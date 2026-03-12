@@ -7,14 +7,12 @@ import {
   ChevronLeft, 
   Edit3, 
   Plus,
-  MoreVertical,
   BookOpen,
   FileText,
   Film,
   Clock,
   Trash2,
   Sparkles,
-  ChevronRight,
   Loader2
 } from 'lucide-react';
 import { novelApi, scriptApi } from '@/lib/api';
@@ -63,6 +61,7 @@ export default function NovelDetailPage() {
     if (novelId) {
       loadData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [novelId]);
 
   const loadData = async () => {

@@ -33,104 +33,154 @@ apiClient.interceptors.request.use(
   }
 );
 
-// 响应拦截器 - 处理令牌刷新和错误
+// 响应拦截器 - 统一错误处理
 apiClient.interceptors.response.use(
   (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-
-    // 如果是401且没有重试过，尝试刷新令牌
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-
-      try {
-        const refreshToken = localStorage.getItem('refresh_token');
-        if (refreshToken) {
-          const response = await axios.post(`${API_BASE_URL}/v1/auth/refresh`, null, {
-            headers: { Authorization: `Bearer ${refreshToken}` },
-          });
-
-          const { access_token, refresh_token: new_refresh_token } = response.data;
-          localStorage.setItem('access_token', access_token);
-          localStorage.setItem('refresh_token', new_refresh_token);
-
-          originalRequest.headers.Authorization = `Bearer ${access_token}`;
-          return apiClient(originalRequest);
-        }
-      } catch (refreshError) {
-        // 刷新失败，清除令牌并跳转登录
+  (error) => {
+    if (error.response?.status === 401) {
+      // Token过期，清除本地存储
+      if (typeof window !== 'undefined') {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
-        window.location.href = '/login';
-        return Promise.reject(refreshError);
+        // 可以在这里添加跳转登录页的逻辑
       }
     }
-
     return Promise.reject(error);
   }
 );
 
-// 导出API客户端
-export default apiClient;
-
-// 认证相关API
+// 认证API
 export const authApi = {
   login: (data: { username: string; password: string }) =>
     apiClient.post('/v1/auth/login', data),
-  register: (data: { email: string; username: string; password: string; nickname?: string }) =>
+  
+  register: (data: { username: string; email: string; password: string; nickname?: string }) =>
     apiClient.post('/v1/auth/register', data),
-  logout: () => apiClient.post('/v1/auth/logout'),
-  getCurrentUser: () => apiClient.get('/v1/auth/me'),
-  changePassword: (data: { old_password: string; new_password: string }) =>
-    apiClient.post('/v1/auth/password/change', data),
+  
+  logout: () =>
+    apiClient.post('/v1/auth/logout'),
+  
+  refresh: (refreshToken: string) =>
+    apiClient.post('/v1/auth/refresh', { refresh_token: refreshToken }),
+  
+  me: () =>
+    apiClient.get('/v1/users/me'),
 };
 
-// 用户相关API
+// 用户API
 export const userApi = {
-  getProfile: () => apiClient.get('/v1/users/me'),
-  getMyProfile: () => apiClient.get('/v1/users/me/profile'),
-  getQuota: () => apiClient.get('/v1/users/me/quota'),
-  updateProfile: (data: { nickname?: string; avatar?: string; phone?: string }) =>
-    apiClient.put('/v1/users/me', data),
+  getProfile: () =>
+    apiClient.get('/v1/users/me'),
+  
+  updateProfile: (data: { username?: string; email?: string; avatar?: string }) =>
+    apiClient.patch('/v1/users/me', data),
+  
+  changePassword: (data: { old_password: string; new_password: string }) =>
+    apiClient.post('/v1/users/change-password', data),
 };
 
-// 小说相关API
+// 小说API
 export const novelApi = {
-  list: (params?: { page?: number; limit?: number; genre?: string; search?: string }) =>
-    apiClient.get('/v1/novels', { params }),
-  getMyList: (params?: { page?: number; limit?: number; status?: string }) =>
-    apiClient.get('/v1/novels/my', { params }),
-  get: (id: string) => apiClient.get(`/v1/novels/${id}`),
-  create: (data: { title: string; description?: string; genre?: string; cover_image?: string }) =>
+  getList: () =>
+    apiClient.get('/v1/novels'),
+  
+  getMyList: () =>
+    apiClient.get('/v1/novels/my'),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/novels/${id}`),
+  
+  create: (data: { title: string; description?: string; cover?: string; genre?: string }) =>
     apiClient.post('/v1/novels', data),
-  update: (id: string, data: { title?: string; description?: string; genre?: string; status?: string }) =>
-    apiClient.put(`/v1/novels/${id}`, data),
-  delete: (id: string) => apiClient.delete(`/v1/novels/${id}`),
-  publish: (id: string) => apiClient.post(`/v1/novels/${id}/publish`),
-  getChapters: (novelId: string) => apiClient.get(`/v1/novels/${novelId}/chapters`),
-  createChapter: (novelId: string, data: { title: string; content?: string; chapter_number: number }) =>
-    apiClient.post(`/v1/novels/${novelId}/chapters`, data),
-  updateChapter: (novelId: string, chapterId: string, data: { title?: string; content?: string }) =>
-    apiClient.put(`/v1/novels/${novelId}/chapters/${chapterId}`, data),
-  deleteChapter: (novelId: string, chapterId: string) =>
-    apiClient.delete(`/v1/novels/${novelId}/chapters/${chapterId}`),
+  
+  update: (id: string, data: Partial<{ title: string; description: string; cover: string; genre?: string; status?: string }>) =>
+    apiClient.patch(`/v1/novels/${id}`, data),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/novels/${id}`),
+  
+  publish: (id: string) =>
+    apiClient.post(`/v1/novels/${id}/publish`),
+  
+  getChapters: (id: string) =>
+    apiClient.get(`/v1/novels/${id}/chapters`),
 };
 
-// 剧本相关API
+// 剧本API
 export const scriptApi = {
-  list: (params?: { novel_id?: string; page?: number; limit?: number }) =>
-    apiClient.get('/v1/scripts', { params }),
-  get: (id: string) => apiClient.get(`/v1/scripts/${id}`),
-  create: (data: { title: string; novel_id?: string; chapter_id?: string }) =>
+  getList: () =>
+    apiClient.get('/v1/scripts'),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/scripts/${id}`),
+  
+  create: (data: { title: string; novel_id: string; content?: string }) =>
     apiClient.post('/v1/scripts', data),
-  update: (id: string, data: { title?: string; content?: object; status?: string }) =>
-    apiClient.put(`/v1/scripts/${id}`, data),
-  delete: (id: string) => apiClient.delete(`/v1/scripts/${id}`),
-  getScenes: (scriptId: string) => apiClient.get(`/v1/scripts/${scriptId}/scenes`),
-  createScene: (scriptId: string, data: object) =>
+  
+  update: (id: string, data: Partial<{ title: string; content: string }>) =>
+    apiClient.patch(`/v1/scripts/${id}`, data),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/scripts/${id}`),
+  
+  generate: (data: { novel_id: string; prompt?: string }) =>
+    apiClient.post('/v1/scripts/generate', data),
+  
+  // 场景相关
+  getScenes: (scriptId: string) =>
+    apiClient.get(`/v1/scripts/${scriptId}/scenes`),
+  
+  createScene: (scriptId: string, data: { title: string; content?: string }) =>
     apiClient.post(`/v1/scripts/${scriptId}/scenes`, data),
-  updateScene: (scriptId: string, sceneId: string, data: object) =>
-    apiClient.put(`/v1/scripts/${scriptId}/scenes/${sceneId}`, data),
+  
+  updateScene: (scriptId: string, sceneId: string, data: Partial<{ title: string; content: string }>) =>
+    apiClient.patch(`/v1/scripts/${scriptId}/scenes/${sceneId}`, data),
+  
   deleteScene: (scriptId: string, sceneId: string) =>
     apiClient.delete(`/v1/scripts/${scriptId}/scenes/${sceneId}`),
 };
+
+// 角色API
+export const characterApi = {
+  getList: (novelId?: string) =>
+    apiClient.get('/v1/characters', { params: { novel_id: novelId } }),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/characters/${id}`),
+  
+  create: (data: { name: string; novel_id: string; description?: string; avatar?: string }) =>
+    apiClient.post('/v1/characters', data),
+  
+  update: (id: string, data: Partial<{ name: string; description: string; avatar: string }>) =>
+    apiClient.patch(`/v1/characters/${id}`, data),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/characters/${id}`),
+  
+  generateAvatar: (id: string) =>
+    apiClient.post(`/v1/characters/${id}/generate-avatar`),
+};
+
+// 视频API
+export const videoApi = {
+  getList: () =>
+    apiClient.get('/v1/videos'),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/videos/${id}`),
+  
+  create: (data: { title: string; script_id: string; settings?: object }) =>
+    apiClient.post('/v1/videos', data),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/videos/${id}`),
+  
+  generate: (id: string) =>
+    apiClient.post(`/v1/videos/${id}/generate`),
+  
+  getStatus: (id: string) =>
+    apiClient.get(`/v1/videos/${id}/status`),
+};
+
+// 默认导出
+export default apiClient;

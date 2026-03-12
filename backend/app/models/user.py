@@ -7,6 +7,8 @@ from sqlalchemy import Column, String, Boolean, DateTime, Integer
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
+from sqlalchemy.orm import relationship
+
 from app.core.database import Base
 
 
@@ -43,6 +45,9 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login_at = Column(DateTime)
+    
+    # 关系
+    novels = relationship("Novel", back_populates="author")
     
     def __repr__(self):
         return f"<User {self.username}>"

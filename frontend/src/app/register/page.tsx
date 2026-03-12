@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Loader2, Sparkles, Check } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Sparkles } from 'lucide-react';
 import { authApi } from '@/lib/api';
 
 export default function RegisterPage() {
@@ -58,8 +58,9 @@ export default function RegisterPage() {
       
       // 注册成功，跳转登录
       router.push('/login?registered=true');
-    } catch (err: any) {
-      setError(err.response?.data?.detail || '注册失败，请稍后重试');
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { detail?: string } } };
+      setError(error.response?.data?.detail || '注册失败，请稍后重试');
     } finally {
       setIsLoading(false);
     }

@@ -6,10 +6,7 @@ import Link from 'next/link';
 import { 
   Plus, 
   Search, 
-  Filter, 
-  MoreVertical, 
   BookOpen,
-  Clock,
   Edit3,
   Trash2,
   Eye,
@@ -33,7 +30,6 @@ interface Novel {
 }
 
 export default function NovelsPage() {
-  const router = useRouter();
   const [novels, setNovels] = useState<Novel[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -43,12 +39,13 @@ export default function NovelsPage() {
 
   useEffect(() => {
     loadNovels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, statusFilter]);
 
   const loadNovels = async () => {
     try {
       setLoading(true);
-      const params: any = { page, limit: 12 };
+      const params: { page: number; limit: number; status?: string } = { page, limit: 12 };
       if (statusFilter !== 'all') {
         params.status = statusFilter;
       }

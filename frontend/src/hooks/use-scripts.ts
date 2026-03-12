@@ -1,6 +1,6 @@
 // 剧本数据Hook - React Query
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { scriptApi } from "@/lib/api";
 
 // 剧本类型
 export interface Script {
@@ -33,7 +33,10 @@ export interface GenerateScriptInput {
 export function useScripts() {
   return useQuery({
     queryKey: ["scripts"],
-    queryFn: () => api.get<Script[]>("/api/scripts"),
+    queryFn: async () => {
+      const response = await scriptApi.getList();
+      return response.data;
+    },
   });
 }
 
@@ -41,7 +44,10 @@ export function useScripts() {
 export function useScript(id: string) {
   return useQuery({
     queryKey: ["scripts", id],
-    queryFn: () => api.get<Script>(`/api/scripts/${id}`),
+    queryFn: async () => {
+      const response = await scriptApi.getById(id);
+      return response.data;
+    },
     enabled: !!id,
   });
 }
@@ -51,8 +57,10 @@ export function useCreateScript() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: CreateScriptInput) =>
-      api.post<Script>("/api/scripts", data),
+    mutationFn: async (data: CreateScriptInput) => {
+      const response = await scriptApi.create(data);
+      return response.data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scripts"] });
     },
@@ -64,8 +72,10 @@ export function useUpdateScript() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: Partial<Script> }) =>
-      api.patch<Script>(`/api/scripts/${id}`, data),
+    mutationFn: async ({ id, data }: { id: string; data: Partial<Script> }) => {
+      const response = await scriptApi.update(id, data);
+      return response.data;
+    },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["scripts"] });
       queryClient.invalidateQueries({ queryKey: ["scripts", variables.id] });
@@ -78,7 +88,9 @@ export function useDeleteScript() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/scripts/${id}`),
+    mutationFn: async (id: string) => {
+      await scriptApi.delete(id);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scripts"] });
     },
@@ -90,8 +102,10 @@ export function useGenerateScript() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: GenerateScriptInput) =>
-      api.post<Script>("/api/scripts/generate", data),
+    mutationFn: async (data: GenerateScriptInput) => {
+      const response = await scriptApi.generate(data);
+      return response.data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["scripts"] });
     },

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { 
   BookOpen, 
   FileVideo, 
@@ -15,7 +16,6 @@ import {
   User,
   Menu
 } from 'lucide-react';
-import Link from 'next/link';
 import { userApi, novelApi } from '@/lib/api';
 
 interface Novel {

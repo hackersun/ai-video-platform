@@ -1,7 +1,7 @@
 // 认证状态管理 - Zustand
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { api } from "@/lib/api";
+import { authApi } from "@/lib/api";
 
 // 用户类型
 export interface User {
@@ -28,7 +28,7 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
       isAuthenticated: false,
       isLoading: false,
@@ -37,27 +37,20 @@ export const useAuthStore = create<AuthState>()(
       login: async (email: string, password: string) => {
         set({ isLoading: true });
         try {
-          const response = await api.post<{
-            access_token: string;
-            refresh_token: string;
-            user: User;
-          }>("/api/auth/login", {
-            email,
-            password,
-          });
+          const response = await authApi.login({ username: email, password });
 
           // 存储Token
-          localStorage.setItem("access_token", response.access_token);
-          localStorage.setItem("refresh_token", response.refresh_token);
+          localStorage.setItem("access_token", response.data.access_token);
+          localStorage.setItem("refresh_token", response.data.refresh_token);
 
           set({
-            user: response.user,
+            user: response.data.user,
             isAuthenticated: true,
             isLoading: false,
           });
-        } catch (error) {
+        } catch (err) {
           set({ isLoading: false });
-          throw error;
+          throw err;
         }
       },
 
@@ -65,28 +58,24 @@ export const useAuthStore = create<AuthState>()(
       register: async (email: string, password: string, username: string) => {
         set({ isLoading: true });
         try {
-          const response = await api.post<{
-            access_token: string;
-            refresh_token: string;
-            user: User;
-          }>("/api/auth/register", {
+          const response = await authApi.register({
             email,
             password,
             username,
           });
 
           // 存储Token
-          localStorage.setItem("access_token", response.access_token);
-          localStorage.setItem("refresh_token", response.refresh_token);
+          localStorage.setItem("access_token", response.data.access_token);
+          localStorage.setItem("refresh_token", response.data.refresh_token);
 
           set({
-            user: response.user,
+            user: response.data.user,
             isAuthenticated: true,
             isLoading: false,
           });
-        } catch (error) {
+        } catch (err) {
           set({ isLoading: false });
-          throw error;
+          throw err;
         }
       },
 
@@ -103,12 +92,12 @@ export const useAuthStore = create<AuthState>()(
       // 获取用户信息
       fetchUser: async () => {
         try {
-          const response = await api.get<User>("/api/users/me");
+          const response = await authApi.me();
           set({
-            user: response,
+            user: response.data,
             isAuthenticated: true,
           });
-        } catch (error) {
+        } catch (err) {
           // Token无效，清除状态
           localStorage.removeItem("access_token");
           localStorage.removeItem("refresh_token");
@@ -121,8 +110,8 @@ export const useAuthStore = create<AuthState>()(
 
       // 更新用户信息
       updateUser: async (data: Partial<User>) => {
-        const response = await api.patch<User>("/api/users/me", data);
-        set({ user: response });
+        const response = await authApi.me();
+        set({ user: response.data });
       },
     }),
     {

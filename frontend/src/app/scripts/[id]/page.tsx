@@ -10,15 +10,8 @@ import {
   Image as ImageIcon,
   Film,
   Volume2,
-  MoreVertical,
-  GripVertical,
   Trash2,
-  Edit3,
-  Sparkles,
-  Loader2,
-  ChevronDown,
-  ChevronRight,
-  Save
+  Loader2
 } from 'lucide-react';
 import { scriptApi } from '@/lib/api';
 
@@ -30,7 +23,7 @@ interface Scene {
   location: string;
   time_of_day: string;
   characters: string[];
-  dialogue: any;
+  dialogue: Record<string, unknown>;
   action_description: string;
   camera_direction: string;
 }
@@ -38,13 +31,12 @@ interface Scene {
 interface Script {
   id: string;
   title: string;
-  content: any;
+  content: Record<string, unknown> | null;
   status: string;
   ai_generated: boolean;
 }
 
 export default function ScriptEditorPage() {
-  const router = useRouter();
   const params = useParams();
   const scriptId = params.id as string;
   
@@ -58,6 +50,7 @@ export default function ScriptEditorPage() {
     if (scriptId) {
       loadData();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scriptId]);
 
   const loadData = async () => {
@@ -121,7 +114,7 @@ export default function ScriptEditorPage() {
     }
   };
 
-  const handleGenerateVideo = async (sceneId: string) => {
+  const handleGenerateVideo = async (_sceneId: string) => {
     setIsGenerating(true);
     try {
       // TODO: 调用视频生成API
@@ -208,7 +201,7 @@ export default function ScriptEditorPage() {
               <h2 className="text-lg font-semibold text-white mb-4">场景列表</h2>
               
               <div className="space-y-2 max-h-[calc(100vh-280px)] overflow-y-auto">
-                {scenes.map((scene, index) => (
+                {scenes.map((scene) => (
                   <div
                     key={scene.id}
                     onClick={() => setSelectedScene(scene)}

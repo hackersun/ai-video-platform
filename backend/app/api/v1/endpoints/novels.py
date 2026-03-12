@@ -3,12 +3,13 @@
 """
 
 from typing import List
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.models.novel import Novel
 
 router = APIRouter()
 
@@ -31,12 +32,31 @@ async def list_novels(
 
 @router.post("/")
 async def create_novel(
-    # novel: NovelCreate,
+    title: str,
+    description: str = "",
+    genre: str = "未分类",
+    author_id: str = "",
     db: AsyncSession = Depends(get_db)
 ):
     """创建小说"""
-    # TODO: 实现小说创建
-    return {"message": "创建小说功能待实现"}
+    from uuid import UUID
+    # 转换 author_id 为 UUID
+    author_uuid = UUID(author_id) if author_id else UUID("df9f3e6c-63ef-4e29-bdd1-130f2579ca23")
+    
+    novel = Novel(
+        id=uuid4(),
+        title=title,
+        description=description,
+        genre=genre,
+        author_id=author_uuid,
+        status="draft",
+        word_count=0,
+        ai_generated=False
+    )
+    db.add(novel)
+    await db.commit()
+    await db.refresh(novel)
+    return {"id": str(novel.id), "title": novel.title, "status": novel.status}
 
 
 @router.get("/{novel_id}")
