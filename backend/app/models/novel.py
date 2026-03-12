@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from sqlalchemy import Column, String, Text, Integer, ForeignKey, DateTime, Boolean, JSON
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
 
@@ -86,10 +86,10 @@ class Scene(Base):
     scene_number = Column(Integer, nullable=False)
     title = Column(String(255))
     description = Column(Text)
-    characters = Column(ARRAY(UUID(as_uuid=True)))
+    characters = Column(JSON)  # 角色ID列表 [uuid1, uuid2, ...]
     location = Column(String(255))
     time_of_day = Column(String(50))
-    props = Column(ARRAY(String))
+    props = Column(JSON)  # 道具列表 ["道具1", "道具2", ...]
     dialogue = Column(JSON)
     action_description = Column(Text)
     camera_direction = Column(Text)

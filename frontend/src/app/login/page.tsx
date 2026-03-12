@@ -1,146 +1,155 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { toast } from "@/components/ui/toaster";
-import { useAuthStore } from "@/store/auth-store";
-import { Film, Eye, EyeOff, Sparkles, Loader2 } from "lucide-react";
+import { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { Eye, EyeOff, Loader2, Sparkles } from 'lucide-react';
+import { authApi } from '@/lib/api';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { login, register, isLoading } = useAuthStore();
+  const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [isLogin, setIsLogin] = useState(true);
+  const [error, setError] = useState('');
+  
   const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-    username: "",
+    username: '',
+    password: '',
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsLoading(true);
+    setError('');
 
     try {
-      if (isLogin) {
-        await login(formData.email, formData.password);
-        toast({
-          title: "登录成功",
-          description: "欢迎回来！",
-          variant: "success",
-        });
-      } else {
-        await register(formData.email, formData.password, formData.username);
-        toast({
-          title: "注册成功",
-          description: "欢迎加入！",
-          variant: "success",
-        });
-      }
-
-      router.push("/dashboard");
-    } catch (error: any) {
-      toast({
-        title: isLogin ? "登录失败" : "注册失败",
-        description: error.message || "请检查您的输入",
-        variant: "error",
-      });
+      const response = await authApi.login(formData);
+      
+      // 保存令牌
+      localStorage.setItem('access_token', response.data.access_token);
+      localStorage.setItem('refresh_token', response.data.refresh_token);
+      
+      // 跳转首页
+      router.push('/dashboard');
+    } catch (err: any) {
+      setError(err.response?.data?.detail || '登录失败，请检查用户名和密码');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
-      {/* Background decoration */}
+      {/* 背景装饰 */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-500/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl" />
+        <div className="absolute top-1/4 -left-32 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl" />
+        <div className="absolute bottom-1/4 -right-32 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-500/10 rounded-full blur-3xl" />
       </div>
 
-      <Card className="w-full max-w-md relative z-10">
-        <CardHeader className="text-center space-y-4">
-          <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center shadow-lg shadow-violet-500/30">
-            <Film className="w-8 h-8 text-white" />
+      {/* 登录卡片 */}
+      <div className="relative w-full max-w-md">
+        {/* Logo和标题 */}
+        <div className="text-center mb-8 animate-fade-in">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 shadow-glow mb-4">
+            <Sparkles className="w-8 h-8 text-white" />
           </div>
-          <div>
-            <CardTitle className="text-2xl font-bold">
-              {isLogin ? "欢迎回来" : "创建账号"}
-            </CardTitle>
-            <CardDescription className="mt-2">
-              {isLogin 
-                ? "登录您的账号开始创作" 
-                : "注册账号开启AI视频创作之旅"
-              }
-            </CardDescription>
-          </div>
-        </CardHeader>
+          <h1 className="text-3xl font-bold gradient-text">AI视频平台</h1>
+          <p className="text-white/60 mt-2">智能创作，触手可及</p>
+        </div>
 
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {!isLogin && (
-              <Input
-                label="用户名"
-                placeholder="请输入用户名"
+        {/* 登录表单 */}
+        <div className="glass rounded-2xl p-8 shadow-soft animate-fade-in" style={{ animationDelay: '0.1s' }}>
+          <h2 className="text-xl font-semibold text-white mb-6">欢迎回来</h2>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            {/* 用户名/邮箱 */}
+            <div>
+              <label className="block text-sm font-medium text-white/80 mb-2">
+                用户名或邮箱
+              </label>
+              <input
+                type="text"
                 value={formData.username}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
+                className="w-full px-4 py-3 rounded-lg bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                placeholder="请输入用户名或邮箱"
                 required
-                disabled={isLoading}
               />
-            )}
-            
-            <Input
-              label="邮箱"
-              type="email"
-              placeholder="your@email.com"
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              required
-              disabled={isLoading}
-            />
-            
-            <div className="relative">
-              <Input
-                label="密码"
-                type={showPassword ? "text" : "password"}
-                placeholder="请输入密码"
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                required
-                disabled={isLoading}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-[38px] text-white/40 hover:text-white transition-colors"
-                disabled={isLoading}
-              >
-                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
             </div>
 
-            <Button
+            {/* 密码 */}
+            <div>
+              <label className="block text-sm font-medium text-white/80 mb-2">
+                密码
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={formData.password}
+                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  className="w-full px-4 py-3 pr-12 rounded-lg bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                  placeholder="请输入密码"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-white/40 hover:text-white transition-colors"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* 错误提示 */}
+            {error && (
+              <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                {error}
+              </div>
+            )}
+
+            {/* 登录按钮 */}
+            <button
               type="submit"
-              className="w-full mt-6"
-              size="lg"
-              isLoading={isLoading}
+              disabled={isLoading}
+              className="w-full py-3 px-4 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 text-white font-medium hover:from-violet-700 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
             >
-              {!isLoading && <Sparkles className="w-4 h-4 mr-2" />}
-              {isLogin ? "登录" : "注册"}
-            </Button>
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  登录中...
+                </>
+              ) : (
+                '登录'
+              )}
+            </button>
           </form>
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-white/60 hover:text-white transition-colors"
-              disabled={isLoading}
-            >
-              {isLogin ? "还没有账号？立即注册" : "已有账号？立即登录"}
-            </button>
+          {/* 分隔符 */}
+          <div className="relative my-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-4 bg-transparent text-white/40">或</span>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+
+          {/* 注册链接 */}
+          <p className="text-center text-white/60">
+            还没有账号？{' '}
+            <Link href="/register" className="text-violet-400 hover:text-violet-300 font-medium transition-colors">
+              立即注册
+            </Link>
+          </p>
+        </div>
+
+        {/* 底部 */}
+        <p className="text-center text-white/30 text-sm mt-8">
+          登录即表示同意我们的服务条款和隐私政策
+        </p>
+      </div>
     </div>
   );
 }

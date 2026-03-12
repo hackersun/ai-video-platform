@@ -15,9 +15,9 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     DEBUG: bool = True
     
-    # 数据库配置
-    DATABASE_URL: str = "postgresql://postgres:postgres@postgres:5432/aivideo"
-    REDIS_URL: str = "redis://redis:6379/0"
+    # 数据库配置（使用SQLite快速启动）
+    DATABASE_URL: str = "sqlite+aiosqlite:///./aivideo.db"
+    REDIS_URL: str = "redis://localhost:6379/0"  # 可选，如未安装Redis会被跳过
     
     # Milvus配置
     MILVUS_HOST: str = "milvus"

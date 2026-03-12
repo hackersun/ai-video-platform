@@ -188,3 +188,11 @@ class UserListResponse(BaseModel):
     pages: int
     
     model_config = ConfigDict(from_attributes=True)
+
+
+class LoginRequest(BaseModel):
+    """登录请求模型"""
+    username: str
+    password: str
+    
+    model_config = ConfigDict(from_attributes=True)

@@ -8,12 +8,18 @@ from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
-# 创建异步引擎
-engine = create_async_engine(
-    settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
-    echo=settings.DEBUG,
-    poolclass=NullPool if settings.DEBUG else None,
-)
+# 创建异步引擎（支持SQLite和PostgreSQL）
+if settings.DATABASE_URL.startswith("sqlite"):
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+    )
+else:
+    engine = create_async_engine(
+        settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
+        echo=settings.DEBUG,
+        poolclass=NullPool if settings.DEBUG else None,
+    )
 
 # 异步会话工厂
 AsyncSessionLocal = sessionmaker(

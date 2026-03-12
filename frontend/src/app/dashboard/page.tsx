@@ -1,175 +1,242 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
-  LayoutDashboard, 
   BookOpen, 
-  FileText, 
+  FileVideo, 
   Users, 
-  Video, 
-  Settings,
+  Settings, 
+  Plus, 
+  Search,
+  ChevronRight,
+  Sparkles,
   LogOut,
-  Plus,
-  TrendingUp,
-  Clock,
-  CheckCircle
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+  User,
+  Menu
+} from 'lucide-react';
+import Link from 'next/link';
+import { userApi, novelApi } from '@/lib/api';
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "概览", href: "/dashboard", active: true },
-  { icon: BookOpen, label: "小说管理", href: "/novels" },
-  { icon: FileText, label: "剧本编辑", href: "/scripts" },
-  { icon: Users, label: "角色管理", href: "/characters" },
-  { icon: Video, label: "视频生成", href: "/videos" },
-  { icon: Settings, label: "设置", href: "/settings" },
-];
-
-const stats = [
-  { label: "小说数量", value: "12", icon: BookOpen, trend: "+2" },
-  { label: "剧本数量", value: "8", icon: FileText, trend: "+1" },
-  { label: "角色数量", value: "24", icon: Users, trend: "+5" },
-  { label: "视频数量", value: "6", icon: Video, trend: "+3" },
-];
-
-const recentActivities = [
-  { action: "创建了新小说", target: "《星际穿越》", time: "2小时前", icon: Plus },
-  { action: "生成了视频", target: "第一章", time: "5小时前", icon: Video },
-  { action: "添加了角色", target: "主角-李明", time: "1天前", icon: Users },
-  { action: "完成了剧本", target: "《未来世界》", time: "2天前", icon: CheckCircle },
-];
+interface Novel {
+  id: string;
+  title: string;
+  description: string;
+  genre: string;
+  status: string;
+  word_count: number;
+  created_at: string;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [novels, setNovels] = useState<Novel[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<any>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  useEffect(() => {
+    // 检查登录状态
+    const token = localStorage.getItem('access_token');
+    if (!token) {
+      router.push('/login');
+      return;
+    }
+
+    // 加载数据
+    loadData();
+  }, [router]);
+
+  const loadData = async () => {
+    try {
+      const [userRes, novelsRes] = await Promise.all([
+        userApi.getProfile(),
+        novelApi.getMyList()
+      ]);
+      setUser(userRes.data);
+      setNovels(novelsRes.data.items);
+    } catch (error) {
+      console.error('加载数据失败', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
+    router.push('/login');
+  };
+
+  const filteredNovels = novels.filter(novel => 
+    novel.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    novel.description?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'published': return 'bg-green-500/20 text-green-400';
+      case 'draft': return 'bg-yellow-500/20 text-yellow-400';
+      case 'archived': return 'bg-gray-500/20 text-gray-400';
+      default: return 'bg-white/10 text-white/60';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-violet-500"></div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen flex">
-      {/* Sidebar */}
-      <aside 
-        className={cn(
-          "fixed left-0 top-0 h-full bg-[#0d0d12] border-r border-white/10 transition-all duration-300 z-50",
-          isSidebarOpen ? "w-64" : "w-20"
-        )}
-      >
-        <div className="p-6">
-          <div className="flex items-center gap-3 mb-8">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-              <Video className="w-5 h-5 text-white" />
-            </div>
-            {isSidebarOpen && (
-              <span className="font-bold text-lg">AI视频平台</span>
-            )}
-          </div>
-
-          <nav className="space-y-2">
-            {menuItems.map((item) => (
-              <button
-                key={item.label}
-                onClick={() => router.push(item.href)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200",
-                  item.active 
-                    ? "bg-violet-500/20 text-violet-400 border border-violet-500/30" 
-                    : "text-white/60 hover:text-white hover:bg-white/5"
-                )}
-              >
-                <item.icon className="w-5 h-5" />
-                {isSidebarOpen && <span>{item.label}</span>}
-              </button>
-            ))}
-          </nav>
-        </div>
-
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10">
-          <button 
-            onClick={() => router.push("/login")}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-white/60 hover:text-white hover:bg-white/5 transition-all"
-          >
-            <LogOut className="w-5 h-5" />
-            {isSidebarOpen && <span>退出登录</span>}
-          </button>
-        </div>
-      </aside>
-
-      {/* Main content */}
-      <main 
-        className={cn(
-          "flex-1 transition-all duration-300",
-          isSidebarOpen ? "ml-64" : "ml-20"
-        )}
-      >
-        {/* Header */}
-        <header className="h-16 border-b border-white/10 flex items-center justify-between px-8">
-          <h1 className="text-xl font-semibold">概览</h1>
-          <div className="flex items-center gap-4">
-            <Button variant="secondary" size="sm">
-              <Plus className="w-4 h-4 mr-2" />
-              新建项目
-            </Button>
-          </div>
-        </header>
-
-        {/* Content */}
-        <div className="p-8">
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            {stats.map((stat) => (
-              <Card key={stat.label} className="hover:border-violet-500/30 transition-colors">
-                <CardContent className="p-6">
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <p className="text-sm text-white/60">{stat.label}</p>
-                      <p className="text-2xl font-bold mt-1">{stat.value}</p>
-                    </div>
-                    <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
-                      <stat.icon className="w-5 h-5 text-violet-400" />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1 mt-4 text-sm">
-                    <TrendingUp className="w-4 h-4 text-green-400" />
-                    <span className="text-green-400">{stat.trend}</span>
-                    <span className="text-white/40">本周</span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          {/* Recent Activity */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-violet-400" />
-                最近活动
-              </CardTitle>
-              <CardDescription>您的创作动态</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {recentActivities.map((activity, index) => (
-                  <div 
-                    key={index}
-                    className="flex items-center gap-4 p-4 rounded-lg bg-white/[0.02] hover:bg-white/[0.05] transition-colors"
-                  >
-                    <div className="w-10 h-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
-                      <activity.icon className="w-5 h-5 text-violet-400" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-white">
-                        {activity.action}
-                        <span className="text-violet-400 ml-1">{activity.target}</span>
-                      </p>
-                      <p className="text-sm text-white/40">{activity.time}</p>
-                    </div>
-                  </div>
-                ))}
+    <div className="min-h-screen bg-slate-900">
+      {/* 顶部导航 */}
+      <header className="glass sticky top-0 z-50 border-b border-white/5">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            {/* Logo */}
+            <Link href="/dashboard" className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center">
+                <Sparkles className="w-5 h-5 text-white" />
               </div>
-            </CardContent>
-          </Card>
+              <span className="text-xl font-bold gradient-text">AI视频平台</span>
+            </Link>
+
+            {/* 导航链接 */}
+            <nav className="hidden md:flex items-center gap-6">
+              <Link href="/dashboard" className="text-white/80 hover:text-white transition-colors">
+                控制台
+              </Link>
+              <Link href="/novels" className="text-white/60 hover:text-white transition-colors">
+                作品管理
+              </Link>
+              <Link href="/scripts" className="text-white/60 hover:text-white transition-colors">
+                剧本库
+              </Link>
+            </nav>
+
+            {/* 用户菜单 */}
+            <div className="flex items-center gap-4">
+              <button className="p-2 rounded-lg hover:bg-white/5 transition-colors">
+                <Settings className="w-5 h-5 text-white/60" />
+              </button>
+              <div className="flex items-center gap-3 pl-4 border-l border-white/10">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center">
+                  <User className="w-4 h-4 text-white" />
+                </div>
+                <span className="text-sm text-white/80 hidden sm:block">{user?.username}</span>
+                <button 
+                  onClick={handleLogout}
+                  className="p-2 rounded-lg hover:bg-white/5 transition-colors"
+                  title="退出登录"
+                >
+                  <LogOut className="w-5 h-5 text-white/60" />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* 主内容 */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* 欢迎区域 */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-white mb-2">
+            欢迎回来，{user?.nickname || user?.username}
+          </h1>
+          <p className="text-white/60">管理您的创作项目</p>
+        </div>
+
+        {/* 快捷操作 */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <Link 
+            href="/novels/new"
+            className="p-6 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 transition-all group"
+          >
+            <Plus className="w-8 h-8 text-white mb-3" />
+            <div className="text-white font-medium">创建小说</div>
+            <div className="text-white/60 text-sm">开始新创作</div>
+          </Link>
+          
+          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <FileVideo className="w-8 h-8 text-cyan-400 mb-3" />
+            <div className="text-white font-medium">AI生成</div>
+            <div className="text-white/60 text-sm">智能创作</div>
+          </div>
+          
+          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <Users className="w-8 h-8 text-pink-400 mb-3" />
+            <div className="text-white font-medium">角色库</div>
+            <div className="text-white/60 text-sm">管理角色</div>
+          </div>
+          
+          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <BookOpen className="w-8 h-8 text-amber-400 mb-3" />
+            <div className="text-white font-medium">剧本库</div>
+            <div className="text-white/60 text-sm">查看全部</div>
+          </div>
+        </div>
+
+        {/* 小说列表 */}
+        <div className="glass rounded-2xl p-6">
+          {/* 标题和搜索 */}
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-semibold text-white">我的作品</h2>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
+              <input
+                type="text"
+                placeholder="搜索作品..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-violet-500 w-64"
+              />
+            </div>
+          </div>
+
+          {/* 作品列表 */}
+          {filteredNovels.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredNovels.map((novel) => (
+                <Link
+                  key={novel.id}
+                  href={`/novels/${novel.id}`}
+                  className="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-violet-500/50 transition-all group"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <h3 className="text-white font-medium group-hover:text-violet-400 transition-colors line-clamp-1">
+                      {novel.title}
+                    </h3>
+                    <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(novel.status)}`}>
+                      {novel.status === 'published' ? '已发布' : novel.status === 'draft' ? '草稿' : '已归档'}
+                    </span>
+                  </div>
+                  <p className="text-white/40 text-sm line-clamp-2 mb-3">
+                    {novel.description || '暂无描述'}
+                  </p>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-white/40">{novel.genre || '未分类'}</span>
+                    <span className="text-white/40">{novel.word_count || 0} 字</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <BookOpen className="w-16 h-16 text-white/20 mx-auto mb-4" />
+              <p className="text-white/40 mb-4">还没有任何作品</p>
+              <Link 
+                href="/novels/new"
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors"
+              >
+                <Plus className="w-4 h-4" />
+                创建第一个小说
+              </Link>
+            </div>
+          )}
         </div>
       </main>
     </div>

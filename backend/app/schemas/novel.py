@@ -67,7 +67,7 @@ class NovelResponse(NovelBase):
 class NovelDetail(NovelResponse):
     """小说详情（包含章节）"""
     chapter_count: int = 0
-    chapters: List["ChapterResponse"] = []
+    chapters: List[dict] = []  # 简化，避免循环引用
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -112,7 +112,7 @@ class ChapterResponse(ChapterBase):
 
 class ChapterDetail(ChapterResponse):
     """章节详情"""
-    scripts: List["ScriptResponse"] = []
+    scripts: List[dict] = []  # 简化，避免循环引用
     
     model_config = ConfigDict(from_attributes=True)
 
@@ -174,3 +174,8 @@ class GenerationStatus(BaseModel):
     updated_at: datetime
     
     model_config = ConfigDict(from_attributes=True)
+
+
+# 重建模型以解决前向引用问题
+NovelDetail.model_rebuild()
+ChapterDetail.model_rebuild()
