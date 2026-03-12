@@ -16,47 +16,13 @@ import {
   ChevronLeft,
   Clock,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/utils";
-
-// Mock data
-const novels = [
-  {
-    id: 1,
-    title: "星际穿越",
-    author: "张三",
-    description: "一个关于太空探索的科幻故事",
-    status: "completed",
-    chapters: 12,
-    characters: 8,
-    updatedAt: "2024-03-10",
-    cover: null,
-  },
-  {
-    id: 2,
-    title: "未来世界",
-    author: "李四",
-    description: "人工智能统治下的世界",
-    status: "writing",
-    chapters: 5,
-    characters: 12,
-    updatedAt: "2024-03-12",
-    cover: null,
-  },
-  {
-    id: 3,
-    title: "魔法学院",
-    author: "王五",
-    description: "一个普通少年的魔法之旅",
-    status: "planning",
-    chapters: 0,
-    characters: 5,
-    updatedAt: "2024-03-08",
-    cover: null,
-  },
-];
+import { useNovels, useCreateNovel, useDeleteNovel, Novel } from "@/hooks/use-novels";
+import { useRequireAuth } from "@/hooks/use-auth";
 
 const statusConfig = {
   completed: { label: "已完成", color: "text-green-400", bg: "bg-green-500/10", icon: CheckCircle },
@@ -66,26 +32,82 @@ const statusConfig = {
 
 export default function NovelsPage() {
   const router = useRouter();
+  const { shouldRedirect } = useRequireAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [newNovel, setNewNovel] = useState({ title: "", author: "", description: "" });
 
-  const filteredNovels = novels.filter(
-    (novel) =>
+  // API Hooks
+  const { data: novels, isLoading, error } = useNovels();
+  const createNovel = useCreateNovel();
+  const deleteNovel = useDeleteNovel();
+
+  // 如果需要登录，重定向
+  if (shouldRedirect) {
+    router.push("/login");
+    return null;
+  }
+
+  const filteredNovels = novels?.filter(
+    (novel: Novel) =>
       novel.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
       novel.author.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  ) || [];
 
-  const handleCreateNovel = () => {
-    setShowCreateModal(true);
+  const handleCreateNovel = async () => {
+    try {
+      await createNovel.mutateAsync(newNovel);
+      setShowCreateModal(false);
+      setNewNovel({ title: "", author: "", description: "" });
+      toast({
+        title: "创建成功",
+        description: "小说已创建",
+        variant: "success",
+      });
+    } catch (error: any) {
+      toast({
+        title: "创建失败",
+        description: error.message || "请稍后重试",
+        variant: "error",
+      });
+    }
   };
 
-  const handleDeleteNovel = (id: number) => {
-    toast({
-      title: "删除成功",
-      description: "小说已删除",
-      variant: "success",
-    });
+  const handleDeleteNovel = async (id: string) => {
+    try {
+      await deleteNovel.mutateAsync(id);
+      toast({
+        title: "删除成功",
+        description: "小说已删除",
+        variant: "success",
+      });
+    } catch (error: any) {
+      toast({
+        title: "删除失败",
+        description: error.message || "请稍后重试",
+        variant: "error",
+      });
+    }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0f] flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-400 mb-4">加载失败</p>
+          <Button onClick={() => window.location.reload()}>重试</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
@@ -116,7 +138,7 @@ export default function NovelsPage() {
               />
             </div>
           </div>
-          <Button onClick={handleCreateNovel}>
+          <Button onClick={() => setShowCreateModal(true)}>
             <Plus className="w-4 h-4 mr-2" />
             新建小说
           </Button>
@@ -124,7 +146,7 @@ export default function NovelsPage() {
 
         {/* Novels Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredNovels.map((novel) => {
+          {filteredNovels.map((novel: Novel) => {
             const status = statusConfig[novel.status as keyof typeof statusConfig];
             return (
               <Card 
@@ -161,7 +183,7 @@ export default function NovelsPage() {
                     <div className="flex items-center gap-4 text-sm text-white/40">
                       <span>{novel.chapters} 章节</span>
                       <span>{novel.characters} 角色</span>
-                      <span>{formatDate(novel.updatedAt)}</span>
+                      <span>{formatDate(novel.updated_at)}</span>
                     </div>
                   </div>
                 </CardContent>
@@ -175,7 +197,7 @@ export default function NovelsPage() {
           <div className="text-center py-20">
             <FileText className="w-16 h-16 text-white/20 mx-auto mb-4" />
             <p className="text-white/60">暂无小说</p>
-            <Button variant="outline" className="mt-4" onClick={handleCreateNovel}>
+            <Button variant="outline" className="mt-4" onClick={() => setShowCreateModal(true)}>
               创建第一本小说
             </Button>
           </div>
@@ -190,8 +212,18 @@ export default function NovelsPage() {
               <CardTitle>新建小说</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Input label="标题" placeholder="输入小说标题" />
-              <Input label="作者" placeholder="输入作者名称" />
+              <Input
+                label="标题"
+                placeholder="输入小说标题"
+                value={newNovel.title}
+                onChange={(e) => setNewNovel({ ...newNovel, title: e.target.value })}
+              />
+              <Input
+                label="作者"
+                placeholder="输入作者名称"
+                value={newNovel.author}
+                onChange={(e) => setNewNovel({ ...newNovel, author: e.target.value })}
+              />
               <div>
                 <label className="block text-sm font-medium text-white/80 mb-1.5">
                   简介
@@ -199,6 +231,8 @@ export default function NovelsPage() {
                 <textarea
                   className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-white/40 focus:outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 min-h-[100px]"
                   placeholder="输入小说简介"
+                  value={newNovel.description}
+                  onChange={(e) => setNewNovel({ ...newNovel, description: e.target.value })}
                 />
               </div>
               <div className="flex gap-3 pt-4">
@@ -209,14 +243,11 @@ export default function NovelsPage() {
                 >
                   取消
                 </Button>
-                <Button className="flex-1" onClick={() => {
-                  setShowCreateModal(false);
-                  toast({
-                    title: "创建成功",
-                    description: "小说已创建",
-                    variant: "success",
-                  });
-                }}>
+                <Button 
+                  className="flex-1" 
+                  onClick={handleCreateNovel}
+                  isLoading={createNovel.isPending}
+                >
                   创建
                 </Button>
               </div>

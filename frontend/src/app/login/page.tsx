@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { toast } from "@/components/ui/toaster";
-import { Film, Eye, EyeOff, Sparkles } from "lucide-react";
+import { useAuthStore } from "@/store/auth-store";
+import { Film, Eye, EyeOff, Sparkles, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [isLoading, setIsLoading] = useState(false);
+  const { login, register, isLoading } = useAuthStore();
   const [showPassword, setShowPassword] = useState(false);
   const [isLogin, setIsLogin] = useState(true);
   const [formData, setFormData] = useState({
@@ -21,27 +22,31 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
 
     try {
-      // TODO: 调用后端API
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      
-      toast({
-        title: isLogin ? "登录成功" : "注册成功",
-        description: "欢迎回来！",
-        variant: "success",
-      });
+      if (isLogin) {
+        await login(formData.email, formData.password);
+        toast({
+          title: "登录成功",
+          description: "欢迎回来！",
+          variant: "success",
+        });
+      } else {
+        await register(formData.email, formData.password, formData.username);
+        toast({
+          title: "注册成功",
+          description: "欢迎加入！",
+          variant: "success",
+        });
+      }
 
       router.push("/dashboard");
-    } catch (error) {
+    } catch (error: any) {
       toast({
-        title: "出错了",
-        description: "请检查您的账号和密码",
+        title: isLogin ? "登录失败" : "注册失败",
+        description: error.message || "请检查您的输入",
         variant: "error",
       });
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -80,6 +85,7 @@ export default function LoginPage() {
                 value={formData.username}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                 required
+                disabled={isLoading}
               />
             )}
             
@@ -90,6 +96,7 @@ export default function LoginPage() {
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               required
+              disabled={isLoading}
             />
             
             <div className="relative">
@@ -100,11 +107,13 @@ export default function LoginPage() {
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 required
+                disabled={isLoading}
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
                 className="absolute right-3 top-[38px] text-white/40 hover:text-white transition-colors"
+                disabled={isLoading}
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -116,7 +125,7 @@ export default function LoginPage() {
               size="lg"
               isLoading={isLoading}
             >
-              <Sparkles className="w-4 h-4 mr-2" />
+              {!isLoading && <Sparkles className="w-4 h-4 mr-2" />}
               {isLogin ? "登录" : "注册"}
             </Button>
           </form>
@@ -125,6 +134,7 @@ export default function LoginPage() {
             <button
               onClick={() => setIsLogin(!isLogin)}
               className="text-sm text-white/60 hover:text-white transition-colors"
+              disabled={isLoading}
             >
               {isLogin ? "还没有账号？立即注册" : "已有账号？立即登录"}
             </button>
