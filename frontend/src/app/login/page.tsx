@@ -32,7 +32,21 @@ export default function LoginPage() {
       // 跳转首页
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.detail || '登录失败，请检查用户名和密码');
+      // 处理不同类型的错误响应
+      let errorMessage = '登录失败，请检查用户名和密码';
+      if (err.response?.data) {
+        if (typeof err.response.data === 'string') {
+          errorMessage = err.response.data;
+        } else if (err.response.data.detail) {
+          errorMessage = err.response.data.detail;
+        } else if (err.response.data.msg) {
+          errorMessage = err.response.data.msg;
+        } else {
+          // 如果是对象，转换为字符串
+          errorMessage = JSON.stringify(err.response.data);
+        }
+      }
+      setError(errorMessage);
     } finally {
       setIsLoading(false);
     }

@@ -52,7 +52,17 @@ apiClient.interceptors.response.use(
 // 认证API
 export const authApi = {
   login: (data: { username: string; password: string }) =>
-    apiClient.post('/v1/auth/login', data),
+    apiClient.post('/v1/auth/login', 
+      new URLSearchParams({
+        username: data.username,
+        password: data.password,
+      }).toString(),
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+      }
+    ),
   
   register: (data: { username: string; email: string; password: string; nickname?: string }) =>
     apiClient.post('/v1/auth/register', data),
@@ -84,8 +94,8 @@ export const novelApi = {
   getList: () =>
     apiClient.get('/v1/novels'),
   
-  getMyList: () =>
-    apiClient.get('/v1/novels/my'),
+  getMyList: (params?: { page?: number; limit?: number; status?: string }) =>
+    apiClient.get('/v1/novels/my', { params }),
   
   getById: (id: string) =>
     apiClient.get(`/v1/novels/${id}`),

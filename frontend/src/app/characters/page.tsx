@@ -17,7 +17,8 @@ import {
   Wand2,
   Image as ImageIcon,
   Save,
-  RefreshCw
+  RefreshCw,
+  CheckCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 

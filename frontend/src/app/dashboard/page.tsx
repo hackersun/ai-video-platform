@@ -32,7 +32,7 @@ export default function DashboardPage() {
   const router = useRouter();
   const [novels, setNovels] = useState<Novel[]>([]);
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<{ username: string; nickname?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
@@ -53,8 +53,15 @@ export default function DashboardPage() {
         userApi.getProfile(),
         novelApi.getMyList()
       ]);
-      setUser(userRes.data);
-      setNovels(novelsRes.data.items);
+      // 确保user数据是对象而不是数组或其他类型
+      const userData = userRes.data;
+      if (userData && typeof userData === 'object' && !Array.isArray(userData)) {
+        setUser(userData);
+      } else {
+        console.error('User数据格式错误:', userData);
+        setUser(null);
+      }
+      setNovels(novelsRes.data?.items || []);
     } catch (error) {
       console.error('加载数据失败', error);
     } finally {

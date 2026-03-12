@@ -4,8 +4,10 @@
 
 from typing import List
 from uuid import UUID, uuid4
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,10 +23,33 @@ async def list_novels(
     db: AsyncSession = Depends(get_db)
 ):
     """获取小说列表"""
-    # TODO: 实现小说列表查询
+    # 从数据库查询
+    result = await db.execute(
+        select(Novel).offset(skip).limit(limit)
+    )
+    novels = result.scalars().all()
+    
+    items = []
+    for novel in novels:
+        items.append({
+            "id": str(novel.id),
+            "title": novel.title,
+            "description": novel.description,
+            "genre": novel.genre,
+            "status": novel.status,
+            "word_count": novel.word_count,
+            "author_id": str(novel.author_id),
+            "created_at": novel.created_at.isoformat() if novel.created_at else None
+        })
+    
+    # 获取总数
+    from sqlalchemy import func
+    total_result = await db.execute(select(func.count(Novel.id)))
+    total = total_result.scalar()
+    
     return {
-        "items": [],
-        "total": 0,
+        "items": items,
+        "total": total,
         "skip": skip,
         "limit": limit
     }
@@ -57,6 +82,53 @@ async def create_novel(
     await db.commit()
     await db.refresh(novel)
     return {"id": str(novel.id), "title": novel.title, "status": novel.status}
+
+
+@router.get("/my")
+async def get_my_novels(
+    skip: int = 0,
+    limit: int = 20,
+    status: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """获取当前用户的小说列表"""
+    # 默认使用测试用户ID
+    author_uuid = UUID("df9f3e6c-63ef-4e29-bdd1-130f2579ca23")
+    
+    # 构建查询
+    query = select(Novel).where(Novel.author_id == author_uuid)
+    if status:
+        query = query.where(Novel.status == status)
+    
+    result = await db.execute(
+        query.offset(skip).limit(limit)
+    )
+    novels = result.scalars().all()
+    
+    items = []
+    for novel in novels:
+        items.append({
+            "id": str(novel.id),
+            "title": novel.title,
+            "description": novel.description,
+            "genre": novel.genre,
+            "status": novel.status,
+            "word_count": novel.word_count,
+            "author_id": str(novel.author_id),
+            "created_at": novel.created_at.isoformat() if novel.created_at else None
+        })
+    
+    # 获取总数
+    from sqlalchemy import func
+    total_result = await db.execute(select(func.count(Novel.id)).where(Novel.author_id == author_uuid))
+    total = total_result.scalar()
+    
+    return {
+        "items": items,
+        "total": total,
+        "skip": skip,
+        "limit": limit
+    }
 
 
 @router.get("/{novel_id}")
