@@ -38,71 +38,63 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(hours=settings.JWT_EXPIRATION_HOURS)
-    
+
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(
-        to_encode, 
-        settings.JWT_SECRET, 
-        algorithm=settings.JWT_ALGORITHM
+        to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM
     )
     return encoded_jwt
 
 
 @router.post("/login", response_model=Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_db)
+    form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)
 ):
     """用户登录"""
     # TODO: 实现用户验证逻辑
     # 这里先返回一个测试token
     access_token = create_access_token(
-        data={"sub": form_data.username}
+        data={"sub": form_data.username, "type": "access"}
     )
     # 生成一个简单的 refresh token (实际应该用不同的密钥)
     refresh_token = create_access_token(
         data={"sub": form_data.username, "type": "refresh"},
-        expires_delta=timedelta(days=30)
+        expires_delta=timedelta(days=30),
     )
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
-        "expires_in": settings.JWT_EXPIRATION_HOURS * 3600
+        "expires_in": settings.JWT_EXPIRATION_HOURS * 3600,
     }
 
 
 @router.post("/register", response_model=UserResponse)
-async def register(
-    user_data: UserCreate,
-    db: AsyncSession = Depends(get_db)
-):
+async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """用户注册"""
     try:
         # 使用异步方式创建用户
         # 检查邮箱是否已存在
         from app.models.user import User
-        result = await db.execute(
-            select(User).where(User.email == user_data.email)
-        )
+
+        result = await db.execute(select(User).where(User.email == user_data.email))
         if result.scalar_one_or_none():
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="该邮箱已被注册"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="该邮箱已被注册"
             )
-        
+
         # 检查用户名是否已存在
         result = await db.execute(
             select(User).where(User.username == user_data.username)
         )
         if result.scalar_one_or_none():
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="该用户名已被使用"
+                status_code=status.HTTP_400_BAD_REQUEST, detail="该用户名已被使用"
             )
-        
+
         # 创建用户
         from uuid import uuid4
+
         db_user = User(
             id=uuid4(),
             email=user_data.email,
@@ -110,22 +102,19 @@ async def register(
             nickname=user_data.nickname or user_data.username,
             hashed_password=get_password_hash(user_data.password),
             is_active=True,
-            is_verified=False
+            is_verified=False,
         )
-        
+
         db.add(db_user)
         await db.commit()
         await db.refresh(db_user)
-        
+
         return db_user
     except HTTPException:
         raise
     except Exception as e:
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.post("/logout")

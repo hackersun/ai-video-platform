@@ -57,7 +57,7 @@ export default function ScriptEditorPage() {
     try {
       setLoading(true);
       const [scriptRes, scenesRes] = await Promise.all([
-        scriptApi.get(scriptId),
+        scriptApi.getById(scriptId),
         scriptApi.getScenes(scriptId)
       ]);
       
@@ -114,12 +114,14 @@ export default function ScriptEditorPage() {
     }
   };
 
-  const handleGenerateVideo = async (_sceneId: string) => {
+  const handleGenerateVideo = async (sceneId: string) => {
     setIsGenerating(true);
     try {
-      // TODO: 调用视频生成API
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      alert('视频生成任务已提交');
+      const response = await scriptApi.generateSceneVideo(sceneId, {
+        style: 'animation',
+        duration: 10
+      });
+      alert(`视频生成任务已提交: ${response.data.task_id}`);
     } catch (error) {
       console.error('生成失败', error);
       alert('生成失败');

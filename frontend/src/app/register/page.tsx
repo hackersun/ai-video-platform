@@ -59,8 +59,16 @@ export default function RegisterPage() {
       // 注册成功，跳转登录
       router.push('/login?registered=true');
     } catch (err: unknown) {
-      const error = err as { response?: { data?: { detail?: string } } };
-      setError(error.response?.data?.detail || '注册失败，请稍后重试');
+      const axiosError = err as { response?: { data?: { detail?: unknown } } };
+      const detail = axiosError.response?.data?.detail;
+      
+      if (Array.isArray(detail)) {
+        setError(detail[0]?.msg || '注册失败，请稍后重试');
+      } else if (typeof detail === 'string') {
+        setError(detail);
+      } else {
+        setError('注册失败，请稍后重试');
+      }
     } finally {
       setIsLoading(false);
     }

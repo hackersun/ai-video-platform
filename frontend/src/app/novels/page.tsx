@@ -24,7 +24,7 @@ interface Novel {
   status: string;
   word_count: number;
   chapter_count?: number;
-  cover_image?: string;
+  cover?: string;
   created_at: string;
   updated_at: string;
 }
@@ -178,9 +178,9 @@ export default function NovelsPage() {
               >
                 {/* 封面 */}
                 <div className="relative h-40 bg-gradient-to-br from-violet-600/20 to-indigo-600/20 flex items-center justify-center">
-                  {novel.cover_image ? (
+                  {novel.cover ? (
                     <img 
-                      src={novel.cover_image} 
+                      src={novel.cover} 
                       alt={novel.title}
                       className="w-full h-full object-cover"
                     />

@@ -65,46 +65,46 @@ export const authApi = {
     ),
   
   register: (data: { username: string; email: string; password: string; nickname?: string }) =>
-    apiClient.post('/v1/auth/register', data),
+    apiClient.post('/v1/auth/register/', data),
   
   logout: () =>
-    apiClient.post('/v1/auth/logout'),
+    apiClient.post('/v1/auth/logout/'),
   
   refresh: (refreshToken: string) =>
-    apiClient.post('/v1/auth/refresh', { refresh_token: refreshToken }),
+    apiClient.post('/v1/auth/refresh/', { refresh_token: refreshToken }),
   
   me: () =>
-    apiClient.get('/v1/users/me'),
+    apiClient.get('/v1/users/me/'),
 };
 
 // 用户API
 export const userApi = {
   getProfile: () =>
-    apiClient.get('/v1/users/me'),
+    apiClient.get('/v1/users/me/'),
   
   updateProfile: (data: { username?: string; email?: string; avatar?: string }) =>
-    apiClient.patch('/v1/users/me', data),
+    apiClient.patch('/v1/users/me/', data),
   
   changePassword: (data: { old_password: string; new_password: string }) =>
-    apiClient.post('/v1/users/change-password', data),
+    apiClient.post('/v1/users/change-password/', data),
 };
 
 // 小说API
 export const novelApi = {
   getList: () =>
-    apiClient.get('/v1/novels'),
+    apiClient.get('/v1/novels/'),
   
   getMyList: (params?: { page?: number; limit?: number; status?: string }) =>
-    apiClient.get('/v1/novels/my', { params }),
+    apiClient.get('/v1/novels/', { params }),
   
   getById: (id: string) =>
     apiClient.get(`/v1/novels/${id}`),
   
-  create: (data: { title: string; description?: string; cover?: string; genre?: string }) =>
-    apiClient.post('/v1/novels', data),
+  create: (data: { title: string; description?: string; cover_image?: string; genre?: string }) =>
+    apiClient.post('/v1/novels/', data),
   
-  update: (id: string, data: Partial<{ title: string; description: string; cover: string; genre?: string; status?: string }>) =>
-    apiClient.patch(`/v1/novels/${id}`, data),
+  update: (id: string, data: { title: string; description?: string; cover_image?: string; genre?: string; status?: string }) =>
+    apiClient.put(`/v1/novels/${id}`, data),
   
   delete: (id: string) =>
     apiClient.delete(`/v1/novels/${id}`),
@@ -114,55 +114,96 @@ export const novelApi = {
   
   getChapters: (id: string) =>
     apiClient.get(`/v1/novels/${id}/chapters`),
+  
+  createChapter: (novelId: string, data: { title: string; content?: string; chapter_number?: number }) =>
+    apiClient.post(`/v1/novels/${novelId}/chapters`, data),
+  
+  getChapter: (novelId: string, chapterId: string) =>
+    apiClient.get(`/v1/novels/${novelId}/chapters/${chapterId}`),
+  
+  updateChapter: (novelId: string, chapterId: string, data: { title?: string; content?: string; chapter_number?: number }) =>
+    apiClient.put(`/v1/novels/${novelId}/chapters/${chapterId}`, data),
+  
+  deleteChapter: (novelId: string, chapterId: string) =>
+    apiClient.delete(`/v1/novels/${novelId}/chapters/${chapterId}`),
+  
+  generateCover: (data: { title: string; description?: string; genre?: string }) =>
+    apiClient.post('/v1/novels/generate-cover/', data),
 };
 
 // 剧本API
 export const scriptApi = {
-  getList: () =>
-    apiClient.get('/v1/scripts'),
+  getList: (params?: { novel_id?: string; chapter_id?: string; status?: string; skip?: number; limit?: number }) =>
+    apiClient.get('/v1/scripts/', { params }),
   
   getById: (id: string) =>
     apiClient.get(`/v1/scripts/${id}`),
   
   create: (data: { title: string; novel_id: string; content?: string }) =>
-    apiClient.post('/v1/scripts', data),
+    apiClient.post('/v1/scripts/', data),
   
   update: (id: string, data: Partial<{ title: string; content: string }>) =>
-    apiClient.patch(`/v1/scripts/${id}`, data),
+    apiClient.patch(`/v1/scripts/${id}`),
   
   delete: (id: string) =>
     apiClient.delete(`/v1/scripts/${id}`),
   
   generate: (data: { novel_id: string; prompt?: string }) =>
-    apiClient.post('/v1/scripts/generate', data),
+    apiClient.post('/v1/scripts/generate/', data),
   
   // 场景相关
   getScenes: (scriptId: string) =>
-    apiClient.get(`/v1/scripts/${scriptId}/scenes`),
+    apiClient.get(`/v1/scripts/${scriptId}/scenes/`),
   
-  createScene: (scriptId: string, data: { title: string; content?: string }) =>
-    apiClient.post(`/v1/scripts/${scriptId}/scenes`, data),
+  createScene: (scriptId: string, data: { 
+    title: string; 
+    content?: string; 
+    scene_number?: number;
+    description?: string;
+    location?: string;
+    time_of_day?: string;
+    characters?: string[];
+    dialogue?: Record<string, unknown>;
+    action_description?: string;
+    camera_direction?: string;
+  }) =>
+    apiClient.post(`/v1/scripts/${scriptId}/scenes/`, data),
   
-  updateScene: (scriptId: string, sceneId: string, data: Partial<{ title: string; content: string }>) =>
-    apiClient.patch(`/v1/scripts/${scriptId}/scenes/${sceneId}`, data),
+  updateScene: (scriptId: string, sceneId: string, data: Partial<{ 
+    title: string; 
+    content: string;
+    scene_number?: number;
+    description?: string;
+    location?: string;
+    time_of_day?: string;
+    characters?: string[];
+    dialogue?: Record<string, unknown>;
+    action_description?: string;
+    camera_direction?: string;
+  }>) =>
+    apiClient.patch(`/v1/scripts/${scriptId}/scenes/${sceneId}`),
   
   deleteScene: (scriptId: string, sceneId: string) =>
     apiClient.delete(`/v1/scripts/${scriptId}/scenes/${sceneId}`),
+  
+  // 场景视频生成
+  generateSceneVideo: (sceneId: string, data: { style?: string; duration?: number }) =>
+    apiClient.post(`/v1/scripts/scenes/${sceneId}/generate-video`, data),
 };
 
 // 角色API
 export const characterApi = {
   getList: (novelId?: string) =>
-    apiClient.get('/v1/characters', { params: { novel_id: novelId } }),
+    apiClient.get('/v1/characters/', { params: { novel_id: novelId } }),
   
   getById: (id: string) =>
     apiClient.get(`/v1/characters/${id}`),
   
   create: (data: { name: string; novel_id: string; description?: string; avatar?: string }) =>
-    apiClient.post('/v1/characters', data),
+    apiClient.post('/v1/characters/', data),
   
   update: (id: string, data: Partial<{ name: string; description: string; avatar: string }>) =>
-    apiClient.patch(`/v1/characters/${id}`, data),
+    apiClient.put(`/v1/characters/${id}`, data),
   
   delete: (id: string) =>
     apiClient.delete(`/v1/characters/${id}`),
@@ -174,13 +215,13 @@ export const characterApi = {
 // 视频API
 export const videoApi = {
   getList: () =>
-    apiClient.get('/v1/videos'),
+    apiClient.get('/v1/videos/'),
   
   getById: (id: string) =>
     apiClient.get(`/v1/videos/${id}`),
   
   create: (data: { title: string; script_id: string; settings?: object }) =>
-    apiClient.post('/v1/videos', data),
+    apiClient.post('/v1/videos/', data),
   
   delete: (id: string) =>
     apiClient.delete(`/v1/videos/${id}`),

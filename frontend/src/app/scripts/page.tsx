@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toaster";
+import { scriptApi, videoApi } from "@/lib/api";
 import { 
   Plus, 
   Search, 
@@ -21,48 +22,18 @@ import {
   Play,
   Users,
   MessageSquare,
-  GripVertical
+  GripVertical,
+  Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-// Mock data
-const scripts = [
-  {
-    id: 1,
-    title: "星际穿越 - 第一幕",
-    novel: "星际穿越",
-    description: "主角发现神秘信号",
-    status: "completed",
-    scenes: 5,
-    characters: 3,
-    updatedAt: "2024-03-10",
-  },
-  {
-    id: 2,
-    title: "未来世界 - 序章",
-    novel: "未来世界",
-    description: "AI觉醒的瞬间",
-    status: "writing",
-    scenes: 3,
-    characters: 2,
-    updatedAt: "2024-03-12",
-  },
-  {
-    id: 3,
-    title: "魔法学院 - 入学测试",
-    novel: "魔法学院",
-    description: "主角参加魔法测试",
-    status: "planning",
-    scenes: 0,
-    characters: 5,
-    updatedAt: "2024-03-08",
-  },
-];
 
 const statusConfig = {
   completed: { label: "已完成", color: "text-green-400", bg: "bg-green-500/10", icon: CheckCircle },
   writing: { label: "写作中", color: "text-blue-400", bg: "bg-blue-500/10", icon: Clock },
   planning: { label: "规划中", color: "text-yellow-400", bg: "bg-yellow-500/10", icon: AlertCircle },
+  draft: { label: "草稿", color: "text-gray-400", bg: "bg-gray-500/10", icon: Clock },
+  generating: { label: "生成中", color: "text-purple-400", bg: "bg-purple-500/10", icon: Clock },
+  published: { label: "已发布", color: "text-green-400", bg: "bg-green-500/10", icon: CheckCircle },
 };
 
 export default function ScriptsPage() {
@@ -70,7 +41,88 @@ export default function ScriptsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditor, setShowEditor] = useState(false);
-  const [selectedScript, setSelectedScript] = useState<typeof scripts[0] | null>(null);
+  const [selectedScript, setSelectedScript] = useState<Script | null>(null);
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generatingVideo, setGeneratingVideo] = useState<string | null>(null);
+
+  interface Script {
+    id: string;
+    title: string;
+    novel: string;
+    description: string;
+    status: string;
+    scenes: number;
+    characters: number;
+    updatedAt: string;
+  }
+
+  useEffect(() => {
+    loadScripts();
+  }, []);
+
+  const loadScripts = async () => {
+    try {
+      setLoading(true);
+      const response = await scriptApi.getList();
+      const items = response.data?.items || [];
+      setScripts(items.map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        novel: s.novel_id || "未关联小说",
+        description: s.content?.substring(0, 50) || "无描述",
+        status: s.status || "draft",
+        scenes: s.scenes?.length || 0,
+        characters: 0,
+        updatedAt: s.created_at || s.updated_at || new Date().toISOString()
+      })));
+    } catch (error: any) {
+      console.error('Failed to load scripts:', error);
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        toast({
+          title: "请先登录",
+          description: "登录后可查看剧本",
+          variant: "error",
+        });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGenerateVideo = async (script: Script) => {
+    try {
+      setGeneratingVideo(script.id);
+      
+      // Create video for this script
+      const createResponse = await videoApi.create({
+        title: `${script.title} - 视频`,
+        script_id: script.id,
+        settings: {}
+      });
+      
+      const videoId = createResponse.data.id;
+      
+      await videoApi.generate(videoId);
+      
+      toast({
+        title: "生成已开始",
+        description: "视频正在生成中，请稍候...",
+        variant: "success",
+      });
+      
+      router.push("/videos");
+    } catch (error) {
+      console.error('Failed to generate video:', error);
+      toast({
+        title: "生成失败",
+        description: "无法生成视频",
+        variant: "error",
+      });
+    } finally {
+      setGeneratingVideo(null);
+    }
+  };
 
   const filteredScripts = scripts.filter(
     (script) =>
@@ -127,7 +179,7 @@ export default function ScriptsPage() {
         {/* Scripts Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredScripts.map((script) => {
-            const status = statusConfig[script.status as keyof typeof statusConfig];
+            const status = statusConfig[script.status as keyof typeof statusConfig] || statusConfig.draft;
             return (
               <Card 
                 key={script.id} 
@@ -180,10 +232,20 @@ export default function ScriptsPage() {
                       variant="secondary" 
                       size="sm" 
                       className="flex-1"
-                      onClick={() => router.push("/videos")}
+                      onClick={() => handleGenerateVideo(script)}
+                      disabled={generatingVideo === script.id}
                     >
-                      <Play className="w-4 h-4 mr-1" />
-                      生成视频
+                      {generatingVideo === script.id ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                          生成中
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-4 h-4 mr-1" />
+                          生成视频
+                        </>
+                      )}
                     </Button>
                   </div>
                 </CardContent>

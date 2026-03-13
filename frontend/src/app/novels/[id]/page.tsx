@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { 
-  ChevronLeft, 
+  ChevronLeft,
+  ChevronRight,
   Edit3, 
   Plus,
   BookOpen,
@@ -24,7 +25,7 @@ interface Novel {
   genre: string;
   status: string;
   word_count: number;
-  cover_image?: string;
+  cover?: string;
   created_at: string;
   updated_at: string;
 }
@@ -68,7 +69,7 @@ export default function NovelDetailPage() {
     try {
       setLoading(true);
       const [novelRes, chaptersRes] = await Promise.all([
-        novelApi.get(novelId),
+        novelApi.getById(novelId),
         novelApi.getChapters(novelId)
       ]);
       
@@ -76,7 +77,7 @@ export default function NovelDetailPage() {
       setChapters(chaptersRes.data.items || []);
       
       // 加载剧本
-      const scriptsRes = await scriptApi.list({ novel_id: novelId });
+      const scriptsRes = await scriptApi.getList({ novel_id: novelId });
       setScripts(scriptsRes.data.items || []);
     } catch (error) {
       console.error('加载数据失败', error);
@@ -195,9 +196,9 @@ export default function NovelDetailPage() {
           <div className="flex gap-6">
             {/* 封面 */}
             <div className="w-40 h-56 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center overflow-hidden flex-shrink-0">
-              {novel.cover_image ? (
+              {novel.cover ? (
                 <img 
-                  src={novel.cover_image} 
+                  src={novel.cover} 
                   alt={novel.title}
                   className="w-full h-full object-cover"
                 />

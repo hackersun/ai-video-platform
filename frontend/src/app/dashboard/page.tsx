@@ -34,6 +34,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [user, setUser] = useState<{ username: string; nickname?: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // 检查登录状态
@@ -49,6 +50,7 @@ export default function DashboardPage() {
 
   const loadData = async () => {
     try {
+      setError(null);
       const [userRes, novelsRes] = await Promise.all([
         userApi.getProfile(),
         novelApi.getMyList()
@@ -62,8 +64,15 @@ export default function DashboardPage() {
         setUser(null);
       }
       setNovels(novelsRes.data?.items || []);
-    } catch (error) {
-      console.error('加载数据失败', error);
+    } catch (err: any) {
+      console.error('加载数据失败', err);
+      setError(err.response?.data?.detail || '加载数据失败，请稍后重试');
+      // 如果是401错误，跳转到登录页
+      if (err.response?.status === 401) {
+        localStorage.removeItem('access_token');
+        localStorage.removeItem('refresh_token');
+        router.push('/login');
+      }
     } finally {
       setLoading(false);
     }
@@ -97,6 +106,22 @@ export default function DashboardPage() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900">
+        <div className="text-center">
+          <p className="text-red-400 mb-4">{error}</p>
+          <button
+            onClick={() => loadData()}
+            className="px-4 py-2 bg-violet-600 text-white rounded hover:bg-violet-700"
+          >
+            重试
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-900">
       {/* 顶部导航 */}
@@ -119,8 +144,17 @@ export default function DashboardPage() {
               <Link href="/novels" className="text-white/60 hover:text-white transition-colors">
                 作品管理
               </Link>
+              <Link href="/ai-generate" className="text-white/60 hover:text-white transition-colors">
+                AI创作
+              </Link>
               <Link href="/scripts" className="text-white/60 hover:text-white transition-colors">
                 剧本库
+              </Link>
+              <Link href="/characters" className="text-white/60 hover:text-white transition-colors">
+                角色库
+              </Link>
+              <Link href="/videos" className="text-white/60 hover:text-white transition-colors">
+                视频生成
               </Link>
             </nav>
 
@@ -168,17 +202,17 @@ export default function DashboardPage() {
             <div className="text-white/60 text-sm">开始新创作</div>
           </Link>
           
-          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+          <Link href="/ai-generate" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
             <FileVideo className="w-8 h-8 text-cyan-400 mb-3" />
             <div className="text-white font-medium">AI生成</div>
             <div className="text-white/60 text-sm">智能创作</div>
-          </div>
+          </Link>
           
-          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+          <Link href="/characters" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
             <Users className="w-8 h-8 text-pink-400 mb-3" />
             <div className="text-white font-medium">角色库</div>
             <div className="text-white/60 text-sm">管理角色</div>
-          </div>
+          </Link>
           
           <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
             <BookOpen className="w-8 h-8 text-amber-400 mb-3" />
