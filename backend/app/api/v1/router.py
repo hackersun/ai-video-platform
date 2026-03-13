@@ -4,7 +4,7 @@ API v1路由聚合
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, novels, health, characters, videos, tts
+from app.api.v1.endpoints import auth, users, novels, health, characters, videos, tts, character_consistency
 from app.api.v1 import scripts
 
 api_router = APIRouter()
@@ -26,6 +26,7 @@ api_router.include_router(scripts.router, tags=["scripts"])
 
 # 角色相关
 api_router.include_router(characters.router, prefix="/characters", tags=["characters"])
+api_router.include_router(character_consistency.router, tags=["character-consistency"])
 
 # 视频相关
 api_router.include_router(videos.router, prefix="/videos", tags=["videos"])
