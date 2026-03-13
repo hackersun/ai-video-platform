@@ -4,7 +4,7 @@ API v1路由聚合
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, novels, health, characters, videos, tts, character_consistency, templates, assets, ai_models, teams, analytics, external_api, websocket
+from app.api.v1.endpoints import auth, users, novels, health, characters, videos, tts, character_consistency, templates, assets, ai_models, teams, analytics, external_api, websocket, notifications
 from app.api.v1 import scripts
 
 api_router = APIRouter()
@@ -54,3 +54,6 @@ api_router.include_router(external_api.router, tags=["external-api"])
 
 # WebSocket
 api_router.include_router(websocket.router)
+
+# 通知
+api_router.include_router(notifications.router, tags=["notifications"])
