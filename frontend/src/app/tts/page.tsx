@@ -4,40 +4,17 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Slider } from "@/components/ui/slider";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import { Mic, Play, Download, Loader2 } from "lucide-react";
-
-interface Voice {
-  id: string;
-  name: string;
-  gender: string;
-  style: string;
-}
+import { Mic, Loader2 } from "lucide-react";
 
 export default function TTSPage() {
   const [text, setText] = useState("");
   const [voice, setVoice] = useState("zh-CN-XiaoxiaoNeural");
-  const [speed, setSpeed] = useState([1.0]);
+  const [speed, setSpeed] = useState(1.0);
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [voices, setVoices] = useState<Voice[]>([]);
   const { toast } = useToast();
-
-  // 加载语音列表
-  useEffect(() => {
-    const loadVoices = async () => {
-      try {
-        const response = await api.get("/api/v1/tts/voices");
-        setVoices(response.data);
-      } catch (error) {
-        console.error("加载语音列表失败:", error);
-      }
-    };
-    loadVoices();
-  }, []);
 
   const handleGenerate = async () => {
     if (!text.trim()) {
@@ -54,13 +31,13 @@ export default function TTSPage() {
       const response = await api.post("/api/v1/tts/generate", {
         text,
         voice,
-        speed: speed[0],
+        speed,
       });
 
       setAudioUrl(response.data.audio_url);
       toast({
         title: "生成成功",
-        description: `语音已生成，时长约 ${Math.ceil(response.data.duration || 0)} 秒`,
+        description: "语音已生成",
       });
     } catch (error) {
       toast({
@@ -74,22 +51,21 @@ export default function TTSPage() {
   };
 
   return (
-    <div className="container mx-auto py-8">
+    <div className="container mx-auto py-8 px-4">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold flex items-center gap-2">
+        <h1 className="text-3xl font-bold flex items-center gap-2 text-white">
           <Mic className="h-8 w-8" />
           AI 语音合成
         </h1>
-        <p className="text-muted-foreground mt-2">
-          将文本转换为自然流畅的语音，支持多种中文语音风格
+        <p className="text-white/60 mt-2">
+          将文本转换为自然流畅的语音
         </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* 输入区域 */}
-        <Card>
+        <Card className="bg-white/5 border-white/10">
           <CardHeader>
-            <CardTitle>文本输入</CardTitle>
+            <CardTitle className="text-white">文本输入</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <Textarea
@@ -97,68 +73,57 @@ export default function TTSPage() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={8}
-              className="resize-none"
+              className="resize-none bg-white/5 border-white/10 text-white"
             />
-            <div className="text-sm text-muted-foreground text-right">
+            <div className="text-sm text-white/40 text-right">
               {text.length} / 5000 字符
             </div>
           </CardContent>
         </Card>
 
-        {/* 设置区域 */}
-        <Card>
+        <Card className="bg-white/5 border-white/10">
           <CardHeader>
-            <CardTitle>语音设置</CardTitle>
+            <CardTitle className="text-white">语音设置</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {/* 语音选择 */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">选择语音</label>
-              <Select value={voice} onValueChange={setVoice}>
-                <SelectTrigger>
-                  <SelectValue placeholder="选择语音" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="zh-CN-XiaoxiaoNeural">
-                    晓晓 - 温柔女声
-                  </SelectItem>
-                  <SelectItem value="zh-CN-YunxiNeural">
-                    云希 - 阳光男声
-                  </SelectItem>
-                  <SelectItem value="zh-CN-XiaoyiNeural">
-                    晓伊 - 甜美女声
-                  </SelectItem>
-                  <SelectItem value="zh-CN-YunyangNeural">
-                    云扬 - 专业男声
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <label className="text-sm text-white/80">选择语音</label>
+              <select 
+                value={voice} 
+                onChange={(e) => setVoice(e.target.value)}
+                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+              >
+                <option value="zh-CN-XiaoxiaoNeural">晓晓 - 温柔女声</option>
+                <option value="zh-CN-YunxiNeural">云希 - 阳光男声</option>
+                <option value="zh-CN-XiaoyiNeural">晓伊 - 甜美女声</option>
+                <option value="zh-CN-YunyangNeural">云扬 - 专业男声</option>
+              </select>
             </div>
 
-            {/* 语速调节 */}
             <div className="space-y-2">
-              <label className="text-sm font-medium">
-                语速: {speed[0].toFixed(1)}x
+              <label className="text-sm text-white/80">
+                语速: {speed.toFixed(1)}x
               </label>
-              <Slider
-                value={speed}
-                onValueChange={setSpeed}
+              <input
+                type="range"
                 min={0.5}
                 max={2.0}
                 step={0.1}
+                value={speed}
+                onChange={(e) => setSpeed(parseFloat(e.target.value))}
+                className="w-full h-2 bg-white/10 rounded-lg appearance-none cursor-pointer accent-violet-500"
               />
-              <div className="flex justify-between text-xs text-muted-foreground">
+              <div className="flex justify-between text-xs text-white/40">
                 <span>慢</span>
                 <span>正常</span>
                 <span>快</span>
               </div>
             </div>
 
-            {/* 生成按钮 */}
             <Button
               onClick={handleGenerate}
               disabled={loading || !text.trim()}
-              className="w-full"
+              className="w-full bg-violet-600 hover:bg-violet-700"
               size="lg"
             >
               {loading ? (
@@ -177,27 +142,16 @@ export default function TTSPage() {
         </Card>
       </div>
 
-      {/* 播放区域 */}
       {audioUrl && (
-        <Card className="mt-6">
+        <Card className="mt-6 bg-white/5 border-white/10">
           <CardHeader>
-            <CardTitle>生成结果</CardTitle>
+            <CardTitle className="text-white">生成结果</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <audio controls className="w-full">
               <source src={audioUrl} type="audio/mpeg" />
               您的浏览器不支持音频播放
             </audio>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={() => window.open(audioUrl)}>
-                <Play className="mr-2 h-4 w-4" />
-                新窗口播放
-              </Button>
-              <Button variant="outline" onClick={() => window.open(audioUrl + "?download=1")}>
-                <Download className="mr-2 h-4 w-4" />
-                下载音频
-              </Button>
-            </div>
           </CardContent>
         </Card>
       )}
