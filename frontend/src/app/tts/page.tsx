@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,7 +27,7 @@ export default function TTSPage() {
   const { toast } = useToast();
 
   // 加载语音列表
-  useState(() => {
+  useEffect(() => {
     const loadVoices = async () => {
       try {
         const response = await api.get("/api/v1/tts/voices");
@@ -37,7 +37,7 @@ export default function TTSPage() {
       }
     };
     loadVoices();
-  });
+  }, []);
 
   const handleGenerate = async () => {
     if (!text.trim()) {

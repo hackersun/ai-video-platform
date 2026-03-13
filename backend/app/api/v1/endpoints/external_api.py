@@ -84,11 +84,16 @@ async def get_api_configs():
     return {"items": configs, "total": len(configs)}
 
 
+class APIConfigRequest(BaseModel):
+    """API配置请求"""
+    api_key: str = Field(..., description="API Key")
+    base_url: Optional[str] = Field(None, description="自定义API地址")
+
+
 @router.post("/config/{provider}")
 async def configure_api(
     provider: str,
-    api_key: str = Field(..., description="API Key"),
-    base_url: Optional[str] = Field(None, description="自定义API地址"),
+    config: APIConfigRequest,
 ):
     """配置API密钥"""
     # 注意：实际应用中应该加密存储
@@ -96,6 +101,7 @@ async def configure_api(
         "provider": provider,
         "message": "API配置已保存（演示模式）",
         "is_configured": True,
+        "api_key": config.api_key[:4] + "****",
     }
 
 

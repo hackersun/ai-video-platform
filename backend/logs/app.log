@@ -58,3 +58,4 @@
 2026-03-13 09:04:43.406 | INFO     | app.core.logging:setup_logging:45 - 日志系统初始化完成
 2026-03-13 09:22:57.503 | INFO     | app.core.logging:setup_logging:45 - 日志系统初始化完成
 2026-03-13 09:42:24.805 | INFO     | app.core.logging:setup_logging:45 - 日志系统初始化完成
+2026-03-13 17:41:37.624 | INFO     | app.core.logging:setup_logging:45 - 日志系统初始化完成
