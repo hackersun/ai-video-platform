@@ -233,5 +233,32 @@ export const videoApi = {
     apiClient.get(`/v1/videos/${id}/status`),
 };
 
+// 任务队列API
+export const jobApi = {
+  getList: (params?: { status?: string; type?: string; page?: number; limit?: number }) =>
+    apiClient.get('/v1/jobs/', { params }),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/jobs/${id}`),
+  
+  create: (data: { type: string; input_params?: Record<string, unknown> }) =>
+    apiClient.post('/v1/jobs/', data),
+  
+  cancel: (id: string) =>
+    apiClient.post(`/v1/jobs/${id}/cancel`),
+  
+  retry: (id: string) =>
+    apiClient.post(`/v1/jobs/${id}/retry`),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/jobs/${id}`),
+  
+  batchDelete: (ids: string[]) =>
+    apiClient.post('/v1/jobs/batch-delete', { ids }),
+  
+  getStats: () =>
+    apiClient.get('/v1/jobs/stats'),
+};
+
 // 默认导出
 export default apiClient;
