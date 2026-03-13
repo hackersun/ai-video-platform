@@ -64,6 +64,9 @@ isort==5.13.2
 flake8==7.0.0
 mypy==1.8.0
 
+# 语音合成
+edge-tts==6.1.12
+
 # 其他工具
 uuid7==0.1.0
 python-dateutil==2.8.2

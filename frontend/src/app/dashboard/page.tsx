@@ -14,7 +14,8 @@ import {
   Sparkles,
   LogOut,
   User,
-  Menu
+  Menu,
+  Mic
 } from 'lucide-react';
 import { userApi, novelApi } from '@/lib/api';
 
@@ -156,6 +157,9 @@ export default function DashboardPage() {
               <Link href="/videos" className="text-white/60 hover:text-white transition-colors">
                 视频生成
               </Link>
+              <Link href="/tts" className="text-white/60 hover:text-white transition-colors">
+                语音合成
+              </Link>
             </nav>
 
             {/* 用户菜单 */}
@@ -219,6 +223,12 @@ export default function DashboardPage() {
             <div className="text-white font-medium">剧本库</div>
             <div className="text-white/60 text-sm">查看全部</div>
           </div>
+          
+          <Link href="/tts" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <Mic className="w-8 h-8 text-emerald-400 mb-3" />
+            <div className="text-white font-medium">语音合成</div>
+            <div className="text-white/60 text-sm">AI配音</div>
+          </Link>
         </div>
 
         {/* 小说列表 */}
