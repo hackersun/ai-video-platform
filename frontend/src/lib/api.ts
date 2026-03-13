@@ -129,6 +129,26 @@ export const novelApi = {
   
   generateCover: (data: { title: string; description?: string; genre?: string }) =>
     apiClient.post('/v1/novels/generate-cover/', data),
+
+  // 章节排序
+  reorderChapters: (novelId: string, chapterIds: string[]) =>
+    apiClient.post(`/v1/novels/${novelId}/chapters/reorder`, { chapter_ids: chapterIds }),
+
+  // 自动保存草稿
+  saveDraft: (data: { novel_id: string; chapter_id?: string; title?: string; content: string; auto_save_key?: string }) =>
+    apiClient.post('/v1/novels/drafts/save', data),
+
+  // 获取草稿
+  getDraft: (novelId: string, autoSaveKey: string) =>
+    apiClient.get(`/v1/novels/${novelId}/drafts`, { params: { auto_save_key: autoSaveKey } }),
+
+  // 导出小说
+  exportNovel: (novelId: string, options: { format: string; include_metadata?: boolean; include_chapter_titles?: boolean; start_chapter?: number; end_chapter?: number }) =>
+    apiClient.post(`/v1/novels/${novelId}/export`, options),
+
+  // 章节批量操作
+  batchChapterOperation: (novelId: string, data: { chapter_ids: string[]; operation: string }) =>
+    apiClient.post(`/v1/novels/${novelId}/chapters/batch`, data),
 };
 
 // 剧本API
