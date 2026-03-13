@@ -260,24 +260,127 @@ export const jobApi = {
   
   getById: (id: string) =>
     apiClient.get(`/v1/jobs/${id}`),
-  
+
   create: (data: { type: string; input_params?: Record<string, unknown> }) =>
     apiClient.post('/v1/jobs/', data),
-  
+
   cancel: (id: string) =>
     apiClient.post(`/v1/jobs/${id}/cancel`),
-  
+
   retry: (id: string) =>
     apiClient.post(`/v1/jobs/${id}/retry`),
-  
+
   delete: (id: string) =>
     apiClient.delete(`/v1/jobs/${id}`),
-  
+
   batchDelete: (ids: string[]) =>
     apiClient.post('/v1/jobs/batch-delete', { ids }),
-  
+
   getStats: () =>
     apiClient.get('/v1/jobs/stats'),
+};
+
+// 分镜API
+export const storyboardApi = {
+  getList: (params?: { script_id?: string; scene_id?: string; page?: number; limit?: number }) =>
+    apiClient.get('/v1/storyboards/', { params }),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/storyboards/${id}`),
+  
+  create: (data: { 
+    title: string; 
+    script_id: string; 
+    scene_id?: string;
+    description?: string;
+  }) =>
+    apiClient.post('/v1/storyboards/', data),
+  
+  update: (id: string, data: Partial<{ 
+    title: string; 
+    description: string;
+    status: string;
+  }>) =>
+    apiClient.patch(`/v1/storyboards/${id}`, data),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/storyboards/${id}`),
+
+  generateShots: (storyboardId: string, data: {
+    scene_description: string;
+    num_shots: number;
+    style?: string;
+    aspect_ratio?: string;
+    include_camera_movement?: boolean;
+  }) =>
+    apiClient.post(`/v1/storyboards/${storyboardId}/generate-shots`, data),
+
+  convertToPrompt: (data: {
+    scene_description: string;
+    camera_movement?: string;
+    camera_angle?: string;
+    shot_type?: string;
+    style?: string;
+  }) =>
+    apiClient.post('/v1/storyboards/convert-prompt', data),
+
+  createShot: (storyboardId: string, data: {
+    title: string;
+    description: string;
+    prompt: string;
+    camera_movement: string;
+    camera_angle: string;
+    shot_type: string;
+    duration: number;
+    characters?: string[];
+    location?: string;
+    time_of_day?: string;
+    dialogue?: string;
+  }) =>
+    apiClient.post(`/v1/storyboards/${storyboardId}/shots`, data),
+
+  updateShot: (storyboardId: string, shotId: string, data: Partial<{
+    title: string;
+    description: string;
+    prompt: string;
+    negative_prompt: string;
+    camera_movement: string;
+    camera_angle: string;
+    shot_type: string;
+    duration: number;
+    characters: string[];
+    location: string;
+    time_of_day: string;
+    dialogue: string;
+    notes: string;
+  }>) =>
+    apiClient.patch(`/v1/storyboards/${storyboardId}/shots/${shotId}`, data),
+
+  deleteShot: (storyboardId: string, shotId: string) =>
+    apiClient.delete(`/v1/storyboards/${storyboardId}/shots/${shotId}`),
+
+  reorderShots: (storyboardId: string, shotIds: string[]) =>
+    apiClient.post(`/v1/storyboards/${storyboardId}/shots/reorder`, { shot_ids: shotIds }),
+
+  generateShotImage: (storyboardId: string, shotId: string, data?: {
+    style?: string;
+    aspect_ratio?: string;
+  }) =>
+    apiClient.post(`/v1/storyboards/${storyboardId}/shots/${shotId}/generate-image`, data),
+
+  batchGenerateImages: (storyboardId: string, shotIds: string[], data?: {
+    style?: string;
+    aspect_ratio?: string;
+  }) =>
+    apiClient.post(`/v1/storyboards/${storyboardId}/batch-generate-images`, { shot_ids: shotIds, ...data }),
+
+  exportStoryboard: (storyboardId: string, options: {
+    format: 'pdf' | 'images' | 'both';
+    include_prompt?: boolean;
+    include_camera_info?: boolean;
+    image_quality?: 'low' | 'medium' | 'high';
+  }) =>
+    apiClient.post(`/v1/storyboards/${storyboardId}/export`, options),
 };
 
 // 默认导出
