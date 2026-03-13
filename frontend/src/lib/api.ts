@@ -383,6 +383,113 @@ export const storyboardApi = {
     apiClient.post(`/v1/storyboards/${storyboardId}/export`, options),
 };
 
+// AI模型配置API
+export const aiModelApi = {
+  getList: (params?: { 
+    category?: string; 
+    provider?: string; 
+    status?: string;
+    search?: string;
+    page?: number;
+    page_size?: number;
+  }) =>
+    apiClient.get('/v1/models/', { params }),
+  
+  getById: (id: string) =>
+    apiClient.get(`/v1/models/${id}`),
+  
+  create: (data: {
+    name: string;
+    display_name?: string;
+    description?: string;
+    provider: string;
+    category: string;
+    model_id?: string;
+    version?: string;
+    base_url?: string;
+    max_tokens?: number;
+    input_price?: number;
+    output_price?: number;
+    status?: string;
+    is_default?: boolean;
+    rate_limit_rpm?: number;
+    rate_limit_tpm?: number;
+    concurrent_limit?: number;
+    icon_url?: string;
+  }) =>
+    apiClient.post('/v1/models/', data),
+  
+  update: (id: string, data: Partial<{
+    name: string;
+    display_name: string;
+    description: string;
+    model_id: string;
+    version: string;
+    base_url: string;
+    max_tokens: number;
+    input_price: number;
+    output_price: number;
+    status: string;
+    is_default: boolean;
+    rate_limit_rpm: number;
+    rate_limit_tpm: number;
+    concurrent_limit: number;
+    icon_url: string;
+  }>) =>
+    apiClient.put(`/v1/models/${id}`, data),
+  
+  delete: (id: string) =>
+    apiClient.delete(`/v1/models/${id}`),
+  
+  getCategories: () =>
+    apiClient.get('/v1/models/categories'),
+  
+  getProviders: () =>
+    apiClient.get('/v1/models/providers'),
+  
+  updateApiKey: (id: string, apiKey: string) =>
+    apiClient.post(`/v1/models/${id}/api-key`, { api_key: apiKey }),
+  
+  testConnection: (id: string, apiKey?: string) =>
+    apiClient.post(`/v1/models/${id}/test`, { model_id: id, api_key: apiKey }),
+  
+  getUserConfig: () =>
+    apiClient.get('/v1/models/user/config'),
+  
+  updateUserConfig: (defaultModels: Record<string, string>, customConfigs?: any[]) =>
+    apiClient.put('/v1/models/user/config', { default_models: defaultModels, custom_configs: customConfigs || [] }),
+  
+  createUserConfig: (data: {
+    model_id: string;
+    is_enabled?: boolean;
+    priority?: number;
+    custom_params?: Record<string, any>;
+    custom_prompts?: Record<string, any>;
+    daily_limit?: number;
+    monthly_limit?: number;
+  }) =>
+    apiClient.post('/v1/models/user/config', data),
+  
+  deleteUserConfig: (configId: string) =>
+    apiClient.delete(`/v1/models/user/config/${configId}`),
+  
+  getUsageStats: (period?: 'day' | 'week' | 'month') =>
+    apiClient.get('/v1/models/usage/stats', { params: { period } }),
+  
+  getCostSettings: () =>
+    apiClient.get('/v1/models/cost/settings'),
+  
+  updateCostSettings: (data: {
+    routing_strategy?: string;
+    daily_budget?: number;
+    monthly_budget?: number;
+    alert_threshold?: number;
+    auto_failover?: boolean;
+    fallback_to_free?: boolean;
+  }) =>
+    apiClient.put('/v1/models/cost/settings', data),
+};
+
 // 默认导出
 export default apiClient;
 

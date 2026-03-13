@@ -2,7 +2,8 @@
 Script service layer (async)
 """
 
-from typing import Optional, List, Tuple
+import json
+from typing import Optional, List, Tuple, Union, Dict, Any
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func, delete
@@ -10,6 +11,20 @@ from sqlalchemy.orm import selectinload
 
 from app.models.novel import Script, Scene
 from app.schemas.script import ScriptCreate, ScriptUpdate, SceneCreate, SceneUpdate
+
+
+def _normalize_content(
+    content: Optional[Union[str, Dict[str, Any]]],
+) -> Optional[Dict[str, Any]]:
+    """Normalize content to JSON dict for database storage"""
+    if content is None:
+        return None
+    if isinstance(content, str):
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError:
+            return {"text": content}
+    return content
 
 
 class ScriptService:
@@ -57,11 +72,12 @@ class ScriptService:
     @staticmethod
     async def create_script(db: AsyncSession, script_data: ScriptCreate) -> Script:
         """Create script"""
+        normalized_content = _normalize_content(script_data.content)
         script = Script(
             novel_id=script_data.novel_id,
             chapter_id=script_data.chapter_id,
             title=script_data.title,
-            content=script_data.content,
+            content=normalized_content,
             format=script_data.format,
             status="draft",
             ai_generated=False,
@@ -85,6 +101,8 @@ class ScriptService:
             raise HTTPException(status_code=404, detail="Script not found")
 
         update_data = script_data.model_dump(exclude_unset=True)
+        if "content" in update_data:
+            update_data["content"] = _normalize_content(update_data["content"])
         for field, value in update_data.items():
             setattr(script, field, value)
 

@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from uuid import UUID
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # ==================== 基础模型 ====================
@@ -27,7 +27,24 @@ class ScriptCreate(ScriptBase):
 
     novel_id: Optional[UUID] = None
     chapter_id: Optional[UUID] = None
-    content: Optional[Dict[str, Any]] = None
+    content: Optional[Union[str, Dict[str, Any]]] = None
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def parse_content(cls, v):
+        """支持字符串或JSON格式的content"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            # 尝试解析JSON字符串
+            import json
+
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # 如果不是有效JSON，返回原始字符串（前端编辑器内容）
+                return v
+        return v
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -36,9 +53,24 @@ class ScriptUpdate(BaseModel):
     """剧本更新模型"""
 
     title: Optional[str] = Field(None, min_length=1, max_length=255)
-    content: Optional[Dict[str, Any]] = None
+    content: Optional[Union[str, Dict[str, Any]]] = None
     format: Optional[str] = Field(None, pattern="^(standard|screenplay)$")
     status: Optional[str] = Field(None, pattern="^(draft|published|generating)$")
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def parse_content(cls, v):
+        """支持字符串或JSON格式的content"""
+        if v is None:
+            return None
+        if isinstance(v, str):
+            import json
+
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return v
+        return v
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -116,7 +148,7 @@ class SceneResponse(SceneBase):
 class ScriptDetail(ScriptResponse):
     """剧本详情"""
 
-    content: Optional[Dict[str, Any]]
+    content: Optional[Union[str, Dict[str, Any]]]
     scenes: List[SceneResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
