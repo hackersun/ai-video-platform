@@ -15,7 +15,13 @@ import {
   LogOut,
   User,
   Menu,
-  Mic
+  Mic,
+  Layout,
+  BarChart3,
+  UserGroup,
+  Cpu,
+  Plug,
+  Bell
 } from 'lucide-react';
 import { userApi, novelApi } from '@/lib/api';
 
@@ -138,7 +144,7 @@ export default function DashboardPage() {
             </Link>
 
             {/* 导航链接 */}
-            <nav className="hidden md:flex items-center gap-6">
+            <nav className="hidden md:flex items-center gap-4">
               <Link href="/dashboard" className="text-white/80 hover:text-white transition-colors">
                 控制台
               </Link>
@@ -159,6 +165,21 @@ export default function DashboardPage() {
               </Link>
               <Link href="/tts" className="text-white/60 hover:text-white transition-colors">
                 语音合成
+              </Link>
+              <Link href="/templates/market" className="text-white/60 hover:text-white transition-colors">
+                模板市场
+              </Link>
+              <Link href="/analytics" className="text-white/60 hover:text-white transition-colors">
+                数据分析
+              </Link>
+              <Link href="/teams" className="text-white/60 hover:text-white transition-colors">
+                团队协作
+              </Link>
+              <Link href="/settings/models" className="text-white/60 hover:text-white transition-colors">
+                AI配置
+              </Link>
+              <Link href="/settings/external" className="text-white/60 hover:text-white transition-colors">
+                外部API
               </Link>
             </nav>
 
@@ -222,12 +243,39 @@ export default function DashboardPage() {
             <BookOpen className="w-8 h-8 text-amber-400 mb-3" />
             <div className="text-white font-medium">剧本库</div>
             <div className="text-white/60 text-sm">查看全部</div>
-          </div>
+          </Link>
           
           <Link href="/tts" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
             <Mic className="w-8 h-8 text-emerald-400 mb-3" />
             <div className="text-white font-medium">语音合成</div>
             <div className="text-white/60 text-sm">AI配音</div>
+          </Link>
+        </div>
+
+        {/* 快捷操作 - 第二行 */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <Link href="/templates/market" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <Layout className="w-8 h-8 text-purple-400 mb-3" />
+            <div className="text-white font-medium">模板市场</div>
+            <div className="text-white/60 text-sm">优质模板</div>
+          </Link>
+          
+          <Link href="/analytics" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <BarChart3 className="w-8 h-8 text-blue-400 mb-3" />
+            <div className="text-white font-medium">数据分析</div>
+            <div className="text-white/60 text-sm">运营统计</div>
+          </Link>
+          
+          <Link href="/teams" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <UserGroup className="w-8 h-8 text-cyan-400 mb-3" />
+            <div className="text-white font-medium">团队协作</div>
+            <div className="text-white/60 text-sm">多人创作</div>
+          </Link>
+          
+          <Link href="/settings/models" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
+            <Cpu className="w-8 h-8 text-orange-400 mb-3" />
+            <div className="text-white font-medium">AI配置</div>
+            <div className="text-white/60 text-sm">模型管理</div>
           </Link>
         </div>
 
