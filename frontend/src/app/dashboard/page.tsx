@@ -3,339 +3,68 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { 
-  BookOpen, 
-  FileVideo, 
-  Users, 
-  Settings, 
-  Plus, 
-  Search,
-  ChevronRight,
-  Sparkles,
-  LogOut,
-  User,
-  Menu,
-  Mic,
-  Layout,
-  BarChart3,
-  UserGroup,
-  Cpu,
-  Plug,
-  Bell
-} from 'lucide-react';
-import { userApi, novelApi } from '@/lib/api';
-
-interface Novel {
-  id: string;
-  title: string;
-  description: string;
-  genre: string;
-  status: string;
-  word_count: number;
-  created_at: string;
-}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [novels, setNovels] = useState<Novel[]>([]);
+  const [user, setUser] = useState({ username: 'user' });
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<{ username: string; nickname?: string } | null>(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // 检查登录状态
-    const token = localStorage.getItem('access_token');
-    if (!token) {
-      router.push('/login');
-      return;
-    }
-
-    // 加载数据
-    loadData();
-  }, [router]);
-
-  const loadData = async () => {
-    try {
-      setError(null);
-      const [userRes, novelsRes] = await Promise.all([
-        userApi.getProfile(),
-        novelApi.getMyList()
-      ]);
-      // 确保user数据是对象而不是数组或其他类型
-      const userData = userRes.data;
-      if (userData && typeof userData === 'object' && !Array.isArray(userData)) {
-        setUser(userData);
-      } else {
-        console.error('User数据格式错误:', userData);
-        setUser(null);
-      }
-      setNovels(novelsRes.data?.items || []);
-    } catch (err: any) {
-      console.error('加载数据失败', err);
-      setError(err.response?.data?.detail || '加载数据失败，请稍后重试');
-      // 如果是401错误，跳转到登录页
-      if (err.response?.status === 401) {
-        localStorage.removeItem('access_token');
-        localStorage.removeItem('refresh_token');
-        router.push('/login');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
-    router.push('/login');
-  };
-
-  const filteredNovels = novels.filter(novel => 
-    novel.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    novel.description?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'published': return 'bg-green-500/20 text-green-400';
-      case 'draft': return 'bg-yellow-500/20 text-yellow-400';
-      case 'archived': return 'bg-gray-500/20 text-gray-400';
-      default: return 'bg-white/10 text-white/60';
-    }
-  };
+    setTimeout(() => setLoading(false), 500);
+  }, []);
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-violet-500"></div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900">
-        <div className="text-center">
-          <p className="text-red-400 mb-4">{error}</p>
-          <button
-            onClick={() => loadData()}
-            className="px-4 py-2 bg-violet-600 text-white rounded hover:bg-violet-700"
-          >
-            重试
-          </button>
-        </div>
+      <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ width: 48, height: 48, borderRadius: '50%', border: '3px solid #8b5cf6', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }}></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-900">
-      {/* 顶部导航 */}
-      <header className="glass sticky top-0 z-50 border-b border-white/5">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            {/* Logo */}
-            <Link href="/dashboard" className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-xl font-bold gradient-text">AI视频平台</span>
-            </Link>
-
-            {/* 导航链接 */}
-            <nav className="hidden md:flex items-center gap-4">
-              <Link href="/dashboard" className="text-white/80 hover:text-white transition-colors">
-                控制台
-              </Link>
-              <Link href="/novels" className="text-white/60 hover:text-white transition-colors">
-                作品管理
-              </Link>
-              <Link href="/ai-generate" className="text-white/60 hover:text-white transition-colors">
-                AI创作
-              </Link>
-              <Link href="/scripts" className="text-white/60 hover:text-white transition-colors">
-                剧本库
-              </Link>
-              <Link href="/characters" className="text-white/60 hover:text-white transition-colors">
-                角色库
-              </Link>
-              <Link href="/videos" className="text-white/60 hover:text-white transition-colors">
-                视频生成
-              </Link>
-              <Link href="/tts" className="text-white/60 hover:text-white transition-colors">
-                语音合成
-              </Link>
-              <Link href="/templates/market" className="text-white/60 hover:text-white transition-colors">
-                模板市场
-              </Link>
-              <Link href="/analytics" className="text-white/60 hover:text-white transition-colors">
-                数据分析
-              </Link>
-              <Link href="/teams" className="text-white/60 hover:text-white transition-colors">
-                团队协作
-              </Link>
-              <Link href="/settings/models" className="text-white/60 hover:text-white transition-colors">
-                AI配置
-              </Link>
-              <Link href="/settings/external" className="text-white/60 hover:text-white transition-colors">
-                外部API
-              </Link>
-            </nav>
-
-            {/* 用户菜单 */}
-            <div className="flex items-center gap-4">
-              <button className="p-2 rounded-lg hover:bg-white/5 transition-colors">
-                <Settings className="w-5 h-5 text-white/60" />
-              </button>
-              <div className="flex items-center gap-3 pl-4 border-l border-white/10">
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-indigo-500 flex items-center justify-center">
-                  <User className="w-4 h-4 text-white" />
-                </div>
-                <span className="text-sm text-white/80 hidden sm:block">{user?.username}</span>
-                <button 
-                  onClick={handleLogout}
-                  className="p-2 rounded-lg hover:bg-white/5 transition-colors"
-                  title="退出登录"
-                >
-                  <LogOut className="w-5 h-5 text-white/60" />
-                </button>
-              </div>
+    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a' }}>
+      <header style={{ position: 'sticky', top: 0, zIndex: 50, borderBottom: '1px solid rgba(255,255,255,0.05)', backgroundColor: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(8px)' }}>
+        <div style={{ maxWidth: '80rem', margin: '0 auto', padding: '0 1rem', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(to bottom right, #7c3aed, #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ color: 'white', fontSize: 20 }}>✨</span>
             </div>
-          </div>
+            <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'white' }}>AI视频平台</span>
+          </Link>
+          <nav style={{ display: 'flex', gap: '1rem' }}>
+            <Link href="/dashboard" style={{ color: 'white' }}>控制台</Link>
+            <Link href="/novels" style={{ color: 'rgba(255,255,255,0.6)' }}>作品</Link>
+            <Link href="/tts" style={{ color: 'rgba(255,255,255,0.6)' }}>语音合成</Link>
+            <Link href="/templates/market" style={{ color: 'rgba(255,255,255,0.6)' }}>模板</Link>
+            <Link href="/analytics" style={{ color: 'rgba(255,255,255,0.6)' }}>分析</Link>
+            <Link href="/teams" style={{ color: 'rgba(255,255,255,0.6)' }}>团队</Link>
+          </nav>
         </div>
       </header>
 
-      {/* 主内容 */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* 欢迎区域 */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">
-            欢迎回来，{user?.nickname || user?.username}
-          </h1>
-          <p className="text-white/60">管理您的创作项目</p>
-        </div>
+      <main style={{ maxWidth: '80rem', margin: '0 auto', padding: '2rem 1rem' }}>
+        <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold', color: 'white', marginBottom: '0.5rem' }}>
+          欢迎回来，{user.username}
+        </h1>
+        <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '2rem' }}>管理您的创作项目</p>
 
-        {/* 快捷操作 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Link 
-            href="/novels/new"
-            className="p-6 rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 transition-all group"
-          >
-            <Plus className="w-8 h-8 text-white mb-3" />
-            <div className="text-white font-medium">创建小说</div>
-            <div className="text-white/60 text-sm">开始新创作</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '1rem', marginBottom: '2rem' }}>
+          <Link href="/novels/new" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'linear-gradient(to bottom right, #7c3aed, #4f46e5)', color: 'white' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>+</div>
+            <div style={{ fontWeight: 500 }}>创建小说</div>
           </Link>
-          
-          <Link href="/ai-generate" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <FileVideo className="w-8 h-8 text-cyan-400 mb-3" />
-            <div className="text-white font-medium">AI生成</div>
-            <div className="text-white/60 text-sm">智能创作</div>
+          <Link href="/tts" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🎤</div>
+            <div style={{ fontWeight: 500 }}>语音合成</div>
           </Link>
-          
-          <Link href="/characters" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <Users className="w-8 h-8 text-pink-400 mb-3" />
-            <div className="text-white font-medium">角色库</div>
-            <div className="text-white/60 text-sm">管理角色</div>
+          <Link href="/templates/market" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📋</div>
+            <div style={{ fontWeight: 500 }}>模板市场</div>
           </Link>
-          
-          <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <BookOpen className="w-8 h-8 text-amber-400 mb-3" />
-            <div className="text-white font-medium">剧本库</div>
-            <div className="text-white/60 text-sm">查看全部</div>
+          <Link href="/analytics" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📊</div>
+            <div style={{ fontWeight: 500 }}>数据分析</div>
           </Link>
-          
-          <Link href="/tts" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <Mic className="w-8 h-8 text-emerald-400 mb-3" />
-            <div className="text-white font-medium">语音合成</div>
-            <div className="text-white/60 text-sm">AI配音</div>
-          </Link>
-        </div>
-
-        {/* 快捷操作 - 第二行 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Link href="/templates/market" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <Layout className="w-8 h-8 text-purple-400 mb-3" />
-            <div className="text-white font-medium">模板市场</div>
-            <div className="text-white/60 text-sm">优质模板</div>
-          </Link>
-          
-          <Link href="/analytics" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <BarChart3 className="w-8 h-8 text-blue-400 mb-3" />
-            <div className="text-white font-medium">数据分析</div>
-            <div className="text-white/60 text-sm">运营统计</div>
-          </Link>
-          
-          <Link href="/teams" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <UserGroup className="w-8 h-8 text-cyan-400 mb-3" />
-            <div className="text-white font-medium">团队协作</div>
-            <div className="text-white/60 text-sm">多人创作</div>
-          </Link>
-          
-          <Link href="/settings/models" className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-white/20 transition-all cursor-pointer">
-            <Cpu className="w-8 h-8 text-orange-400 mb-3" />
-            <div className="text-white font-medium">AI配置</div>
-            <div className="text-white/60 text-sm">模型管理</div>
-          </Link>
-        </div>
-
-        {/* 小说列表 */}
-        <div className="glass rounded-2xl p-6">
-          {/* 标题和搜索 */}
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-white">我的作品</h2>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
-              <input
-                type="text"
-                placeholder="搜索作品..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-violet-500 w-64"
-              />
-            </div>
-          </div>
-
-          {/* 作品列表 */}
-          {filteredNovels.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredNovels.map((novel) => (
-                <Link
-                  key={novel.id}
-                  href={`/novels/${novel.id}`}
-                  className="p-4 rounded-xl bg-white/5 border border-white/10 hover:border-violet-500/50 transition-all group"
-                >
-                  <div className="flex items-start justify-between mb-2">
-                    <h3 className="text-white font-medium group-hover:text-violet-400 transition-colors line-clamp-1">
-                      {novel.title}
-                    </h3>
-                    <span className={`px-2 py-0.5 rounded text-xs ${getStatusColor(novel.status)}`}>
-                      {novel.status === 'published' ? '已发布' : novel.status === 'draft' ? '草稿' : '已归档'}
-                    </span>
-                  </div>
-                  <p className="text-white/40 text-sm line-clamp-2 mb-3">
-                    {novel.description || '暂无描述'}
-                  </p>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-white/40">{novel.genre || '未分类'}</span>
-                    <span className="text-white/40">{novel.word_count || 0} 字</span>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center py-12">
-              <BookOpen className="w-16 h-16 text-white/20 mx-auto mb-4" />
-              <p className="text-white/40 mb-4">还没有任何作品</p>
-              <Link 
-                href="/novels/new"
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                创建第一个小说
-              </Link>
-            </div>
-          )}
         </div>
       </main>
     </div>

@@ -385,3 +385,6 @@ export const storyboardApi = {
 
 // 默认导出
 export default apiClient;
+
+export const api = apiClient;
+export { apiClient };
