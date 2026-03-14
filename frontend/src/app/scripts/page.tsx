@@ -45,6 +45,15 @@ export default function ScriptsPage() {
   const [scripts, setScripts] = useState<Script[]>([]);
   const [loading, setLoading] = useState(true);
   const [generatingVideo, setGeneratingVideo] = useState<string | null>(null);
+  
+  // 创建剧本表单状态
+  const [newScript, setNewScript] = useState({
+    title: '',
+    novel_id: '',
+    description: ''
+  });
+  const [novels, setNovels] = useState<{id: string; title: string}[]>([]);
+  const [creating, setCreating] = useState(false);
 
   interface Script {
     id: string;
@@ -59,7 +68,58 @@ export default function ScriptsPage() {
 
   useEffect(() => {
     loadScripts();
+    loadNovels();
   }, []);
+
+  const loadNovels = async () => {
+    try {
+      const { novelApi } = await import('@/lib/api');
+      const response = await novelApi.getList();
+      const novelsData = response.data?.items || response.data || [];
+      setNovels(Array.isArray(novelsData) ? novelsData.map((n: any) => ({ id: n.id, title: n.title })) : []);
+    } catch (error) {
+      console.error('Failed to load novels:', error);
+    }
+  };
+
+  const handleCreateScript = async () => {
+    if (!newScript.title || !newScript.novel_id) {
+      toast({
+        title: "请填写完整信息",
+        description: "标题和关联小说不能为空",
+        variant: "error",
+      });
+      return;
+    }
+    
+    try {
+      setCreating(true);
+      await scriptApi.create({
+        title: newScript.title,
+        novel_id: newScript.novel_id,
+        content: newScript.description
+      });
+      
+      toast({
+        title: "创建成功",
+        description: "剧本已创建",
+        variant: "success",
+      });
+      
+      setShowCreateModal(false);
+      setNewScript({ title: '', novel_id: '', description: '' });
+      loadScripts(); // 刷新列表
+    } catch (error) {
+      console.error('Failed to create script:', error);
+      toast({
+        title: "创建失败",
+        description: "无法创建剧本",
+        variant: "error",
+      });
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const loadScripts = async () => {
     try {
@@ -269,15 +329,29 @@ export default function ScriptsPage() {
               <CardTitle>新建剧本</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Input label="标题" placeholder="输入剧本标题" />
+              <div>
+                <label className="block text-sm font-medium text-white/80 mb-1.5">
+                  标题
+                </label>
+                <Input 
+                  placeholder="输入剧本标题" 
+                  value={newScript.title}
+                  onChange={(e) => setNewScript({...newScript, title: e.target.value})}
+                />
+              </div>
               <div>
                 <label className="block text-sm font-medium text-white/80 mb-1.5">
                   关联小说
                 </label>
-                <select className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white">
-                  <option>星际穿越</option>
-                  <option>未来世界</option>
-                  <option>魔法学院</option>
+                <select 
+                  className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white"
+                  value={newScript.novel_id}
+                  onChange={(e) => setNewScript({...newScript, novel_id: e.target.value})}
+                >
+                  <option value="">请选择小说</option>
+                  {novels.map((novel) => (
+                    <option key={novel.id} value={novel.id}>{novel.title}</option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -287,6 +361,8 @@ export default function ScriptsPage() {
                 <textarea
                   className="w-full px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-white/40 focus:outline-none focus:border-violet-500/50 focus:ring-2 focus:ring-violet-500/20 min-h-[100px]"
                   placeholder="输入剧本简介"
+                  value={newScript.description}
+                  onChange={(e) => setNewScript({...newScript, description: e.target.value})}
                 />
               </div>
               <div className="flex gap-3 pt-4">
@@ -294,18 +370,16 @@ export default function ScriptsPage() {
                   variant="outline" 
                   className="flex-1"
                   onClick={() => setShowCreateModal(false)}
+                  disabled={creating}
                 >
                   取消
                 </Button>
-                <Button className="flex-1" onClick={() => {
-                  setShowCreateModal(false);
-                  toast({
-                    title: "创建成功",
-                    description: "剧本已创建",
-                    variant: "success",
-                  });
-                }}>
-                  创建
+                <Button 
+                  className="flex-1" 
+                  onClick={handleCreateScript}
+                  disabled={creating}
+                >
+                  {creating ? '创建中...' : '创建'}
                 </Button>
               </div>
             </CardContent>
