@@ -7,13 +7,13 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "@/components/ui/toaster";
 import { characterApi } from "@/lib/api";
+import { MainLayout } from "@/components/layout/main-layout";
 import { 
   Plus, 
   Search, 
   Edit, 
   Trash2, 
   Users,
-  ChevronLeft,
   Sparkles,
   Wand2,
   Image as ImageIcon,
@@ -301,23 +301,18 @@ export default function CharactersPage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f]">
-      {/* Header */}
-      <header className="h-16 border-b border-white/10 flex items-center px-8">
-        <button 
-          onClick={() => router.push("/dashboard")}
-          className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
-        >
-          <ChevronLeft className="w-5 h-5" />
-          返回
-        </button>
-        <h1 className="text-xl font-semibold ml-4">角色管理</h1>
-      </header>
+    <MainLayout>
+      <div className="space-y-6">
+        {/* Page Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-white">角色管理</h1>
+            <p className="text-white/60 mt-1">创建和管理您的角色库</p>
+          </div>
+        </div>
 
-      {/* Content */}
-      <div className="p-8">
         {/* Toolbar */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
@@ -839,6 +834,6 @@ function CharacterDetail({
           )}
         </div>
       </Card>
-    </div>
+    </MainLayout>
   );
 }
