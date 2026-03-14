@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import { Mic, Loader2 } from "lucide-react";
+import { MainLayout } from "@/components/layout/main-layout";
 
 export default function TTSPage() {
   const [text, setText] = useState("");
@@ -51,16 +52,15 @@ export default function TTSPage() {
   };
 
   return (
-    <div className="container mx-auto py-8 px-4">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold flex items-center gap-2 text-white">
-          <Mic className="h-8 w-8" />
-          AI 语音合成
-        </h1>
-        <p className="text-white/60 mt-2">
-          将文本转换为自然流畅的语音
-        </p>
-      </div>
+    <MainLayout>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <Mic className="w-6 h-6" />
+            AI 语音合成
+          </h1>
+          <p className="text-white/60 mt-1">将文本转换为自然流畅的语音</p>
+        </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="bg-white/5 border-white/10">
@@ -143,7 +143,7 @@ export default function TTSPage() {
       </div>
 
       {audioUrl && (
-        <Card className="mt-6 bg-white/5 border-white/10">
+        <Card className="bg-white/5 border-white/10">
           <CardHeader>
             <CardTitle className="text-white">生成结果</CardTitle>
           </CardHeader>
@@ -155,6 +155,6 @@ export default function TTSPage() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </MainLayout>
   );
 }

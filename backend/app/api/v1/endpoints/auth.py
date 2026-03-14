@@ -48,19 +48,62 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 
 @router.post("/login", response_model=Token)
 async def login(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)
+    login_data: LoginRequest,
+    db: AsyncSession = Depends(get_db)
 ):
-    """用户登录"""
-    # TODO: 实现用户验证逻辑
-    # 这里先返回一个测试token
-    access_token = create_access_token(
-        data={"sub": form_data.username, "type": "access"}
+    """
+    用户登录
+    
+    支持JSON格式提交登录凭证
+    """
+    # 查找用户
+    from app.models.user import User
+    result = await db.execute(
+        select(User).where(
+            (User.username == login_data.username) | (User.email == login_data.username)
+        )
     )
-    # 生成一个简单的 refresh token (实际应该用不同的密钥)
+    user = result.scalar_one_or_none()
+    
+    # 验证用户存在且密码正确
+    if not user or not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="用户名或密码错误",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # 检查用户是否被禁用
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="账户已被禁用，请联系管理员"
+        )
+    
+    # 更新最后登录时间
+    user.last_login_at = datetime.utcnow()
+    await db.commit()
+    
+    # 生成访问令牌
+    access_token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "username": user.username,
+            "email": user.email,
+            "membership": user.membership_level,
+            "type": "access"
+        }
+    )
+    
+    # 生成刷新令牌
     refresh_token = create_access_token(
-        data={"sub": form_data.username, "type": "refresh"},
+        data={
+            "sub": str(user.id),
+            "type": "refresh"
+        },
         expires_delta=timedelta(days=30),
     )
+    
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,

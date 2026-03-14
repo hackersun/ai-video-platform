@@ -15,6 +15,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { novelApi } from '@/lib/api';
+import { MainLayout } from '@/components/layout/main-layout';
 
 interface Novel {
   id: string;
@@ -108,30 +109,25 @@ export default function NovelsPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900">
-      {/* 顶部导航 */}
-      <header className="glass sticky top-0 z-50 border-b border-white/5">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link href="/dashboard" className="p-2 rounded-lg hover:bg-white/5 transition-colors">
-                <ChevronLeft className="w-5 h-5 text-white/60" />
-              </Link>
-              <h1 className="text-xl font-bold text-white">我的作品</h1>
-            </div>
-            <Link 
-              href="/novels/new"
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              创建小说
-            </Link>
+    <MainLayout>
+      <div className="space-y-6">
+        {/* 页面标题 */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-white">我的作品</h1>
+            <p className="text-white/60 mt-1">管理您的小说作品</p>
           </div>
+          <Link 
+            href="/novels/new"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            创建小说
+          </Link>
         </div>
-      </header>
 
-      {/* 主内容 */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* 筛选栏 */}
+        <div className="flex flex-col sm:flex-row gap-4">
         {/* 筛选栏 */}
         <div className="flex flex-col sm:flex-row gap-4 mb-8">
           {/* 搜索 */}
@@ -281,7 +277,7 @@ export default function NovelsPage() {
             </button>
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </MainLayout>
   );
 }

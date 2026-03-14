@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.models.novel import Novel, Chapter
+from app.models.user import User
 
 router = APIRouter()
 
@@ -68,9 +69,16 @@ async def create_novel(
 ):
     """创建小说"""
     from uuid import UUID
-
-    # 获取当前用户ID（这里暂时用固定的测试ID）
-    author_uuid = UUID("df9f3e6c-63ef-4e29-bdd1-130f2579ca23")
+    from sqlalchemy import select
+    
+    # 获取第一个用户作为作者（临时解决方案）
+    result = await db.execute(select(User).limit(1))
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="请先创建用户")
+    
+    author_uuid = user.id
 
     novel = Novel(
         id=uuid4(),

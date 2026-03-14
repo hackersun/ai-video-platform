@@ -48,6 +48,8 @@ class User(Base):
     
     # 关系
     novels = relationship("Novel", back_populates="author")
+    owned_teams = relationship("Team", back_populates="owner")
+    team_memberships = relationship("TeamMember", back_populates="user")
     
     def __repr__(self):
         return f"<User {self.username}>"

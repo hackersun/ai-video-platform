@@ -52,17 +52,7 @@ apiClient.interceptors.response.use(
 // 认证API
 export const authApi = {
   login: (data: { username: string; password: string }) =>
-    apiClient.post('/v1/auth/login', 
-      new URLSearchParams({
-        username: data.username,
-        password: data.password,
-      }).toString(),
-      {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      }
-    ),
+    apiClient.post('/v1/auth/login', data),
   
   register: (data: { username: string; email: string; password: string; nickname?: string }) =>
     apiClient.post('/v1/auth/register/', data),

@@ -1,11 +1,22 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { 
+  Plus, 
+  Mic, 
+  LayoutTemplate, 
+  BarChart3,
+  FileText,
+  Users,
+  Video,
+  LayoutGrid,
+  ListTodo,
+  Cpu
+} from 'lucide-react';
+import { MainLayout } from '@/components/layout/main-layout';
 
 export default function DashboardPage() {
-  const router = useRouter();
   const [user, setUser] = useState({ username: 'user' });
   const [loading, setLoading] = useState(true);
 
@@ -15,58 +26,78 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 48, height: 48, borderRadius: '50%', border: '3px solid #8b5cf6', borderTopColor: 'transparent', animation: 'spin 1s linear infinite' }}></div>
+      <div className="min-h-screen bg-[#0f172a] flex items-center justify-center">
+        <div className="w-12 h-12 rounded-full border-3 border-violet-500 border-t-transparent animate-spin" />
       </div>
     );
   }
 
+  const quickActions = [
+    { label: '创建小说', href: '/novels/new', icon: Plus, color: 'from-violet-600 to-indigo-600' },
+    { label: '创建剧本', href: '/scripts', icon: FileText, color: 'from-blue-600 to-cyan-600' },
+    { label: '管理角色', href: '/characters', icon: Users, color: 'from-green-600 to-emerald-600' },
+    { label: '生成视频', href: '/videos', icon: Video, color: 'from-pink-600 to-rose-600' },
+    { label: '语音合成', href: '/tts', icon: Mic, color: 'from-amber-600 to-orange-600' },
+    { label: '分镜设计', href: '/storyboards', icon: LayoutGrid, color: 'from-purple-600 to-fuchsia-600' },
+    { label: '模板市场', href: '/templates/market', icon: LayoutTemplate, color: 'from-gray-600 to-slate-600' },
+    { label: '任务队列', href: '/jobs', icon: ListTodo, color: 'from-teal-600 to-cyan-600' },
+    { label: 'AI模型', href: '/ai-models', icon: Cpu, color: 'from-indigo-600 to-violet-600' },
+    { label: '数据分析', href: '/analytics', icon: BarChart3, color: 'from-cyan-600 to-blue-600' },
+  ];
+
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#0f172a' }}>
-      <header style={{ position: 'sticky', top: 0, zIndex: 50, borderBottom: '1px solid rgba(255,255,255,0.05)', backgroundColor: 'rgba(15,23,42,0.8)', backdropFilter: 'blur(8px)' }}>
-        <div style={{ maxWidth: '80rem', margin: '0 auto', padding: '0 1rem', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Link href="/dashboard" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(to bottom right, #7c3aed, #4f46e5)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <span style={{ color: 'white', fontSize: 20 }}>✨</span>
-            </div>
-            <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'white' }}>AI视频平台</span>
-          </Link>
-          <nav style={{ display: 'flex', gap: '1rem' }}>
-            <Link href="/dashboard" style={{ color: 'white' }}>控制台</Link>
-            <Link href="/novels" style={{ color: 'rgba(255,255,255,0.6)' }}>作品</Link>
-            <Link href="/tts" style={{ color: 'rgba(255,255,255,0.6)' }}>语音合成</Link>
-            <Link href="/templates/market" style={{ color: 'rgba(255,255,255,0.6)' }}>模板</Link>
-            <Link href="/analytics" style={{ color: 'rgba(255,255,255,0.6)' }}>分析</Link>
-            <Link href="/teams" style={{ color: 'rgba(255,255,255,0.6)' }}>团队</Link>
-          </nav>
+    <MainLayout>
+      <div className="space-y-8">
+        {/* Welcome Section */}
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2">
+            欢迎回来，{user.username}
+          </h1>
+          <p className="text-white/60">管理您的创作项目</p>
         </div>
-      </header>
 
-      <main style={{ maxWidth: '80rem', margin: '0 auto', padding: '2rem 1rem' }}>
-        <h1 style={{ fontSize: '1.875rem', fontWeight: 'bold', color: 'white', marginBottom: '0.5rem' }}>
-          欢迎回来，{user.username}
-        </h1>
-        <p style={{ color: 'rgba(255,255,255,0.6)', marginBottom: '2rem' }}>管理您的创作项目</p>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: '1rem', marginBottom: '2rem' }}>
-          <Link href="/novels/new" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'linear-gradient(to bottom right, #7c3aed, #4f46e5)', color: 'white' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>+</div>
-            <div style={{ fontWeight: 500 }}>创建小说</div>
-          </Link>
-          <Link href="/tts" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🎤</div>
-            <div style={{ fontWeight: 500 }}>语音合成</div>
-          </Link>
-          <Link href="/templates/market" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📋</div>
-            <div style={{ fontWeight: 500 }}>模板市场</div>
-          </Link>
-          <Link href="/analytics" style={{ padding: '1.5rem', borderRadius: '1rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}>
-            <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📊</div>
-            <div style={{ fontWeight: 500 }}>数据分析</div>
-          </Link>
+        {/* Quick Actions Grid */}
+        <div>
+          <h2 className="text-lg font-semibold text-white mb-4">快速操作</h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {quickActions.map((action) => {
+              const Icon = action.icon;
+              return (
+                <Link
+                  key={action.href}
+                  href={action.href}
+                  className={`group p-6 rounded-xl bg-gradient-to-br ${action.color} 
+                    hover:scale-105 transition-all duration-200
+                    flex flex-col items-center gap-3 text-white`}
+                >
+                  <Icon className="w-8 h-8" />
+                  <span className="font-medium">{action.label}</span>
+                </Link>
+              );
+            })}
+          </div>
         </div>
-      </main>
-    </div>
+
+        {/* Stats Section */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div className="p-6 rounded-xl bg-white/5 border border-white/10">
+            <div className="text-3xl font-bold text-white mb-1">0</div>
+            <div className="text-white/60">作品数量</div>
+          </div>
+          <div className="p-6 rounded-xl bg-white/5 border border-white/10">
+            <div className="text-3xl font-bold text-white mb-1">0</div>
+            <div className="text-white/60">剧本数量</div>
+          </div>
+          <div className="p-6 rounded-xl bg-white/5 border border-white/10">
+            <div className="text-3xl font-bold text-white mb-1">0</div>
+            <div className="text-white/60">视频数量</div>
+          </div>
+          <div className="p-6 rounded-xl bg-white/5 border border-white/10">
+            <div className="text-3xl font-bold text-white mb-1">0</div>
+            <div className="text-white/60">角色数量</div>
+          </div>
+        </div>
+      </div>
+    </MainLayout>
   );
 }
