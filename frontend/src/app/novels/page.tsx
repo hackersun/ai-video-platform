@@ -128,8 +128,6 @@ export default function NovelsPage() {
 
         {/* 筛选栏 */}
         <div className="flex flex-col sm:flex-row gap-4">
-        {/* 筛选栏 */}
-        <div className="flex flex-col sm:flex-row gap-4 mb-8">
           {/* 搜索 */}
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-white/40" />
