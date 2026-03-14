@@ -96,7 +96,9 @@ export default function CharactersPage() {
     try {
       const { novelApi } = await import("@/lib/api");
       const response = await novelApi.getList();
-      setNovels(response.data || []);
+      // Handle different response formats
+      const novelsData = response.data?.items || response.data || [];
+      setNovels(Array.isArray(novelsData) ? novelsData : []);
     } catch (error) {
       console.error('Failed to load novels:', error);
     }
