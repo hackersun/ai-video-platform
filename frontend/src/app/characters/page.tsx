@@ -834,6 +834,6 @@ function CharacterDetail({
           )}
         </div>
       </Card>
-    </MainLayout>
+    </div>
   );
 }
