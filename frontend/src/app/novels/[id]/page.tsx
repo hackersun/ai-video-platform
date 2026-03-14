@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
+import { MainLayout } from '@/components/layout/main-layout';
 import { 
   ChevronLeft,
   ChevronRight,
@@ -150,17 +151,16 @@ export default function NovelDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-900">
-      {/* 顶部导航 */}
-      <header className="glass sticky top-0 z-50 border-b border-white/5">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link href="/novels" className="p-2 rounded-lg hover:bg-white/5 transition-colors">
-                <ChevronLeft className="w-5 h-5 text-white/60" />
-              </Link>
-              <h1 className="text-xl font-bold text-white line-clamp-1">{novel.title}</h1>
-            </div>
+    <MainLayout>
+      <div className="space-y-6">
+        {/* Page Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Link href="/novels" className="p-2 rounded-lg hover:bg-white/5 transition-colors">
+              <ChevronLeft className="w-5 h-5 text-white/60" />
+            </Link>
+            <h1 className="text-2xl font-bold text-white line-clamp-1">{novel.title}</h1>
+          </div>
             <div className="flex items-center gap-2">
               <Link
                 href={`/novels/${novelId}/edit`}
@@ -373,7 +373,7 @@ export default function NovelDetailPage() {
             )}
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </MainLayout>
   );
 }

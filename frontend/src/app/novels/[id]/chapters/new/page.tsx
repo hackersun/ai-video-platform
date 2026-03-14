@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
+import { MainLayout } from '@/components/layout/main-layout';
 import { 
   ChevronLeft, 
   Loader2,
@@ -60,21 +61,19 @@ export default function NewChapterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900">
-      <header className="glass sticky top-0 z-50 border-b border-white/5">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <Link href={`/novels/${novelId}`} className="p-2 rounded-lg hover:bg-white/5 transition-colors">
-                <ChevronLeft className="w-5 h-5 text-white/60" />
-              </Link>
-              <h1 className="text-xl font-bold text-white">添加章节</h1>
-            </div>
+    <MainLayout>
+      <div className="max-w-4xl mx-auto space-y-6">
+        {/* Page Header */}
+        <div className="flex items-center gap-4">
+          <Link href={`/novels/${novelId}`} className="p-2 rounded-lg hover:bg-white/5 transition-colors">
+            <ChevronLeft className="w-5 h-5 text-white/60" />
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold text-white">添加章节</h1>
+            <p className="text-white/60 mt-1">为小说添加新章节</p>
           </div>
         </div>
-      </header>
 
-      <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className="glass rounded-2xl p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             {error && (
@@ -144,7 +143,7 @@ export default function NewChapterPage() {
             </div>
           </form>
         </div>
-      </main>
-    </div>
+      </div>
+    </MainLayout>
   );
 }
