@@ -43,6 +43,10 @@ api_router.include_router(assets.router, tags=["assets"])
 # AI模型配置
 api_router.include_router(ai_models.router, tags=["ai-models"])
 
+# AI生成服务（图片/视频生成）
+from app.api.v1.endpoints import ai_generation
+api_router.include_router(ai_generation.router, tags=["ai-generation"])
+
 # 团队协作
 api_router.include_router(teams.router, tags=["teams"])
 
