@@ -56,6 +56,36 @@ export default function DashboardPage() {
           <p className="text-white/60">管理您的创作项目</p>
         </div>
 
+        {/* 创作流程引导 */}
+        <div className="glass rounded-2xl p-6">
+          <h2 className="text-lg font-semibold text-white mb-4">创作流程</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            {[
+              { step: 1, label: '创建小说', href: '/novels/new', color: 'bg-violet-600' },
+              { step: 2, label: '添加章节', href: '/novels', color: 'bg-blue-600' },
+              { step: 3, label: '创建角色', href: '/characters', color: 'bg-green-600' },
+              { step: 4, label: '编写剧本', href: '/scripts', color: 'bg-yellow-600' },
+              { step: 5, label: '设计分镜', href: '/storyboards', color: 'bg-purple-600' },
+              { step: 6, label: '生成视频', href: '/videos', color: 'bg-pink-600' },
+            ].map((item, index) => (
+              <div key={item.step} className="flex items-center gap-2">
+                <Link
+                  href={item.href}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg ${item.color} text-white font-medium hover:opacity-90 transition-opacity`}
+                >
+                  <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-xs">
+                    {item.step}
+                  </span>
+                  {item.label}
+                </Link>
+                {index < 5 && (
+                  <div className="text-white/40">→</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Quick Actions Grid */}
         <div>
           <h2 className="text-lg font-semibold text-white mb-4">快速操作</h2>
