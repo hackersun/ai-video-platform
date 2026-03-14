@@ -626,7 +626,7 @@ export default function CharactersPage() {
           isGenerating={aiGenerating}
         />
       )}
-    </div>
+    </MainLayout>
   );
 }
 

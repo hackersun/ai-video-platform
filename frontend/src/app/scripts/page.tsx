@@ -320,7 +320,7 @@ export default function ScriptsPage() {
           onClose={() => setShowEditor(false)} 
         />
       )}
-    </div>
+    </MainLayout>
   );
 }
 
@@ -473,6 +473,6 @@ function ScriptEditor({ script, onClose }: { script: typeof scripts[0]; onClose:
           ))}
         </div>
       </div>
-    </MainLayout>
+    </div>
   );
 }
