@@ -12,7 +12,8 @@ import {
   Video,
   LayoutGrid,
   ListTodo,
-  Cpu
+  Cpu,
+  Settings
 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
 
@@ -37,11 +38,12 @@ export default function DashboardPage() {
     { label: '创建剧本', href: '/scripts', icon: FileText, color: 'from-blue-600 to-cyan-600' },
     { label: '管理角色', href: '/characters', icon: Users, color: 'from-green-600 to-emerald-600' },
     { label: '生成视频', href: '/videos', icon: Video, color: 'from-pink-600 to-rose-600' },
+    { label: '系统配置', href: '/settings', icon: Settings, color: 'from-gray-600 to-slate-600' },
+    { label: 'AI模型', href: '/ai-models', icon: Cpu, color: 'from-indigo-600 to-violet-600' },
     { label: '语音合成', href: '/tts', icon: Mic, color: 'from-amber-600 to-orange-600' },
     { label: '分镜设计', href: '/storyboards', icon: LayoutGrid, color: 'from-purple-600 to-fuchsia-600' },
     { label: '模板市场', href: '/templates/market', icon: LayoutTemplate, color: 'from-gray-600 to-slate-600' },
     { label: '任务队列', href: '/jobs', icon: ListTodo, color: 'from-teal-600 to-cyan-600' },
-    { label: 'AI模型', href: '/ai-models', icon: Cpu, color: 'from-indigo-600 to-violet-600' },
     { label: '数据分析', href: '/analytics', icon: BarChart3, color: 'from-cyan-600 to-blue-600' },
   ];
 
