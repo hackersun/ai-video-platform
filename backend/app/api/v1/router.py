@@ -47,6 +47,10 @@ api_router.include_router(ai_models.router, tags=["ai-models"])
 from app.api.v1.endpoints import ai_generation
 api_router.include_router(ai_generation.router, tags=["ai-generation"])
 
+# AI配置管理（API密钥、外部API、模型配置）
+from app.api.v1.endpoints import ai_config
+api_router.include_router(ai_config.router, tags=["ai-config"])
+
 # 团队协作
 api_router.include_router(teams.router, tags=["teams"])
 
