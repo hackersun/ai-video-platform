@@ -68,3 +68,7 @@ api_router.include_router(notifications.router, tags=["notifications"])
 
 # API密钥管理
 api_router.include_router(api_keys.router, tags=["api-keys"])
+
+# 统一配置管理（服务商、密钥、模型）
+from app.api.v1.endpoints import config
+api_router.include_router(config.router)
