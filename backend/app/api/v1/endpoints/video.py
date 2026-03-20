@@ -424,3 +424,70 @@ async def generate_video_legacy(
         image_url=request.image_url
     )
     return await generate_video(new_request)
+
+
+# ============== 视频下载代理接口 ==============
+
+class VideoDownloadRequest(BaseModel):
+    """视频下载请求"""
+    video_url: str = Field(..., description="视频URL")
+    filename: Optional[str] = Field(None, description="下载文件名")
+
+
+@router.post("/download")
+async def download_video(
+    request: VideoDownloadRequest
+):
+    """
+    代理下载视频 - 解决URL特殊字符截断问题
+    
+    由于火山引擎视频URL包含特殊字符，前端直接打开可能截断
+    因此通过后端代理下载
+    """
+    try:
+        import httpx
+        import urllib.parse
+        
+        video_url = request.video_url
+        
+        # 解析URL确保特殊字符正确处理
+        parsed = urllib.parse.urlparse(video_url)
+        
+        # 使用httpx下载视频
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(video_url)
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"下载失败: HTTP {response.status_code}"
+                )
+            
+            # 获取文件名
+            filename = request.filename or "video.mp4"
+            
+            # 返回流式响应
+            from fastapi.responses import StreamingResponse
+            from starlette.datastructures import Headers
+            
+            headers = Headers({
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Type": "video/mp4",
+            })
+            
+            return StreamingResponse(
+                response.aiter_bytes(),
+                media_type="video/mp4",
+                headers=headers
+            )
+            
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="下载超时，请稍后重试"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"下载失败: {str(e)}"
+        )

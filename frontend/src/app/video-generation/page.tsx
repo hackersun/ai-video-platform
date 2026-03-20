@@ -198,9 +198,37 @@ export default function VideoGenerationPage() {
   };
 
   // 下载视频
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (videoUrl) {
-      window.open(videoUrl, '_blank');
+      try {
+        // 使用后端代理下载，解决URL特殊字符截断问题
+        const response = await fetch(`${API_BASE}/api/v1/video/download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            video_url: videoUrl,
+            filename: 'ai_video.mp4'
+          })
+        });
+        
+        if (response.ok) {
+          const blob = await response.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = 'ai_video.mp4';
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+        } else {
+          alert('下载失败');
+        }
+      } catch (err) {
+        console.error('下载失败:', err);
+        // 降级：直接打开URL
+        window.open(videoUrl, '_blank');
+      }
     }
   };
 
@@ -551,7 +579,32 @@ export default function VideoGenerationPage() {
                             <Button 
                               variant="ghost" 
                               size="sm"
-                              onClick={() => window.open(job.video_url, '_blank')}
+                              onClick={async () => {
+                                try {
+                                  const response = await fetch(`${API_BASE}/api/v1/video/download`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                      video_url: job.video_url,
+                                      filename: `video_${job.id}.mp4`
+                                    })
+                                  });
+                                  if (response.ok) {
+                                    const blob = await response.blob();
+                                    const url = window.URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `video_${job.id}.mp4`;
+                                    document.body.appendChild(a);
+                                    a.click();
+                                    window.URL.revokeObjectURL(url);
+                                    document.body.removeChild(a);
+                                  }
+                                } catch (err) {
+                                  console.error('下载失败:', err);
+                                  window.open(job.video_url, '_blank');
+                                }
+                              }}
                             >
                               <Download className="w-4 h-4" />
                             </Button>
