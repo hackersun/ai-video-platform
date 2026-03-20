@@ -2,17 +2,19 @@
 视频生成 API 端点
 支持火山引擎豆包视频模型
 
+使用官方SDK: volcengine-python-sdk[ark]
+模型: doubao-seedance-1-5-pro-251215 (Doubao-Seedance-1.5-pro)
+
 完整异步流程:
 1. POST /video/generate -> 提交任务，返回 task_id
-2. POST /video/status -> 查询任务状态
-3. POST /video/generate/complete -> 同步等待完成（轮询）
+2. GET /video/status/{task_id} -> 查询任务状态
 """
 
 from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
 import asyncio
-import aiohttp
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +28,8 @@ router = APIRouter(tags=["视频生成"])
 
 # ============== 常量配置 ==============
 
-VIDEO_MODEL_ID = "Doubao-Seed-2.0-pro"
-VIDEO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+# 视频模型ID - 使用Doubao-Seedance-1.5-pro
+VIDEO_MODEL_ID = "doubao-seedance-1-5-pro-251215"
 
 
 # ============== 请求/响应模型 ==============
@@ -35,7 +37,7 @@ VIDEO_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 class VideoGenerateRequest(BaseModel):
     """视频生成请求"""
     prompt: str = Field(..., description="视频描述")
-    model: str = Field(VIDEO_MODEL_ID, description="模型ID，默认 Doubao-Seed-2.0-pro")
+    model: str = Field(VIDEO_MODEL_ID, description="模型ID，默认 doubao-seedance-1-5-pro-251215")
     duration: int = Field(5, ge=4, le=10, description="视频时长（秒），支持4/8/10秒")
     resolution: str = Field("720p", description="分辨率: 480p, 720p, 1080p")
     api_key: str = Field(..., description="火山引擎API Key")
@@ -50,20 +52,16 @@ class VideoGenerateResponse(BaseModel):
     message: str
 
 
-class VideoStatusRequest(BaseModel):
-    """视频状态查询请求"""
-    task_id: str
-    api_key: str = Field(..., description="火山引擎API Key")
-
-
 class VideoStatusResponse(BaseModel):
     """视频状态响应"""
     task_id: str
-    status: str  # pending, processing, completed, failed
-    video_url: Optional[str]
-    cover_url: Optional[str]
+    status: str  # pending, running, succeeded, failed
+    video_url: Optional[str] = None
+    cover_url: Optional[str] = None
     message: str
     progress: Optional[int] = Field(None, description="进度百分比")
+    duration: Optional[int] = None
+    resolution: Optional[str] = None
 
 
 class VideoQueryResponse(BaseModel):
@@ -71,26 +69,13 @@ class VideoQueryResponse(BaseModel):
     videos: List[dict]
 
 
-# ============== API端点 ==============
-
-async def _call_volcano_api(api_key: str, payload: dict) -> dict:
-    """调用火山引擎API"""
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            VIDEO_BASE_URL + "/responses",
-            headers=headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=300)
-        ) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise Exception(f"API调用失败: {error_text}")
-            return await response.json()
+def _create_ark_client(api_key: str):
+    """创建ARK客户端"""
+    from volcenginesdkarkruntime import Ark
+    return Ark(
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        api_key=api_key,
+    )
 
 
 @router.post("/generate", response_model=VideoGenerateResponse)
@@ -101,268 +86,248 @@ async def generate_video(
     """
     生成视频 - 异步提交任务
     
-    返回 task_id，用于后续查询状态
+    使用火山引擎官方SDK调用视频生成API
     """
     try:
-        # 构建消息内容
+        client = _create_ark_client(request.api_key)
+        
+        # 构建content
         content = []
+        
+        # 如果有参考图片，添加图片
         if request.image_url:
             content.append({
-                "type": "input_image",
-                "image_url": request.image_url
+                "type": "image_url",
+                "image_url": {"url": request.image_url}
             })
+        
+        # 构建提示词，包含参数
+        duration_arg = f"--duration {request.duration}"
+        camerafixed = "false"  # 相机运动
+        watermark = "true"
+        resolution_arg = f"--resolution {request.resolution}"
+        
+        prompt_text = f"{request.prompt} {duration_arg} --camerafixed {camerafixed} --watermark {watermark} {resolution_arg}"
+        
         content.append({
-            "type": "input_text",
-            "text": f"请生成一段{request.duration}秒的视频：{request.prompt}"
+            "type": "text",
+            "text": prompt_text
         })
         
-        payload = {
-            "model": request.model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ]
-        }
+        # 调用SDK创建任务
+        create_result = client.content_generation.tasks.create(
+            model=request.model,
+            content=content
+        )
         
-        result = await _call_volcano_api(request.api_key, payload)
-
-        # 火山引擎Responses API返回结果
-        # output可能是list或dict，需要处理
-        task_id = result.get("id") or str(uuid4())
-
-        # 检查返回的内容
-        output_data = result.get("output", [])
-        if isinstance(output_data, list) and len(output_data) > 0:
-            # output是list，找第一个非reasoning项
-            for item in output_data:
-                if isinstance(item, dict) and item.get("type") == "video":
-                    video_url = item.get("url") or item.get("video_url")
-                    if video_url:
-                        return VideoGenerateResponse(
-                            task_id=task_id,
-                            status="completed",
-                            message="视频生成完成"
-                        )
-
-        # 检查是否有错误
-        if "error" in result:
-            error_msg = result.get("error", {})
-            if isinstance(error_msg, dict):
-                error_msg = error_msg.get("message", str(error_msg))
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"视频生成失败: {error_msg}"
-            )
-
-        # 如果没有video数据，说明这是异步任务
         return VideoGenerateResponse(
-            task_id=task_id,
+            task_id=create_result.id,
             status="pending",
-            message="视频生成任务已提交，请使用任务ID查询进度"
+            message="视频生成任务已提交，请使用task_id查询状态"
         )
         
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"视频生成失败: {str(e)}"
         )
 
 
-@router.post("/status", response_model=VideoStatusResponse)
-async def query_video_status(
-    request: VideoStatusRequest,
-    db: AsyncSession = Depends(get_db)
+@router.get("/status/{task_id}", response_model=VideoStatusResponse)
+async def get_video_status(
+    task_id: str,
+    api_key: str
 ):
     """
     查询视频生成状态
     
-    火山引擎Responses API是同步的，通常10-30秒完成
-    如果之前调用返回了task_id，可以用它来查询
+    使用task_id轮询任务状态
     """
     try:
-        # 火山引擎的Responses API是同步的
-        # 如果之前的调用还在处理，可以通过task_id查询
+        client = _create_ark_client(api_key)
         
-        payload = {
-            "task_id": request.task_id
+        get_result = client.content_generation.tasks.get(task_id=task_id)
+        task_status = get_result.status
+        
+        # 状态映射
+        status_map = {
+            "pending": "pending",
+            "running": "running", 
+            "succeeded": "succeeded",
+            "failed": "failed"
         }
         
-        result = await _call_volcano_api(request.api_key, payload)
+        mapped_status = status_map.get(task_status, task_status)
         
-        # 检查输出
-        output_items = result.get("output", {}).get("attachments", [])
-        
+        # 获取输出信息
         video_url = None
         cover_url = None
-        status_str = "processing"
-        message = "视频生成中..."
-        progress = None
+        duration = None
+        resolution = None
         
-        for item in output_items:
-            if item.get("type") == "video":
-                video_url = item.get("url")
-                status_str = "completed"
-                message = "视频生成完成"
-                progress = 100
-            elif item.get("type") == "image" and item.get("property", {}).get("type") == "cover":
-                cover_url = item.get("url")
+        if task_status == "succeeded" and hasattr(get_result, 'output'):
+            output = get_result.output
+            if output:
+                video_url = getattr(output, 'video_url', None)
+                cover_url = getattr(output, 'last_frame_url', None)
+        
+        if hasattr(get_result, 'duration'):
+            duration = get_result.duration
+        if hasattr(get_result, 'resolution'):
+            resolution = get_result.resolution
+        
+        # 进度百分比估算
+        progress = None
+        if task_status == "pending":
+            progress = 10
+        elif task_status == "running":
+            progress = 50
+        elif task_status == "succeeded":
+            progress = 100
+        
+        message = {
+            "pending": "任务等待中",
+            "running": "视频生成中，请稍候",
+            "succeeded": "视频生成完成",
+            "failed": f"生成失败: {getattr(get_result, 'error', 'Unknown error')}"
+        }.get(task_status, f"未知状态: {task_status}")
         
         return VideoStatusResponse(
-            task_id=request.task_id,
-            status=status_str,
+            task_id=task_id,
+            status=mapped_status,
             video_url=video_url,
             cover_url=cover_url,
             message=message,
-            progress=progress
+            progress=progress,
+            duration=duration,
+            resolution=resolution
         )
         
-    except Exception as e:
-        return VideoStatusResponse(
-            task_id=request.task_id,
-            status="failed",
-            video_url=None,
-            cover_url=None,
-            message=f"查询失败: {str(e)}"
-        )
-
-
-@router.post("/generate/complete", response_model=VideoStatusResponse)
-async def generate_video_complete(
-    request: VideoGenerateRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    生成视频 - 同步等待完成
-    
-    提交任务后轮询等待完成，返回视频URL
-    适用于短等待场景（5-30秒）
-    """
-    try:
-        # 构建消息内容
-        content = []
-        if request.image_url:
-            content.append({
-                "type": "input_image",
-                "image_url": request.image_url
-            })
-        content.append({
-            "type": "input_text",
-            "text": f"请生成一段{request.duration}秒的视频：{request.prompt}"
-        })
-        
-        payload = {
-            "model": request.model,
-            "input": [
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ]
-        }
-        
-        # 第一次调用
-        result = await _call_volcano_api(request.api_key, payload)
-        
-        task_id = result.get("id") or str(uuid4())
-        
-        # 检查第一次结果
-        output_items = result.get("output", {}).get("attachments", [])
-        
-        video_url = None
-        cover_url = None
-        
-        for item in output_items:
-            if item.get("type") == "video":
-                video_url = item.get("url")
-            elif item.get("type") == "image" and item.get("property", {}).get("type") == "cover":
-                cover_url = item.get("url")
-        
-        if video_url:
-            return VideoStatusResponse(
-                task_id=task_id,
-                status="completed",
-                video_url=video_url,
-                cover_url=cover_url,
-                message="视频生成完成",
-                progress=100
-            )
-        
-        # 如果没完成，轮询等待
-        max_polls = 60  # 最多等待5分钟
-        poll_interval = 5
-        
-        for i in range(max_polls):
-            await asyncio.sleep(poll_interval)
-            
-            try:
-                # 尝试查询状态
-                status_payload = {"task_id": task_id}
-                status_result = await _call_volcano_api(request.api_key, status_payload)
-                
-                output_items = status_result.get("output", {}).get("attachments", [])
-                
-                for item in output_items:
-                    if item.get("type") == "video":
-                        video_url = item.get("url")
-                    elif item.get("type") == "image" and item.get("property", {}).get("type") == "cover":
-                        cover_url = item.get("url")
-                
-                if video_url:
-                    return VideoStatusResponse(
-                        task_id=task_id,
-                        status="completed",
-                        video_url=video_url,
-                        cover_url=cover_url,
-                        message="视频生成完成",
-                        progress=100
-                    )
-                    
-            except Exception:
-                # 轮询查询失败，继续等待
-                pass
-            
-            # 继续等待
-            progress = min(95, (i + 1) * 100 // max_polls)
-        
-        # 超时
-        return VideoStatusResponse(
-            task_id=task_id,
-            status="processing",
-            video_url=None,
-            cover_url=None,
-            message="视频生成超时，请稍后使用任务ID查询",
-            progress=None
-        )
-        
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"查询状态失败: {str(e)}"
+        )
+
+
+@router.post("/generate/sync")
+async def generate_video_sync(
+    request: VideoGenerateRequest
+):
+    """
+    同步生成视频 - 轮询等待完成
+    
+    适用于短时生成场景（测试用）
+    """
+    try:
+        client = _create_ark_client(request.api_key)
+        
+        # 构建content
+        content = []
+        
+        if request.image_url:
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": request.image_url}
+            })
+        
+        duration_arg = f"--duration {request.duration}"
+        prompt_text = f"{request.prompt} {duration_arg} --camerafixed false --watermark true"
+        
+        content.append({
+            "type": "text",
+            "text": prompt_text
+        })
+        
+        # 创建任务
+        create_result = client.content_generation.tasks.create(
+            model=request.model,
+            content=content
+        )
+        
+        task_id = create_result.id
+        
+        # 轮询等待完成
+        max_wait = 120  # 最多等待120秒
+        start_time = time.time()
+        
+        while time.time() - start_time < max_wait:
+            get_result = client.content_generation.tasks.get(task_id=task_id)
+            task_status = get_result.status
+            
+            if task_status == "succeeded":
+                output = get_result.output
+                video_url = getattr(output, 'video_url', None) if output else None
+                cover_url = getattr(output, 'last_frame_url', None) if output else None
+                
+                return {
+                    "task_id": task_id,
+                    "status": "succeeded",
+                    "video_url": video_url,
+                    "cover_url": cover_url,
+                    "duration": getattr(get_result, 'duration', None),
+                    "resolution": getattr(get_result, 'resolution', None),
+                    "message": "视频生成完成"
+                }
+            
+            elif task_status == "failed":
+                return {
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": str(getattr(get_result, 'error', 'Unknown error')),
+                    "message": "视频生成失败"
+                }
+            
+            # 等待3秒后继续轮询
+            time.sleep(3)
+        
+        # 超时
+        return {
+            "task_id": task_id,
+            "status": "timeout",
+            "message": "生成超时，请稍后使用task_id查询"
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"视频生成失败: {str(e)}"
         )
 
 
-@router.get("/models")
-async def list_video_models():
-    """获取可用的视频生成模型"""
-    video_models = [
-        {
-            "id": "Doubao-Seed-2.0-pro",
-            "name": "豆包Seed-2.0-pro",
-            "type": "video-generation",
-            "capabilities": ["text-to-video", "image-to-video"],
-            "durations": [4, 8, 10],
-            "resolutions": ["480p", "720p", "1080p"],
-            "input_cost_per_1k": 0.5,
-            "output_cost_per_1k": 0.5,
-            "description": "火山引擎高质量视频生成模型，支持文生视频、图生视频"
-        }
-    ]
+@router.get("/jobs")
+async def list_video_jobs(
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    获取用户的视频任务列表
     
-    return {
-        "models": video_models,
-        "default": "Doubao-Seed-2.0-pro"
-    }
+    TODO: 从数据库查询历史任务
+    """
+    # TODO: 实现从数据库查询历史任务
+    return {"videos": [], "message": "历史任务查询待实现"}
+
+
+# ============== 废弃的旧API（保持向后兼容）==============
+
+class OldVideoGenerateRequest(BaseModel):
+    """旧版视频生成请求（兼容）"""
+    prompt: str
+    api_key: str
+    duration: int = 5
+    image_url: Optional[str] = None
+
+
+@router.post("/generate/legacy")
+async def generate_video_legacy(
+    request: OldVideoGenerateRequest
+):
+    """旧版视频生成接口，保持向后兼容"""
+    new_request = VideoGenerateRequest(
+        prompt=request.prompt,
+        duration=request.duration,
+        api_key=request.api_key,
+        image_url=request.image_url
+    )
+    return await generate_video(new_request)
