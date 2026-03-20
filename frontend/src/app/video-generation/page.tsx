@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
@@ -20,7 +21,9 @@ import {
   AlertCircle,
   RefreshCw,
   Download,
-  Copy
+  Copy,
+  Image as ImageIcon,
+  Loader
 } from 'lucide-react';
 
 // 视频生成状态
@@ -54,7 +57,13 @@ interface VideoJob {
   updated_at: string;
 }
 
-export default function VideoGenerationPage() {
+function VideoGenerationPageContent() {
+  const searchParams = useSearchParams();
+  const novelId = searchParams.get('novel_id');
+  const scriptId = searchParams.get('script');
+  const storyboardId = searchParams.get('storyboard');
+  const coverUrlParam = searchParams.get('cover_url');
+  
   const [selectedProvider] = useState('volcano');
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [progress, setProgress] = useState(0);
@@ -67,11 +76,14 @@ export default function VideoGenerationPage() {
   const [prompt, setPrompt] = useState('无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验');
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState('720p');
-  const [imageUrl, setImageUrl] = useState('');
+  const [imageUrl, setImageUrl] = useState(coverUrlParam || '');
   
   // 历史记录
   const [history, setHistory] = useState<VideoJob[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
+  // 关联信息
+  const [novelInfo, setNovelInfo] = useState<{title?: string; description?: string; cover_url?: string} | null>(null);
 
   // 加载历史记录
   const loadHistory = async () => {
@@ -91,7 +103,40 @@ export default function VideoGenerationPage() {
 
   useEffect(() => {
     loadHistory();
+    
+    // 如果有novel_id，加载小说信息
+    if (novelId) {
+      loadNovelInfo();
+    }
   }, []);
+
+  // 加载小说信息
+  const loadNovelInfo = async () => {
+    if (!novelId) return;
+    
+    try {
+      const token = localStorage.getItem('token');
+      const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+      const response = await fetch(`${API_BASE}/api/v1/novels/${novelId}`, { headers });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setNovelInfo(data);
+        
+        // 如果没有设置封面图，使用小说封面
+        if (!imageUrl && data.cover_url) {
+          setImageUrl(data.cover_url);
+        }
+        
+        // 如果没有自定义prompt，使用小说描述
+        if (!prompt || prompt === '无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验') {
+          setPrompt(data.description || `基于小说《${data.title}》的视频`);
+        }
+      }
+    } catch (err) {
+      console.error('加载小说信息失败:', err);
+    }
+  };
 
   // 轮询任务状态
   const pollTaskStatus = async (tid: string, jid: string) => {
@@ -641,5 +686,20 @@ export default function VideoGenerationPage() {
         </div>
       </div>
     </MainLayout>
+  );
+}
+
+// 包装组件，提供 Suspense 边界（useSearchParams 需要）
+export default function VideoGenerationPage() {
+  return (
+    <Suspense fallback={
+      <MainLayout>
+        <div className="min-h-screen flex items-center justify-center">
+          <Loader className="w-8 h-8 animate-spin text-violet-500" />
+        </div>
+      </MainLayout>
+    }>
+      <VideoGenerationPageContent />
+    </Suspense>
   );
 }

@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     llm_config, external_api, qwen, coding_plan, usage_stats,
     characters, dashboard, auth, novels, scripts, video,
-    chapters, storyboards, shots
+    chapters, storyboards, shots, synthesis, tts
 )
 
 api_router = APIRouter()
@@ -53,3 +53,9 @@ api_router.include_router(shots.router, prefix="/shots", tags=["镜头管理"])
 
 # 视频生成API
 api_router.include_router(video.router, prefix="/video", tags=["视频生成"])
+
+# 音视频合成API
+api_router.include_router(synthesis.router, prefix="/synthesis", tags=["音视频合成"])
+
+# 语音合成API
+api_router.include_router(tts.router, prefix="/tts", tags=["语音合成"])

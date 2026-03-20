@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -51,6 +51,11 @@ export default function TTSPage() {
   // 历史记录
   const [history, setHistory] = useState<TTSJob[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+
+  // 页面加载时获取历史记录
+  useEffect(() => {
+    loadHistory();
+  }, []);
 
   const handleGenerate = async () => {
     if (!text.trim()) {

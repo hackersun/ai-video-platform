@@ -32,6 +32,7 @@ const mainMenuItems = [
 // 工具菜单
 const toolMenuItems = [
   { label: '语音合成', path: '/tts', icon: Mic },
+  { label: '音视频合成', path: '/synthesis', icon: Video },
   { label: 'AI模型', path: '/llm-config', icon: Cpu },
   { label: '任务队列', path: '/jobs', icon: ListTodo },
 ];

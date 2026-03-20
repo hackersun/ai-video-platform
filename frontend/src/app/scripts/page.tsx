@@ -512,10 +512,10 @@ export default function ScriptsPage() {
                     <Card key={script.id} className="bg-white/5 border-white/10 hover:border-blue-500/30 transition-colors">
                       <CardContent className="p-4">
                         <div className="flex items-start justify-between">
-                          <div className="flex-1">
+                          <Link href={`/scripts/${script.id}`} className="flex-1 block">
                             <div className="flex items-center gap-3">
                               <FileText className="w-5 h-5 text-blue-400" />
-                              <h3 className="text-lg font-semibold text-white">{script.title}</h3>
+                              <h3 className="text-lg font-semibold text-white hover:text-blue-400 transition-colors">{script.title}</h3>
                               <span className={`px-2 py-0.5 rounded text-xs ${STATUS_COLORS[script.status]}`}>
                                 {STATUS_LABELS[script.status]}
                               </span>
@@ -532,8 +532,8 @@ export default function ScriptsPage() {
                               </span>
                               <span>更新于 {new Date(script.updated_at).toLocaleDateString()}</span>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2">
+                          </Link>
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                             {script.status === 'completed' && (
                               <Button 
                                 variant="ghost" 
@@ -553,9 +553,11 @@ export default function ScriptsPage() {
                                 </Button>
                               </Link>
                             )}
-                            <Button variant="ghost" size="icon" className="text-white/60 hover:text-white">
-                              <Eye className="w-4 h-4" />
-                            </Button>
+                            <Link href={`/scripts/${script.id}`}>
+                              <Button variant="ghost" size="icon" className="text-white/60 hover:text-white">
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                            </Link>
                             <Button 
                               variant="ghost" 
                               size="icon" 

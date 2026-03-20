@@ -92,6 +92,10 @@ export default function NovelDetailPage() {
   const [newCharacterName, setNewCharacterName] = useState('');
   const [newCharacterDesc, setNewCharacterDesc] = useState('');
   const [creatingCharacter, setCreatingCharacter] = useState(false);
+  
+  // 封面生成
+  const [generatingCover, setGeneratingCover] = useState(false);
+  const [coverPreview, setCoverPreview] = useState<string | null>(novel?.cover_url || null);
 
   useEffect(() => {
     if (novelId) {
@@ -199,6 +203,42 @@ export default function NovelDetailPage() {
     }
   };
 
+  // 生成封面
+  const handleGenerateCover = async () => {
+    if (!novel) return;
+    
+    setGeneratingCover(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_BASE}/api/v1/novels/${novelId}/generate-cover`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          prompt: `小说封面，标题《${novel.title}》，类型：${novel.genre || '通用'}`
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        if (data.cover_url) {
+          setCoverPreview(data.cover_url);
+          setNovel({ ...novel, cover_url: data.cover_url });
+        }
+        alert('封面生成成功！');
+      } else {
+        throw new Error('生成失败');
+      }
+    } catch (err) {
+      console.error('生成封面失败:', err);
+      alert('封面生成失败，请稍后重试');
+    } finally {
+      setGeneratingCover(false);
+    }
+  };
+
   if (loading) {
     return (
       <MainLayout>
@@ -247,8 +287,17 @@ export default function NovelDetailPage() {
           
           {/* 快捷操作 */}
           <div className="flex gap-2">
-            <Button variant="outline" className="border-violet-500/50">
-              <Image className="w-4 h-4 mr-2" />
+            <Button 
+              variant="outline" 
+              className="border-violet-500/50"
+              onClick={handleGenerateCover}
+              disabled={generatingCover}
+            >
+              {generatingCover ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Image className="w-4 h-4 mr-2" />
+              )}
               生成封面
             </Button>
             <Link href={`/video-generation?novel_id=${novelId}`}>
@@ -338,9 +387,10 @@ export default function NovelDetailPage() {
                 ) : (
                   <div className="space-y-2">
                     {chapters.map((chapter, index) => (
-                      <div
+                      <Link
                         key={chapter.id}
-                        className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+                        href={`/novels/${novelId}/chapters/${chapter.id}`}
+                        className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors block"
                       >
                         <div className="flex items-center gap-3">
                           <span className="text-white/40 text-sm w-8">
@@ -353,12 +403,13 @@ export default function NovelDetailPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2" onClick={(e) => e.preventDefault()}>
+                          <span className="text-white/40 text-sm">点击编辑</span>
                           <Button size="sm" variant="ghost">
                             <Edit2 className="w-4 h-4" />
                           </Button>
                         </div>
-                      </div>
+                      </Link>
                     ))}
                   </div>
                 )}
