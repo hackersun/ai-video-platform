@@ -20,16 +20,12 @@ class TTSJob(Base):
     shot_id = Column(String(36), ForeignKey("shots.id"), nullable=True)
     
     # 基本信息
-    title = Column(String(255), nullable=False)
-    text_content = Column(Text, nullable=False)  # 要转换的文本
+    title = Column(String(255), nullable=True)
+    text_content = Column(Text, nullable=True)  # 要转换的文本
     
     # 语音配置
     voice_model = Column(String(50), default="default")  # 语音模型
     api_provider = Column(String(20), default="volcano")  # volcano, azure
-    
-    # 语音参数
-    speed = Column(Float, default=1.0)  # 语速
-    pitch = Column(Float, default=0)  # 音调
     
     # 状态: pending, running, succeeded, failed
     status = Column(String(20), default="pending", index=True)
@@ -43,6 +39,15 @@ class TTSJob(Base):
     
     # 错误信息
     error_message = Column(Text, nullable=True)
+    
+    # 额外数据（JSON格式）
+    extra_data = Column(Text, default='{}')
+    
+    # 成本
+    cost = Column(Integer, default=0)
+    
+    # 是否激活
+    is_active = Column(Integer, default=1)
     
     # 时间戳
     created_at = Column(DateTime(timezone=True), server_default=func.now())

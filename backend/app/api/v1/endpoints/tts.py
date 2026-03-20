@@ -27,8 +27,6 @@ class TTSGenerateRequest(BaseModel):
     title: Optional[str] = Field(None, description="任务标题")
     voice_model: str = Field("default", description="语音模型")
     api_provider: str = Field("volcano", description="API提供商: volcano, azure")
-    speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
-    pitch: float = Field(0, ge=-10, le=10, description="音调")
     script_id: Optional[str] = Field(None, description="关联的剧本ID")
     shot_id: Optional[str] = Field(None, description="关联的镜头ID")
 
@@ -39,17 +37,18 @@ class TTSJobResponse(BaseModel):
     user_id: str
     script_id: Optional[str] = None
     shot_id: Optional[str] = None
-    title: str
-    text_content: str
-    voice_model: str
-    api_provider: str
-    speed: float
-    pitch: float
+    title: Optional[str] = None
+    text_content: Optional[str] = None
+    voice_model: Optional[str] = None
+    api_provider: Optional[str] = None
     status: str
     progress: int
     audio_url: Optional[str] = None
     duration: Optional[float] = None
+    cost: Optional[int] = 0
     error_message: Optional[str] = None
+    extra_data: Optional[str] = '{}'
+    is_active: Optional[int] = 1
     created_at: datetime
     updated_at: datetime
 
@@ -72,8 +71,6 @@ async def generate_tts(
         text_content=request.text_content,
         voice_model=request.voice_model,
         api_provider=request.api_provider,
-        speed=request.speed,
-        pitch=request.pitch,
         script_id=request.script_id,
         shot_id=request.shot_id,
         status="pending",

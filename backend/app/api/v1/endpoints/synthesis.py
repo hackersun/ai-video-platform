@@ -26,7 +26,6 @@ class SynthesisCreateRequest(BaseModel):
     video_job_id: Optional[str] = Field(None, description="视频任务ID")
     tts_job_id: Optional[str] = Field(None, description="TTS任务ID")
     title: str = Field(..., description="作品标题")
-    description: Optional[str] = Field(None, description="作品描述")
 
 
 class SynthesisStatusUpdate(BaseModel):
@@ -40,16 +39,19 @@ class SynthesisStatusUpdate(BaseModel):
 class SynthesisJobResponse(BaseModel):
     """合成任务响应"""
     id: str
+    user_id: str
     video_job_id: Optional[str] = None
     tts_job_id: Optional[str] = None
-    title: str
-    description: Optional[str] = None
+    title: Optional[str] = None
     status: str
     progress: int
     output_url: Optional[str] = None
     output_type: Optional[str] = None
     duration: Optional[float] = None
+    cost: Optional[int] = 0
     error_message: Optional[str] = None
+    extra_data: Optional[str] = '{}'
+    is_active: Optional[int] = 1
     created_at: datetime
     updated_at: datetime
 
@@ -71,7 +73,6 @@ async def create_synthesis(
         video_job_id=request.video_job_id,
         tts_job_id=request.tts_job_id,
         title=request.title,
-        description=request.description,
         status="pending",
         progress=0
     )
