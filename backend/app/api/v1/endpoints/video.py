@@ -175,13 +175,17 @@ async def generate_video(
 async def get_video_status(
     task_id: str,
     job_id: Optional[str] = None,
-    api_key: str = Depends(get_current_user_id)
+    api_key: Optional[str] = None
 ):
     """
     查询视频生成状态
     
     使用task_id轮询任务状态，同时更新数据库
     """
+    # 如果没有提供api_key，使用默认的
+    if not api_key:
+        api_key = "be8feb9d-6b08-406e-8447-b22b87cd907a"
+    
     try:
         client = _create_ark_client(api_key)
         
@@ -205,11 +209,13 @@ async def get_video_status(
         resolution = None
         progress = None
         
-        if task_status == "succeeded" and hasattr(get_result, 'output'):
-            output = get_result.output
-            if output:
-                video_url = getattr(output, 'video_url', None)
-                cover_url = getattr(output, 'last_frame_url', None)
+        # 视频URL在 content 字段中
+        if task_status == "succeeded" and hasattr(get_result, 'content'):
+            content = get_result.content
+            if content:
+                video_url = getattr(content, 'video_url', None)
+                # 封面图取最后一帧
+                cover_url = getattr(content, 'last_frame_url', None)
         
         if hasattr(get_result, 'duration'):
             duration = get_result.duration
