@@ -117,7 +117,7 @@ export default function LLMConfigPage() {
         { id: 'volcano', name: 'volcano', name_cn: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3', description: '字节跳动豆包大模型' },
         { id: 'qwen', name: 'qwen', name_cn: '阿里千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '阿里云通义千问' },
         { id: 'baidu', name: 'baidu', name_cn: '百度文心', base_url: 'https://qianfan.baidubce.com/v2/chat/completions', description: '百度文心大模型' },
-        { id: 'qianlian', name: 'qianlian', name_cn: '阿里百炼', base_url: 'https://qianfan.wbCEAI.githubapps.com', description: '阿里云百炼大模型' },
+        { id: 'qianlian', name: 'qianlian', name_cn: '阿里百炼', base_url: 'https://bailian.aliyuncs.com', description: '阿里云百炼大模型' },
       ]);
     }
   };

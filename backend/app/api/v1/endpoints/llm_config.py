@@ -665,16 +665,16 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
 
 
 async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试阿里百炼API"""
-    url = "https://qianfan.wbCEAI.githubapps.com/chat/completions"
+    """测试阿里百炼API (Coding Plan)"""
+    url = "https://coding.dashscope.aliyuncs.com/v1/chat/completions"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
     data = {
         "model": model_id,
-        "input": {"messages": [{"role": "user", "content": message}]},
-        "parameters": {"max_tokens": 100}
+        "messages": [{"role": "user", "content": message}],
+        "max_tokens": 100
     }
     
     try:
@@ -683,13 +683,13 @@ async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
             
             if response.status_code == 200:
                 result = response.json()
-                content = result.get("output", {}).get("text") or result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
+                content = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
                 return {
                     "success": True,
                     "message": "阿里百炼 API 连接成功！",
-                    "response": content,
+                    "response": content[:500] if content else "响应成功",
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) or result.get("usage", {}).get("input_tokens", 0) + result.get("usage", {}).get("output_tokens", 0)
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
                 }
             else:
                 error = response.json().get("error", {})
