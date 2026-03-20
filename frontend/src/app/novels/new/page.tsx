@@ -65,7 +65,7 @@ export default function NewNovelPage() {
     setIsSaving(true);
     try {
       // 保存到后端API
-      const response = await fetch('http://localhost:8001/api/v1/novels', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/novels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
