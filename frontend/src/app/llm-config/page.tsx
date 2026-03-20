@@ -548,6 +548,8 @@ export default function LLMConfigPage() {
                               {model.model_type === 'chat' && <MessageSquare className="w-4 h-4 text-blue-400" />}
                               {model.model_type === 'vision' && <ImageIcon className="w-4 h-4 text-purple-400" />}
                               {model.model_type === 'video' && <Video className="w-4 h-4 text-pink-400" />}
+                              {model.model_type === 'image-generation' && <ImageIcon className="w-4 h-4 text-orange-400" />}
+                              {model.model_type === 'video-generation' && <Video className="w-4 h-4 text-red-400" />}
                               {model.model_name_cn || model.model_name}
                               {model.is_recommended && (
                                 <span className="px-2 py-0.5 text-xs bg-violet-500/20 text-violet-400 rounded">
@@ -556,7 +558,11 @@ export default function LLMConfigPage() {
                               )}
                             </div>
                             <div className="text-white/60 text-sm mt-1">
-                              上下文{model.context_window} • 输入¥{model.input_cost_per_1k}/千token
+                              {model.model_type === 'image-generation' && '图像生成'}
+                              {model.model_type === 'video-generation' && '视频生成'}
+                              {model.model_type === 'chat' && `上下文${model.context_window}`}
+                              {!['image-generation', 'video-generation', 'chat'].includes(model.model_type) && `上下文${model.context_window}`}
+                              {model.model_type !== 'image-generation' && model.model_type !== 'video-generation' && ` • 输入¥${model.input_cost_per_1k}/千token`}
                             </div>
                             {model.description && (
                               <div className="text-white/40 text-xs mt-1">{model.description}</div>
