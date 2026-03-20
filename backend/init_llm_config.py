@@ -1,0 +1,328 @@
+"""
+LLM服务商和模型配置初始化脚本
+
+运行此脚本初始化LLM服务商和模型配置到数据库
+"""
+import sys
+import uuid
+sys.path.insert(0, '.')
+
+from app.core.database import sync_engine
+from sqlalchemy.orm import Session
+from app.models.llm_config import LLMProvider, LLMModel
+
+
+def init_llm_providers_and_models():
+    """初始化LLM服务商和模型"""
+    
+    # 服务商配置
+    providers = [
+        {
+            "id": "volcano",
+            "name": "volcano",
+            "name_cn": "火山引擎",
+            "name_en": "Volcano Engine",
+            "provider_type": "cloud",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "auth_type": "bearer",
+            "is_active": True,
+            "is_builtin": True,
+            "description": "字节跳动火山引擎，提供豆包大模型系列",
+            "website_url": "https://www.volcengine.com/",
+            "doc_url": "https://www.volcengine.com/docs/82379"
+        },
+        {
+            "id": "qianlian",
+            "name": "qianlian",
+            "name_cn": "阿里百炼",
+            "name_en": "Alibaba Qianlian",
+            "provider_type": "cloud",
+            "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+            "auth_type": "bearer",
+            "is_active": True,
+            "is_builtin": True,
+            "description": "阿里云百炼平台，支持qwen3.5-plus、kimi等模型",
+            "website_url": "https://bailian.console.aliyun.com/",
+            "doc_url": "https://help.aliyun.com/zh/model-studio/"
+        },
+        {
+            "id": "dashscope",
+            "name": "dashscope",
+            "name_cn": "千问(DashScope)",
+            "name_en": "Alibaba DashScope",
+            "provider_type": "cloud",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "auth_type": "bearer",
+            "is_active": True,
+            "is_builtin": True,
+            "description": "阿里云千问平台，支持qwen-long、qwen-plus等模型",
+            "website_url": "https://dashscope.console.aliyun.com/",
+            "doc_url": "https://help.aliyun.com/zh/dashscope/"
+        }
+    ]
+    
+    # 模型配置
+    models = [
+        # 火山引擎 - 文本模型
+        {
+            "id": "volcano-doubao-seed-1-8",
+            "provider_id": "volcano",
+            "model_id": "doubao-seed-1-8-251228",
+            "model_name": "doubao-seed-1-8-251228",
+            "model_name_cn": "豆包Seed-1.8",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "function_calling"],
+            "context_window": 4096,
+            "max_tokens": 2048,
+            "input_cost_per_1k": 0.5,
+            "output_cost_per_1k": 1.0,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "豆包最新轻量级模型，性价比高"
+        },
+        # 火山引擎 - 视频模型
+        {
+            "id": "volcano-video",
+            "provider_id": "volcano",
+            "model_id": "volcano-video",
+            "model_name": "volcano-video",
+            "model_name_cn": "火山视频生成",
+            "model_type": "video",
+            "capabilities": ["text-to-video", "image-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "火山引擎高质量视频生成模型"
+        },
+        # 火山引擎 - 图像模型
+        {
+            "id": "volcano-seedream-4-5",
+            "provider_id": "volcano",
+            "model_id": "Doubao-Seedream-4.5",
+            "model_name": "Doubao-Seedream-4.5",
+            "model_name_cn": "豆包Seedream-4.5",
+            "model_type": "image",
+            "capabilities": ["text-to-image", "image-to-image"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "豆包高质量图像生成模型"
+        },
+        
+        # 百炼 - 文本模型
+        {
+            "id": "qianlian-qwen-3-5-plus",
+            "provider_id": "qianlian",
+            "model_id": "qwen3.5-plus",
+            "model_name": "qwen3.5-plus",
+            "model_name_cn": "千问3.5-Plus",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "vision"],
+            "context_window": 32768,
+            "max_tokens": 4096,
+            "input_cost_per_1k": 0.02,
+            "output_cost_per_1k": 0.06,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "supports_vision": True,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "支持图片理解，千问3.5-Plus模型"
+        },
+        {
+            "id": "qianlian-kimi-k2-5",
+            "provider_id": "qianlian",
+            "model_id": "kimi-k2.5",
+            "model_name": "Moonshot-Kimi-K2.5",
+            "model_name_cn": "Kimi-K2.5",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "vision"],
+            "context_window": 32768,
+            "max_tokens": 4096,
+            "input_cost_per_1k": 0.02,
+            "output_cost_per_1k": 0.06,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "supports_vision": True,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "月之暗面Kimi模型，支持图片理解"
+        },
+        {
+            "id": "qianlian-glm-5",
+            "provider_id": "qianlian",
+            "model_id": "glm-5",
+            "model_name": "THUDM-GLM-5",
+            "model_name_cn": "智谱GLM-5",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion"],
+            "context_window": 32768,
+            "max_tokens": 4096,
+            "input_cost_per_1k": 0.02,
+            "output_cost_per_1k": 0.06,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "智谱大语言模型GLM-5"
+        },
+        {
+            "id": "qianlian-minimax-m2-5",
+            "provider_id": "qianlian",
+            "model_id": "MiniMax-M2.5",
+            "model_name": "MiniMax-M2.5",
+            "model_name_cn": "MiniMax-M2.5",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion"],
+            "context_window": 32768,
+            "max_tokens": 4096,
+            "input_cost_per_1k": 0.02,
+            "output_cost_per_1k": 0.06,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "MiniMax大语言模型M2.5"
+        },
+        
+        # 千问 - 文本模型
+        {
+            "id": "dashscope-qwen-long",
+            "provider_id": "dashscope",
+            "model_id": "qwen-long",
+            "model_name": "qwen-long",
+            "model_name_cn": "千问Long",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion"],
+            "context_window": 1000000,  # 100万token
+            "max_tokens": 8192,
+            "input_cost_per_1k": 0.5,
+            "output_cost_per_1k": 2.0,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "超长上下文模型，支持百万token，适合长篇小说生成"
+        },
+        {
+            "id": "dashscope-qwen-plus",
+            "provider_id": "dashscope",
+            "model_id": "qwen-plus",
+            "model_name": "qwen-plus",
+            "model_name_cn": "千问Plus",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "function_calling"],
+            "context_window": 32768,
+            "max_tokens": 8192,
+            "input_cost_per_1k": 2.0,
+            "output_cost_per_1k": 6.0,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "均衡型模型，综合能力优秀"
+        },
+        {
+            "id": "dashscope-qwen-coder-plus",
+            "provider_id": "dashscope",
+            "model_id": "qwen-coder-plus",
+            "model_name": "qwen-coder-plus",
+            "model_name_cn": "千问Coder Plus",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "code_generation"],
+            "context_window": 32768,
+            "max_tokens": 8192,
+            "input_cost_per_1k": 2.0,
+            "output_cost_per_1k": 6.0,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "代码生成旗舰模型，支持复杂规划"
+        },
+        {
+            "id": "dashscope-qwen-vl-plus",
+            "provider_id": "dashscope",
+            "model_id": "qwen-vl-plus",
+            "model_name": "qwen-vl-plus",
+            "model_name_cn": "千问VL Plus",
+            "model_type": "vision",
+            "capabilities": ["chat", "vision", "image_understanding"],
+            "context_window": 32768,
+            "max_tokens": 2048,
+            "input_cost_per_1k": 2.0,
+            "output_cost_per_1k": 6.0,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "supports_vision": True,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "视觉语言模型，支持视频分镜生成"
+        },
+        {
+            "id": "dashscope-qwen-turbo",
+            "provider_id": "dashscope",
+            "model_id": "qwen-turbo",
+            "model_name": "qwen-turbo",
+            "model_name_cn": "千问Turbo",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion"],
+            "context_window": 8192,
+            "max_tokens": 2048,
+            "input_cost_per_1k": 0.5,
+            "output_cost_per_1k": 1.0,
+            "supports_streaming": True,
+            "supports_function_calling": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "轻量级模型，响应速度快"
+        },
+    ]
+    
+    with Session(sync_engine) as session:
+        # 插入服务商
+        for p in providers:
+            existing = session.query(LLMProvider).filter_by(name=p["name"]).first()
+            if not existing:
+                provider = LLMProvider(**p)
+                session.add(provider)
+                print(f"  ✓ 添加服务商: {p['name_cn']} ({p['name']})")
+            else:
+                print(f"  - 服务商已存在: {p['name_cn']} ({p['name']})")
+        
+        session.commit()
+        
+        # 插入模型
+        for m in models:
+            existing = session.query(LLMModel).filter_by(model_id=m["model_id"]).first()
+            if not existing:
+                model = LLMModel(**m)
+                session.add(model)
+                print(f"  ✓ 添加模型: {m['model_name_cn']} ({m['model_id']})")
+            else:
+                print(f"  - 模型已存在: {m['model_name_cn']} ({m['model_id']})")
+        
+        session.commit()
+    
+    print("\n✅ LLM服务商和模型初始化完成！")
+    print(f"   - 服务商: {len(providers)} 个")
+    print(f"   - 模型: {len(models)} 个")
+
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("LLM服务商和模型初始化")
+    print("=" * 50)
+    init_llm_providers_and_models()
