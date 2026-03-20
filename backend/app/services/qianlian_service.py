@@ -2,6 +2,9 @@
 阿里百炼 (Qianlian) API 服务
 支持 qwen3.5-plus, kimi-k2.5, glm-5, MiniMax-M2.5 等模型
 用于 Coding Plan 生成
+
+注意：百炼使用 Anthropic 兼容 API 格式
+API地址: https://coding.dashscope.aliyuncs.com/apps/anthropic
 """
 
 import json
@@ -11,16 +14,17 @@ from datetime import datetime
 
 
 class QianlianService:
-    """阿里百炼 API 服务类"""
+    """阿里百炼 API 服务类 (Anthropic 兼容格式)"""
     
-    # Coding Plan 专用端点
-    BASE_URL = "https://coding.dashscope.aliyuncs.com/v1"
+    # Anthropic 兼容端点
+    BASE_URL = "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1"
     
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}"
+            "Authorization": f"Bearer {api_key}",
+            "anthropic-version": "2023-06-01"
         }
     
     async def chat_completion(
@@ -33,29 +37,30 @@ class QianlianService:
         **kwargs
     ) -> Dict:
         """
-        聊天补全
+        聊天补全 (Anthropic 兼容格式)
         
         Args:
             model: 模型ID，如 qwen3.5-plus, kimi-k2.5, glm-5, MiniMax-M2.5
-            messages: 消息列表
+            messages: 消息列表 (Anthropic格式: role, content)
             temperature: 温度参数
             max_tokens: 最大token数
             stream: 是否流式输出
         
         Returns:
-            API响应
+            API响应 (Anthropic格式: content数组)
         """
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self.BASE_URL}/messages"
         
+        # Anthropic 格式
         payload = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "stream": stream
         }
         
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        if max_tokens is None:
+            max_tokens = 4096  # 百炼默认
+        payload["max_tokens"] = max_tokens
         
         payload.update(kwargs)
         
@@ -63,13 +68,27 @@ class QianlianService:
             async with session.post(
                 url,
                 headers=self.headers,
-                json=payload
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120)
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     raise Exception(f"API调用失败: {error_text}")
                 
-                return await response.json()
+                result = await response.json()
+                
+                # 转换为 OpenAI 兼容格式返回，方便调用方统一处理
+                return {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": result.get("content", [{}])[0].get("text", "")
+                        },
+                        "finish_reason": result.get("stop_reason", "stop")
+                    }],
+                    "usage": result.get("usage", {}),
+                    "model": model
+                }
     
     async def chat_completion_stream(
         self,
@@ -79,8 +98,8 @@ class QianlianService:
         max_tokens: Optional[int] = None,
         **kwargs
     ) -> AsyncGenerator[str, None]:
-        """流式聊天补全"""
-        url = f"{self.BASE_URL}/chat/completions"
+        """流式聊天补全 (Anthropic 兼容格式)"""
+        url = f"{self.BASE_URL}/messages"
         
         payload = {
             "model": model,
@@ -89,8 +108,9 @@ class QianlianService:
             "stream": True
         }
         
-        if max_tokens:
-            payload["max_tokens"] = max_tokens
+        if max_tokens is None:
+            max_tokens = 4096
+        payload["max_tokens"] = max_tokens
         
         payload.update(kwargs)
         
@@ -98,7 +118,8 @@ class QianlianService:
             async with session.post(
                 url,
                 headers=self.headers,
-                json=payload
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120)
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
