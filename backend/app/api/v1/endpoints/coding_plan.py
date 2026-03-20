@@ -34,7 +34,7 @@ class CodingPlanResponse(BaseModel):
 class NovelWithPlanRequest(BaseModel):
     """带规划的小说生成请求"""
     prompt: str = Field(..., description="小说主题")
-    model: str = Field("qwen-coder-plus", description="规划模型")
+    model: str = Field("qwen-long", description="生成模型，默认使用qwen-long支持长文本")
     api_key: str = Field(..., description="DashScope API Key")
 
 
@@ -127,28 +127,25 @@ async def generate_novel_with_plan(request: NovelWithPlanRequest):
     使用 Coding Plan 方式生成小说
     
     先规划情节架构，再生成具体内容
+    默认使用 qwen-long 模型支持长文本输出
     """
     try:
         service = await create_dashscope_service(request.api_key)
         
         response = await service.generate_novel_with_plan(
             prompt=request.prompt,
-            model=request.model
+            model=request.model  # 默认 qwen-long
         )
         
         plan = response["plan"]
         content = response["content"]
         usage = response.get("usage", {})
         
-        # 计算总成本（规划 + 生成）
+        # 计算总成本
         cost = service.calculate_request_cost(
-            "qwen-coder-plus",  # 规划使用coder模型
-            usage.get("prompt_tokens", 0) // 2,  # 估算
-            usage.get("completion_tokens", 0) // 2
-        ) + service.calculate_request_cost(
-            "qwen-long",  # 生成使用long模型
-            usage.get("prompt_tokens", 0) // 2,
-            usage.get("completion_tokens", 0) // 2
+            request.model,
+            usage.get("prompt_tokens", 0),
+            usage.get("completion_tokens", 0)
         )
         
         return NovelWithPlanResponse(
@@ -232,10 +229,10 @@ async def auto_generate(request: AutoGenerateRequest):
         total_cost = 0
         
         if request.generate_type == "novel":
-            # 小说生成
+            # 小说生成 - 默认使用 qwen-long 支持长文本
             novel_response = await service.generate_novel_with_plan(
                 prompt=request.user_input,
-                model="qwen-coder-plus"
+                model="qwen-long"
             )
             plan = novel_response.get("plan", "")
             result = novel_response.get("content", "")

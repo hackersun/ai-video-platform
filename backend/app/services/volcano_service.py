@@ -293,3 +293,9 @@ class VolcanoService:
 def create_volcano_service(api_key: str) -> VolcanoService:
     """创建火山引擎服务实例"""
     return VolcanoService(api_key)
+
+# 默认模型配置
+DEFAULT_IMAGE_MODEL = "Doubao-Seedream-4.5"
+DEFAULT_VIDEO_MODEL = "Doubao-Seed-2.0-pro"
+DEFAULT_TEXT_MODEL = "doubao-seed-1.8"
+

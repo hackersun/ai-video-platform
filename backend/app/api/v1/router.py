@@ -4,7 +4,7 @@ API v1路由聚合
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import llm_config, external_api, qwen, coding_plan, usage_stats, characters, dashboard, auth, novels, scripts
+from app.api.v1.endpoints import llm_config, external_api, qwen, coding_plan, usage_stats, characters, dashboard, auth, novels, scripts, video
 
 api_router = APIRouter()
 
@@ -37,3 +37,6 @@ api_router.include_router(novels.router, prefix="/novels", tags=["小说管理"]
 
 # 剧本管理API
 api_router.include_router(scripts.router, prefix="/scripts", tags=["剧本管理"])
+
+# 视频生成API
+api_router.include_router(video.router, prefix="/video", tags=["视频生成"])

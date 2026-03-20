@@ -23,29 +23,34 @@ class ModelProvider(str, Enum):
 
 
 # 各能力默认模型配置
+# 注意：文本生成默认使用 qwen-long（百炼平台），支持长文本小说创作
 DEFAULT_MODEL_CONFIG = {
     ModelCapability.TEXT_GENERATION: {
         "provider": ModelProvider.QWEN,
         "model_id": "qwen-long",
-        "model_name_cn": "千问Long",
-        "description": "长文本生成，默认用于小说、剧本创作"
+        "model_name_cn": "千问Long（百炼）",
+        "platform": "qianlian",  # 百炼平台
+        "description": "长文本生成，默认用于小说、剧本创作，支持百万token上下文"
     },
     ModelCapability.IMAGE_GENERATION: {
         "provider": ModelProvider.VOLCANO,
         "model_id": "Doubao-Seedream-4.5",
         "model_name_cn": "豆包Seedream-4.5",
+        "platform": "volcano",  # 火山引擎平台
         "description": "高质量图像生成"
     },
     ModelCapability.VIDEO_GENERATION: {
         "provider": ModelProvider.VOLCANO,
         "model_id": "Doubao-Seed-2.0-pro",
         "model_name_cn": "豆包Seed-2.0-pro",
-        "description": "视频生成，默认4秒"
+        "platform": "volcano",  # 火山引擎平台
+        "description": "视频生成，支持4/8/10秒"
     },
     ModelCapability.TTS: {
         "provider": ModelProvider.VOLCANO,
         "model_id": "Doubao-Seedream-5.0-lite",
         "model_name_cn": "豆包Seedream-5.0-lite",
+        "platform": "volcano",  # 火山引擎平台
         "description": "语音合成"
     }
 }
