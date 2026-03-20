@@ -28,7 +28,8 @@ import {
   AlertCircle,
   Globe,
   Network,
-  KeyRound
+  KeyRound,
+  Edit2
 } from 'lucide-react';
 
 // 模型分类
@@ -76,7 +77,9 @@ interface SavedConfig {
   max_tokens?: number;
   is_default: boolean;
   test_status?: string;
+  test_message?: string;
   usage_count: number;
+  api_key?: string;
 }
 
 export default function LLMConfigPage() {
@@ -84,6 +87,7 @@ export default function LLMConfigPage() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<Model[]>([]);
   const [savedConfigs, setSavedConfigs] = useState<SavedConfig[]>([]);
+  const [editingConfig, setEditingConfig] = useState<SavedConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{success: boolean; message: string; response?: string} | null>(null);
@@ -521,6 +525,65 @@ export default function LLMConfigPage() {
     }
   };
 
+  // 编辑配置
+  const handleEdit = (config: SavedConfig) => {
+    setEditingConfig(config);
+    setConfigName(config.name);
+    setSelectedModel(config.model_id);
+    // 查找对应的provider
+    const model = models.find(m => m.id === config.model_id);
+    if (model) {
+      setSelectedProvider(model.provider_id);
+      setActiveTab(model.provider_id);
+    }
+    // 注意：出于安全考虑，不回填API Key
+    setApiKey('');
+    setApiSecret('');
+    setTemperature(config.temperature);
+    setTopP(config.top_p);
+    setMaxTokens(config.max_tokens || 2048);
+    setIsDefault(config.is_default);
+  };
+
+  // 测试指定配置
+  const handleTestConfig = async (config: SavedConfig) => {
+    if (!config.api_key) {
+      setTestResult({ success: false, message: '无法测试：API Key不可用' });
+      return;
+    }
+    
+    setIsTesting(true);
+    setTestResult(null);
+    
+    try {
+      const res = await fetch(`${API_BASE_URL}/llm/configs/${config.id}/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: '你好，请介绍一下自己' })
+      });
+      
+      const data = await res.json();
+      setTestResult({
+        success: data.success,
+        message: data.message || (data.success ? '测试成功' : '测试失败'),
+        response: data.response
+      });
+      
+      // 更新配置状态
+      if (data.success) {
+        setSavedConfigs(prev => prev.map(c => 
+          c.id === config.id 
+            ? { ...c, test_status: 'success', test_message: data.message }
+            : c
+        ));
+      }
+    } catch (error) {
+      setTestResult({ success: false, message: '测试请求失败' });
+    }
+    
+    setIsTesting(false);
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -887,10 +950,28 @@ export default function LLMConfigPage() {
                             <Button
                               size="sm"
                               variant="ghost"
+                              onClick={() => handleTestConfig(config)}
+                              title="测试"
+                              className="text-blue-400 hover:text-blue-300"
+                            >
+                              <TestTube className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => handleSetDefault(config.id)}
                               title="设为默认"
                             >
                               <CheckCircle className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleEdit(config)}
+                              title="编辑"
+                              className="text-white/60 hover:text-white"
+                            >
+                              <Edit2 className="w-3 h-3" />
                             </Button>
                             <Button
                               size="sm"

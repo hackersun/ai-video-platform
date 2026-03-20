@@ -9,7 +9,6 @@ import { MainLayout } from '@/components/layout/main-layout';
 import { 
   Video, 
   Play, 
-  Pause,
   Settings,
   Clock,
   Film,
@@ -19,10 +18,7 @@ import {
   Loader2,
   CheckCircle,
   AlertCircle,
-  Image as ImageIcon,
-  Music,
   RefreshCw,
-  ExternalLink,
   Download,
   Copy
 } from 'lucide-react';
@@ -37,37 +33,70 @@ const PROVIDERS = [
   { id: 'volcano', name: '火山引擎', icon: '🔥', cost: '约50分/秒' },
 ];
 
-// 默认火山API Key（演示用，实际应该从用户配置获取）
+// 默认火山API Key
 const DEFAULT_API_KEY = 'be8feb9d-6b08-406e-8447-b22b87cd907a';
+
+// 视频任务类型
+interface VideoJob {
+  id: string;
+  task_id?: string;
+  title?: string;
+  prompt?: string;
+  model_name?: string;
+  status: string;
+  progress: number;
+  video_url?: string;
+  cover_url?: string;
+  error_message?: string;
+  duration?: number;
+  resolution?: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export default function VideoGenerationPage() {
   const [selectedProvider] = useState('volcano');
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // 参数配置
   const [prompt, setPrompt] = useState('无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验');
   const [duration, setDuration] = useState(5);
-  const [fps] = useState(24);
   const [resolution, setResolution] = useState('720p');
   const [imageUrl, setImageUrl] = useState('');
   
   // 历史记录
-  const [history, setHistory] = useState<Array<{
-    id: string;
-    prompt: string;
-    status: string;
-    videoUrl?: string;
-    time: string;
-  }>>([]);
+  const [history, setHistory] = useState<VideoJob[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // 加载历史记录
+  const loadHistory = async () => {
+    setIsLoadingHistory(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/video/jobs`);
+      if (response.ok) {
+        const data = await response.json();
+        setHistory(data || []);
+      }
+    } catch (err) {
+      console.error('加载历史失败:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    loadHistory();
+  }, []);
 
   // 轮询任务状态
-  const pollTaskStatus = async (tid: string) => {
+  const pollTaskStatus = async (tid: string, jid: string) => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/video/status/${tid}?api_key=${DEFAULT_API_KEY}`);
+      const response = await fetch(`${API_BASE}/api/v1/video/status/${tid}?api_key=${DEFAULT_API_KEY}&job_id=${jid}`);
       if (!response.ok) {
         throw new Error('查询失败');
       }
@@ -79,24 +108,19 @@ export default function VideoGenerationPage() {
         setStatus('completed');
         setVideoUrl(data.video_url);
         setProgress(100);
-        // 添加到历史
-        setHistory(prev => [{
-          id: tid,
-          prompt: prompt,
-          status: 'completed',
-          videoUrl: data.video_url,
-          time: new Date().toLocaleTimeString()
-        }, ...prev.slice(0, 9)]);
+        // 刷新历史
+        loadHistory();
       } else if (data.status === 'failed') {
         setStatus('error');
         setError(data.message || '生成失败');
+        loadHistory();
       } else {
         // 继续轮询
-        setTimeout(() => pollTaskStatus(tid), 3000);
+        setTimeout(() => pollTaskStatus(tid, jid), 3000);
       }
     } catch (err) {
       console.error('轮询状态失败:', err);
-      setTimeout(() => pollTaskStatus(tid), 5000);
+      setTimeout(() => pollTaskStatus(tid, jid), 5000);
     }
   };
 
@@ -133,13 +157,35 @@ export default function VideoGenerationPage() {
 
       const data = await response.json();
       setTaskId(data.task_id);
+      setJobId(data.job_id);
       setStatus('generating');
       
       // 开始轮询
-      pollTaskStatus(data.task_id);
+      pollTaskStatus(data.task_id, data.job_id);
+      // 刷新历史列表
+      loadHistory();
     } catch (err: any) {
       setStatus('error');
       setError(err.message || '提交失败');
+    }
+  };
+
+  // 刷新单个任务状态
+  const handleRefreshStatus = async (job: VideoJob) => {
+    if (!job.id) return;
+    
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/video/jobs/${job.id}/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: DEFAULT_API_KEY })
+      });
+      
+      if (response.ok) {
+        loadHistory();
+      }
+    } catch (err) {
+      console.error('刷新状态失败:', err);
     }
   };
 
@@ -156,6 +202,12 @@ export default function VideoGenerationPage() {
     if (videoUrl) {
       window.open(videoUrl, '_blank');
     }
+  };
+
+  // 格式化时间
+  const formatTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleString();
   };
 
   return (
@@ -413,46 +465,95 @@ export default function VideoGenerationPage() {
                 <CardTitle className="text-white flex items-center gap-2">
                   <Clock className="w-5 h-5" />
                   生成历史
+                  <Button 
+                    variant="ghost" 
+                    size="sm"
+                    onClick={loadHistory}
+                    disabled={isLoadingHistory}
+                    className="ml-auto text-white/60"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isLoadingHistory ? 'animate-spin' : ''}`} />
+                  </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {history.length > 0 ? (
-                  <div className="space-y-3 max-h-60 overflow-y-auto">
-                    {history.map((item) => (
+                {isLoadingHistory && history.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-white/40" />
+                    <p className="text-white/40">加载中...</p>
+                  </div>
+                ) : history.length > 0 ? (
+                  <div className="space-y-3 max-h-80 overflow-y-auto">
+                    {history.map((job) => (
                       <div
-                        key={item.id}
-                        className="flex items-center justify-between p-3 rounded-lg bg-white/5"
+                        key={job.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="w-12 h-12 rounded bg-violet-500/20 flex items-center justify-center">
-                            {item.status === 'completed' ? (
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="w-12 h-12 rounded bg-violet-500/20 flex items-center justify-center flex-shrink-0">
+                            {job.status === 'succeeded' ? (
                               <Video className="w-6 h-6 text-violet-400" />
-                            ) : (
+                            ) : job.status === 'failed' ? (
                               <AlertCircle className="w-6 h-6 text-red-400" />
+                            ) : job.status === 'running' ? (
+                              <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
+                            ) : (
+                              <Clock className="w-6 h-6 text-yellow-400" />
                             )}
                           </div>
-                          <div>
-                            <div className="text-white font-medium truncate max-w-[200px]">
-                              {item.prompt.slice(0, 30)}...
+                          <div className="min-w-0 flex-1">
+                            <div className="text-white font-medium truncate">
+                              {job.title || job.prompt?.slice(0, 30) || '视频生成'}
                             </div>
-                            <div className="text-white/60 text-sm">{item.time}</div>
+                            <div className="text-white/60 text-sm flex items-center gap-2">
+                              <span>{formatTime(job.created_at)}</span>
+                              {job.duration && <span>{job.duration}秒</span>}
+                              {job.resolution && <span>{job.resolution}</span>}
+                            </div>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-shrink-0">
                           <span className={`px-2 py-1 text-xs rounded ${
-                            item.status === 'completed' 
+                            job.status === 'succeeded' 
                               ? 'bg-green-500/20 text-green-400' 
-                              : 'bg-red-500/20 text-red-400'
+                              : job.status === 'failed'
+                              ? 'bg-red-500/20 text-red-400'
+                              : job.status === 'running'
+                              ? 'bg-blue-500/20 text-blue-400'
+                              : 'bg-yellow-500/20 text-yellow-400'
                           }`}>
-                            {item.status === 'completed' ? '已完成' : '失败'}
+                            {job.status === 'succeeded' ? '已完成' : 
+                             job.status === 'failed' ? '失败' : 
+                             job.status === 'running' ? '生成中' : '等待'}
                           </span>
-                          {item.videoUrl && (
+                          {(job.status === 'pending' || job.status === 'running') && (
                             <Button 
                               variant="ghost" 
                               size="sm"
-                              onClick={() => window.open(item.videoUrl, '_blank')}
+                              onClick={() => handleRefreshStatus(job)}
                             >
-                              <ChevronRight className="w-4 h-4" />
+                              <RefreshCw className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {job.video_url && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => {
+                                setVideoUrl(job.video_url!);
+                                setStatus('completed');
+                              }}
+                            >
+                              <Play className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {job.video_url && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => window.open(job.video_url, '_blank')}
+                            >
+                              <Download className="w-4 h-4" />
                             </Button>
                           )}
                         </div>
@@ -463,6 +564,7 @@ export default function VideoGenerationPage() {
                   <div className="text-center py-8 text-white/40">
                     <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
                     <p>暂无生成历史</p>
+                    <p className="text-sm">生成视频后会显示在这里</p>
                   </div>
                 )}
               </CardContent>
@@ -472,7 +574,6 @@ export default function VideoGenerationPage() {
             <Card className="bg-blue-600/10 border-blue-500/30">
               <CardContent className="p-4">
                 <h4 className="font-medium text-blue-300 mb-2 flex items-center gap-2">
-                  <ExternalLink className="w-4 h-4" />
                   当前使用
                 </h4>
                 <ul className="text-sm text-white/60 space-y-1">
