@@ -1,6 +1,9 @@
 """
 AI平台模型配置
 定义各能力类型的默认模型
+
+火山引擎API Key（已验证可用）: be8feb9d-6b08-406e-8447-b22b87cd907a
+百炼API Key（已验证无效，返回401）
 """
 
 from enum import Enum
@@ -22,24 +25,37 @@ class ModelProvider(str, Enum):
     BAIDU = "baidu"        # 百度文心
 
 
+# 火山引擎模型Endpoint IDs (已验证可用)
+# API Key: be8feb9d-6b08-406e-8447-b22b87cd907a
+VOLCANO_ENDPOINT_IDS = {
+    "Doubao-Seedream-4.5": "ep-20260320112226-rgndq",
+    "Doubao-Seed-2.0-pro": "ep-20260320111926-sn9tg",
+    "Doubao-Seedream-5.0-lite": "ep-20260320113731-jzjkn",
+    # 文本生成模型（使用chat/completions端点）
+    "doubao-pro-32k": "doubao-pro-32k",
+    "doubao-pro-128k": "doubao-pro-128k",
+}
+
+
 # 各能力默认模型配置
 # 注意：
-# - 千问 (qwen-long等) 通过 DashScope API: https://dashscope.aliyuncs.com
-# - 百炼 (qwen3.5-plus等) 通过百炼 API: https://coding.dashscope.aliyuncs.com
-# - 火山引擎 (豆包等) 通过 ARK API: https://ark.cn-beijing.volces.com
+# - 由于百炼API Key无效，文本生成改用火山引擎 doubao-pro-32k
+# - 火山引擎API Key已验证可用: be8feb9d-6b08-406e-8447-b22b87cd907a
 DEFAULT_MODEL_CONFIG = {
     ModelCapability.TEXT_GENERATION: {
-        "provider": ModelProvider.QWEN,
-        "model_id": "qwen-long",
-        "model_name_cn": "千问Long",
-        "platform": "dashscope",  # 千问/DashScope平台
-        "description": "长文本生成，默认用于小说、剧本创作，支持百万token上下文"
+        "provider": ModelProvider.VOLCANO,
+        "model_id": "doubao-pro-32k",
+        "model_name_cn": "豆包Pro-32K（火山引擎）",
+        "platform": "volcano",  # 火山引擎平台
+        "endpoint_id": "doubao-pro-32k",
+        "description": "长文本生成，默认用于小说、剧本创作，支持32K上下文"
     },
     ModelCapability.IMAGE_GENERATION: {
         "provider": ModelProvider.VOLCANO,
         "model_id": "Doubao-Seedream-4.5",
         "model_name_cn": "豆包Seedream-4.5",
         "platform": "volcano",  # 火山引擎平台
+        "endpoint_id": "ep-20260320112226-rgndq",
         "description": "高质量图像生成"
     },
     ModelCapability.VIDEO_GENERATION: {
@@ -47,6 +63,7 @@ DEFAULT_MODEL_CONFIG = {
         "model_id": "Doubao-Seed-2.0-pro",
         "model_name_cn": "豆包Seed-2.0-pro",
         "platform": "volcano",  # 火山引擎平台
+        "endpoint_id": "ep-20260320111926-sn9tg",
         "description": "视频生成，支持4/8/10秒"
     },
     ModelCapability.TTS: {
@@ -54,6 +71,7 @@ DEFAULT_MODEL_CONFIG = {
         "model_id": "Doubao-Seedream-5.0-lite",
         "model_name_cn": "豆包Seedream-5.0-lite",
         "platform": "volcano",  # 火山引擎平台
+        "endpoint_id": "ep-20260320113731-jzjkn",
         "description": "语音合成"
     }
 }
@@ -104,3 +122,19 @@ def get_image_size_options() -> list:
         {"value": "1024x1536", "label": "1024x1536", "description": "竖版海报"},
         {"value": "1536x1024", "label": "1536x1024", "description": "横版封面"}
     ]
+
+
+# 已验证可用的API Keys
+VERIFIED_API_KEYS = {
+    "volcano": "be8feb9d-6b08-406e-8447-b22b87cd907a",
+}
+
+
+def get_verified_api_key(provider: str = "volcano") -> str:
+    """获取已验证的API Key"""
+    return VERIFIED_API_KEYS.get(provider, "")
+
+
+def get_endpoint_id(model_id: str) -> str:
+    """获取模型的Endpoint ID"""
+    return VOLCANO_ENDPOINT_IDS.get(model_id, model_id)
