@@ -132,6 +132,19 @@ DEFAULT_PROVIDERS = [
         "icon_url": "/icons/qwen.svg",
         "website_url": "https://dashscope.console.aliyun.com",
         "doc_url": "https://help.aliyun.com/document_detail/611411.html"
+    },
+    {
+        "id": "baidu",
+        "name": "baidu",
+        "name_cn": "百度文心一言",
+        "name_en": "Baidu ERNIE",
+        "provider_type": "cloud",
+        "base_url": "https://qianfan.baidubce.com/v2/chat/completions",
+        "auth_type": "bearer",
+        "description": "百度文心一言大模型，支持ERNIE-4.0、ERNIE-3.5等模型",
+        "icon_url": "/icons/baidu.svg",
+        "website_url": "https://console.bce.baidu.com/qianfan",
+        "doc_url": "https://cloud.baidu.com/doc/WenxinWorkshop/index.html"
     }
 ]
 
@@ -357,6 +370,117 @@ DEFAULT_MODELS = [
         "description": "视觉语言模型，支持图像理解",
         "version": "1.0",
         "release_date": "2024-06-01"
+    },
+    # 百度文心一言模型
+    {
+        "id": "ernie-4.0-8k",
+        "provider_id": "baidu",
+        "model_id": "ernie-4.0-8k",
+        "model_name": "ERNIE-4.0-8K",
+        "model_name_cn": "文心一言4.0-8K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode"],
+        "context_window": 8192,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.12,
+        "output_cost_per_1k": 0.12,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "百度文心旗舰大模型，知识理解与生成能力强",
+        "version": "4.0",
+        "release_date": "2024-05-01"
+    },
+    {
+        "id": "ernie-3.5-8k",
+        "provider_id": "baidu",
+        "model_id": "ernie-3.5-8k",
+        "model_name": "ERNIE-3.5-8K",
+        "model_name_cn": "文心一言3.5-8K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode"],
+        "context_window": 8192,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.012,
+        "output_cost_per_1k": 0.012,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "文心3.5升级版，性价比高",
+        "version": "3.5",
+        "release_date": "2024-03-01"
+    },
+    {
+        "id": "ernie-3.5-8k-0205",
+        "provider_id": "baidu",
+        "model_id": "ernie-3.5-8k-0205",
+        "model_name": "ERNIE-3.5-8K-0205",
+        "model_name_cn": "文心一言3.5-0205",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling"],
+        "context_window": 8192,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.008,
+        "output_cost_per_1k": 0.008,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "文心3.5轻量版，成本更低",
+        "version": "3.5",
+        "release_date": "2024-02-05"
+    },
+    {
+        "id": "ernie-speed-8k",
+        "provider_id": "baidu",
+        "model_id": "ernie-speed-8k",
+        "model_name": "ERNIE-Speed-8K",
+        "model_name_cn": "文心一言Speed-8K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion"],
+        "context_window": 8192,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.004,
+        "output_cost_per_1k": 0.004,
+        "supports_streaming": True,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "文心极速版，响应速度快",
+        "version": "speed",
+        "release_date": "2024-05-01"
+    },
+    {
+        "id": "ernie-lite-8k",
+        "provider_id": "baidu",
+        "model_id": "ernie-lite-8k",
+        "model_name": "ERNIE-Lite-8K",
+        "model_name_cn": "文心一言Lite-8K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion"],
+        "context_window": 8192,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.003,
+        "output_cost_per_1k": 0.003,
+        "supports_streaming": True,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "文心轻量版，成本最低",
+        "version": "lite",
+        "release_date": "2024-03-01"
     }
 ]
 
@@ -428,11 +552,11 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
         "input": {"messages": [{"role": "user", "content": message}]},
         "parameters": {"max_tokens": 100}
     }
-    
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, json=data, headers=headers)
-            
+
             if response.status_code == 200:
                 result = response.json()
                 content = result.get("output", {}).get("text") or result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
@@ -448,6 +572,62 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
                 return {
                     "success": False,
                     "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "response": None,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": 0
+                }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络或API地址",
+            "response": None,
+            "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)[:100]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
+
+
+async def test_baidu_api(api_key: str, model_id: str, message: str) -> dict:
+    """测试百度文心一言API"""
+    # 百度千帆平台使用IAM认证或Access Token
+    # 兼容模式使用Access Token方式
+    url = "https://qianfan.baidubce.com/v2/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": message}],
+        "max_tokens": 100
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=data, headers=headers)
+
+            if response.status_code == 200:
+                result = response.json()
+                return {
+                    "success": True,
+                    "message": "百度文心一言 API 连接成功！",
+                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
+                }
+            else:
+                error_data = response.json() if response.content else {}
+                error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(error_data)[:100]
+                return {
+                    "success": False,
+                    "message": f"API错误: {error_msg}",
                     "response": None,
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
                     "tokens_used": 0
@@ -682,6 +862,8 @@ async def test_api_connection(
         return await test_volcano_api(request.api_key, model_id, request.message)
     elif model_provider_id == "qwen":
         return await test_qwen_api(request.api_key, model_id, request.message)
+    elif model_provider_id == "baidu":
+        return await test_baidu_api(request.api_key, model_id, request.message)
     else:
         return {
             "success": False,
@@ -732,6 +914,8 @@ async def test_config(
         test_result = await test_volcano_api(config.api_key, model.model_id, request.message)
     elif provider_id == "qwen":
         test_result = await test_qwen_api(config.api_key, model.model_id, request.message)
+    elif provider_id == "baidu":
+        test_result = await test_baidu_api(config.api_key, model.model_id, request.message)
     else:
         test_result = {
             "success": False,
