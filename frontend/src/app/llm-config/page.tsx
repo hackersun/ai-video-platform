@@ -116,7 +116,8 @@ export default function LLMConfigPage() {
       setProviders([
         { id: 'volcano', name: 'volcano', name_cn: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3', description: '字节跳动豆包大模型' },
         { id: 'qwen', name: 'qwen', name_cn: '阿里千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '阿里云通义千问' },
-        { id: 'baidu', name: 'baidu', name_cn: '百度文心一言', base_url: 'https://qianfan.baidubce.com/v2/chat/completions', description: '百度文心大模型' },
+        { id: 'baidu', name: 'baidu', name_cn: '百度文心', base_url: 'https://qianfan.baidubce.com/v2/chat/completions', description: '百度文心大模型' },
+        { id: 'qianlian', name: 'qianlian', name_cn: '阿里百炼', base_url: 'https://qianfan.wbCEAI.githubapps.com', description: '阿里云百炼大模型' },
       ]);
     }
   };
@@ -167,6 +168,7 @@ export default function LLMConfigPage() {
       volcano: 'volcano',
       qwen: 'qwen',
       baidu: 'baidu',
+      qianlian: 'qianlian',
       external: ''
     };
     setSelectedProvider(providerMap[activeTab] || '');
@@ -395,6 +397,47 @@ export default function LLMConfigPage() {
       }
     }
 
+    // 阿里百炼测试
+    if (provider.id === 'qianlian') {
+      try {
+        const res = await fetch(`${provider.base_url}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify({
+            model: model.model_id,
+            input: { messages: [{ role: 'user', content: '你好' }] },
+            parameters: { max_tokens: 100 }
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            success: true,
+            message: '✅ 阿里百炼 API 连接成功！',
+            response: data.output?.text || data.choices?.[0]?.message?.content || '响应成功'
+          };
+        } else if (res.status === 401 || res.status === 403) {
+          return { success: false, message: '🔑 API Key无效或已过期，请检查Key是否正确' };
+        } else if (res.status === 429) {
+          return { success: false, message: '⏱️ 请求过于频繁，请稍后再试（配额可能已用完）' };
+        } else if (res.status >= 500) {
+          return { success: false, message: '🖥️ 服务端错误，请检查阿里百炼服务状态' };
+        } else {
+          const error = await res.json().catch(() => ({}));
+          return { success: false, message: `❌ API错误: ${error.error?.message || res.statusText}` };
+        }
+      } catch (e: any) {
+        if (e.name === 'TypeError' && e.message.includes('fetch')) {
+          return { success: false, message: '🌐 网络连接失败，请检查网络或API地址是否正确' };
+        }
+        return { success: false, message: `❌ 连接失败: ${e.message}` };
+      }
+    }
+
     return { success: false, message: '❌ 不支持的提供商' };
   };
 
@@ -527,10 +570,17 @@ export default function LLMConfigPage() {
                   >
                     🔴 百度文心
                   </Button>
+                  <Button
+                    variant={activeTab === 'qianlian' ? 'default' : 'outline'}
+                    onClick={() => setActiveTab('qianlian')}
+                    className={activeTab === 'qianlian' ? 'bg-violet-600' : 'border-white/10'}
+                  >
+                    🟠 阿里百炼
+                  </Button>
                 </div>
 
-                {/* 火山引擎/千问/百度模型 */}
-                {(activeTab === 'volcano' || activeTab === 'qwen' || activeTab === 'baidu') && (
+                {/* 火山引擎/千问/百度/百炼模型 */}
+                {(activeTab === 'volcano' || activeTab === 'qwen' || activeTab === 'baidu' || activeTab === 'qianlian') && (
                   <div className="space-y-3">
                     {filteredModels.length > 0 ? filteredModels.map((model) => (
                       <div

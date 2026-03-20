@@ -664,6 +664,60 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
         }
 
 
+async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
+    """测试阿里百炼API"""
+    url = "https://qianfan.wbCEAI.githubapps.com/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": model_id,
+        "input": {"messages": [{"role": "user", "content": message}]},
+        "parameters": {"max_tokens": 100}
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=data, headers=headers)
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result.get("output", {}).get("text") or result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
+                return {
+                    "success": True,
+                    "message": "阿里百炼 API 连接成功！",
+                    "response": content,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) or result.get("usage", {}).get("input_tokens", 0) + result.get("usage", {}).get("output_tokens", 0)
+                }
+            else:
+                error = response.json().get("error", {})
+                return {
+                    "success": False,
+                    "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "response": None,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": 0
+                }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络或API地址",
+            "response": None,
+            "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)[:100]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
+
+
 async def test_baidu_api(api_key: str, model_id: str, message: str) -> dict:
     """测试百度文心一言API"""
     # 百度千帆平台使用IAM认证或Access Token
@@ -932,6 +986,8 @@ async def test_api_connection(
         return await test_volcano_api(request.api_key, model_id, request.message)
     elif model_provider_id == "qwen":
         return await test_qwen_api(request.api_key, model_id, request.message)
+    elif model_provider_id == "qianlian":
+        return await test_qianlian_api(request.api_key, model_id, request.message)
     elif model_provider_id == "baidu":
         return await test_baidu_api(request.api_key, model_id, request.message)
     else:
@@ -984,6 +1040,8 @@ async def test_config(
         test_result = await test_volcano_api(config.api_key, model.model_id, request.message)
     elif provider_id == "qwen":
         test_result = await test_qwen_api(config.api_key, model.model_id, request.message)
+    elif provider_id == "qianlian":
+        test_result = await test_qianlian_api(config.api_key, model.model_id, request.message)
     elif provider_id == "baidu":
         test_result = await test_baidu_api(config.api_key, model.model_id, request.message)
     else:
