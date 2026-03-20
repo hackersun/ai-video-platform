@@ -165,11 +165,11 @@ async def get_video_status(
         duration = None
         resolution = None
         
-        if task_status == "succeeded" and hasattr(get_result, 'output'):
-            output = get_result.output
-            if output:
-                video_url = getattr(output, 'video_url', None)
-                cover_url = getattr(output, 'last_frame_url', None)
+        if task_status == "succeeded" and hasattr(get_result, 'content'):
+            content = get_result.content
+            if content:
+                video_url = getattr(content, 'video_url', None)
+                cover_url = getattr(content, 'last_frame_url', None)
         
         if hasattr(get_result, 'duration'):
             duration = get_result.duration

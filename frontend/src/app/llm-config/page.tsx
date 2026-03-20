@@ -115,9 +115,8 @@ export default function LLMConfigPage() {
       // 使用默认提供商
       setProviders([
         { id: 'volcano', name: 'volcano', name_cn: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3', description: '字节跳动豆包大模型' },
-        { id: 'qwen', name: 'qwen', name_cn: '阿里千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '阿里云通义千问' },
-        { id: 'baidu', name: 'baidu', name_cn: '百度文心', base_url: 'https://qianfan.baidubce.com/v2/chat/completions', description: '百度文心大模型' },
-        { id: 'qianlian', name: 'qianlian', name_cn: '阿里百炼', base_url: 'https://bailian.aliyuncs.com', description: '阿里云百炼大模型' },
+        { id: 'qianlian', name: 'qianlian', name_cn: '阿里百炼', base_url: 'https://coding.dashscope.aliyuncs.com/apps/anthropic', description: '阿里云百炼平台' },
+        { id: 'dashscope', name: 'dashscope', name_cn: '阿里千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '阿里云千问DashScope' },
       ]);
     }
   };
@@ -138,7 +137,7 @@ export default function LLMConfigPage() {
       // 使用默认模型
       setModels([
         { id: 'doubao-seed-1-8', provider_id: 'volcano', model_id: 'doubao-seed-1-8-251228', model_name: 'Doubao-Seed-1.8', model_name_cn: '豆包Seed-1.8', model_type: 'chat', context_window: 4096, max_tokens: 2048, input_cost_per_1k: 0.5, output_cost_per_1k: 1.0, is_recommended: true },
-        { id: 'qwen-turbo', provider_id: 'qwen', model_id: 'qwen-turbo', model_name: 'qwen-turbo', model_name_cn: '千问Turbo', model_type: 'chat', context_window: 8192, max_tokens: 2048, input_cost_per_1k: 0.5, output_cost_per_1k: 1.0 },
+        { id: 'qwen-turbo', provider_id: 'dashscope', model_id: 'qwen-turbo', model_name: 'qwen-turbo', model_name_cn: '千问Turbo', model_type: 'chat', context_window: 8192, max_tokens: 2048, input_cost_per_1k: 0.5, output_cost_per_1k: 1.0 },
       ]);
     }
   };
@@ -166,9 +165,8 @@ export default function LLMConfigPage() {
   useEffect(() => {
     const providerMap: Record<string, string> = {
       volcano: 'volcano',
-      qwen: 'qwen',
-      baidu: 'baidu',
       qianlian: 'qianlian',
+      dashscope: 'dashscope',
       external: ''
     };
     setSelectedProvider(providerMap[activeTab] || '');
@@ -557,30 +555,23 @@ export default function LLMConfigPage() {
                     🔥 火山引擎
                   </Button>
                   <Button
-                    variant={activeTab === 'qwen' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('qwen')}
-                    className={activeTab === 'qwen' ? 'bg-violet-600' : 'border-white/10'}
-                  >
-                    🐱 阿里千问
-                  </Button>
-                  <Button
-                    variant={activeTab === 'baidu' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('baidu')}
-                    className={activeTab === 'baidu' ? 'bg-violet-600' : 'border-white/10'}
-                  >
-                    🔴 百度文心
-                  </Button>
-                  <Button
                     variant={activeTab === 'qianlian' ? 'default' : 'outline'}
                     onClick={() => setActiveTab('qianlian')}
                     className={activeTab === 'qianlian' ? 'bg-violet-600' : 'border-white/10'}
                   >
                     🟠 阿里百炼
                   </Button>
+                  <Button
+                    variant={activeTab === 'dashscope' ? 'default' : 'outline'}
+                    onClick={() => setActiveTab('dashscope')}
+                    className={activeTab === 'dashscope' ? 'bg-violet-600' : 'border-white/10'}
+                  >
+                    🐱 阿里千问
+                  </Button>
                 </div>
 
-                {/* 火山引擎/千问/百度/百炼模型 */}
-                {(activeTab === 'volcano' || activeTab === 'qwen' || activeTab === 'baidu' || activeTab === 'qianlian') && (
+                {/* 火山引擎/百炼/千问模型 */}
+                {(activeTab === 'volcano' || activeTab === 'qianlian' || activeTab === 'dashscope') && (
                   <div className="space-y-3">
                     {filteredModels.length > 0 ? filteredModels.map((model) => (
                       <div
@@ -948,8 +939,8 @@ export default function LLMConfigPage() {
                 </h4>
                 <ul className="text-sm text-white/60 space-y-1">
                   <li>• <strong className="text-white/80">火山引擎:</strong> <a href="https://www.volcengine.com" target="_blank" className="text-violet-400 hover:underline">volcengine.com</a></li>
+                  <li>• <strong className="text-white/80">阿里百炼:</strong> <a href="https://bailian.console.aliyun.com" target="_blank" className="text-violet-400 hover:underline">阿里云百炼</a></li>
                   <li>• <strong className="text-white/80">阿里千问:</strong> <a href="https://dashscope.console.aliyun.com" target="_blank" className="text-violet-400 hover:underline">阿里云DashScope</a></li>
-                  <li>• <strong className="text-white/80">百度文心:</strong> <a href="https://console.bce.baidu.com/qianfan" target="_blank" className="text-violet-400 hover:underline">百度千帆平台</a></li>
                 </ul>
               </CardContent>
             </Card>
