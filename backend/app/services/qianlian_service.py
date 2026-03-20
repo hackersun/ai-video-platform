@@ -586,43 +586,57 @@ class QianlianService:
 
 
 # ============== 模型配置 ==============
+# 百炼支持的模型（Anthropic兼容格式）
+# 默认: qwen3.5-plus
 
 QIANLIAN_MODELS = {
     "qwen3.5-plus": {
         "type": "vision",
         "name": "通义千问3.5-Plus",
+        "name_cn": "千问3.5-Plus",
         "context_window": 32768,
         "max_tokens": 4096,
         "input_cost_per_1k": 0.02,
         "output_cost_per_1k": 0.06,
-        "capabilities": ["chat", "vision", "completion"]
+        "capabilities": ["chat", "vision", "completion"],
+        "vision_support": True,
+        "description": "支持图片理解的千问模型"
     },
     "kimi-k2.5": {
         "type": "vision",
-        "name": "月之暗面Kimi-K2.5",
+        "name": "Moonshot-Kimi-K2.5",
+        "name_cn": "Kimi-K2.5",
         "context_window": 32768,
         "max_tokens": 4096,
         "input_cost_per_1k": 0.02,
         "output_cost_per_1k": 0.06,
-        "capabilities": ["chat", "vision", "completion"]
+        "capabilities": ["chat", "vision", "completion"],
+        "vision_support": True,
+        "description": "支持图片理解的Kimi模型"
     },
     "glm-5": {
         "type": "chat",
-        "name": "智谱GLM-5",
+        "name": "THUDM-GLM-5",
+        "name_cn": "智谱GLM-5",
         "context_window": 32768,
         "max_tokens": 4096,
         "input_cost_per_1k": 0.02,
         "output_cost_per_1k": 0.06,
-        "capabilities": ["chat", "completion"]
+        "capabilities": ["chat", "completion"],
+        "vision_support": False,
+        "description": "智谱大语言模型"
     },
     "MiniMax-M2.5": {
         "type": "chat",
         "name": "MiniMax-M2.5",
+        "name_cn": "MiniMax-M2.5",
         "context_window": 32768,
         "max_tokens": 4096,
         "input_cost_per_1k": 0.02,
         "output_cost_per_1k": 0.06,
-        "capabilities": ["chat", "completion"]
+        "capabilities": ["chat", "completion"],
+        "vision_support": False,
+        "description": "MiniMax大语言模型"
     }
 }
 
