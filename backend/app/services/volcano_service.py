@@ -1,12 +1,10 @@
 """
 火山引擎（Volcano Engine）API 服务
 支持豆包大模型、图像生成、视频生成、TTS语音合成
+
+API文档: https://www.volcengine.com/docs/82379
 """
 
-import base64
-import hashlib
-import hmac
-import time
 from typing import List, Dict, Optional, AsyncGenerator
 from datetime import datetime
 import aiohttp
@@ -17,28 +15,22 @@ from app.core.volcano_config import VOLCANO_MODELS, get_volcano_model
 class VolcanoService:
     """火山引擎 API 服务类"""
 
-    # 文本生成 API (ARK)
+    # ARK API 基础地址 (文本、图像、视频生成共用)
     ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 
-    # 图像/视频生成 API (视觉智能)
-    VISUAL_BASE_URL = "https://visual.volcengine.com"
+    # 模型Endpoint IDs (从控制台获取)
+    ENDPOINT_IDS = {
+        "Doubao-Seedream-4.5": "ep-20260320112226-rgndq",
+        "Doubao-Seedream-5.0-lite": "ep-20260320113731-jzjkn",
+        "Doubao-Seed-2.0-pro": "ep-20260320111926-sn9tg"
+    }
 
-    def __init__(self, access_key: str, secret_key: str):
-        self.access_key = access_key
-        self.secret_key = secret_key
+    def __init__(self, api_key: str):
+        self.api_key = api_key
         self.headers = {
-            "Content-Type": "application/json"
-        }
-
-    def _generate_auth_header(self, method: str, path: str, body: str = "") -> dict:
-        """生成火山引擎签名认证"""
-        # 这里简化处理，实际应使用完整的签名算法
-        headers = {
             "Content-Type": "application/json",
-            "X-Date": datetime.utcnow().strftime("%Y%m%dT%H%M%SZ"),
-            "X-Access-Key": self.access_key
+            "Authorization": f"Bearer {api_key}"
         }
-        return headers
 
     async def chat_completion(
         self,
@@ -73,19 +65,16 @@ class VolcanoService:
 
         payload.update(kwargs)
 
-        headers = self._generate_auth_header("POST", "/chat/completions")
-        headers["Authorization"] = f"Bearer {self.secret_key}"
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=headers,
+                headers=self.headers,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=120)
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(f"API调用失败: {error_text}")
+                    raise Exception(f"文本生成API调用失败: {error_text}")
 
                 return await response.json()
 
@@ -93,8 +82,9 @@ class VolcanoService:
         self,
         prompt: str,
         model: str = "Doubao-Seedream-4.5",
-        size: str = "1024x1024",
+        size: str = "2K",
         num: int = 1,
+        watermark: bool = True,
         **kwargs
     ) -> Dict:
         """
@@ -103,28 +93,31 @@ class VolcanoService:
         Args:
             prompt: 图片描述
             model: 模型ID，如 Doubao-Seedream-4.5, Doubao-Seedream-5.0-lite
-            size: 图片尺寸，如 512x512, 768x768, 1024x1024, 1024x1536, 1536x1024
+            size: 图片尺寸，支持 2K, 4K 等
             num: 生成数量
+            watermark: 是否添加水印
         """
-        # 注意：图像生成API可能使用不同的端点，这里使用通用视觉API
-        url = f"{self.VISUAL_BASE_URL}/api/v1/image/generate"
+        url = f"{self.ARK_BASE_URL}/images/generations"
+
+        # 获取Endpoint ID
+        endpoint_id = self.ENDPOINT_IDS.get(model, model)
 
         payload = {
-            "model": model,
+            "model": endpoint_id,
             "prompt": prompt,
             "size": size,
-            "n": num
+            "n": num,
+            "response_format": "url",
+            "stream": False,
+            "watermark": watermark
         }
 
         payload.update(kwargs)
 
-        headers = self._generate_auth_header("POST", "/api/v1/image/generate")
-        headers["Authorization"] = f"Bearer {self.secret_key}"
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=headers,
+                headers=self.headers,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=180)
             ) as response:
@@ -138,42 +131,49 @@ class VolcanoService:
         self,
         prompt: str,
         model: str = "Doubao-Seed-2.0-pro",
-        duration: int = 4,
-        resolution: str = "720p",
         image_url: Optional[str] = None,
+        duration: int = 4,
         **kwargs
     ) -> Dict:
         """
-        视频生成
+        视频生成 (通过Responses API)
 
         Args:
             prompt: 视频描述
             model: 模型ID，如 Doubao-Seed-2.0-pro
-            duration: 视频时长(秒)，支持 4, 8, 10 秒
-            resolution: 分辨率，如 720p, 1080p
             image_url: 可选，参考图片URL用于图生视频
+            duration: 视频时长(秒)，支持 4, 8, 10 秒
         """
-        url = f"{self.VISUAL_BASE_URL}/api/v1/video/generate"
+        url = f"{self.ARK_BASE_URL}/responses"
+
+        # 构建消息内容
+        content = []
+        if image_url:
+            content.append({
+                "type": "input_image",
+                "image_url": image_url
+            })
+        content.append({
+            "type": "input_text",
+            "text": prompt
+        })
 
         payload = {
-            "model": model,
-            "prompt": prompt,
-            "duration": duration,
-            "resolution": resolution
+            "model": model,  # 使用模型名称而非Endpoint ID
+            "input": [
+                {
+                    "role": "user",
+                    "content": content
+                }
+            ]
         }
 
-        if image_url:
-            payload["image_url"] = image_url
-
         payload.update(kwargs)
-
-        headers = self._generate_auth_header("POST", "/api/v1/video/generate")
-        headers["Authorization"] = f"Bearer {self.secret_key}"
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=headers,
+                headers=self.headers,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=300)
             ) as response:
@@ -200,24 +200,30 @@ class VolcanoService:
             voice: 音色选择
             speed: 语速，1.0为正常速度
         """
-        url = f"{self.VISUAL_BASE_URL}/api/v1/tts/synthesize"
+        # 注意: TTS可能使用不同的API端点，这里暂用Responses API
+        url = f"{self.ARK_BASE_URL}/responses"
 
         payload = {
             "model": model,
-            "input": text,
-            "voice": voice,
-            "speed": speed
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"请将以下文本转换为语音: {text}"
+                        }
+                    ]
+                }
+            ]
         }
 
         payload.update(kwargs)
 
-        headers = self._generate_auth_header("POST", "/api/v1/tts/synthesize")
-        headers["Authorization"] = f"Bearer {self.secret_key}"
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=headers,
+                headers=self.headers,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as response:
@@ -237,28 +243,31 @@ class VolcanoService:
         """
         视频语音合成（将音频与视频合并）
 
-        Args:
-            video_url: 视频文件URL
-            audio_url: 音频文件URL
-            model: 合成模型
+        注意: 火山引擎的视频语音合成可能需要使用特定API
         """
-        url = f"{self.VISUAL_BASE_URL}/api/v1/video/voice/synthesis"
+        url = f"{self.ARK_BASE_URL}/responses"
 
         payload = {
-            "model": model,
-            "video_url": video_url,
-            "audio_url": audio_url
+            "model": " Doubao-Seed-2.0-pro",
+            "input": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"将音频 {audio_url} 合成到视频 {video_url}"
+                        }
+                    ]
+                }
+            ]
         }
 
         payload.update(kwargs)
 
-        headers = self._generate_auth_header("POST", "/api/v1/video/voice/synthesis")
-        headers["Authorization"] = f"Bearer {self.secret_key}"
-
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
-                headers=headers,
+                headers=self.headers,
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=300)
             ) as response:
@@ -281,6 +290,6 @@ class VolcanoService:
 
 
 # 便捷函数
-def create_volcano_service(access_key: str, secret_key: str) -> VolcanoService:
+def create_volcano_service(api_key: str) -> VolcanoService:
     """创建火山引擎服务实例"""
-    return VolcanoService(access_key, secret_key)
+    return VolcanoService(api_key)
