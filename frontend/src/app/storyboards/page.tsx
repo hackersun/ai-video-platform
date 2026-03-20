@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -87,11 +87,38 @@ const MOCK_SCENES: Scene[] = [
 const CAMERA_TYPES = ['全景', '远景', '中景', '近景', '特写', '跟拍', '摇镜头', '推镜头'];
 const EFFECTS = ['无', '光晕', '暗光', '虚化', '旋转', '闪烁', '渐变', '粒子'];
 
+// 从 localStorage 加载数据
+const loadScenes = (): Scene[] => {
+  if (typeof window === 'undefined') return MOCK_SCENES;
+  const saved = localStorage.getItem('video-storyboards');
+  if (saved) {
+    return JSON.parse(saved);
+  }
+  return MOCK_SCENES;
+};
+
+// 保存到 localStorage
+const saveScenes = (scenes: Scene[]) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('video-storyboards', JSON.stringify(scenes));
+};
+
 export default function StoryboardsPage() {
   const [scenes, setScenes] = useState<Scene[]>(MOCK_SCENES);
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
+
+  // 初始化加载数据
+  useEffect(() => {
+    const loaded = loadScenes();
+    setScenes(loaded);
+  }, []);
+
+  // 数据变化时保存
+  useEffect(() => {
+    saveScenes(scenes);
+  }, [scenes]);
 
   // 筛选分镜
   const filteredScenes = scenes.filter(scene => 

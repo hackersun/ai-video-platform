@@ -64,6 +64,27 @@ export default function NewNovelPage() {
 
     setIsSaving(true);
     try {
+      // 保存到 localStorage
+      const existingNovels = typeof window !== 'undefined' 
+        ? JSON.parse(localStorage.getItem('video-novels') || '[]') 
+        : [];
+      
+      const now = new Date().toISOString().split('T')[0];
+      const newNovel = {
+        id: Date.now().toString(),
+        title: novel.title,
+        description: novel.description,
+        genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
+        status: publish ? 'writing' as const : 'draft' as const,
+        chapters: 0,
+        characters: 0,
+        createdAt: now,
+        updatedAt: now
+      };
+      
+      const updatedNovels = [newNovel, ...existingNovels];
+      localStorage.setItem('video-novels', JSON.stringify(updatedNovels));
+      
       // 模拟保存
       await new Promise(resolve => setTimeout(resolve, 1000));
       alert(publish ? '发布成功！' : '保存成功！');

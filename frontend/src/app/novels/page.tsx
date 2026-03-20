@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -82,11 +82,38 @@ const STATUS_LABELS = {
 
 const GENRE_OPTIONS = ['全部', '仙侠', '都市', '科幻', '历史', '言情', '悬疑'];
 
+// 从 localStorage 加载数据
+const loadNovels = (): Novel[] => {
+  if (typeof window === 'undefined') return MOCK_NOVELS;
+  const saved = localStorage.getItem('video-novels');
+  if (saved) {
+    return JSON.parse(saved);
+  }
+  return MOCK_NOVELS;
+};
+
+// 保存到 localStorage
+const saveNovels = (novels: Novel[]) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('video-novels', JSON.stringify(novels));
+};
+
 export default function NovelsPage() {
   const [novels, setNovels] = useState<Novel[]>(MOCK_NOVELS);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('全部');
   const [activeTab, setActiveTab] = useState('all');
+
+  // 初始化加载数据
+  useEffect(() => {
+    const loaded = loadNovels();
+    setNovels(loaded);
+  }, []);
+
+  // 数据变化时保存
+  useEffect(() => {
+    saveNovels(novels);
+  }, [novels]);
 
   // 筛选小说
   const filteredNovels = novels.filter(novel => {

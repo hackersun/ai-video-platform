@@ -59,12 +59,39 @@ const MOCK_CHARACTERS: Character[] = [
   }
 ];
 
+// 从 localStorage 加载数据
+const loadCharacters = (): Character[] => {
+  if (typeof window === 'undefined') return MOCK_CHARACTERS;
+  const saved = localStorage.getItem('video-characters');
+  if (saved) {
+    return JSON.parse(saved);
+  }
+  return MOCK_CHARACTERS;
+};
+
+// 保存到 localStorage
+const saveCharacters = (characters: Character[]) => {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem('video-characters', JSON.stringify(characters));
+};
+
 export default function CharactersPage() {
   const [characters, setCharacters] = useState<Character[]>(MOCK_CHARACTERS);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCharacter, setSelectedCharacter] = useState<Character | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  
+  // 初始化加载数据
+  useEffect(() => {
+    const loaded = loadCharacters();
+    setCharacters(loaded);
+  }, []);
+
+  // 数据变化时保存
+  useEffect(() => {
+    saveCharacters(characters);
+  }, [characters]);
   
   // 表单状态
   const [formData, setFormData] = useState<Partial<Character>>({
