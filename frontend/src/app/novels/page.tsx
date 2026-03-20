@@ -18,7 +18,8 @@ import {
   Copy,
   Eye,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  FileTextIcon
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -291,6 +292,12 @@ function NovelsContent() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
+                            <Link href={`/scripts?novel_id=${novel.id}`}>
+                              <Button variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
+                                <FileTextIcon className="w-4 h-4 mr-1" />
+                                剧本
+                              </Button>
+                            </Link>
                             <Button 
                               variant="ghost" 
                               size="icon" 

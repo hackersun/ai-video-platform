@@ -127,22 +127,36 @@ async def generate_video(
         }
         
         result = await _call_volcano_api(request.api_key, payload)
-        
-        # 火山引擎Responses API直接返回视频结果
-        # 如果返回中有video数据，说明完成了
+
+        # 火山引擎Responses API返回结果
+        # output可能是list或dict，需要处理
         task_id = result.get("id") or str(uuid4())
-        
-        # 检查是否直接返回了视频
-        output_items = result.get("output", {}).get("attachments", [])
-        if output_items:
-            # 视频已生成完成
-            return VideoGenerateResponse(
-                task_id=task_id,
-                status="completed",
-                message="视频生成完成"
+
+        # 检查返回的内容
+        output_data = result.get("output", [])
+        if isinstance(output_data, list) and len(output_data) > 0:
+            # output是list，找第一个非reasoning项
+            for item in output_data:
+                if isinstance(item, dict) and item.get("type") == "video":
+                    video_url = item.get("url") or item.get("video_url")
+                    if video_url:
+                        return VideoGenerateResponse(
+                            task_id=task_id,
+                            status="completed",
+                            message="视频生成完成"
+                        )
+
+        # 检查是否有错误
+        if "error" in result:
+            error_msg = result.get("error", {})
+            if isinstance(error_msg, dict):
+                error_msg = error_msg.get("message", str(error_msg))
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"视频生成失败: {error_msg}"
             )
-        
-        # 否则返回pending状态
+
+        # 如果没有video数据，说明这是异步任务
         return VideoGenerateResponse(
             task_id=task_id,
             status="pending",
