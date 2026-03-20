@@ -40,25 +40,28 @@ QIANLIAN_CONFIG = {
 }
 
 # 默认模型配置
+# 注意：千问和百炼是不同的平台
+# - 千问 (DashScope): https://dashscope.aliyuncs.com - qwen-long, qwen-plus 等
+# - 百炼 (Qianlian): https://coding.dashscope.aliyuncs.com - qwen3.5-plus, kimi-k2.5 等
 DEFAULT_MODELS = {
-    # 文本生成
-    "default_text": "doubao-seed-1.8",  # 火山引擎 - 豆包Seed-1.8
+    # 文本生成 - 默认使用千问long（长文本小说生成）
+    "default_text": "qwen-long",  # 千问 - 长文本模型，支持百万token
     
-    # 图像生成
+    # 图像生成 - 火山引擎
     "default_image": "Doubao-Seedream-4.5",  # 火山引擎 - Seedream-4.5
     
-    # 视频生成
+    # 视频生成 - 火山引擎
     "default_video": "Doubao-Seed-2.0-pro",  # 火山引擎 - Seed-2.0-pro
     
-    # Coding Plan / 对话理解
-    "default_coding_plan": "qwen3.5-plus",  # 百炼 - 通义千问3.5-Plus
-    "default_dialogue": "qwen3.5-plus",  # 百炼 - 通义千问3.5-Plus
+    # Coding Plan / 对话理解 - 使用千问coder
+    "default_coding_plan": "qwen-coder-plus",  # 千问Coder Plus - 支持复杂规划
+    "default_dialogue": "qwen-plus",  # 千问Plus - 对话理解
     
-    # 小说生成
-    "default_novel": "qwen-long",  # 千问 - 长文本模型
+    # 小说生成 - 使用千问long（长文本）
+    "default_novel": "qwen-long",  # 千问Long - 支持百万token上下文
     
-    # 分镜生成
-    "default_storyboard": "qwen-vl-plus",  # 千问VL - 视觉模型
+    # 分镜生成 - 使用千问VL（视觉模型）
+    "default_storyboard": "qwen-vl-plus",  # 千问VL Plus - 视觉语言模型
     
     # 角色扮演
     "default_roleplay": "qwen-plus",  # 千问Plus
@@ -69,41 +72,42 @@ SERVICE_MODEL_MAP = {
     "novel_generation": {
         "provider": "qwen",
         "model": "qwen-long",
-        "description": "长文本小说生成"
+        "description": "长文本小说生成 - 千问Long（百万token上下文）"
     },
     "coding_plan": {
-        "provider": "qianlian",
-        "model": "qwen3.5-plus",
-        "description": "Coding Plan 生成"
+        "provider": "qwen",
+        "model": "qwen-coder-plus",
+        "description": "Coding Plan 生成 - 千问Coder Plus"
     },
     "dialogue_understanding": {
-        "provider": "qianlian",
-        "model": "qwen3.5-plus",
-        "description": "对话理解"
+        "provider": "qwen",
+        "model": "qwen-plus",
+        "description": "对话理解 - 千问Plus"
     },
     "storyboard_generation": {
         "provider": "qwen",
         "model": "qwen-vl-plus",
-        "description": "视频分镜生成"
+        "description": "视频分镜生成 - 千问VL Plus（视觉语言模型）"
     },
     "image_generation": {
         "provider": "volcano",
         "model": "Doubao-Seedream-4.5",
-        "description": "图像生成"
+        "description": "图像生成 - 火山引擎Seedream-4.5"
     },
     "video_generation": {
         "provider": "volcano",
         "model": "Doubao-Seed-2.0-pro",
-        "description": "视频生成"
+        "description": "视频生成 - 火山引擎Seed-2.0-pro"
     },
     "roleplay": {
         "provider": "qwen",
         "model": "qwen-plus",
-        "description": "角色扮演"
+        "description": "角色扮演 - 千问Plus"
     }
 }
 
-# 千问模型列表
+# 千问模型列表（千问/DashScope平台）
+# 注意：qwen3.5-plus 是百炼平台专用模型，在 QIANLIAN_MODELS 中定义
 QWEN_MODELS = [
     {
         "id": "qwen-turbo",
@@ -154,7 +158,7 @@ QWEN_MODELS = [
         "max_tokens": 8192,
         "input_cost_per_1k": 0.5,
         "output_cost_per_1k": 2.0,
-        "description": "超长上下文模型，支持百万token",
+        "description": "超长上下文模型，支持百万token上下文，适合长篇小说生成",
         "use_case": "长文本小说生成、文档分析"
     },
     {
@@ -193,7 +197,7 @@ QWEN_MODELS = [
         "max_tokens": 2048,
         "input_cost_per_1k": 2.0,
         "output_cost_per_1k": 6.0,
-        "description": "视觉语言模型，支持图像理解",
+        "description": "视觉语言模型，支持图像理解和视频分镜生成",
         "use_case": "视频分镜生成、图像描述"
     },
     {

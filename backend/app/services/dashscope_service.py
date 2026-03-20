@@ -134,7 +134,7 @@ class DashScopeService:
         """
         生成小说
         
-        使用 qwen-long 模型，支持长文本生成
+        使用 qwen-long 模型，支持长文本生成（百万token上下文）
         """
         messages = [
             {

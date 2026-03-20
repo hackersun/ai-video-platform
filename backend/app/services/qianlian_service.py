@@ -449,8 +449,8 @@ def get_qianlian_model(model_id: str) -> Optional[Dict]:
 
 
 # 默认模型
-DEFAULT_QIANLIAN_MODEL = "qwen3.5-plus"
-DEFAULT_CODING_PLAN_MODEL = "qwen3.5-plus"
+DEFAULT_QIANLIAN_MODEL = "qwen3.5-plus"  # 百炼默认模型
+DEFAULT_CODING_PLAN_MODEL = "qwen3.5-plus"  # Coding Plan默认使用百炼模型
 
 
 # ============== 便捷函数 ==============

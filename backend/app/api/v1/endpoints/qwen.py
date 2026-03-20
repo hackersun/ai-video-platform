@@ -36,7 +36,7 @@ class ChatResponse(BaseModel):
 class NovelGenerateRequest(BaseModel):
     """小说生成请求"""
     prompt: str = Field(..., description="小说创作提示词")
-    model: str = Field("qwen-long", description="模型ID，推荐使用qwen-long")
+    model: str = Field("qwen-long", description="模型ID，默认使用qwen-long（百万token上下文，适合长篇小说）")
     max_tokens: int = Field(8000, ge=1000, le=8000)
     temperature: float = Field(0.8, ge=0, le=2)
     api_key: str = Field(..., description="DashScope API Key")

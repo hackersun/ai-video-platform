@@ -23,13 +23,16 @@ class ModelProvider(str, Enum):
 
 
 # 各能力默认模型配置
-# 注意：文本生成默认使用 qwen-long（百炼平台），支持长文本小说创作
+# 注意：
+# - 千问 (qwen-long等) 通过 DashScope API: https://dashscope.aliyuncs.com
+# - 百炼 (qwen3.5-plus等) 通过百炼 API: https://coding.dashscope.aliyuncs.com
+# - 火山引擎 (豆包等) 通过 ARK API: https://ark.cn-beijing.volces.com
 DEFAULT_MODEL_CONFIG = {
     ModelCapability.TEXT_GENERATION: {
         "provider": ModelProvider.QWEN,
         "model_id": "qwen-long",
-        "model_name_cn": "千问Long（百炼）",
-        "platform": "qianlian",  # 百炼平台
+        "model_name_cn": "千问Long",
+        "platform": "dashscope",  # 千问/DashScope平台
         "description": "长文本生成，默认用于小说、剧本创作，支持百万token上下文"
     },
     ModelCapability.IMAGE_GENERATION: {

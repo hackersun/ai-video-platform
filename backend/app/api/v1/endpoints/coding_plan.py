@@ -34,7 +34,7 @@ class CodingPlanResponse(BaseModel):
 class NovelWithPlanRequest(BaseModel):
     """带规划的小说生成请求"""
     prompt: str = Field(..., description="小说主题")
-    model: str = Field("qwen-long", description="生成模型，默认使用qwen-long支持长文本")
+    model: str = Field("qwen-long", description="生成模型，默认使用qwen-long支持长文本（百万token上下文）")
     api_key: str = Field(..., description="DashScope API Key")
 
 
