@@ -39,22 +39,47 @@ class QianlianService:
         """
         聊天补全 (Anthropic 兼容格式)
         
+        注意：百炼 Anthropic 兼容接口不支持独立的 system 角色，
+        需要将 system 提示合并到第一条 user 消息中。
+        
         Args:
             model: 模型ID，如 qwen3.5-plus, kimi-k2.5, glm-5, MiniMax-M2.5
-            messages: 消息列表 (Anthropic格式: role, content)
+            messages: 消息列表 (OpenAI格式: role, content)
             temperature: 温度参数
             max_tokens: 最大token数
             stream: 是否流式输出
         
         Returns:
-            API响应 (Anthropic格式: content数组)
+            API响应 (OpenAI兼容格式: content数组)
         """
         url = f"{self.BASE_URL}/messages"
+        
+        # 处理消息格式：将 system 提示合并到 user 消息
+        processed_messages = []
+        system_prompt = ""
+        
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_prompt += msg.get("content", "") + "\n\n"
+            else:
+                processed_messages.append(msg)
+        
+        # 如果有系统提示，合并到第一个用户消息
+        if system_prompt and processed_messages:
+            first_msg = processed_messages[0]
+            if first_msg.get("role") == "user":
+                first_msg["content"] = system_prompt + first_msg.get("content", "")
+            else:
+                # 如果第一个不是user消息，插入一个user消息携带system
+                processed_messages.insert(0, {
+                    "role": "user",
+                    "content": system_prompt.strip()
+                })
         
         # Anthropic 格式
         payload = {
             "model": model,
-            "messages": messages,
+            "messages": processed_messages,
             "temperature": temperature,
         }
         
@@ -77,12 +102,21 @@ class QianlianService:
                 
                 result = await response.json()
                 
+                # 提取文本内容（处理 thinking 类型）
+                content_list = result.get("content", [])
+                text_content = ""
+                for item in content_list:
+                    if item.get("type") == "text":
+                        text_content += item.get("text", "")
+                    elif item.get("type") == "thinking":
+                        text_content += item.get("thinking", "")
+                
                 # 转换为 OpenAI 兼容格式返回，方便调用方统一处理
                 return {
                     "choices": [{
                         "message": {
                             "role": "assistant",
-                            "content": result.get("content", [{}])[0].get("text", "")
+                            "content": text_content
                         },
                         "finish_reason": result.get("stop_reason", "stop")
                     }],
@@ -411,6 +445,135 @@ class QianlianService:
             model=model,
             messages=messages,
             temperature=0.8,
+            max_tokens=3000
+        )
+    
+    async def generate_novel_with_plan(
+        self,
+        prompt: str,
+        model: str = "qwen3.5-plus",
+        max_tokens: int = 8000
+    ) -> Dict:
+        """
+        使用 Coding Plan 方式生成小说
+        
+        先规划情节架构，再生成具体内容
+        
+        Args:
+            prompt: 小说主题
+            model: 模型ID
+            max_tokens: 最大token数
+        
+        Returns:
+            包含规划和小说的响应
+        """
+        # 第一步：生成情节规划
+        plan_prompt = f"""作为小说创作规划师，请为以下主题生成详细的小说创作规划：
+
+主题：{prompt}
+
+请提供：
+1. 故事大纲（起承转合）
+2. 主要角色设定
+3. 关键情节节点
+4. 章节规划
+5. 写作风格和技巧建议
+
+请以结构化的方式输出规划："""
+        
+        plan_messages = [
+            {"role": "system", "content": "你是专业的小说创作规划师，擅长设计精彩的故事架构。"},
+            {"role": "user", "content": plan_prompt}
+        ]
+        
+        plan_response = await self.chat_completion(
+            model=model,
+            messages=plan_messages,
+            temperature=0.8,
+            max_tokens=2000
+        )
+        
+        plan_content = plan_response["choices"][0]["message"]["content"]
+        
+        # 第二步：基于规划生成小说内容
+        content_prompt = f"""基于以下规划，创作小说正文：
+
+创作规划：
+{plan_content}
+
+原始主题：{prompt}
+
+请创作第一章内容（约3000字）："""
+        
+        content_messages = [
+            {"role": "system", "content": "你是专业的小说作家，擅长将规划转化为精彩的故事内容。"},
+            {"role": "user", "content": content_prompt}
+        ]
+        
+        content_response = await self.chat_completion(
+            model=model,
+            messages=content_messages,
+            temperature=0.8,
+            max_tokens=max_tokens
+        )
+        
+        # 合并结果
+        content = content_response["choices"][0]["message"]["content"]
+        usage = content_response.get("usage", {})
+        
+        return {
+            "plan": plan_content,
+            "content": content,
+            "usage": usage
+        }
+    
+    async def generate_technical_storyboard(
+        self,
+        scene_description: str,
+        technical_requirements: Optional[str] = None,
+        model: str = "qwen3.5-plus"
+    ) -> Dict:
+        """
+        生成技术分镜方案
+        
+        结合代码规划能力，生成技术实现导向的分镜
+        
+        Args:
+            scene_description: 场景描述
+            technical_requirements: 技术要求
+            model: 模型ID
+        
+        Returns:
+            技术分镜内容
+        """
+        system_prompt = """你是专业的技术分镜师和视觉开发专家。
+请为视频场景生成分镜方案，包含技术实现细节：
+
+1. 镜头基本信息（编号、时长、景别）
+2. 画面描述（构图、色彩、光影）
+3. 技术实现方案（特效、动画、合成）
+4. 代码/节点参考（如需要程序化生成）
+5. 资源需求清单
+6. 实现难度评估
+
+请以结构化的方式输出，便于技术团队执行。"""
+
+        user_prompt = f"场景描述：\n{scene_description}\n\n"
+        
+        if technical_requirements:
+            user_prompt += f"技术要求：\n{technical_requirements}\n\n"
+        
+        user_prompt += "请生成技术分镜方案："
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        
+        return await self.chat_completion(
+            model=model,
+            messages=messages,
+            temperature=0.7,
             max_tokens=3000
         )
     

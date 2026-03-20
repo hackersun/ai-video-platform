@@ -1,13 +1,16 @@
 """
 Coding Plan API 端点
 支持代码规划、技术方案设计、AI生成调用
+
+注意：此端点使用阿里百炼服务，支持 qwen3.5-plus, kimi-k2.5 等模型
+API格式: Anthropic 兼容 (coding.dashscope.aliyuncs.com/apps/anthropic)
 """
 
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.services.dashscope_service import DashScopeService, create_dashscope_service
+from app.services.qianlian_service import QianlianService, create_qianlian_service
 
 router = APIRouter(tags=["Coding Plan"])
 
@@ -17,10 +20,10 @@ router = APIRouter(tags=["Coding Plan"])
 class CodingPlanRequest(BaseModel):
     """代码规划请求"""
     requirement: str = Field(..., description="需求描述")
-    model: str = Field("qwen-coder-plus", description="模型ID")
+    model: str = Field("qwen3.5-plus", description="模型ID，默认 qwen3.5-plus（百炼）")
     context: Optional[str] = Field(None, description="额外上下文")
     language: Optional[str] = Field(None, description="目标编程语言")
-    api_key: str = Field(..., description="DashScope API Key")
+    api_key: str = Field(..., description="百炼 API Key")
 
 
 class CodingPlanResponse(BaseModel):
@@ -34,8 +37,8 @@ class CodingPlanResponse(BaseModel):
 class NovelWithPlanRequest(BaseModel):
     """带规划的小说生成请求"""
     prompt: str = Field(..., description="小说主题")
-    model: str = Field("qwen-long", description="生成模型，默认使用qwen-long支持长文本（百万token上下文）")
-    api_key: str = Field(..., description="DashScope API Key")
+    model: str = Field("qwen3.5-plus", description="生成模型，默认使用 qwen3.5-plus（百炼）")
+    api_key: str = Field(..., description="百炼 API Key")
 
 
 class NovelWithPlanResponse(BaseModel):
@@ -50,8 +53,8 @@ class TechnicalStoryboardRequest(BaseModel):
     """技术分镜请求"""
     scene_description: str = Field(..., description="场景描述")
     technical_requirements: Optional[str] = Field(None, description="技术要求")
-    model: str = Field("qwen-coder-plus", description="模型ID")
-    api_key: str = Field(..., description="DashScope API Key")
+    model: str = Field("qwen3.5-plus", description="模型ID，默认 qwen3.5-plus（百炼）")
+    api_key: str = Field(..., description="百炼 API Key")
 
 
 class TechnicalStoryboardResponse(BaseModel):
@@ -67,7 +70,7 @@ class AutoGenerateRequest(BaseModel):
     user_input: str = Field(..., description="用户输入")
     generate_type: str = Field(..., description="生成类型：novel/storyboard/code")
     context: Optional[List[dict]] = Field(None, description="对话上下文")
-    api_key: str = Field(..., description="DashScope API Key")
+    api_key: str = Field(..., description="百炼 API Key")
 
 
 class AutoGenerateResponse(BaseModel):
@@ -86,10 +89,10 @@ async def generate_coding_plan(request: CodingPlanRequest):
     """
     生成 Coding Plan（代码规划）
     
-    使用 qwen-coder-plus 进行技术方案设计
+    使用百炼 qwen3.5-plus 进行技术方案设计
     """
     try:
-        service = await create_dashscope_service(request.api_key)
+        service = await create_qianlian_service(request.api_key)
         
         response = await service.generate_coding_plan(
             requirement=request.requirement,
@@ -127,14 +130,14 @@ async def generate_novel_with_plan(request: NovelWithPlanRequest):
     使用 Coding Plan 方式生成小说
     
     先规划情节架构，再生成具体内容
-    默认使用 qwen-long 模型支持长文本输出
+    使用百炼 qwen3.5-plus 模型
     """
     try:
-        service = await create_dashscope_service(request.api_key)
+        service = await create_qianlian_service(request.api_key)
         
         response = await service.generate_novel_with_plan(
             prompt=request.prompt,
-            model=request.model  # 默认 qwen-long
+            model=request.model  # qwen3.5-plus
         )
         
         plan = response["plan"]
@@ -168,9 +171,10 @@ async def generate_technical_storyboard(request: TechnicalStoryboardRequest):
     生成技术分镜方案
     
     结合代码规划能力，生成技术实现导向的分镜
+    使用百炼 qwen3.5-plus 模型
     """
     try:
-        service = await create_dashscope_service(request.api_key)
+        service = await create_qianlian_service(request.api_key)
         
         response = await service.generate_technical_storyboard(
             scene_description=request.scene_description,
@@ -210,15 +214,17 @@ async def auto_generate(request: AutoGenerateRequest):
     1. 理解用户需求
     2. 生成规划（Coding Plan）
     3. 执行生成
+    
+    使用百炼 qwen3.5-plus 模型
     """
     try:
-        service = await create_dashscope_service(request.api_key)
+        service = await create_qianlian_service(request.api_key)
         
         # 第一步：对话理解
         understanding_response = await service.understand_dialogue(
             user_input=request.user_input,
             context=request.context,
-            model="qwen-plus"
+            model="qwen3.5-plus"
         )
         
         understanding = understanding_response["choices"][0]["message"]["content"]
@@ -229,10 +235,10 @@ async def auto_generate(request: AutoGenerateRequest):
         total_cost = 0
         
         if request.generate_type == "novel":
-            # 小说生成 - 默认使用 qwen-long 支持长文本
+            # 小说生成
             novel_response = await service.generate_novel_with_plan(
                 prompt=request.user_input,
-                model="qwen-long"
+                model="qwen3.5-plus"
             )
             plan = novel_response.get("plan", "")
             result = novel_response.get("content", "")
@@ -241,7 +247,7 @@ async def auto_generate(request: AutoGenerateRequest):
             # 分镜生成
             storyboard_response = await service.generate_technical_storyboard(
                 scene_description=request.user_input,
-                model="qwen-coder-plus"
+                model="qwen3.5-plus"
             )
             result = storyboard_response["choices"][0]["message"]["content"]
             
@@ -249,7 +255,7 @@ async def auto_generate(request: AutoGenerateRequest):
             # 代码生成
             code_response = await service.generate_coding_plan(
                 requirement=request.user_input,
-                model="qwen-coder-plus"
+                model="qwen3.5-plus"
             )
             result = code_response["choices"][0]["message"]["content"]
         else:
