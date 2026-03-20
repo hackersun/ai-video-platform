@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
+import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
 import { 
   Video, 
@@ -19,45 +20,142 @@ import {
   CheckCircle,
   AlertCircle,
   Image as ImageIcon,
-  Music
+  Music,
+  RefreshCw,
+  ExternalLink,
+  Download,
+  Copy
 } from 'lucide-react';
 
 // 视频生成状态
-type GenerationStatus = 'idle' | 'generating' | 'completed' | 'error';
+type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 // 提供商配置
 const PROVIDERS = [
-  { id: 'volcano', name: '火山引擎', icon: '🔥', cost: '50分/秒' },
-  { id: 'runway', name: 'Runway', icon: '🎬', cost: '$0.20/秒' },
+  { id: 'volcano', name: '火山引擎', icon: '🔥', cost: '约50分/秒' },
 ];
 
+// 默认火山API Key（演示用，实际应该从用户配置获取）
+const DEFAULT_API_KEY = 'be8feb9d-6b08-406e-8447-b22b87cd907a';
+
 export default function VideoGenerationPage() {
-  const [selectedProvider, setSelectedProvider] = useState('volcano');
+  const [selectedProvider] = useState('volcano');
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [progress, setProgress] = useState(0);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   
   // 参数配置
-  const [duration, setDuration] = useState(4);
-  const [fps, setFps] = useState(24);
-  const [resolution, setResolution] = useState('1080p');
-  const [motionStrength, setMotionStrength] = useState(50);
+  const [prompt, setPrompt] = useState('无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验');
+  const [duration, setDuration] = useState(5);
+  const [fps] = useState(24);
+  const [resolution, setResolution] = useState('720p');
+  const [imageUrl, setImageUrl] = useState('');
   
-  // 模拟生成
+  // 历史记录
+  const [history, setHistory] = useState<Array<{
+    id: string;
+    prompt: string;
+    status: string;
+    videoUrl?: string;
+    time: string;
+  }>>([]);
+
+  // 轮询任务状态
+  const pollTaskStatus = async (tid: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/video/status/${tid}?api_key=${DEFAULT_API_KEY}`);
+      if (!response.ok) {
+        throw new Error('查询失败');
+      }
+      const data = await response.json();
+      
+      setProgress(data.progress || 0);
+      
+      if (data.status === 'succeeded') {
+        setStatus('completed');
+        setVideoUrl(data.video_url);
+        setProgress(100);
+        // 添加到历史
+        setHistory(prev => [{
+          id: tid,
+          prompt: prompt,
+          status: 'completed',
+          videoUrl: data.video_url,
+          time: new Date().toLocaleTimeString()
+        }, ...prev.slice(0, 9)]);
+      } else if (data.status === 'failed') {
+        setStatus('error');
+        setError(data.message || '生成失败');
+      } else {
+        // 继续轮询
+        setTimeout(() => pollTaskStatus(tid), 3000);
+      }
+    } catch (err) {
+      console.error('轮询状态失败:', err);
+      setTimeout(() => pollTaskStatus(tid), 5000);
+    }
+  };
+
+  // 生成视频
   const handleGenerate = async () => {
-    setStatus('generating');
+    if (!prompt.trim()) {
+      alert('请输入视频描述');
+      return;
+    }
+
+    setStatus('submitting');
     setProgress(0);
-    
-    // 模拟进度
-    const interval = setInterval(() => {
-      setProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setStatus('completed');
-          return 100;
-        }
-        return prev + 10;
+    setError(null);
+    setVideoUrl(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/v1/video/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: prompt,
+          duration: duration,
+          resolution: resolution,
+          api_key: DEFAULT_API_KEY,
+          image_url: imageUrl || undefined,
+          model: 'doubao-seedance-1-5-pro-251215'
+        })
       });
-    }, 500);
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.detail || '提交失败');
+      }
+
+      const data = await response.json();
+      setTaskId(data.task_id);
+      setStatus('generating');
+      
+      // 开始轮询
+      pollTaskStatus(data.task_id);
+    } catch (err: any) {
+      setStatus('error');
+      setError(err.message || '提交失败');
+    }
+  };
+
+  // 复制视频链接
+  const handleCopyUrl = () => {
+    if (videoUrl) {
+      navigator.clipboard.writeText(videoUrl);
+      alert('链接已复制');
+    }
+  };
+
+  // 下载视频
+  const handleDownload = () => {
+    if (videoUrl) {
+      window.open(videoUrl, '_blank');
+    }
   };
 
   return (
@@ -75,35 +173,30 @@ export default function VideoGenerationPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 左侧：生成配置 */}
           <div className="lg:col-span-1 space-y-4">
-            {/* 提供商选择 */}
+            {/* 提供商 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <Settings className="w-5 h-5" />
-                  选择提供商
+                  提供商
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 {PROVIDERS.map((provider) => (
                   <div
                     key={provider.id}
-                    onClick={() => setSelectedProvider(provider.id)}
                     className={`p-4 rounded-lg border cursor-pointer transition-all ${
                       selectedProvider === provider.id
                         ? 'border-violet-500 bg-violet-500/10'
-                        : 'border-white/10 hover:border-white/20'
+                        : 'border-white/10'
                     }`}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <span className="text-2xl">{provider.icon}</span>
                         <div>
-                          <div className="text-white font-medium">
-                            {provider.name}
-                          </div>
-                          <div className="text-white/60 text-sm">
-                            {provider.cost}
-                          </div>
+                          <div className="text-white font-medium">{provider.name}</div>
+                          <div className="text-white/60 text-sm">{provider.cost}</div>
                         </div>
                       </div>
                       {selectedProvider === provider.id && (
@@ -124,6 +217,30 @@ export default function VideoGenerationPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-6">
+                {/* 视频描述 */}
+                <div>
+                  <label className="text-white/80 mb-2 block">视频描述</label>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="描述你想要生成的视频内容..."
+                    disabled={status === 'generating'}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 h-24 resize-none"
+                  />
+                </div>
+
+                {/* 参考图片（可选） */}
+                <div>
+                  <label className="text-white/80 mb-2 block">参考图片URL（可选）</label>
+                  <Input
+                    placeholder="输入图片URL用于图生视频"
+                    value={imageUrl}
+                    onChange={(e) => setImageUrl(e.target.value)}
+                    disabled={status === 'generating'}
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </div>
+
                 {/* 时长 */}
                 <div>
                   <div className="flex justify-between mb-2">
@@ -133,35 +250,14 @@ export default function VideoGenerationPage() {
                   <Slider
                     value={[duration]}
                     onValueChange={(v) => setDuration(v[0])}
-                    min={2}
+                    min={4}
                     max={10}
                     step={1}
                     className="w-full"
                   />
                   <div className="flex justify-between text-white/40 text-xs mt-1">
-                    <span>2s</span>
+                    <span>4s</span>
                     <span>10s</span>
-                  </div>
-                </div>
-
-                {/* 帧率 */}
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <label className="text-white/80">帧率</label>
-                    <span className="text-white">{fps}fps</span>
-                  </div>
-                  <div className="flex gap-2">
-                    {[24, 30, 60].map((f) => (
-                      <Button
-                        key={f}
-                        variant={fps === f ? 'default' : 'outline'}
-                        size="sm"
-                        onClick={() => setFps(f)}
-                        className={fps === f ? 'bg-violet-600' : 'border-white/10'}
-                      >
-                        {f}fps
-                      </Button>
-                    ))}
                   </div>
                 </div>
 
@@ -169,37 +265,18 @@ export default function VideoGenerationPage() {
                 <div>
                   <label className="text-white/80 mb-2 block">分辨率</label>
                   <div className="flex gap-2">
-                    {['720p', '1080p', '4K'].map((res) => (
+                    {['480p', '720p', '1080p'].map((res) => (
                       <Button
                         key={res}
                         variant={resolution === res ? 'default' : 'outline'}
                         size="sm"
                         onClick={() => setResolution(res)}
+                        disabled={status === 'generating'}
                         className={resolution === res ? 'bg-violet-600' : 'border-white/10'}
                       >
                         {res}
                       </Button>
                     ))}
-                  </div>
-                </div>
-
-                {/* 运动强度 */}
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <label className="text-white/80">运动强度</label>
-                    <span className="text-white">{motionStrength}%</span>
-                  </div>
-                  <Slider
-                    value={[motionStrength]}
-                    onValueChange={(v) => setMotionStrength(v[0])}
-                    min={0}
-                    max={100}
-                    step={10}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-white/40 text-xs mt-1">
-                    <span>静态</span>
-                    <span>动态</span>
                   </div>
                 </div>
               </CardContent>
@@ -208,26 +285,49 @@ export default function VideoGenerationPage() {
             {/* 生成按钮 */}
             <Button
               onClick={handleGenerate}
-              disabled={status === 'generating'}
+              disabled={status === 'submitting' || status === 'generating'}
               className="w-full bg-violet-600 hover:bg-violet-700 h-12"
             >
-              {status === 'generating' ? (
+              {status === 'submitting' && (
+                <>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  提交中...
+                </>
+              )}
+              {status === 'generating' && (
                 <>
                   <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   生成中 {progress}%
                 </>
-              ) : status === 'completed' ? (
+              )}
+              {status === 'completed' && (
                 <>
                   <CheckCircle className="w-5 h-5 mr-2" />
                   生成完成
                 </>
-              ) : (
+              )}
+              {status === 'error' && (
+                <>
+                  <AlertCircle className="w-5 h-5 mr-2" />
+                  重试
+                </>
+              )}
+              {(status === 'idle') && (
                 <>
                   <Sparkles className="w-5 h-5 mr-2" />
                   开始生成
                 </>
               )}
             </Button>
+
+            {/* 错误信息 */}
+            {error && (
+              <Card className="bg-red-500/10 border-red-500/30">
+                <CardContent className="p-3">
+                  <p className="text-red-400 text-sm">{error}</p>
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* 右侧：预览和结果 */}
@@ -245,7 +345,14 @@ export default function VideoGenerationPage() {
                   {status === 'idle' && (
                     <div className="text-center text-white/40">
                       <Video className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                      <p>点击"开始生成"创建视频</p>
+                      <p>输入描述并点击"开始生成"</p>
+                    </div>
+                  )}
+                  
+                  {status === 'submitting' && (
+                    <div className="text-center">
+                      <Loader2 className="w-16 h-16 mx-auto mb-4 text-violet-400 animate-spin" />
+                      <p className="text-white">正在提交任务...</p>
                     </div>
                   )}
                   
@@ -254,6 +361,9 @@ export default function VideoGenerationPage() {
                       <Loader2 className="w-16 h-16 mx-auto mb-4 text-violet-400 animate-spin" />
                       <p className="text-white">正在生成视频...</p>
                       <p className="text-white/60 text-sm mt-2">{progress}%</p>
+                      {taskId && (
+                        <p className="text-white/40 text-xs mt-1">任务ID: {taskId}</p>
+                      )}
                       
                       {/* 进度条 */}
                       <div className="w-64 h-2 bg-white/10 rounded-full mt-4 mx-auto">
@@ -265,21 +375,32 @@ export default function VideoGenerationPage() {
                     </div>
                   )}
                   
-                  {status === 'completed' && (
-                    <div className="text-center">
-                      <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-green-500/20 flex items-center justify-center">
-                        <CheckCircle className="w-10 h-10 text-green-400" />
-                      </div>
-                      <p className="text-white text-lg">视频生成完成！</p>
+                  {status === 'completed' && videoUrl && (
+                    <div className="text-center w-full px-4">
+                      <video 
+                        src={videoUrl}
+                        controls
+                        autoPlay
+                        className="w-full h-full rounded-lg max-h-[400px]"
+                      />
                       <div className="flex gap-2 mt-4 justify-center">
-                        <Button>
-                          <Play className="w-4 h-4 mr-2" />
-                          播放
-                        </Button>
-                        <Button variant="outline">
+                        <Button onClick={handleDownload} className="bg-violet-600 hover:bg-violet-700">
+                          <Download className="w-4 h-4 mr-2" />
                           下载
                         </Button>
+                        <Button variant="outline" onClick={handleCopyUrl} className="border-white/20">
+                          <Copy className="w-4 h-4 mr-2" />
+                          复制链接
+                        </Button>
                       </div>
+                    </div>
+                  )}
+                  
+                  {status === 'error' && (
+                    <div className="text-center">
+                      <AlertCircle className="w-16 h-16 mx-auto mb-4 text-red-400" />
+                      <p className="text-red-400">生成失败</p>
+                      <p className="text-white/60 text-sm mt-2">{error}</p>
                     </div>
                   )}
                 </div>
@@ -295,35 +416,71 @@ export default function VideoGenerationPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {[
-                    { id: 1, name: '修仙之路第一集', status: 'completed', time: '2分钟前' },
-                    { id: 2, name: '角色介绍视频', status: 'completed', time: '1小时前' },
-                  ].map((video) => (
-                    <div
-                      key={video.id}
-                      className="flex items-center justify-between p-3 rounded-lg bg-white/5"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded bg-violet-500/20 flex items-center justify-center">
-                          <Video className="w-6 h-6 text-violet-400" />
+                {history.length > 0 ? (
+                  <div className="space-y-3 max-h-60 overflow-y-auto">
+                    {history.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-3 rounded-lg bg-white/5"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 rounded bg-violet-500/20 flex items-center justify-center">
+                            {item.status === 'completed' ? (
+                              <Video className="w-6 h-6 text-violet-400" />
+                            ) : (
+                              <AlertCircle className="w-6 h-6 text-red-400" />
+                            )}
+                          </div>
+                          <div>
+                            <div className="text-white font-medium truncate max-w-[200px]">
+                              {item.prompt.slice(0, 30)}...
+                            </div>
+                            <div className="text-white/60 text-sm">{item.time}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="text-white font-medium">{video.name}</div>
-                          <div className="text-white/60 text-sm">{video.time}</div>
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-1 text-xs rounded ${
+                            item.status === 'completed' 
+                              ? 'bg-green-500/20 text-green-400' 
+                              : 'bg-red-500/20 text-red-400'
+                          }`}>
+                            {item.status === 'completed' ? '已完成' : '失败'}
+                          </span>
+                          {item.videoUrl && (
+                            <Button 
+                              variant="ghost" 
+                              size="sm"
+                              onClick={() => window.open(item.videoUrl, '_blank')}
+                            >
+                              <ChevronRight className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <span className="px-2 py-1 text-xs bg-green-500/20 text-green-400 rounded">
-                          已完成
-                        </span>
-                        <Button variant="ghost" size="sm">
-                          <ChevronRight className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-white/40">
+                    <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>暂无生成历史</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 模型信息 */}
+            <Card className="bg-blue-600/10 border-blue-500/30">
+              <CardContent className="p-4">
+                <h4 className="font-medium text-blue-300 mb-2 flex items-center gap-2">
+                  <ExternalLink className="w-4 h-4" />
+                  当前使用
+                </h4>
+                <ul className="text-sm text-white/60 space-y-1">
+                  <li>• <strong className="text-white/80">模型:</strong> Doubao-Seedance-1.5-pro</li>
+                  <li>• <strong className="text-white/80">ID:</strong> doubao-seedance-1-5-pro-251215</li>
+                  <li>• <strong className="text-white/80">提供商:</strong> 火山引擎</li>
+                  <li>• <strong className="text-white/80">支持:</strong> 文生视频、图生视频</li>
+                </ul>
               </CardContent>
             </Card>
           </div>
