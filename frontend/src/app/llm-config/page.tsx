@@ -7,11 +7,11 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Settings, 
-  Key, 
-  Plus, 
-  Trash2, 
+import {
+  Settings,
+  Key,
+  Plus,
+  Trash2,
   TestTube,
   CheckCircle,
   XCircle,
@@ -25,7 +25,10 @@ import {
   Copy,
   RefreshCw,
   ExternalLink,
-  AlertCircle
+  AlertCircle,
+  Globe,
+  Network,
+  KeyRound
 } from 'lucide-react';
 
 // 模型分类
@@ -113,6 +116,7 @@ export default function LLMConfigPage() {
       setProviders([
         { id: 'volcano', name: 'volcano', name_cn: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3', description: '字节跳动豆包大模型' },
         { id: 'qwen', name: 'qwen', name_cn: '阿里千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '阿里云通义千问' },
+        { id: 'baidu', name: 'baidu', name_cn: '百度文心一言', base_url: 'https://qianfan.baidubce.com/v2/chat/completions', description: '百度文心大模型' },
       ]);
     }
   };
@@ -162,6 +166,7 @@ export default function LLMConfigPage() {
     const providerMap: Record<string, string> = {
       volcano: 'volcano',
       qwen: 'qwen',
+      baidu: 'baidu',
       external: ''
     };
     setSelectedProvider(providerMap[activeTab] || '');
@@ -263,7 +268,7 @@ export default function LLMConfigPage() {
   // 直接测试API连接
   const testApiConnection = async (provider?: Provider, model?: Model, key?: string): Promise<{success: boolean; message: string; response?: string}> => {
     if (!provider || !model || !key) {
-      return { success: false, message: '参数不完整' };
+      return { success: false, message: '参数不完整，请确保已选择服务商和模型' };
     }
 
     // 火山引擎测试
@@ -281,20 +286,30 @@ export default function LLMConfigPage() {
             max_tokens: 100
           })
         });
-        
+
         if (res.ok) {
           const data = await res.json();
-          return { 
-            success: true, 
-            message: '火山引擎 API 连接成功！',
+          return {
+            success: true,
+            message: '✅ 火山引擎 API 连接成功！',
             response: data.choices?.[0]?.message?.content || '响应成功'
           };
+        } else if (res.status === 401 || res.status === 403) {
+          const error = await res.json().catch(() => ({}));
+          return { success: false, message: '🔑 API Key无效或已过期，请检查Key是否正确' };
+        } else if (res.status === 429) {
+          return { success: false, message: '⏱️ 请求过于频繁，请稍后再试（配额可能已用完）' };
+        } else if (res.status >= 500) {
+          return { success: false, message: '🖥️ 服务端错误，请检查火山引擎服务状态' };
         } else {
           const error = await res.json().catch(() => ({}));
-          return { success: false, message: `API错误: ${error.error?.message || res.statusText}` };
+          return { success: false, message: `❌ API错误: ${error.error?.message || res.statusText}` };
         }
       } catch (e: any) {
-        return { success: false, message: `连接失败: ${e.message}` };
+        if (e.name === 'TypeError' && e.message.includes('fetch')) {
+          return { success: false, message: '🌐 网络连接失败，请检查网络或API地址是否正确' };
+        }
+        return { success: false, message: `❌ 连接失败: ${e.message}` };
       }
     }
 
@@ -313,24 +328,74 @@ export default function LLMConfigPage() {
             parameters: { max_tokens: 100 }
           })
         });
-        
+
         if (res.ok) {
           const data = await res.json();
-          return { 
-            success: true, 
-            message: '阿里千问 API 连接成功！',
+          return {
+            success: true,
+            message: '✅ 阿里千问 API 连接成功！',
             response: data.output?.text || data.choices?.[0]?.message?.content || '响应成功'
           };
+        } else if (res.status === 401 || res.status === 403) {
+          return { success: false, message: '🔑 API Key无效或已过期，请检查Key是否正确' };
+        } else if (res.status === 429) {
+          return { success: false, message: '⏱️ 请求过于频繁，请稍后再试（配额可能已用完）' };
+        } else if (res.status >= 500) {
+          return { success: false, message: '🖥️ 服务端错误，请检查阿里云服务状态' };
         } else {
           const error = await res.json().catch(() => ({}));
-          return { success: false, message: `API错误: ${error.error?.message || res.statusText}` };
+          return { success: false, message: `❌ API错误: ${error.error?.message || res.statusText}` };
         }
       } catch (e: any) {
-        return { success: false, message: `连接失败: ${e.message}` };
+        if (e.name === 'TypeError' && e.message.includes('fetch')) {
+          return { success: false, message: '🌐 网络连接失败，请检查网络或API地址是否正确' };
+        }
+        return { success: false, message: `❌ 连接失败: ${e.message}` };
       }
     }
 
-    return { success: false, message: '不支持的提供商' };
+    // 百度文心测试
+    if (provider.id === 'baidu') {
+      try {
+        const res = await fetch(`${provider.base_url}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify({
+            model: model.model_id,
+            messages: [{ role: 'user', content: '你好' }],
+            max_tokens: 100
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            success: true,
+            message: '✅ 百度文心一言 API 连接成功！',
+            response: data.choices?.[0]?.message?.content || '响应成功'
+          };
+        } else if (res.status === 401 || res.status === 403) {
+          return { success: false, message: '🔑 API Key无效或已过期，请检查Key是否正确' };
+        } else if (res.status === 429) {
+          return { success: false, message: '⏱️ 请求过于频繁，请稍后再试（配额可能已用完）' };
+        } else if (res.status >= 500) {
+          return { success: false, message: '🖥️ 服务端错误，请检查百度千帆服务状态' };
+        } else {
+          const error = await res.json().catch(() => ({}));
+          return { success: false, message: `❌ API错误: ${error.error?.message || res.statusText}` };
+        }
+      } catch (e: any) {
+        if (e.name === 'TypeError' && e.message.includes('fetch')) {
+          return { success: false, message: '🌐 网络连接失败，请检查网络或API地址是否正确' };
+        }
+        return { success: false, message: `❌ 连接失败: ${e.message}` };
+      }
+    }
+
+    return { success: false, message: '❌ 不支持的提供商' };
   };
 
   // 保存配置
@@ -456,16 +521,16 @@ export default function LLMConfigPage() {
                     🐱 阿里千问
                   </Button>
                   <Button
-                    variant={activeTab === 'external' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('external')}
-                    className={activeTab === 'external' ? 'bg-violet-600' : 'border-white/10'}
+                    variant={activeTab === 'baidu' ? 'default' : 'outline'}
+                    onClick={() => setActiveTab('baidu')}
+                    className={activeTab === 'baidu' ? 'bg-violet-600' : 'border-white/10'}
                   >
-                    🌐 外部API
+                    🔴 百度文心
                   </Button>
                 </div>
 
-                {/* 火山引擎/千问模型 */}
-                {(activeTab === 'volcano' || activeTab === 'qwen') && (
+                {/* 火山引擎/千问/百度模型 */}
+                {(activeTab === 'volcano' || activeTab === 'qwen' || activeTab === 'baidu') && (
                   <div className="space-y-3">
                     {filteredModels.length > 0 ? filteredModels.map((model) => (
                       <div
@@ -562,6 +627,18 @@ export default function LLMConfigPage() {
                     }
                     placeholder="选择服务商"
                   />
+                  {/* 显示API地址信息 */}
+                  {selectedProvider && providers.find(p => p.id === selectedProvider) && (
+                    <div className="mt-2 p-2 rounded bg-white/5 border border-white/10">
+                      <div className="flex items-center gap-2 text-xs text-white/60 mb-1">
+                        <Globe className="w-3 h-3" />
+                        <span>API地址</span>
+                      </div>
+                      <code className="text-xs text-violet-400 break-all">
+                        {providers.find(p => p.id === selectedProvider)?.base_url}
+                      </code>
+                    </div>
+                  )}
                 </div>
 
                 {/* 模型 */}
@@ -816,6 +893,23 @@ export default function LLMConfigPage() {
                 <ul className="text-sm text-white/60 space-y-1">
                   <li>• <strong className="text-white/80">火山引擎:</strong> <a href="https://www.volcengine.com" target="_blank" className="text-violet-400 hover:underline">volcengine.com</a></li>
                   <li>• <strong className="text-white/80">阿里千问:</strong> <a href="https://dashscope.console.aliyun.com" target="_blank" className="text-violet-400 hover:underline">阿里云DashScope</a></li>
+                  <li>• <strong className="text-white/80">百度文心:</strong> <a href="https://console.bce.baidu.com/qianfan" target="_blank" className="text-violet-400 hover:underline">百度千帆平台</a></li>
+                </ul>
+              </CardContent>
+            </Card>
+
+            {/* 错误码说明 */}
+            <Card className="bg-amber-600/10 border-amber-500/30">
+              <CardContent className="p-4">
+                <h4 className="font-medium text-amber-300 mb-2 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4" />
+                  常见错误说明
+                </h4>
+                <ul className="text-xs text-white/60 space-y-1">
+                  <li>🔑 <strong className="text-white/80">Key无效:</strong> API Key格式或值错误</li>
+                  <li>🌐 <strong className="text-white/80">网络失败:</strong> 网络不通或API地址错误</li>
+                  <li>⏱️ <strong className="text-white/80">配额用完:</strong> 当月用量已达上限</li>
+                  <li>🖥️ <strong className="text-white/80">服务端错误:</strong> 服务商服务器异常</li>
                 </ul>
               </CardContent>
             </Card>
