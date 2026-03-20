@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton, DashboardSkeleton } from '@/components/ui/skeleton';
 import { MainLayout } from '@/components/layout/main-layout';
 import Link from 'next/link';
 import { 
@@ -25,7 +26,8 @@ import {
   Play,
   Volume2,
   ArrowRight,
-  Loader
+  Loader,
+  FolderOpen
 } from 'lucide-react';
 
 // API基础URL
@@ -189,11 +191,8 @@ export default function DashboardPage() {
   if (loading) {
     return (
       <MainLayout>
-        <div className="min-h-screen flex items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="w-12 h-12 mx-auto mb-4 text-violet-500 animate-spin" />
-            <p className="text-white/60">加载中...</p>
-          </div>
+        <div className="space-y-8 px-4 max-w-7xl mx-auto">
+          <DashboardSkeleton />
         </div>
       </MainLayout>
     );
@@ -339,16 +338,28 @@ export default function DashboardPage() {
               })}
             </div>
           ) : (
-            <Card className="bg-white/5 border-white/10">
-              <CardContent className="p-8 text-center">
-                <BookOpen className="w-12 h-12 mx-auto mb-4 text-white/20" />
-                <p className="text-white/60 mb-4">还没有任何作品</p>
-                <Link href="/novels/new">
-                  <Button className="bg-violet-600 hover:bg-violet-700">
-                    <Plus className="w-4 h-4 mr-2" />
-                    创建第一本小说
-                  </Button>
-                </Link>
+            <Card className="bg-gradient-to-br from-violet-600/10 to-indigo-600/10 border-violet-500/20">
+              <CardContent className="p-12 text-center">
+                <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-gradient-to-br from-violet-500/20 to-purple-500/20 flex items-center justify-center">
+                  <FolderOpen className="w-10 h-10 text-violet-400" />
+                </div>
+                <h3 className="text-xl font-semibold text-white mb-2">开始您的创作之旅</h3>
+                <p className="text-white/60 mb-6 max-w-md mx-auto">
+                  创建一个小说项目，AI将帮助您完成从剧本到视频的完整创作流程
+                </p>
+                <div className="flex flex-col sm:flex-row gap-4 justify-center">
+                  <Link href="/novels/new">
+                    <Button className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
+                      <Plus className="w-4 h-4 mr-2" />
+                      创建小说
+                    </Button>
+                  </Link>
+                  <Link href="/novels">
+                    <Button variant="outline" className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20 px-8">
+                      浏览示例
+                    </Button>
+                  </Link>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -424,9 +435,17 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <Video className="w-8 h-8 mx-auto mb-2 text-white/20" />
-                  <p className="text-white/40 text-sm">暂无生成的视频</p>
+                <div className="text-center py-8 px-4">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-pink-500/10 flex items-center justify-center">
+                    <Video className="w-7 h-7 text-pink-400/50" />
+                  </div>
+                  <p className="text-white/60 text-sm mb-3">还没有生成的视频</p>
+                  <Link href="/video-generation">
+                    <Button size="sm" className="bg-pink-600 hover:bg-pink-700 text-white">
+                      <Sparkles className="w-4 h-4 mr-1" />
+                      生成视频
+                    </Button>
+                  </Link>
                 </div>
               )}
             </CardContent>
@@ -472,9 +491,17 @@ export default function DashboardPage() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-8">
-                  <Volume2 className="w-8 h-8 mx-auto mb-2 text-white/20" />
-                  <p className="text-white/40 text-sm">暂无生成的音频</p>
+                <div className="text-center py-8 px-4">
+                  <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-blue-500/10 flex items-center justify-center">
+                    <Volume2 className="w-7 h-7 text-blue-400/50" />
+                  </div>
+                  <p className="text-white/60 text-sm mb-3">还没有生成的音频</p>
+                  <Link href="/tts">
+                    <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+                      <Sparkles className="w-4 h-4 mr-1" />
+                      生成语音
+                    </Button>
+                  </Link>
                 </div>
               )}
             </CardContent>
