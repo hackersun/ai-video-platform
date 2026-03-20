@@ -15,6 +15,94 @@ DASHSCOPE_CONFIG = {
     "icon_url": "/icons/qwen.svg",
 }
 
+# 火山引擎配置
+VOLCANO_CONFIG = {
+    "provider": "volcano",
+    "provider_name": "Volcano Engine",
+    "provider_name_cn": "火山引擎",
+    "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+    "auth_type": "bearer",
+    "auth_header": "Authorization",
+    "doc_url": "https://www.volcengine.com/docs/82379",
+    "icon_url": "/icons/volcano.svg",
+}
+
+# 阿里百炼配置
+QIANLIAN_CONFIG = {
+    "provider": "qianlian",
+    "provider_name": "Alibaba Qianlian",
+    "provider_name_cn": "阿里百炼",
+    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+    "auth_type": "bearer",
+    "auth_header": "Authorization",
+    "doc_url": "https://help.aliyun.com/document_detail/3096588.html",
+    "icon_url": "/icons/qianlian.svg",
+}
+
+# 默认模型配置
+DEFAULT_MODELS = {
+    # 文本生成
+    "default_text": "doubao-seed-1.8",  # 火山引擎 - 豆包Seed-1.8
+    
+    # 图像生成
+    "default_image": "Doubao-Seedream-4.5",  # 火山引擎 - Seedream-4.5
+    
+    # 视频生成
+    "default_video": "Doubao-Seed-2.0-pro",  # 火山引擎 - Seed-2.0-pro
+    
+    # Coding Plan / 对话理解
+    "default_coding_plan": "qwen3.5-plus",  # 百炼 - 通义千问3.5-Plus
+    "default_dialogue": "qwen3.5-plus",  # 百炼 - 通义千问3.5-Plus
+    
+    # 小说生成
+    "default_novel": "qwen-long",  # 千问 - 长文本模型
+    
+    # 分镜生成
+    "default_storyboard": "qwen-vl-plus",  # 千问VL - 视觉模型
+    
+    # 角色扮演
+    "default_roleplay": "qwen-plus",  # 千问Plus
+}
+
+# 各功能对应的服务商和模型
+SERVICE_MODEL_MAP = {
+    "novel_generation": {
+        "provider": "qwen",
+        "model": "qwen-long",
+        "description": "长文本小说生成"
+    },
+    "coding_plan": {
+        "provider": "qianlian",
+        "model": "qwen3.5-plus",
+        "description": "Coding Plan 生成"
+    },
+    "dialogue_understanding": {
+        "provider": "qianlian",
+        "model": "qwen3.5-plus",
+        "description": "对话理解"
+    },
+    "storyboard_generation": {
+        "provider": "qwen",
+        "model": "qwen-vl-plus",
+        "description": "视频分镜生成"
+    },
+    "image_generation": {
+        "provider": "volcano",
+        "model": "Doubao-Seedream-4.5",
+        "description": "图像生成"
+    },
+    "video_generation": {
+        "provider": "volcano",
+        "model": "Doubao-Seed-2.0-pro",
+        "description": "视频生成"
+    },
+    "roleplay": {
+        "provider": "qwen",
+        "model": "qwen-plus",
+        "description": "角色扮演"
+    }
+}
+
 # 千问模型列表
 QWEN_MODELS = [
     {
