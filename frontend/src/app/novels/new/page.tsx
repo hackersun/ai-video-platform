@@ -64,35 +64,29 @@ export default function NewNovelPage() {
 
     setIsSaving(true);
     try {
-      // 保存到 localStorage
-      const existingNovels = typeof window !== 'undefined' 
-        ? JSON.parse(localStorage.getItem('video-novels') || '[]') 
-        : [];
+      // 保存到后端API
+      const response = await fetch('http://localhost:8001/api/v1/novels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: novel.title,
+          description: novel.description,
+          genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
+          content: novel.intro || '',
+          status: publish ? 'writing' : 'draft'
+        })
+      });
       
-      const now = new Date().toISOString().split('T')[0];
-      const newNovel = {
-        id: Date.now().toString(),
-        title: novel.title,
-        description: novel.description,
-        genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
-        status: publish ? 'writing' as const : 'draft' as const,
-        chapters: 0,
-        characters: 0,
-        createdAt: now,
-        updatedAt: now
-      };
+      if (!response.ok) {
+        throw new Error('保存失败');
+      }
       
-      const updatedNovels = [newNovel, ...existingNovels];
-      localStorage.setItem('video-novels', JSON.stringify(updatedNovels));
-      
-      // 模拟保存
-      await new Promise(resolve => setTimeout(resolve, 1000));
       alert(publish ? '发布成功！' : '保存成功！');
       // 跳转到小说列表
       window.location.href = '/novels';
     } catch (error) {
       console.error('保存失败:', error);
-      alert('保存失败，请重试');
+      alert('保存失败，请检查后端服务是否启动');
     } finally {
       setIsSaving(false);
     }
