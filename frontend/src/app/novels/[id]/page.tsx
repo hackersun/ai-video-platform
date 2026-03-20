@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -28,7 +29,8 @@ import {
   Volume2,
   Image,
   Play,
-  Settings
+  Settings,
+  ImageIcon
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -242,8 +244,35 @@ export default function NovelDetailPage() {
   if (loading) {
     return (
       <MainLayout>
-        <div className="flex items-center justify-center h-64">
-          <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
+        <div className="space-y-6 px-4 max-w-6xl mx-auto">
+          {/* 顶部导航 */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Skeleton className="w-20 h-10" />
+              <Skeleton className="w-48 h-8" />
+            </div>
+            <Skeleton className="w-32 h-10" />
+          </div>
+
+          {/* 封面区域 */}
+          <Card className="bg-white/5 border-white/10">
+            <CardContent className="p-6">
+              <div className="flex gap-6">
+                <Skeleton className="w-32 h-44 rounded-lg" />
+                <div className="flex-1 space-y-3">
+                  <Skeleton className="w-3/4 h-8" />
+                  <Skeleton className="w-1/2 h-4" />
+                  <Skeleton className="w-full h-20" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 标签页 */}
+          <Skeleton className="w-full h-12" />
+
+          {/* 内容区域 */}
+          <Skeleton className="w-full h-64" />
         </div>
       </MainLayout>
     );
@@ -296,7 +325,7 @@ export default function NovelDetailPage() {
               {generatingCover ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
-                <Image className="w-4 h-4 mr-2" />
+                <ImageIcon className="w-4 h-4 mr-2" />
               )}
               生成封面
             </Button>
@@ -308,6 +337,21 @@ export default function NovelDetailPage() {
             </Link>
           </div>
         </div>
+
+        {/* 封面图预览 */}
+        {(novel.cover_url || coverPreview) && (
+          <Card className="bg-white/5 border-white/10 overflow-hidden">
+            <CardContent className="p-4">
+              <div className="relative aspect-video max-w-md mx-auto rounded-lg overflow-hidden bg-black/20">
+                <img 
+                  src={coverPreview || novel.cover_url} 
+                  alt={novel.title}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* 标签页 */}
         <Tabs defaultValue="chapters" className="space-y-4">
