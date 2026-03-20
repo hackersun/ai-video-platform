@@ -490,12 +490,16 @@ function VideoGenerationPageContent() {
                         <p className="text-white/40 text-xs mt-1">任务ID: {taskId}</p>
                       )}
                       
-                      {/* 进度条 */}
-                      <div className="w-64 h-2 bg-white/10 rounded-full mt-4 mx-auto">
-                        <div 
-                          className="h-full bg-violet-500 rounded-full transition-all"
-                          style={{ width: `${progress}%` }}
-                        />
+                      {/* 进度条 - 动画样式 */}
+                      <div className="w-72 mx-auto mt-4">
+                        <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-violet-500 via-purple-500 to-pink-500 rounded-full transition-all duration-500 relative"
+                            style={{ width: `${progress}%` }}
+                          >
+                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}

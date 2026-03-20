@@ -218,37 +218,37 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* 创作流程引导 */}
-        <Card className="bg-gradient-to-r from-violet-600/20 to-indigo-600/20 border-violet-500/30">
+        {/* 创作流程引导 - 时间线样式 */}
+        <Card className="bg-gradient-to-r from-violet-600/10 to-indigo-600/10 border-violet-500/20">
           <CardContent className="p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-violet-400" />
               创作流程
             </h2>
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { step: 1, label: '创建小说', href: '/novels/new', icon: BookOpen },
-                { step: 2, label: '添加章节', href: '/novels', icon: FileText },
-                { step: 3, label: '创建角色', href: '/characters', icon: Users },
-                { step: 4, label: '编写剧本', href: '/scripts', icon: FileText },
-                { step: 5, label: '设计分镜', href: '/storyboards', icon: LayoutGrid },
-                { step: 6, label: '生成视频', href: '/video-generation', icon: Video },
-              ].map((item, index) => (
-                <div key={item.step} className="flex items-center gap-2">
-                  <Link
-                    href={item.href}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 text-white hover:bg-violet-700 transition-all"
-                  >
-                    <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center text-xs">
-                      {item.step}
-                    </span>
-                    {item.label}
-                  </Link>
-                  {index < 5 && (
-                    <span className="text-white/40">→</span>
-                  )}
-                </div>
-              ))}
+            <div className="relative">
+              {/* 时间线连接线 */}
+              <div className="absolute top-6 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 hidden md:block" />
+              
+              <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4">
+                {[
+                  { step: 1, label: '创建小说', href: '/novels/new', icon: BookOpen, color: 'from-violet-500 to-violet-600' },
+                  { step: 2, label: '添加章节', href: '/novels', icon: FileText, color: 'from-purple-500 to-purple-600' },
+                  { step: 3, label: '创建角色', href: '/characters', icon: Users, color: 'from-blue-500 to-blue-600' },
+                  { step: 4, label: '编写剧本', href: '/scripts', icon: FileText, color: 'from-cyan-500 to-cyan-600' },
+                  { step: 5, label: '设计分镜', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
+                  { step: 6, label: '生成视频', href: '/video-generation', icon: Video, color: 'from-pink-500 to-pink-600' },
+                ].map((item, index) => (
+                  <div key={item.step} className="flex flex-col items-center relative z-10">
+                    <Link
+                      href={item.href}
+                      className={`w-12 h-12 rounded-full bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-lg hover:scale-110 transition-all duration-200`}
+                    >
+                      <item.icon className="w-5 h-5" />
+                    </Link>
+                    <span className="text-xs text-white/60 mt-2 whitespace-nowrap">{item.label}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -272,44 +272,63 @@ export default function DashboardPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {novels.map((novel) => {
                 const progress = getNovelProgress(novel);
+                const totalProgress = progress.chapters + progress.characters + progress.scripts;
+                const progressPercent = Math.min(100, (totalProgress / 9) * 100); // 假设总共9个步骤
                 return (
                   <Link key={novel.id} href={`/novels/${novel.id}`}>
-                    <Card className="bg-white/5 border-white/10 hover:border-violet-500/30 transition-all cursor-pointer h-full">
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="w-12 h-16 rounded bg-gradient-to-br from-violet-500/30 to-purple-500/30 flex items-center justify-center">
-                            {novel.cover_url ? (
-                              <img src={novel.cover_url} alt="" className="w-full h-full object-cover rounded" />
-                            ) : (
-                              <BookOpen className="w-6 h-6 text-violet-400" />
-                            )}
+                    <Card className="bg-white/5 border-white/10 hover:border-violet-500/50 transition-all duration-300 cursor-pointer h-full overflow-hidden group">
+                      <CardContent className="p-0">
+                        {/* 封面图区域 */}
+                        <div className="relative h-32 bg-gradient-to-br from-violet-600/30 to-purple-600/30 overflow-hidden">
+                          {novel.cover_url ? (
+                            <img 
+                              src={novel.cover_url} 
+                              alt="" 
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <BookOpen className="w-12 h-12 text-violet-400/50" />
+                            </div>
+                          )}
+                          {/* 状态标签 */}
+                          <div className="absolute top-2 right-2">
+                            <span className={`px-2 py-0.5 rounded text-xs backdrop-blur-sm ${
+                              novel.status === 'completed' ? 'bg-green-500/80 text-green-100' :
+                              novel.status === 'writing' ? 'bg-blue-500/80 text-blue-100' :
+                              'bg-yellow-500/80 text-yellow-100'
+                            }`}>
+                              {novel.status === 'completed' ? '已完成' : 
+                               novel.status === 'writing' ? '连载中' : '草稿'}
+                            </span>
                           </div>
-                          <span className={`px-2 py-0.5 rounded text-xs ${
-                            novel.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                            novel.status === 'writing' ? 'bg-blue-500/20 text-blue-400' :
-                            'bg-yellow-500/20 text-yellow-400'
-                          }`}>
-                            {novel.status === 'completed' ? '已完成' : 
-                             novel.status === 'writing' ? '连载中' : '草稿'}
-                          </span>
                         </div>
                         
-                        <h3 className="text-white font-medium mb-1 truncate">{novel.title}</h3>
-                        {novel.genre && (
-                          <p className="text-white/40 text-sm mb-3">{novel.genre}</p>
-                        )}
-                        
-                        {/* 进度条 */}
-                        <div className="space-y-2">
-                          <div className="flex justify-between text-xs text-white/40">
-                            <span>章节 {progress.chapters}</span>
-                            <span>角色 {progress.characters}</span>
-                            <span>剧本 {progress.scripts}</span>
+                        {/* 内容区域 */}
+                        <div className="p-4">
+                          <h3 className="text-white font-medium mb-1 truncate group-hover:text-violet-300 transition-colors">{novel.title}</h3>
+                          {novel.genre && (
+                            <p className="text-white/40 text-sm mb-3">{novel.genre}</p>
+                          )}
+                          
+                          {/* 统计信息 */}
+                          <div className="flex items-center justify-between text-xs text-white/50 mb-2">
+                            <span className="flex items-center gap-1">
+                              <FileText className="w-3 h-3" /> {progress.chapters}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Users className="w-3 h-3" /> {progress.characters}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Video className="w-3 h-3" /> {progress.scripts}
+                            </span>
                           </div>
-                          <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+                          
+                          {/* 进度条 */}
+                          <div className="relative h-1.5 bg-white/10 rounded-full overflow-hidden">
                             <div 
-                              className="h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full"
-                              style={{ width: `${Math.min(100, (progress.scripts / 3) * 100)}%` }}
+                              className="absolute top-0 left-0 h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full transition-all duration-500"
+                              style={{ width: `${progressPercent}%` }}
                             />
                           </div>
                         </div>
