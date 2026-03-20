@@ -6,6 +6,8 @@
 from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
+import httpx
+import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,6 +89,9 @@ class LLMConfigResponse(BaseModel):
 
 class LLMTestRequest(BaseModel):
     """测试请求"""
+    api_key: str = Field(..., description="API密钥")
+    provider_id: str = Field(..., description="提供商ID")
+    model_id: str = Field(..., description="模型ID")
     message: str = Field("你好，请介绍一下自己", description="测试消息")
 
 
@@ -114,10 +119,24 @@ DEFAULT_PROVIDERS = [
         "icon_url": "/icons/volcano.svg",
         "website_url": "https://www.volcengine.com",
         "doc_url": "https://www.volcengine.com/docs/82379"
+    },
+    {
+        "id": "qwen",
+        "name": "qwen",
+        "name_cn": "阿里千问",
+        "name_en": "Alibaba Qwen",
+        "provider_type": "cloud",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "auth_type": "bearer",
+        "description": "阿里云通义千问大模型",
+        "icon_url": "/icons/qwen.svg",
+        "website_url": "https://dashscope.console.aliyun.com",
+        "doc_url": "https://help.aliyun.com/document_detail/611411.html"
     }
 ]
 
 DEFAULT_MODELS = [
+    # 火山引擎模型
     {
         "id": "doubao-seed-1-8",
         "provider_id": "volcano",
@@ -139,8 +158,316 @@ DEFAULT_MODELS = [
         "description": "豆包最新轻量级模型，性价比高",
         "version": "1.8",
         "release_date": "2024-12-28"
+    },
+    {
+        "id": "doubao-pro-4k",
+        "provider_id": "volcano",
+        "model_id": "doubao-pro-4k",
+        "model_name": "Doubao-Pro-4K",
+        "model_name_cn": "豆包Pro-4K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling"],
+        "context_window": 4096,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.008,
+        "output_cost_per_1k": 0.02,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "豆包Pro轻量版，性价比高",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    {
+        "id": "doubao-lite-4k",
+        "provider_id": "volcano",
+        "model_id": "doubao-lite-4k",
+        "model_name": "Doubao-Lite-4K",
+        "model_name_cn": "豆包Lite-4K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion"],
+        "context_window": 4096,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.003,
+        "output_cost_per_1k": 0.006,
+        "supports_streaming": True,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "豆包Lite极速版，响应最快，成本最低",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    {
+        "id": "doubao-pro-32k",
+        "provider_id": "volcano",
+        "model_id": "doubao-pro-32k",
+        "model_name": "Doubao-Pro-32K",
+        "model_name_cn": "豆包Pro-32K",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode"],
+        "context_window": 32768,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0.02,
+        "output_cost_per_1k": 0.06,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "豆包Pro长上下文版，支持32K上下文",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    # 千问模型
+    {
+        "id": "qwen-turbo",
+        "provider_id": "qwen",
+        "model_id": "qwen-turbo",
+        "model_name": "Qwen-Turbo",
+        "model_name_cn": "千问Turbo",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion"],
+        "context_window": 8192,
+        "max_tokens": 2048,
+        "input_cost_per_1k": 0.005,
+        "output_cost_per_1k": 0.01,
+        "supports_streaming": True,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "轻量级模型，响应速度快，成本低",
+        "version": "1.0",
+        "release_date": "2024-01-01"
+    },
+    {
+        "id": "qwen-plus",
+        "provider_id": "qwen",
+        "model_id": "qwen-plus",
+        "model_name": "Qwen-Plus",
+        "model_name_cn": "千问Plus",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling"],
+        "context_window": 32768,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0.02,
+        "output_cost_per_1k": 0.06,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "均衡型模型，综合能力优秀",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    {
+        "id": "qwen-max",
+        "provider_id": "qwen",
+        "model_id": "qwen-max",
+        "model_name": "Qwen-Max",
+        "model_name_cn": "千问Max",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode"],
+        "context_window": 32768,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0.2,
+        "output_cost_per_1k": 0.6,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "旗舰级模型，最强性能",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    {
+        "id": "qwen-long",
+        "provider_id": "qwen",
+        "model_id": "qwen-long",
+        "model_name": "Qwen-Long",
+        "model_name_cn": "千问Long",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion"],
+        "context_window": 1000000,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0.005,
+        "output_cost_per_1k": 0.02,
+        "supports_streaming": True,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "超长上下文模型，支持百万token",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    {
+        "id": "qwen-coder-plus",
+        "provider_id": "qwen",
+        "model_id": "qwen-coder-plus",
+        "model_name": "Qwen-Coder-Plus",
+        "model_name_cn": "千问Coder Plus",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "code_generation", "planning"],
+        "context_window": 32768,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0.02,
+        "output_cost_per_1k": 0.06,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "代码生成旗舰模型，支持复杂规划和架构设计",
+        "version": "1.0",
+        "release_date": "2024-06-01"
+    },
+    {
+        "id": "qwen-vl-plus",
+        "provider_id": "qwen",
+        "model_id": "qwen-vl-plus",
+        "model_name": "Qwen-VL-Plus",
+        "model_name_cn": "千问VL Plus",
+        "model_type": "vision",
+        "capabilities": ["chat", "vision", "image_understanding"],
+        "context_window": 32768,
+        "max_tokens": 2048,
+        "input_cost_per_1k": 0.02,
+        "output_cost_per_1k": 0.06,
+        "supports_streaming": True,
+        "supports_function_calling": False,
+        "supports_vision": True,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "视觉语言模型，支持图像理解",
+        "version": "1.0",
+        "release_date": "2024-06-01"
     }
 ]
+
+
+# ============== 辅助函数 ==============
+
+async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
+    """测试火山引擎API"""
+    url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": message}],
+        "max_tokens": 100
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=data, headers=headers)
+            
+            if response.status_code == 200:
+                result = response.json()
+                return {
+                    "success": True,
+                    "message": "火山引擎 API 连接成功！",
+                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
+                }
+            else:
+                error = response.json().get("error", {})
+                return {
+                    "success": False,
+                    "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "response": None,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": 0
+                }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络或API地址",
+            "response": None,
+            "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)[:100]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
+
+
+async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
+    """测试阿里千问API"""
+    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": model_id,
+        "input": {"messages": [{"role": "user", "content": message}]},
+        "parameters": {"max_tokens": 100}
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=data, headers=headers)
+            
+            if response.status_code == 200:
+                result = response.json()
+                content = result.get("output", {}).get("text") or result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
+                return {
+                    "success": True,
+                    "message": "阿里千问 API 连接成功！",
+                    "response": content,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) or result.get("usage", {}).get("input_tokens", 0) + result.get("usage", {}).get("output_tokens", 0)
+                }
+            else:
+                error = response.json().get("error", {})
+                return {
+                    "success": False,
+                    "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "response": None,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": 0
+                }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络或API地址",
+            "response": None,
+            "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)[:100]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
 
 
 # ============== API端点 ==============
@@ -229,12 +556,18 @@ async def list_configs(
     configs = []
     for row in result.all():
         config, model = row
+        # 获取provider名称
+        provider_result = await db.execute(
+            select(LLMProvider).where(LLMProvider.id == model.provider_id)
+        )
+        provider = provider_result.scalar_one_or_none()
+        
         configs.append({
             "id": config.id,
             "user_id": config.user_id,
             "model_id": config.model_id,
-            "model_name": model.model_name,
-            "provider_name": "火山引擎",  # TODO: 从provider表获取
+            "model_name": model.model_name_cn or model.model_name,
+            "provider_name": provider.name_cn if provider else "未知",
             "name": config.name,
             "temperature": config.temperature,
             "top_p": config.top_p,
@@ -298,12 +631,18 @@ async def create_config(
     await db.commit()
     await db.refresh(config)
     
+    # 获取provider信息
+    provider_result = await db.execute(
+        select(LLMProvider).where(LLMProvider.id == model.provider_id)
+    )
+    provider = provider_result.scalar_one_or_none()
+    
     return {
         "id": config.id,
         "user_id": config.user_id,
         "model_id": config.model_id,
-        "model_name": model.model_name,
-        "provider_name": "火山引擎",
+        "model_name": model.model_name_cn or model.model_name,
+        "provider_name": provider.name_cn if provider else "未知",
         "name": config.name,
         "temperature": config.temperature,
         "top_p": config.top_p,
@@ -316,6 +655,41 @@ async def create_config(
         "created_at": config.created_at,
         "updated_at": config.updated_at
     }
+
+
+@router.post("/configs/test", response_model=LLMTestResponse)
+async def test_api_connection(
+    request: LLMTestRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """测试API连接（无需保存配置）"""
+    # 获取模型信息
+    result = await db.execute(
+        select(LLMModel).where(LLMModel.id == request.model_id)
+    )
+    model = result.scalar_one_or_none()
+    
+    if not model:
+        # 如果数据库中没有模型，使用请求中的信息
+        model_provider_id = request.provider_id
+        model_id = request.model_id
+    else:
+        model_provider_id = model.provider_id
+        model_id = model.model_id
+    
+    # 根据提供商调用不同的测试函数
+    if model_provider_id == "volcano":
+        return await test_volcano_api(request.api_key, model_id, request.message)
+    elif model_provider_id == "qwen":
+        return await test_qwen_api(request.api_key, model_id, request.message)
+    else:
+        return {
+            "success": False,
+            "message": f"不支持的提供商: {model_provider_id}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
 
 
 @router.post("/configs/{config_id}/test", response_model=LLMTestResponse)
@@ -346,28 +720,34 @@ async def test_config(
     
     config, model = row
     
-    # TODO: 实现实际的API调用测试
-    # 这里模拟测试成功
-    import asyncio
-    start_time = datetime.utcnow()
-    await asyncio.sleep(1)  # 模拟API调用
-    end_time = datetime.utcnow()
+    # 获取provider信息
+    provider_result = await db.execute(
+        select(LLMProvider).where(LLMProvider.id == model.provider_id)
+    )
+    provider = provider_result.scalar_one_or_none()
+    provider_id = provider.id if provider else model.provider_id
     
-    response_time = int((end_time - start_time).total_seconds() * 1000)
+    # 根据提供商调用测试
+    if provider_id == "volcano":
+        test_result = await test_volcano_api(config.api_key, model.model_id, request.message)
+    elif provider_id == "qwen":
+        test_result = await test_qwen_api(config.api_key, model.model_id, request.message)
+    else:
+        test_result = {
+            "success": False,
+            "message": f"不支持的提供商: {provider_id}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
     
     # 更新测试状态
-    config.test_status = "success"
-    config.test_message = "连接成功"
+    config.test_status = "success" if test_result["success"] else "failed"
+    config.test_message = test_result["message"]
     config.tested_at = datetime.utcnow()
     await db.commit()
     
-    return {
-        "success": True,
-        "message": "测试成功",
-        "response": f"你好！我是{model.model_name_cn}，很高兴为你服务。",
-        "response_time_ms": response_time,
-        "tokens_used": 25
-    }
+    return test_result
 
 
 @router.put("/configs/{config_id}", response_model=LLMConfigResponse)
@@ -414,12 +794,18 @@ async def update_config(
     )
     model = result.scalar_one()
     
+    # 获取provider信息
+    provider_result = await db.execute(
+        select(LLMProvider).where(LLMProvider.id == model.provider_id)
+    )
+    provider = provider_result.scalar_one_or_none()
+    
     return {
         "id": config.id,
         "user_id": config.user_id,
         "model_id": config.model_id,
-        "model_name": model.model_name,
-        "provider_name": "火山引擎",
+        "model_name": model.model_name_cn or model.model_name,
+        "provider_name": provider.name_cn if provider else "未知",
         "name": config.name,
         "temperature": config.temperature,
         "top_p": config.top_p,
