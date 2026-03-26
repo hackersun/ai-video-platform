@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
-import { 
-  LayoutGrid, 
-  Plus, 
-  Edit2, 
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import {
+  LayoutGrid,
+  Plus,
+  Edit2,
   Trash2,
   Search,
   Image as ImageIcon,
@@ -23,60 +24,168 @@ import {
   Sparkles,
   Loader2,
   X,
-  Save
+  Save,
+  RefreshCw,
+  Video
 } from 'lucide-react';
 
-// 分镜数据类型
+// 分镜数据类型 - 与后端 Shot 模型匹配
 interface Shot {
   id: string;
   shot_number: number;
-  title: string;
-  description: string;
   duration: number;
-  image_url?: string;
+  prompt: string;
   dialogue?: string;
-  camera_type: string;
-  effect?: string;
+  visual_description?: string;
+  camera_angle?: string;
+  video_url?: string;
+  audio_url?: string;
+  video_status: string;
+  audio_status: string;
+  image_url?: string;
+  image_status?: string;
+  // 精细化控制字段
+  camera_movement?: string;
+  movement_speed?: number;
+  emotion?: string;
+  emotion_intensity?: number;
+  lighting?: string;
+  color_grading?: string;
+  music_cue?: string;
+  sfx_cue?: string;
+  keyframes?: any[];
+  version?: number;
   created_at: string;
   updated_at: string;
 }
 
-// 分镜卡数据类型
+// 分镜卡数据类型 - 与后端 Storyboard 模型匹配
 interface Storyboard {
   id: string;
+  script_id: string;
   title: string;
   description?: string;
-  script_id: string;
-  status: 'draft' | 'approved' | 'rejected';
-  shots: Shot[];
+  content?: any;
+  shot_count: number;
+  total_duration: number;
+  status: string;
+  script_title?: string;
   created_at: string;
   updated_at: string;
 }
 
-const CAMERA_TYPES = ['全景', '远景', '中景', '近景', '特写', '跟拍', '摇镜头', '推镜头'];
-const EFFECTS = ['无', '光晕', '暗光', '虚化', '旋转', '闪烁', '渐变', '粒子'];
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// 剧本数据
+interface Script {
+  id: string;
+  title: string;
+}
+
+// 分镜生成请求
+interface GenerateRequest {
+  script_id: string;
+  shot_count?: number;
+  style?: string;
+}
+
+const CAMERA_ANGLES = ['wide', 'medium', 'close-up', 'extreme-close-up', 'over-shoulder', 'dutch', 'two-shot', 'pov', 'birds-eye', 'worms-eye'];
+const CAMERA_MOVEMENTS = ['static', 'pan_left', 'pan_right', 'tilt_up', 'tilt_down', 'zoom_in', 'zoom_out', 'dolly', 'crane', 'handheld'];
+const EMOTIONS = ['happy', 'sad', 'angry', 'surprised', 'neutral', 'tense', 'relaxed', 'excited'];
+const LIGHTING_OPTIONS = ['natural', 'dramatic', 'soft', 'rim', 'back', 'neon', 'moonlight', 'golden_hour'];
+const COLOR_GRADING_OPTIONS = ['warm', 'cool', 'desaturated', 'vibrant', 'vintage', 'cinematic', 'noir'];
+const STORYBOARD_STYLES = ['anime', 'realistic', 'cartoon', 'noir', 'fantasy', 'sci-fi'];
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 export default function StoryboardsPage() {
   const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
   const [selectedStoryboard, setSelectedStoryboard] = useState<Storyboard | null>(null);
   const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
+  const [shots, setShots] = useState<Shot[]>([]);
+  const [scripts, setScripts] = useState<Script[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingShots, setLoadingShots] = useState(false);
   const [showNewModal, setShowNewModal] = useState(false);
   const [newStoryboardTitle, setNewStoryboardTitle] = useState('');
   const [newStoryboardScriptId, setNewStoryboardScriptId] = useState('');
-  
-  // 加载分镜数据
+  const [newStoryboardStyle, setNewStoryboardStyle] = useState('anime');
+  const [generatingStoryboard, setGeneratingStoryboard] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
+
+  const handleGenerateShotImage = async (shotId: string) => {
+    setGeneratingImage(true);
+    try {
+      await fetchWithAuth(`${API_BASE}/shots/${shotId}/generate-image`, { method: 'POST' });
+      pollShotImage(shotId);
+    } catch (err) {
+      console.error("Image generation failed:", err);
+      setGeneratingImage(false);
+    }
+  };
+
+  const pollShotImage = async (shotId: string) => {
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const res = await fetchWithAuth(`${API_BASE}/shots/${shotId}`);
+        if (!res.ok) continue;
+        const shot = await res.json();
+        if (shot.image_status === "succeeded") {
+          const shotsRes = await fetchWithAuth(`${API_BASE}/shots/storyboard/${selectedStoryboard?.id}`);
+          if (shotsRes.ok) {
+            const updated = await shotsRes.json();
+            setShots(updated);
+          }
+          setSelectedShot(shot);
+          setGeneratingImage(false);
+          return;
+        }
+        if (shot.image_status === "failed") {
+          setGeneratingImage(false);
+          return;
+        }
+      } catch {
+        // continue polling
+      }
+    }
+    setGeneratingImage(false);
+  };
+
+  // 加载剧本列表
+  const loadScripts = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/scripts`);
+      if (res.ok) {
+        const data = await res.json();
+        setScripts(Array.isArray(data) ? data : []);
+      }
+    } catch (error) {
+      console.error('加载剧本失败:', error);
+      setScripts([]);
+    }
+  };
+
+  // 加载分镜列表
   const loadStoryboards = async () => {
     setLoading(true);
     try {
-      // 由于分镜是挂在script下的，我们从API获取
-      // 这里简化处理，实际应该先获取所有storyboard列表
-      const response = await fetch(`${API_BASE}/api/v1/storyboards/script/mock`);
-      const data = await response.json();
-      setStoryboards(Array.isArray(data) ? data : []);
+      // 先获取所有剧本
+      await loadScripts();
+
+      // 再获取每个剧本的分镜
+      const allStoryboards: Storyboard[] = [];
+      for (const script of scripts) {
+        const sbRes = await fetchWithAuth(`${API_BASE}/storyboards/script/${script.id}`);
+        if (sbRes.ok) {
+          const sbs = await sbRes.json();
+          const sbsWithScript = (Array.isArray(sbs) ? sbs : []).map((sb: any) => ({
+            ...sb,
+            script_title: script.title,
+          }));
+          allStoryboards.push(...sbsWithScript);
+        }
+      }
+      setStoryboards(allStoryboards);
     } catch (error) {
       console.error('加载分镜失败:', error);
       setStoryboards([]);
@@ -85,14 +194,44 @@ export default function StoryboardsPage() {
     }
   };
 
+  // 加载指定分镜的镜头
+  const loadShots = async (storyboardId: string) => {
+    setLoadingShots(true);
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/shots/storyboard/${storyboardId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setShots(Array.isArray(data) ? data : []);
+      } else {
+        setShots([]);
+      }
+    } catch (error) {
+      console.error('加载镜头失败:', error);
+      setShots([]);
+    } finally {
+      setLoadingShots(false);
+    }
+  };
+
   useEffect(() => {
     loadStoryboards();
   }, []);
 
+  // 选中分镜时加载镜头
+  useEffect(() => {
+    if (selectedStoryboard) {
+      loadShots(selectedStoryboard.id);
+      setSelectedShot(null);
+    } else {
+      setShots([]);
+    }
+  }, [selectedStoryboard?.id]);
+
   // 筛选分镜
-  const filteredStoryboards = storyboards.filter(sb => 
+  const filteredStoryboards = storyboards.filter(sb =>
     sb.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    sb.description?.toLowerCase().includes(searchQuery.toLowerCase())
+    sb.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    sb.script_title?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // 创建分镜
@@ -101,28 +240,71 @@ export default function StoryboardsPage() {
       alert('请输入分镜标题');
       return;
     }
+    if (!newStoryboardScriptId) {
+      alert('请选择关联的剧本');
+      return;
+    }
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/storyboards`, {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          script_id: newStoryboardScriptId,
           title: newStoryboardTitle,
           description: '',
-          script_id: newStoryboardScriptId || 'default'
         })
       });
 
       if (response.ok) {
-        const newSb = await response.json();
-        setStoryboards([newSb, ...storyboards]);
+        await loadStoryboards();
         setShowNewModal(false);
         setNewStoryboardTitle('');
-        setSelectedStoryboard(newSb);
+        setNewStoryboardScriptId('');
+      } else {
+        const err = await response.json();
+        alert(err.detail || '创建失败');
       }
     } catch (error) {
       console.error('创建分镜失败:', error);
       alert('创建失败');
+    }
+  };
+
+  // AI 生成故事板（从剧本生成）
+  const handleAIGenerateStoryboard = async () => {
+    if (!newStoryboardScriptId) {
+      alert('请先选择一个剧本');
+      return;
+    }
+    if (!confirm('确定要使用AI自动生成分镜吗？这将从剧本内容生成镜头。')) return;
+    setGeneratingStoryboard(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          script_id: newStoryboardScriptId,
+          shot_count: 5,
+          style: newStoryboardStyle || 'anime'
+        })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        await loadStoryboards();
+        // 选中新创建的分镜
+        const newSb = storyboards.find(sb => sb.id === data.id) || data;
+        setSelectedStoryboard(newSb);
+        alert(`分镜生成成功！共 ${data.shot_count} 个镜头。`);
+      } else {
+        const errData = await response.json();
+        throw new Error(errData.detail || '生成失败');
+      }
+    } catch (err: any) {
+      console.error('生成故事板失败:', err);
+      alert(err.message || '生成失败');
+    } finally {
+      setGeneratingStoryboard(false);
     }
   };
 
@@ -131,63 +313,55 @@ export default function StoryboardsPage() {
     if (!selectedStoryboard) return;
 
     try {
-      const newShot = {
-        shot_number: selectedStoryboard.shots?.length + 1 || 1,
-        title: `镜头 ${(selectedStoryboard.shots?.length || 0) + 1}`,
-        description: '新镜头描述',
-        duration: 5,
-        camera_type: '中景',
-        effect: '无'
+      const newShotData = {
+        storyboard_id: selectedStoryboard.id,
+        shot_number: shots.length + 1,
+        duration: 4,
+        prompt: `镜头 ${shots.length + 1} 描述`,
+        dialogue: '',
+        visual_description: '',
+        camera_angle: 'medium',
       };
 
-      const response = await fetch(`${API_BASE}/api/v1/shots`, {
+      const response = await fetchWithAuth(`${API_BASE}/shots`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newShot,
-          storyboard_id: selectedStoryboard.id
-        })
+        body: JSON.stringify(newShotData)
       });
 
       if (response.ok) {
         const createdShot = await response.json();
-        const updatedStoryboard = {
-          ...selectedStoryboard,
-          shots: [...(selectedStoryboard.shots || []), createdShot]
-        };
-        setSelectedStoryboard(updatedStoryboard);
-        setStoryboards(storyboards.map(sb => 
-          sb.id === updatedStoryboard.id ? updatedStoryboard : sb
-        ));
+        setShots([...shots, createdShot]);
+        setSelectedShot(createdShot);
       }
     } catch (error) {
       console.error('创建镜头失败:', error);
+      alert('创建镜头失败');
     }
   };
 
   // 更新镜头
   const handleUpdateShot = async (updated: Shot) => {
-    if (!selectedStoryboard) return;
-
     try {
-      const response = await fetch(`${API_BASE}/api/v1/shots/${updated.id}`, {
+      const response = await fetchWithAuth(`${API_BASE}/shots/${updated.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
       });
 
       if (response.ok) {
-        const newShots = selectedStoryboard.shots.map(s => 
-          s.id === updated.id ? updated : s
+        const updatedData = await response.json();
+        const newShots = shots.map(s =>
+          s.id === updated.id ? { ...updated, ...updatedData } : s
         );
-        const updatedStoryboard = { ...selectedStoryboard, shots: newShots };
-        setSelectedStoryboard(updatedStoryboard);
-        setStoryboards(storyboards.map(sb => 
-          sb.id === updatedStoryboard.id ? updatedStoryboard : sb
-        ));
+        setShots(newShots);
+        setSelectedShot(null);
+      } else {
+        alert('更新失败');
       }
     } catch (error) {
       console.error('更新镜头失败:', error);
+      alert('更新失败');
     }
   };
 
@@ -197,54 +371,44 @@ export default function StoryboardsPage() {
     if (!confirm('确定要删除这个镜头吗？')) return;
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/shots/${shotId}`, {
+      const response = await fetchWithAuth(`${API_BASE}/shots/${shotId}`, {
         method: 'DELETE'
       });
 
       if (response.ok) {
-        const newShots = selectedStoryboard.shots.filter(s => s.id !== shotId);
-        const updatedStoryboard = { ...selectedStoryboard, shots: newShots };
-        setSelectedStoryboard(updatedStoryboard);
-        setStoryboards(storyboards.map(sb => 
-          sb.id === updatedStoryboard.id ? updatedStoryboard : sb
-        ));
+        const newShots = shots.filter(s => s.id !== shotId);
+        setShots(newShots);
         if (selectedShot?.id === shotId) {
           setSelectedShot(null);
         }
       }
     } catch (error) {
       console.error('删除镜头失败:', error);
+      alert('删除失败');
     }
   };
 
   // 移动镜头顺序
   const moveShot = async (index: number, direction: 'up' | 'down') => {
-    if (!selectedStoryboard || !selectedStoryboard.shots) return;
-    
     const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= selectedStoryboard.shots.length) return;
+    if (newIndex < 0 || newIndex >= shots.length) return;
 
-    const newShots = [...selectedStoryboard.shots];
+    const newShots = [...shots];
     [newShots[index], newShots[newIndex]] = [newShots[newIndex], newShots[index]];
-    
+
     // 更新shot_number
     newShots.forEach((shot, i) => {
       shot.shot_number = i + 1;
     });
 
-    const updatedStoryboard = { ...selectedStoryboard, shots: newShots };
-    setSelectedStoryboard(updatedStoryboard);
-    setStoryboards(storyboards.map(sb => 
-      sb.id === updatedStoryboard.id ? updatedStoryboard : sb
-    ));
+    setShots(newShots);
 
     // 同步到后端
     try {
-      await fetch(`${API_BASE}/api/v1/shots/reorder`, {
+      await fetchWithAuth(`${API_BASE}/shots/reorder?storyboard_id=${selectedStoryboard?.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          storyboard_id: selectedStoryboard.id,
           shot_ids: newShots.map(s => s.id)
         })
       });
@@ -254,7 +418,7 @@ export default function StoryboardsPage() {
   };
 
   // 总时长
-  const totalDuration = selectedStoryboard?.shots?.reduce((sum, s) => sum + (s.duration || 0), 0) || 0;
+  const totalDuration = shots.reduce((sum, s) => sum + (s.duration || 0), 0);
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -271,23 +435,19 @@ export default function StoryboardsPage() {
             <p className="text-white/60 mt-1">设计视频分镜和镜头序列</p>
           </div>
           <div className="flex gap-3">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               className="border-white/20 text-white"
               onClick={() => setShowNewModal(true)}
             >
               <Plus className="w-4 h-4 mr-2" />
               新建分镜
             </Button>
-            <Button className="bg-purple-600 hover:bg-purple-700">
-              <Sparkles className="w-4 h-4 mr-2" />
-              AI 生成
-            </Button>
           </div>
         </div>
 
         {/* 统计信息 */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <Card className="bg-white/5 border-white/10">
             <CardContent className="p-4 text-center">
               <div className="text-2xl font-bold text-white">{storyboards.length}</div>
@@ -302,10 +462,14 @@ export default function StoryboardsPage() {
           </Card>
           <Card className="bg-white/5 border-white/10">
             <CardContent className="p-4 text-center">
-              <div className="text-2xl font-bold text-blue-400">
-                {selectedStoryboard?.shots?.filter(s => s.image_url).length || 0}
-              </div>
-              <div className="text-sm text-white/60">已配图</div>
+              <div className="text-2xl font-bold text-blue-400">{shots.filter(s => s.video_url).length}</div>
+              <div className="text-sm text-white/60">已生成视频</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-white/5 border-white/10">
+            <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-green-400">{shots.length}</div>
+              <div className="text-sm text-white/60">当前镜头数</div>
             </CardContent>
           </Card>
         </div>
@@ -335,7 +499,7 @@ export default function StoryboardsPage() {
                 {filteredStoryboards.map((sb) => (
                   <div
                     key={sb.id}
-                    onClick={() => { setSelectedStoryboard(sb); setSelectedShot(null); }}
+                    onClick={() => setSelectedStoryboard(sb)}
                     className={`p-3 rounded-lg cursor-pointer transition-all ${
                       selectedStoryboard?.id === sb.id
                         ? 'bg-purple-600/20 border-purple-500'
@@ -346,9 +510,16 @@ export default function StoryboardsPage() {
                       <div>
                         <div className="text-white font-medium">{sb.title}</div>
                         <div className="text-xs text-white/40">
-                          {sb.shots?.length || 0} 个镜头 · {sb.status}
+                          {sb.shot_count || 0} 个镜头 · {sb.script_title || sb.script_id}
                         </div>
                       </div>
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        sb.status === 'approved' ? 'bg-green-600/30 text-green-400' :
+                        sb.status === 'rejected' ? 'bg-red-600/30 text-red-400' :
+                        'bg-white/10 text-white/60'
+                      }`}>
+                        {sb.status || 'draft'}
+                      </span>
                     </div>
                   </div>
                 ))}
@@ -378,9 +549,19 @@ export default function StoryboardsPage() {
                     <CardTitle className="text-white flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <LayoutGrid className="w-5 h-5 text-purple-400" />
-                        {selectedStoryboard.title}
+                        <span className="text-lg">{selectedStoryboard.title}</span>
+                        <span className="text-sm text-white/50">· {shots.length} 个镜头</span>
                       </div>
                       <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => loadShots(selectedStoryboard.id)}
+                          className="border-purple-500/50 text-purple-400 hover:bg-purple-600/20"
+                        >
+                          <RefreshCw className="w-4 h-4 mr-1" />
+                          刷新
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"
@@ -396,7 +577,13 @@ export default function StoryboardsPage() {
                   <CardContent>
                     {/* 镜头列表 */}
                     <div className="space-y-3">
-                      {selectedStoryboard.shots?.map((shot, index) => (
+                      {loadingShots ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
+                          <span className="ml-2 text-white/60">加载镜头...</span>
+                        </div>
+                      ) : shots.length > 0 ? (
+                        shots.map((shot, index) => (
                         <div
                           key={shot.id}
                           onClick={() => setSelectedShot(shot)}
@@ -412,9 +599,18 @@ export default function StoryboardsPage() {
                                 {shot.shot_number}
                               </span>
                               <div>
-                                <div className="text-white font-medium">{shot.title}</div>
+                                <div className="text-white font-medium line-clamp-1">{shot.prompt || '未设置描述'}</div>
                                 <div className="text-xs text-white/40">
-                                  {shot.duration}秒 · {shot.camera_type}
+                                  {shot.duration}秒 · {shot.camera_angle || 'medium'}
+                                  {shot.video_status !== 'pending' && (
+                                    <span className={`ml-2 ${
+                                      shot.video_status === 'completed' ? 'text-green-400' :
+                                      shot.video_status === 'failed' ? 'text-red-400' :
+                                      'text-yellow-400'
+                                    }`}>
+                                      视频: {shot.video_status}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -433,7 +629,7 @@ export default function StoryboardsPage() {
                                 size="icon"
                                 className="w-6 h-6 text-white/40"
                                 onClick={(e) => { e.stopPropagation(); moveShot(index, 'down'); }}
-                                disabled={index === (selectedStoryboard.shots?.length || 0) - 1}
+                                disabled={index === shots.length - 1}
                               >
                                 <ChevronRight className="w-3 h-3" />
                               </Button>
@@ -448,12 +644,10 @@ export default function StoryboardsPage() {
                             </div>
                           </div>
                         </div>
-                      ))}
-
-                      {(!selectedStoryboard.shots || selectedStoryboard.shots.length === 0) && (
+                      ))) : (
                         <div className="text-center py-8">
                           <Film className="w-12 h-12 mx-auto text-white/20" />
-                          <p className="text-white/40 mt-2">暂无镜头，点击上方添加</p>
+                          <p className="text-white/40 mt-2">暂无镜头，点击上方添加或使用AI生成</p>
                         </div>
                       )}
                     </div>
@@ -462,83 +656,9 @@ export default function StoryboardsPage() {
                     {selectedShot && (
                       <div className="mt-6 pt-6 border-t border-white/10">
                         <h4 className="text-white font-medium mb-4">镜头 {selectedShot.shot_number} 详情</h4>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="text-sm text-white/60 mb-2 block">镜头标题</label>
-                            <Input
-                              value={selectedShot.title}
-                              onChange={(e) => setSelectedShot({ ...selectedShot, title: e.target.value })}
-                              className="bg-white/5 border-white/10 text-white"
-                            />
-                          </div>
-                          <div>
-                            <label className="text-sm text-white/60 mb-2 block">时长（秒）</label>
-                            <Input
-                              type="number"
-                              value={selectedShot.duration}
-                              onChange={(e) => setSelectedShot({ ...selectedShot, duration: parseInt(e.target.value) || 0 })}
-                              className="bg-white/5 border-white/10 text-white"
-                            />
-                          </div>
-                        </div>
 
-                        <div className="mt-4">
-                          <label className="text-sm text-white/60 mb-2 block">镜头描述</label>
-                          <Input
-                            value={selectedShot.description}
-                            onChange={(e) => setSelectedShot({ ...selectedShot, description: e.target.value })}
-                            className="bg-white/5 border-white/10 text-white"
-                          />
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4 mt-4">
-                          <div>
-                            <label className="text-sm text-white/60 mb-2 block">镜头类型</label>
-                            <select
-                              value={selectedShot.camera_type}
-                              onChange={(e) => setSelectedShot({ ...selectedShot, camera_type: e.target.value })}
-                              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
-                            >
-                              {CAMERA_TYPES.map(type => (
-                                <option key={type} value={type}>{type}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <div>
-                            <label className="text-sm text-white/60 mb-2 block">特效</label>
-                            <select
-                              value={selectedShot.effect || '无'}
-                              onChange={(e) => setSelectedShot({ ...selectedShot, effect: e.target.value })}
-                              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
-                            >
-                              {EFFECTS.map(effect => (
-                                <option key={effect} value={effect}>{effect}</option>
-                              ))}
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="mt-4">
-                          <label className="text-sm text-white/60 mb-2 block">台词/配音</label>
-                          <Input
-                            value={selectedShot.dialogue || ''}
-                            onChange={(e) => setSelectedShot({ ...selectedShot, dialogue: e.target.value })}
-                            placeholder="输入镜头台词或配音内容"
-                            className="bg-white/5 border-white/10 text-white"
-                          />
-                        </div>
-
-                        <div className="mt-4">
-                          <label className="text-sm text-white/60 mb-2 block">图片URL</label>
-                          <Input
-                            value={selectedShot.image_url || ''}
-                            onChange={(e) => setSelectedShot({ ...selectedShot, image_url: e.target.value })}
-                            placeholder="输入分镜图片URL"
-                            className="bg-white/5 border-white/10 text-white"
-                          />
-                        </div>
-
-                        <div className="flex gap-2 mt-4">
+                        {/* 快速操作按钮 */}
+                        <div className="flex gap-2 mb-4">
                           <Button
                             onClick={() => handleUpdateShot(selectedShot)}
                             className="bg-purple-600 hover:bg-purple-700"
@@ -553,6 +673,212 @@ export default function StoryboardsPage() {
                           >
                             取消
                           </Button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-sm text-white/60 mb-2 block">镜头时长（秒）</label>
+                            <Input
+                              type="number"
+                              value={selectedShot.duration}
+                              onChange={(e) => setSelectedShot({ ...selectedShot, duration: parseInt(e.target.value) || 4 })}
+                              className="bg-white/5 border-white/10 text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-white/60 mb-2 block">镜头角度</label>
+                            <select
+                              value={selectedShot.camera_angle || 'medium'}
+                              onChange={(e) => setSelectedShot({ ...selectedShot, camera_angle: e.target.value })}
+                              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                            >
+                              {CAMERA_ANGLES.map(angle => (
+                                <option key={angle} value={angle}>{angle}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <label className="text-sm text-white/60 mb-2 block">
+                            视频生成 Prompt <span className="text-red-400">*</span>
+                          </label>
+                          <Input
+                            value={selectedShot.prompt || ''}
+                            onChange={(e) => setSelectedShot({ ...selectedShot, prompt: e.target.value })}
+                            placeholder="用于AI视频生成的关键描述词，简洁有力"
+                            className="bg-white/5 border-white/10 text-white"
+                          />
+                        </div>
+
+                        <div className="mt-4">
+                          <label className="text-sm text-white/60 mb-2 block">视觉描述</label>
+                          <textarea
+                            value={selectedShot.visual_description || ''}
+                            onChange={(e) => setSelectedShot({ ...selectedShot, visual_description: e.target.value })}
+                            placeholder="人物动作、环境、表情等细节描述"
+                            rows={3}
+                            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white resize-none"
+                          />
+                        </div>
+
+                        {/* 参考图 */}
+                        <div className="mt-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <label className="text-sm font-medium text-white/60">参考图</label>
+                            <button
+                              onClick={() => handleGenerateShotImage(selectedShot.id)}
+                              disabled={generatingImage || !selectedShot.visual_description}
+                              className="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {generatingImage ? "生成中..." : "生成参考图"}
+                            </button>
+                          </div>
+                          {(selectedShot.image_status === "generating" || selectedShot.image_status === "pending") && (
+                            <div className="text-sm text-yellow-400">生成中...</div>
+                          )}
+                          {selectedShot.image_url && (
+                            <img
+                              src={selectedShot.image_url}
+                              alt="Shot reference"
+                              className="w-full max-h-48 object-cover rounded-lg border border-white/10"
+                            />
+                          )}
+                        </div>
+
+                        <div className="mt-4">
+                          <label className="text-sm text-white/60 mb-2 block">台词/配音</label>
+                          <Input
+                            value={selectedShot.dialogue || ''}
+                            onChange={(e) => setSelectedShot({ ...selectedShot, dialogue: e.target.value })}
+                            placeholder="输入镜头台词或配音内容"
+                            className="bg-white/5 border-white/10 text-white"
+                          />
+                        </div>
+
+                        {/* 精细化控制 */}
+                        <div className="mt-6 pt-4 border-t border-white/10">
+                          <h5 className="text-white font-medium mb-3">精细化控制</h5>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">运镜方式</label>
+                              <select
+                                value={selectedShot.camera_movement || 'static'}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, camera_movement: e.target.value })}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                              >
+                                {CAMERA_MOVEMENTS.map(m => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">情绪</label>
+                              <select
+                                value={selectedShot.emotion || 'neutral'}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, emotion: e.target.value })}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                              >
+                                {EMOTIONS.map(e => (
+                                  <option key={e} value={e}>{e}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">光线</label>
+                              <select
+                                value={selectedShot.lighting || 'natural'}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, lighting: e.target.value })}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                              >
+                                {LIGHTING_OPTIONS.map(l => (
+                                  <option key={l} value={l}>{l}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">调色</label>
+                              <select
+                                value={selectedShot.color_grading || 'cinematic'}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, color_grading: e.target.value })}
+                                className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                              >
+                                {COLOR_GRADING_OPTIONS.map(c => (
+                                  <option key={c} value={c}>{c}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-4 mt-4">
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">配乐提示</label>
+                              <Input
+                                value={selectedShot.music_cue || ''}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, music_cue: e.target.value })}
+                                placeholder="背景音乐风格"
+                                className="bg-white/5 border-white/10 text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">音效提示</label>
+                              <Input
+                                value={selectedShot.sfx_cue || ''}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, sfx_cue: e.target.value })}
+                                placeholder="环境音效"
+                                className="bg-white/5 border-white/10 text-white"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 视频/音频URL */}
+                        <div className="mt-6 pt-4 border-t border-white/10">
+                          <h5 className="text-white font-medium mb-3">生成结果</h5>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">视频 URL</label>
+                              <Input
+                                value={selectedShot.video_url || ''}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, video_url: e.target.value })}
+                                placeholder="生成后的视频链接"
+                                className="bg-white/5 border-white/10 text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">音频 URL</label>
+                              <Input
+                                value={selectedShot.audio_url || ''}
+                                onChange={(e) => setSelectedShot({ ...selectedShot, audio_url: e.target.value })}
+                                placeholder="配音音频链接"
+                                className="bg-white/5 border-white/10 text-white"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-4 mt-4">
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">视频状态</label>
+                              <span className={`px-2 py-1 rounded text-xs ${
+                                selectedShot.video_status === 'completed' ? 'bg-green-600/30 text-green-400' :
+                                selectedShot.video_status === 'failed' ? 'bg-red-600/30 text-red-400' :
+                                selectedShot.video_status === 'processing' ? 'bg-yellow-600/30 text-yellow-400' :
+                                'bg-white/10 text-white/60'
+                              }`}>
+                                {selectedShot.video_status}
+                              </span>
+                            </div>
+                            <div>
+                              <label className="text-sm text-white/60 mb-2 block">音频状态</label>
+                              <span className={`px-2 py-1 rounded text-xs ${
+                                selectedShot.audio_status === 'completed' ? 'bg-green-600/30 text-green-400' :
+                                selectedShot.audio_status === 'failed' ? 'bg-red-600/30 text-red-400' :
+                                selectedShot.audio_status === 'processing' ? 'bg-yellow-600/30 text-yellow-400' :
+                                'bg-white/10 text-white/60'
+                              }`}>
+                                {selectedShot.audio_status}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -577,9 +903,9 @@ export default function StoryboardsPage() {
           <Card className="bg-white/10 backdrop-blur-lg border-white/20 w-full max-w-md">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-white">新建分镜</CardTitle>
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setShowNewModal(false)}
                 className="text-white/60 hover:text-white"
               >
@@ -596,26 +922,43 @@ export default function StoryboardsPage() {
                   className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
               </div>
-              
+
               <div>
-                <label className="text-sm text-white/60 mb-2 block">关联剧本ID</label>
-                <Input
-                  placeholder="留空为默认剧本"
+                <label className="text-sm text-white/60 mb-2 block">关联剧本 *</label>
+                <select
                   value={newStoryboardScriptId}
                   onChange={(e) => setNewStoryboardScriptId(e.target.value)}
-                  className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-                />
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">请选择剧本...</option>
+                  {scripts.map(script => (
+                    <option key={script.id} value={script.id}>{script.title}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-sm text-white/60 mb-2 block">分镜风格</label>
+                <select
+                  value={newStoryboardStyle}
+                  onChange={(e) => setNewStoryboardStyle(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                >
+                  {STORYBOARD_STYLES.map(style => (
+                    <option key={style} value={style}>{style}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex gap-3 pt-4">
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   onClick={() => setShowNewModal(false)}
                   className="flex-1 border-white/20 text-white"
                 >
                   取消
                 </Button>
-                <Button 
+                <Button
                   onClick={handleCreateStoryboard}
                   className="flex-1 bg-purple-600 hover:bg-purple-700"
                 >
@@ -623,6 +966,31 @@ export default function StoryboardsPage() {
                   创建
                 </Button>
               </div>
+
+              {newStoryboardScriptId && (
+                <div className="pt-4 border-t border-white/10">
+                  <Button
+                    onClick={handleAIGenerateStoryboard}
+                    disabled={generatingStoryboard}
+                    className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                  >
+                    {generatingStoryboard ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        AI 生成分镜中...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        AI 从剧本生成
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-xs text-white/40 mt-2 text-center">
+                    将从所选剧本内容自动生成 {newStoryboardStyle} 风格的分镜镜头
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
