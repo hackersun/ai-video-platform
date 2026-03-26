@@ -365,7 +365,7 @@ async def create_shots_batch(
     return [build_shot_response(s, storyboard.title) for s in created_shots]
 
 
-@router.post("/shots/{shot_id}/generate-image")
+@router.post("/{shot_id}/generate-image")
 async def generate_shot_image(
     shot_id: str,
     db: AsyncSession = Depends(get_db),
