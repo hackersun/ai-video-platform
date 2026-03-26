@@ -85,6 +85,23 @@ export default function CharactersPage() {
   const [extractCount, setExtractCount] = useState(5);
   const [extractError, setExtractError] = useState<string | null>(null);
 
+  // Sync selectedCharacter when characters array changes (e.g., after avatar generation)
+  useEffect(() => {
+    if (selectedCharacter && characters) {
+      const updated = characters.find((c: Character) => c.id === selectedCharacter.id);
+      if (updated && updated.avatar !== selectedCharacter.avatar) {
+        setSelectedCharacter(updated);
+      }
+    }
+  }, [characters]);
+
+  // Clear extracted chars when modal closes
+  useEffect(() => {
+    if (!showExtractModal) {
+      setExtractedChars([]);
+    }
+  }, [showExtractModal]);
+
   const loadCharacters = async () => {
     setLoading(true);
     setError(null);
@@ -185,7 +202,6 @@ export default function CharactersPage() {
             setExtractedChars(prev => prev.map(c => c.id === char.id ? { ...c, avatar_status: 'failed' } : c));
           }
         }
-        setExtractedChars([]); // Clear after all started
         await loadCharacters();
       } else {
         await loadCharacters();
