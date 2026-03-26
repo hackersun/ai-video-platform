@@ -58,6 +58,20 @@ def init_llm_providers_and_models():
             "description": "阿里云千问平台，支持qwen-long、qwen-plus等模型",
             "website_url": "https://dashscope.console.aliyun.com/",
             "doc_url": "https://help.aliyun.com/zh/dashscope/"
+        },
+        {
+            "id": "openai",
+            "name": "openai",
+            "name_cn": "OpenAI",
+            "name_en": "OpenAI",
+            "provider_type": "cloud",
+            "base_url": "https://api.openai.com/v1",
+            "auth_type": "bearer",
+            "is_active": True,
+            "is_builtin": True,
+            "description": "OpenAI 提供 GPT-4o、DALL-E、Sora 等模型",
+            "website_url": "https://platform.openai.com/",
+            "doc_url": "https://platform.openai.com/docs"
         }
     ]
     
@@ -84,6 +98,24 @@ def init_llm_providers_and_models():
         },
         # 火山引擎 - 视频模型
         {
+            "id": "volcano-seedance-1-0-pro-fast",
+            "provider_id": "volcano",
+            "model_id": "ep-20260322134751-fbglz",
+            "model_name": "Doubao-Seedance-1.0-pro-fast",
+            "model_name_cn": "豆包Seedance-1.0-pro-fast",
+            "model_type": "video",
+            "capabilities": ["text-to-video", "image-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "豆包Seedance 1.0 Pro快速版，图生视频/文生视频，速度快"
+        },
+        {
             "id": "volcano-video",
             "provider_id": "volcano",
             "model_id": "volcano-video",
@@ -97,7 +129,7 @@ def init_llm_providers_and_models():
             "output_cost_per_1k": 0,
             "supports_streaming": False,
             "supports_function_calling": False,
-            "is_recommended": True,
+            "is_recommended": False,
             "is_active": True,
             "description": "火山引擎高质量视频生成模型"
         },
@@ -196,7 +228,146 @@ def init_llm_providers_and_models():
             "is_active": True,
             "description": "MiniMax大语言模型M2.5"
         },
-        
+
+        # OpenAI - 文本模型
+        {
+            "id": "openai-gpt-4o",
+            "provider_id": "openai",
+            "model_id": "gpt-4o",
+            "model_name": "gpt-4o",
+            "model_name_cn": "GPT-4o",
+            "model_type": "chat",
+            "capabilities": ["chat", "vision", "function_calling", "json_mode"],
+            "context_window": 128000,
+            "max_tokens": 16384,
+            "input_cost_per_1k": 2.5,
+            "output_cost_per_1k": 10.0,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "supports_vision": True,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "OpenAI 最强旗舰模型，支持文本和图像理解"
+        },
+        {
+            "id": "openai-gpt-4o-mini",
+            "provider_id": "openai",
+            "model_id": "gpt-4o-mini",
+            "model_name": "gpt-4o-mini",
+            "model_name_cn": "GPT-4o-mini",
+            "model_type": "chat",
+            "capabilities": ["chat", "vision", "function_calling", "json_mode"],
+            "context_window": 128000,
+            "max_tokens": 16384,
+            "input_cost_per_1k": 0.15,
+            "output_cost_per_1k": 0.6,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "supports_vision": True,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "轻量级旗舰模型，性价比高，支持文本和图像理解"
+        },
+        {
+            "id": "openai-gpt-4-turbo",
+            "provider_id": "openai",
+            "model_id": "gpt-4-turbo",
+            "model_name": "gpt-4-turbo",
+            "model_name_cn": "GPT-4 Turbo",
+            "model_type": "chat",
+            "capabilities": ["chat", "vision", "function_calling", "json_mode"],
+            "context_window": 128000,
+            "max_tokens": 4096,
+            "input_cost_per_1k": 10.0,
+            "output_cost_per_1k": 30.0,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "supports_vision": True,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "GPT-4 高性能版，上下文窗口大"
+        },
+        {
+            "id": "openai-gpt-3-5-turbo",
+            "provider_id": "openai",
+            "model_id": "gpt-3.5-turbo",
+            "model_name": "gpt-3.5-turbo",
+            "model_name_cn": "GPT-3.5 Turbo",
+            "model_type": "chat",
+            "capabilities": ["chat", "function_calling", "json_mode"],
+            "context_window": 16385,
+            "max_tokens": 4096,
+            "input_cost_per_1k": 0.5,
+            "output_cost_per_1k": 1.5,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "supports_vision": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "轻量快速模型，适合简单任务"
+        },
+
+        # OpenAI - 图像生成模型
+        {
+            "id": "openai-dall-e-3",
+            "provider_id": "openai",
+            "model_id": "dall-e-3",
+            "model_name": "dall-e-3",
+            "model_name_cn": "DALL-E 3",
+            "model_type": "image",
+            "capabilities": ["text-to-image"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "supports_vision": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "OpenAI 高质量图像生成模型"
+        },
+        {
+            "id": "openai-dall-e-2",
+            "provider_id": "openai",
+            "model_id": "dall-e-2",
+            "model_name": "dall-e-2",
+            "model_name_cn": "DALL-E 2",
+            "model_type": "image",
+            "capabilities": ["text-to-image", "image-edit", "variation"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "supports_vision": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "OpenAI 图像生成模型"
+        },
+
+        # OpenAI - 视频生成模型 (Sora, 预留)
+        {
+            "id": "openai-sora",
+            "provider_id": "openai",
+            "model_id": "sora",
+            "model_name": "sora",
+            "model_name_cn": "OpenAI Sora",
+            "model_type": "video",
+            "capabilities": ["text-to-video", "image-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "supports_vision": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "OpenAI 视频生成模型（即将发布）"
+        },
+
         # 千问 - 文本模型
         {
             "id": "dashscope-qwen-long",

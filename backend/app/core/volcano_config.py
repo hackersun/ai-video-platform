@@ -108,6 +108,18 @@ VOLCANO_MODELS = [
         "is_recommended": False
     },
     {
+        "id": "ep-20260322134751-fbglz",
+        "name": "Doubao-Seedance-1.0-pro-fast",
+        "name_cn": "豆包Seedance-1.0-pro-fast",
+        "type": "video-generation",
+        "capabilities": ["image-to-video", "text-to-video"],
+        "supported_durations": [4, 5, 8, 10],
+        "cost_per_second": 50,  # 50分/秒
+        "description": "豆包Seedance 1.0 Pro快速版，图生视频/文生视频，速度快",
+        "use_case": "视频生成、动画制作",
+        "is_recommended": False
+    },
+    {
         "id": "volcano-video",
         "name": "volcano-video",
         "name_cn": "火山视频生成",
@@ -128,7 +140,7 @@ VOLCANO_USE_CASES = {
     "快速响应": ["doubao-seed-1-8-251228", "doubao-lite-4k"],
     "长文档处理": ["doubao-pro-128k", "doubao-pro-32k"],
     "图像生成": ["volcano-vision"],
-    "视频生成": ["volcano-video"],
+    "视频生成": ["volcano-video", "ep-20260322134751-fbglz"],
     "低成本场景": ["doubao-lite-4k", "doubao-seed-1-8-251228"]
 }
 
