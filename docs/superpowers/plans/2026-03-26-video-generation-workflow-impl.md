@@ -46,22 +46,21 @@ Check if `getNovels()` and `getScripts(novelId?)` methods exist. If not, note wh
 
 Focus on the `POST /video/generate` endpoint and the job list endpoint.
 
-- [ ] **Step 2: Update VideoGenerateRequest model**
+- [ ] **Step 2: Check existing VideoGenerateRequest fields**
 
-Add optional fields to the request model:
+Read `video.py` and find the `VideoGenerateRequest` model definition. The model **already has** `script_id`, `storyboard_id`, `shot_id` fields. Only add `novel_id`:
 
 ```python
 class VideoGenerateRequest(BaseModel):
-    # ... existing fields ...
-    novel_id: Optional[str] = None
-    script_id: Optional[str] = None
-    storyboard_id: Optional[str] = None
-    shot_id: Optional[str] = None
+    # ... existing fields: script_id, storyboard_id, shot_id are already here ...
+    novel_id: Optional[str] = None  # ← Only add this field
 ```
 
-- [ ] **Step 3: Update POST /video/generate endpoint**
+- [ ] **Step 3: Update POST /video/generate endpoint to fetch titles**
 
-When creating the `VideoJob` record, merge association data into `extra_data`:
+⚠️ **Important:** Read the existing endpoint first. It may already store IDs in `extra_data` (lines ~218-222). You need to **replace or extend** that block to also fetch titles, since the frontend history list (Task 3 Step 6) reads `job.extra_data.novel_title` etc.
+
+Replace the existing `extra_data` assignment with this code that fetches all titles:
 
 ```python
 extra_data = request.extra_data or {}
@@ -84,9 +83,24 @@ if request.shot_id:
     extra_data["shot_number"] = shot.shot_number if shot else None
 ```
 
-- [ ] **Step 4: Update GET /video/jobs to include association info in response**
+- [ ] **Step 4: Update GET /video/jobs to return association info**
 
-The `VideoJobResponse` model should include `extra_data` in its output so the frontend can display the association.
+Update the `VideoJobResponse` model to include the association fields:
+
+```python
+class VideoJobResponse(BaseModel):
+    # ... existing fields ...
+    novel_id: Optional[str] = None       # ← Add
+    novel_title: Optional[str] = None    # ← Add
+    script_id: Optional[str] = None      # ← Add (if not already present)
+    script_title: Optional[str] = None    # ← Add
+    storyboard_id: Optional[str] = None   # ← Add
+    storyboard_title: Optional[str] = None # ← Add
+    shot_id: Optional[str] = None         # ← Add
+    shot_number: Optional[int] = None     # ← Add
+```
+
+In the endpoint, extract these from `extra_data` when building the response.
 
 - [ ] **Step 5: Commit**
 
@@ -146,13 +160,18 @@ Insert above the existing script selector. When novel changes, reset script/stor
 
 - [ ] **Step 4: Filter scripts by selected novel**
 
-Modify the existing scripts fetch: if `selectedNovel` is set, only show scripts that belong to that novel. Scripts have a `novel_id` field. If the API doesn't support filtering by novel, filter client-side:
+⚠️ **Context:** The page currently loads ALL scripts globally (no novel concept exists yet). The script selector uses the full list. You need to **client-side filter** the scripts dropdown by `novel_id` when a novel is selected:
 
 ```typescript
+// In the JSX where scripts dropdown options are rendered:
 const filteredScripts = selectedNovel
   ? scripts.filter((s) => s.novel_id === selectedNovel)
   : scripts;
+
+// Render dropdown with filteredScripts instead of scripts
 ```
+
+If the backend endpoint `GET /scripts` supports a `novel_id` query param, prefer that instead (more efficient). Otherwise client-side filter is fine for now.
 
 - [ ] **Step 5: Pass association IDs to generateVideo call**
 
@@ -217,17 +236,55 @@ Focus on the create character flow, the extract flow, and how image generation i
 
 Focus on the `extract_characters` endpoint and the image generation service.
 
-- [ ] **Step 2: Add auto_generate_avatar parameter**
+- [ ] **Step 2: Add auto_generate_avatar parameter to existing CharacterExtractRequest**
+
+⚠️ **Important:** Do NOT create a new class. Find the existing `CharacterExtractRequest` class definition in `characters.py` (around line 85) and **add one field** to it:
 
 ```python
 class CharacterExtractRequest(BaseModel):
-    # ... existing fields ...
-    auto_generate_avatar: bool = True
+    # ... keep all existing fields ...
+    auto_generate_avatar: bool = True  # ← Add this field to existing class
 ```
 
 - [ ] **Step 3: After creating each character, auto-generate avatar if enabled**
 
-Find where extracted characters are created. After the loop that creates characters, if `auto_generate_avatar` is True, call the image generation service for each character. Since image generation is async (returns a task_id), store the task info in a temporary field or just trigger the generation and let the frontend poll.
+Find where extracted characters are created. After the loop that creates characters, if `auto_generate_avatar` is True, call the image generation service for each character.
+
+Build avatar prompt from character fields:
+```python
+def build_avatar_prompt(char: Character) -> str:
+    """Construct an image generation prompt from character data."""
+    parts = []
+    if char.name:
+        parts.append(f"character: {char.name}")
+    if char.appearance:
+        parts.append(f"appearance: {char.appearance}")
+    if char.personality:
+        parts.append(f"personality: {char.personality}")
+    parts.append("anime style, high quality, portrait")
+    return ", ".join(parts)
+```
+
+Then for each character:
+```python
+if request.auto_generate_avatar:
+    from app.services.volcano_service import VolcanoService
+    volcano = VolcanoService()
+    for char in created_characters:
+        try:
+            prompt = build_avatar_prompt(char)
+            result = await volcano.generate_image(prompt=prompt)
+            image_url = result.get("image_url")
+            if image_url:
+                char.avatar = image_url
+                db.add(char)
+                await db.commit()
+        except Exception:
+            # Don't fail the whole extract if one avatar fails
+            pass
+```
+
+Note: Image generation is synchronous here (waiting for result). This is acceptable for extract flows with few characters. If characters > 5, consider making it async (background task).
 
 For simplicity, do this synchronously by calling the image generation API and waiting for completion:
 
@@ -451,7 +508,77 @@ git commit -m "feat(db): add image_url, image_status, image_asset_id to Shot mod
 
 Focus on the existing endpoints and how the image generation service is used.
 
-- [ ] **Step 2: Add generate-image endpoint**
+- [ ] **Step 2: Create shared image poll service module**
+
+⚠️ **Critical fix:** Background tasks CANNOT share the request's `db` session — it gets closed when the HTTP response is sent, causing `DetachedInstanceError`. You must create a separate session inside the background task.
+
+Create a new file:
+
+**Create:** `backend/app/services/image_poll_service.py`
+
+```python
+"""Background image generation polling service."""
+import asyncio
+from app.core.database import async_session_maker
+from app.models.shot import Shot
+from app.models.asset import Asset
+
+
+async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
+    """Background polling: creates its own DB session. Call with asyncio.create_task()."""
+    import uuid
+    from app.services.volcano_service import VolcanoService
+
+    volcano = VolcanoService()
+    max_attempts = 60  # 2 min max
+
+    for _ in range(max_attempts):
+        await asyncio.sleep(2)
+        try:
+            status_result = await volcano.get_image_status(task_id)
+            status = status_result.get("status")
+
+            if status == "succeeded":
+                image_url = status_result.get("image_url")
+
+                # Create independent session for background work
+                async with async_session_maker() as session:
+                    # Update shot
+                    shot = await session.get(Shot, shot_id)
+                    if shot:
+                        shot.image_url = image_url
+                        shot.image_status = "succeeded"
+
+                        # Create asset
+                        asset = Asset(
+                            id=str(uuid.uuid4()),
+                            user_id=user_id,
+                            category="scene",
+                            name=f"镜头{shot.shot_number}参考图",
+                            asset_type="image",
+                            url=image_url,
+                            extra_data={"shot_id": shot_id},
+                        )
+                        session.add(asset)
+                        shot.image_asset_id = asset.id
+                        await session.commit()
+                return
+
+            elif status == "failed":
+                async with async_session_maker() as session:
+                    shot = await session.get(Shot, shot_id)
+                    if shot:
+                        shot.image_status = "failed"
+                        await session.commit()
+                return
+
+        except Exception:
+            continue
+```
+
+- [ ] **Step 3: Add generate-image endpoint to shots.py**
+
+Use the shared service:
 
 ```python
 @router.post("/shots/{shot_id}/generate-image")
@@ -465,7 +592,7 @@ async def generate_shot_image(
     if not shot or shot.user_id != user_id:
         raise HTTPException(status_code=404, detail="镜头不存在")
 
-    # Build prompt from shot data
+    # Build prompt (include lighting and color_grading for better results)
     prompt_parts = []
     if shot.visual_description:
         prompt_parts.append(shot.visual_description)
@@ -475,80 +602,31 @@ async def generate_shot_image(
         prompt_parts.append(f"camera: {shot.camera_angle}")
     if shot.emotion:
         prompt_parts.append(f"emotion: {shot.emotion}")
+    if shot.lighting:
+        prompt_parts.append(f"lighting: {shot.lighting}")
     prompt = " ".join(prompt_parts) if prompt_parts else shot.visual_description or shot.prompt or "cinematic scene"
 
     # Call image generation service
     from app.services.volcano_service import VolcanoService
     volcano = VolcanoService()
     result = await volcano.generate_image(prompt=prompt)
-
     task_id = result.get("task_id")
 
     # Update shot status
     shot.image_status = "generating"
     await db.commit()
 
-    # Start background task to poll and update result
-    asyncio.create_task(poll_and_update_shot_image(db, shot_id, task_id))
+    # Start background poll with user_id — creates own DB session
+    asyncio.create_task(poll_and_update_shot_image(shot_id, task_id, user_id))
 
     return {"shot_id": shot_id, "task_id": task_id, "status": "generating"}
-
-
-async def poll_and_update_shot_image(db: AsyncSession, shot_id: str, task_id: str):
-    """后台轮询图像生成状态并更新shot记录"""
-    import asyncio
-    from app.services.volcano_service import VolcanoService
-
-    volcano = VolcanoService()
-    max_attempts = 60  # 2 minutes max
-
-    for _ in range(max_attempts):
-        await asyncio.sleep(2)
-        try:
-            status_result = await volcano.get_image_status(task_id)
-            status = status_result.get("status")
-
-            if status == "succeeded":
-                image_url = status_result.get("image_url")
-                # Create asset
-                from app.models.asset import Asset
-                asset = Asset(
-                    id=str(uuid.uuid4()),
-                    user_id=shot.user_id if hasattr(shot, 'user_id') else None,
-                    category="scene",
-                    name=f"镜头{shot.shot_number}参考图",
-                    asset_type="image",
-                    url=image_url,
-                    extra_data={"shot_id": shot_id},
-                )
-                db.add(asset)
-                await db.commit()
-
-                # Update shot
-                shot = await db.get(Shot, shot_id)
-                shot.image_url = image_url
-                shot.image_status = "succeeded"
-                shot.image_asset_id = asset.id
-                await db.commit()
-                return
-
-            elif status == "failed":
-                shot = await db.get(Shot, shot_id)
-                shot.image_status = "failed"
-                await db.commit()
-                return
-
-        except Exception:
-            continue
 ```
 
-Note: Fix the `poll_and_update_shot_image` function to properly pass user_id and use a separate DB session (since the background task can't share the request's session).
-
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add backend/app/api/v1/endpoints/shots.py
-git commit -m "feat(shots): add generate-image endpoint for shot reference images"
+git add backend/app/services/image_poll_service.py backend/app/api/v1/endpoints/shots.py
+git commit -m "feat(shots): add generate-image endpoint with background polling"
 ```
 
 ### Task 10: 后端 - Storyboards端点增加批量生成接口
@@ -558,7 +636,9 @@ git commit -m "feat(shots): add generate-image endpoint for shot reference image
 
 - [ ] **Step 1: Read storyboards.py**
 
-- [ ] **Step 2: Add batch generate images endpoint**
+- [ ] **Step 2: Add batch generate images endpoint to storyboards.py**
+
+⚠️ **Same DB session issue as Task 9.** Use the shared `poll_and_update_shot_image` from `image_poll_service.py` (do NOT pass the request's `db` session — the shared function creates its own).
 
 ```python
 @router.post("/storyboards/{storyboard_id}/shots/generate-images")
@@ -580,15 +660,16 @@ async def generate_storyboard_shot_images(
             results.append({"shot_id": shot_id, "status": "skipped", "reason": "not found or not in this storyboard"})
             continue
 
-        # Build prompt
+        # Build prompt (include lighting for better results)
         prompt_parts = []
         if shot.visual_description:
             prompt_parts.append(shot.visual_description)
         if shot.prompt:
             prompt_parts.append(shot.prompt)
+        if shot.lighting:
+            prompt_parts.append(f"lighting: {shot.lighting}")
         prompt = " ".join(prompt_parts) if prompt_parts else shot.visual_description or shot.prompt or "cinematic scene"
 
-        # Call image service
         try:
             from app.services.volcano_service import VolcanoService
             volcano = VolcanoService()
@@ -598,8 +679,9 @@ async def generate_storyboard_shot_images(
             shot.image_status = "generating"
             await db.commit()
 
-            # Background poll
-            asyncio.create_task(poll_and_update_shot_image(db, shot_id, task_id))
+            # Use shared background poller — it creates its own DB session
+            from app.services.image_poll_service import poll_and_update_shot_image
+            asyncio.create_task(poll_and_update_shot_image(shot_id, task_id, user_id))
 
             results.append({"shot_id": shot_id, "task_id": task_id, "status": "generating"})
         except Exception as e:
@@ -607,8 +689,6 @@ async def generate_storyboard_shot_images(
 
     return {"storyboard_id": storyboard_id, "results": results}
 ```
-
-Note: Move `poll_and_update_shot_image` to a shared module (e.g., `backend/app/services/image_poll_service.py`) to avoid duplication between shots.py and storyboards.py.
 
 - [ ] **Step 3: Commit**
 
