@@ -1,40 +1,89 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
-import { 
-  Video, 
-  Play, 
+import {
+  Video,
+  Play,
   Settings,
   Clock,
   Film,
   Sparkles,
   Wand2,
-  ChevronRight,
   Loader2,
   CheckCircle,
   AlertCircle,
   RefreshCw,
   Download,
-  Copy
+  Copy,
+  User,
+  Image as ImageIcon,
+  ChevronRight,
+  BookOpen,
+  FileText,
+  LayoutGrid
 } from 'lucide-react';
+import Link from 'next/link';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
 
 // 视频生成状态
 type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
-// 提供商配置
-const PROVIDERS = [
-  { id: 'volcano', name: '火山引擎', icon: '🔥', cost: '约50分/秒' },
+// 视频模型配置
+const VIDEO_MODELS = [
+  { id: 'doubao-seedance-1-5-pro-251215', name: 'Doubao-Seedance-1.5-pro', desc: '最新Pro版，支持文生视频/图生视频', duration: '4/8/10秒' },
 ];
 
-// 默认火山API Key
-const DEFAULT_API_KEY = 'be8feb9d-6b08-406e-8447-b22b87cd907a';
+// 角色类型
+interface Character {
+  id: string;
+  name: string;
+  avatar?: string;
+  appearance?: string;
+}
+
+// 镜头类型
+interface Shot {
+  id: string;
+  shot_number: number;
+  duration: number;
+  prompt: string;
+  dialogue?: string;
+  visual_description?: string;
+  camera_angle?: string;
+  video_status: string;
+  image_url?: string;
+  character_id?: string;
+  character_refs?: any[];
+}
+
+// 小说类型
+interface Novel {
+  id: string;
+  title: string;
+}
+
+// 剧本类型
+interface Script {
+  id: string;
+  title: string;
+  novel_id?: string;
+}
+
+// 分镜类型
+interface Storyboard {
+  id: string;
+  title: string;
+  script_id: string;
+  shot_count: number;
+}
 
 // 视频任务类型
 interface VideoJob {
@@ -52,32 +101,193 @@ interface VideoJob {
   resolution?: string;
   created_at: string;
   updated_at: string;
+  novel_id?: string;
+  novel_title?: string;
+  script_id?: string;
+  script_title?: string;
+  storyboard_id?: string;
+  shot_id?: string;
+  shot_number?: number;
+  extra_data?: any;
 }
 
-export default function VideoGenerationPage() {
-  const [selectedProvider] = useState('volcano');
+// 视频生成参数
+interface VideoGenerateParams {
+  shot_id?: string;
+  storyboard_id?: string;
+  script_id?: string;
+  novel_id?: string;
+  prompt: string;
+  duration: number;
+  resolution: string;
+  image_url?: string;
+  model: string;
+}
+
+function VideoGenerationPageInner() {
+  const searchParams = useSearchParams();
+
+  // ====== URL 参数 ======
+  const urlScriptId = searchParams.get('script_id');
+  const urlStoryboardId = searchParams.get('storyboard_id');
+  const urlShotId = searchParams.get('shot_id');
+
+  // ====== 状态 ======
   const [status, setStatus] = useState<GenerationStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  // 参数配置
-  const [prompt, setPrompt] = useState('无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验');
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [apiKeyLoading, setApiKeyLoading] = useState(true);
+
+  // 关联数据
+  const [novels, setNovels] = useState<Novel[]>([]);
+  const [selectedNovel, setSelectedNovel] = useState<string>('');
+  const [shot, setShot] = useState<Shot | null>(null);
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [selectedCharacterId, setSelectedCharacterId] = useState<string>('');
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
+  const [shots, setShots] = useState<Shot[]>([]);
+
+  // 生成参数
+  const [prompt, setPrompt] = useState('');
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState('720p');
   const [imageUrl, setImageUrl] = useState('');
-  
+  const [selectedModel, setSelectedModel] = useState('doubao-seedance-1-5-pro-251215');
+  const [selectedShotId, setSelectedShotId] = useState<string>('');
+
+  // 关联ID
+  const [scriptId, setScriptId] = useState<string>(urlScriptId || '');
+  const [storyboardId, setStoryboardId] = useState<string>(urlStoryboardId || '');
+  const [currentShotId, setCurrentShotId] = useState<string>(urlShotId || '');
+
   // 历史记录
   const [history, setHistory] = useState<VideoJob[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // 加载火山引擎 API Key
+  const loadApiKey = async () => {
+    setApiKeyLoading(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (response.ok) {
+        const configs = await response.json();
+        const volcanoConfig = Array.isArray(configs)
+          ? configs.find((c: any) => c.provider_id === 'volcano')
+          : null;
+        if (volcanoConfig?.api_key) {
+          setApiKey(volcanoConfig.api_key);
+        }
+      }
+    } catch (err) {
+      console.error('加载API Key失败:', err);
+    } finally {
+      setApiKeyLoading(false);
+    }
+  };
+
+  // 加载剧本列表
+  const loadScripts = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/scripts`);
+      if (res.ok) {
+        const data = await res.json();
+        setScripts(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error('加载剧本失败:', err);
+    }
+  };
+
+  // 加载小说列表
+  const loadNovels = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/novels`);
+      if (res.ok) {
+        const data = await res.json();
+        setNovels(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      console.error('加载小说失败:', err);
+    }
+  };
+
+  // 加载角色的函数（会过滤没有avatar的）
+  const loadCharacters = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/characters`);
+      if (res.ok) {
+        const data = await res.json();
+        // 只保留有avatar的角色
+        setCharacters((Array.isArray(data) ? data : []).filter((c: Character) => c.avatar));
+      }
+    } catch (err) {
+      console.error('加载角色失败:', err);
+    }
+  };
+
+  // 加载指定剧本的分镜列表
+  const loadStoryboardsByScript = async (sid: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/storyboards/script/${sid}`);
+      if (res.ok) {
+        const data = await res.json();
+        setStoryboards(Array.isArray(data) ? data : []);
+      } else {
+        setStoryboards([]);
+      }
+    } catch (err) {
+      console.error('加载分镜失败:', err);
+      setStoryboards([]);
+    }
+  };
+
+  // 加载指定分镜的镜头列表
+  const loadShotsByStoryboard = async (sid: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/shots/storyboard/${sid}`);
+      if (res.ok) {
+        const data = await res.json();
+        setShots(Array.isArray(data) ? data : []);
+      } else {
+        setShots([]);
+      }
+    } catch (err) {
+      console.error('加载镜头失败:', err);
+      setShots([]);
+    }
+  };
+
+  // 加载单个镜头详情
+  const loadShotDetail = async (shotId: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/shots/${shotId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setShot(data);
+        // 自动填充prompt
+        if (data.prompt) {
+          setPrompt(data.prompt);
+        }
+        // 如果镜头有参考图片，自动填入
+        if (data.image_url) {
+          setImageUrl(data.image_url);
+        }
+      }
+    } catch (err) {
+      console.error('加载镜头详情失败:', err);
+    }
+  };
 
   // 加载历史记录
   const loadHistory = async () => {
     setIsLoadingHistory(true);
     try {
-      const response = await fetch(`${API_BASE}/api/v1/video/jobs`);
+      const response = await fetchWithAuth(`${API_BASE}/video/jobs`);
       if (response.ok) {
         const data = await response.json();
         setHistory(data || []);
@@ -89,33 +299,69 @@ export default function VideoGenerationPage() {
     }
   };
 
+  // 初始化
   useEffect(() => {
+    loadApiKey();
     loadHistory();
+    loadScripts();
+    loadCharacters();
+    loadNovels();
   }, []);
+
+  // 根据URL参数自动加载关联数据
+  useEffect(() => {
+    if (urlScriptId) {
+      setScriptId(urlScriptId);
+      loadStoryboardsByScript(urlScriptId);
+    }
+    if (urlStoryboardId) {
+      setStoryboardId(urlStoryboardId);
+      loadShotsByStoryboard(urlStoryboardId);
+    }
+    if (urlShotId) {
+      setCurrentShotId(urlShotId);
+      setSelectedShotId(urlShotId);
+      loadShotDetail(urlShotId);
+    }
+  }, [urlScriptId, urlStoryboardId, urlShotId]);
+
+  // 角色选择变化 → 自动设置角色图像
+  const handleCharacterChange = (charId: string) => {
+    setSelectedCharacterId(charId);
+    const char = characters.find(c => c.id === charId);
+    if (char?.avatar) {
+      setImageUrl(char.avatar);
+    }
+  };
+
+  // 镜头选择变化 → 自动填充prompt和参考图
+  const handleShotChange = (shotId: string) => {
+    setSelectedShotId(shotId);
+    setCurrentShotId(shotId);
+    loadShotDetail(shotId);
+  };
 
   // 轮询任务状态
   const pollTaskStatus = async (tid: string, jid: string) => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/video/status/${tid}?api_key=${DEFAULT_API_KEY}&job_id=${jid}`);
+      const response = await fetchWithAuth(`${API_BASE}/video/status/${tid}?api_key=${apiKey}&job_id=${jid}`);
       if (!response.ok) {
         throw new Error('查询失败');
       }
       const data = await response.json();
-      
+
       setProgress(data.progress || 0);
-      
+
       if (data.status === 'succeeded') {
         setStatus('completed');
         setVideoUrl(data.video_url);
         setProgress(100);
-        // 刷新历史
         loadHistory();
       } else if (data.status === 'failed') {
         setStatus('error');
         setError(data.message || '生成失败');
         loadHistory();
       } else {
-        // 继续轮询
         setTimeout(() => pollTaskStatus(tid, jid), 3000);
       }
     } catch (err) {
@@ -130,6 +376,10 @@ export default function VideoGenerationPage() {
       alert('请输入视频描述');
       return;
     }
+    if (!apiKey) {
+      alert('请先配置火山引擎 API Key。请前往「LLM 配置」页面进行配置。');
+      return;
+    }
 
     setStatus('submitting');
     setProgress(0);
@@ -137,17 +387,34 @@ export default function VideoGenerationPage() {
     setVideoUrl(null);
 
     try {
-      const response = await fetch(`${API_BASE}/api/v1/video/generate`, {
+      const params: VideoGenerateParams = {
+        prompt: prompt,
+        duration: duration,
+        resolution: resolution,
+        model: selectedModel,
+      };
+
+      // 如果选择了镜头，传递镜头ID
+      if (currentShotId) {
+        params.shot_id = currentShotId;
+      } else if (storyboardId) {
+        params.storyboard_id = storyboardId;
+      } else if (scriptId) {
+        params.script_id = scriptId;
+      }
+
+      // 传递小说ID（用于关联记录）
+      if (selectedNovel) {
+        params.novel_id = selectedNovel;
+      }
+
+      if (imageUrl) {
+        params.image_url = imageUrl;
+      }
+
+      const response = await fetchWithAuth(`${API_BASE}/video/generate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: prompt,
-          duration: duration,
-          resolution: resolution,
-          api_key: DEFAULT_API_KEY,
-          image_url: imageUrl || undefined,
-          model: 'doubao-seedance-1-5-pro-251215'
-        })
+        body: JSON.stringify(params)
       });
 
       if (!response.ok) {
@@ -159,10 +426,8 @@ export default function VideoGenerationPage() {
       setTaskId(data.task_id);
       setJobId(data.job_id);
       setStatus('generating');
-      
-      // 开始轮询
+
       pollTaskStatus(data.task_id, data.job_id);
-      // 刷新历史列表
       loadHistory();
     } catch (err: any) {
       setStatus('error');
@@ -173,14 +438,11 @@ export default function VideoGenerationPage() {
   // 刷新单个任务状态
   const handleRefreshStatus = async (job: VideoJob) => {
     if (!job.id) return;
-    
     try {
-      const response = await fetch(`${API_BASE}/api/v1/video/jobs/${job.id}/refresh`, {
+      const response = await fetchWithAuth(`${API_BASE}/video/jobs/${job.id}/refresh`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: DEFAULT_API_KEY })
+        body: JSON.stringify({ api_key: apiKey })
       });
-      
       if (response.ok) {
         loadHistory();
       }
@@ -210,49 +472,224 @@ export default function VideoGenerationPage() {
     return date.toLocaleString();
   };
 
+  // 判断是否有上游数据
+  const hasUpstream = !!(urlScriptId || urlStoryboardId || urlShotId);
+
+  // 根据选择的小说过滤剧本列表
+  const filteredScripts = selectedNovel
+    ? scripts.filter((s) => s.novel_id === selectedNovel)
+    : scripts;
+
   return (
     <MainLayout>
       <div className="space-y-6">
         {/* 页面标题 */}
-        <div>
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Video className="w-6 h-6" />
-            视频生成
-          </h1>
-          <p className="text-white/60 mt-1">使用AI生成高质量视频</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              <Video className="w-6 h-6" />
+              视频生成
+              {hasUpstream && (
+                <span className="text-sm font-normal text-violet-400 bg-violet-500/10 px-2 py-1 rounded">
+                  关联模式
+                </span>
+              )}
+            </h1>
+            <p className="text-white/60 mt-1">
+              {hasUpstream ? '基于分镜/镜头生成视频' : '使用AI生成高质量视频'}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Link href="/scripts">
+              <Button variant="outline" size="sm" className="border-white/20 text-white">
+                <FileText className="w-4 h-4 mr-1" />剧本
+              </Button>
+            </Link>
+            <Link href="/storyboards">
+              <Button variant="outline" size="sm" className="border-white/20 text-white">
+                <LayoutGrid className="w-4 h-4 mr-1" />分镜
+              </Button>
+            </Link>
+          </div>
         </div>
 
+        {/* API Key 配置提示 */}
+        {apiKeyLoading ? (
+          <div className="flex items-center gap-2 text-white/40 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            加载 API 配置...
+          </div>
+        ) : !apiKey ? (
+          <Card className="bg-yellow-500/10 border-yellow-500/30">
+            <CardContent className="p-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="w-5 h-5 text-yellow-400" />
+                <div>
+                  <p className="text-yellow-300 font-medium">未配置 API Key</p>
+                  <p className="text-yellow-400/60 text-sm">请先配置火山引擎 API Key 才能生成视频</p>
+                </div>
+              </div>
+              <Link href="/llm-config">
+                <Button variant="outline" size="sm" className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10">
+                  前往配置
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 左侧：生成配置 */}
+          {/* 左侧：关联选择 + 参数配置 */}
           <div className="lg:col-span-1 space-y-4">
-            {/* 提供商 */}
+            {/* 关联数据选择 */}
+            {!hasUpstream && (
+              <Card className="bg-white/5 border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <BookOpen className="w-5 h-5 text-violet-400" />
+                    数据关联
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* 小说选择 */}
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">小说</label>
+                    <select
+                      value={selectedNovel}
+                      onChange={(e) => {
+                        setSelectedNovel(e.target.value);
+                        setScriptId('');
+                        setStoryboardId('');
+                        setCurrentShotId('');
+                        setSelectedShotId('');
+                        setShot(null);
+                      }}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="">-- 选择小说 --</option>
+                      {novels.map((n) => (
+                        <option key={n.id} value={n.id}>{n.title}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 剧本选择 */}
+                  <div>
+                    <label className="text-white/60 text-sm mb-1 block">剧本</label>
+                    <select
+                      value={scriptId}
+                      onChange={(e) => {
+                        setScriptId(e.target.value);
+                        setStoryboardId('');
+                        setCurrentShotId('');
+                        setSelectedShotId('');
+                        setShot(null);
+                        if (e.target.value) {
+                          loadStoryboardsByScript(e.target.value);
+                        } else {
+                          setStoryboards([]);
+                        }
+                      }}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="">手动输入描述</option>
+                      {filteredScripts.map(s => (
+                        <option key={s.id} value={s.id}>{s.title}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* 分镜选择 */}
+                  {scriptId && (
+                    <div>
+                      <label className="text-white/60 text-sm mb-1 block">分镜</label>
+                      <select
+                        value={storyboardId}
+                        onChange={(e) => {
+                          setStoryboardId(e.target.value);
+                          setCurrentShotId('');
+                          setSelectedShotId('');
+                          setShot(null);
+                          if (e.target.value) {
+                            loadShotsByStoryboard(e.target.value);
+                          } else {
+                            setShots([]);
+                          }
+                        }}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                      >
+                        <option value="">全部镜头</option>
+                        {storyboards.map(sb => (
+                          <option key={sb.id} value={sb.id}>
+                            {sb.title} ({sb.shot_count}个镜头)
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* 镜头选择 */}
+                  {storyboardId && shots.length > 0 && (
+                    <div>
+                      <label className="text-white/60 text-sm mb-1 block">镜头</label>
+                      <select
+                        value={selectedShotId}
+                        onChange={(e) => handleShotChange(e.target.value)}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                      >
+                        <option value="">全部镜头（批量）</option>
+                        {shots.map(s => (
+                          <option key={s.id} value={s.id}>
+                            镜头{s.shot_number} - {s.prompt?.slice(0, 30) || '(无描述)'}...
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {/* 当前镜头信息 */}
+                  {shot && (
+                    <div className="bg-violet-500/10 border border-violet-500/20 rounded-lg p-3 text-sm">
+                      <div className="text-violet-300 font-medium mb-1">
+                        镜头{shot.shot_number} | {shot.duration}秒 | {shot.camera_angle || '无角度'}
+                      </div>
+                      {shot.visual_description && (
+                        <div className="text-white/50 text-xs mt-1 line-clamp-2">
+                          {shot.visual_description}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 视频模型选择 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <Settings className="w-5 h-5" />
-                  提供商
+                  视频模型
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {PROVIDERS.map((provider) => (
+              <CardContent className="space-y-2">
+                {VIDEO_MODELS.map(model => (
                   <div
-                    key={provider.id}
-                    className={`p-4 rounded-lg border cursor-pointer transition-all ${
-                      selectedProvider === provider.id
+                    key={model.id}
+                    onClick={() => setSelectedModel(model.id)}
+                    className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                      selectedModel === model.id
                         ? 'border-violet-500 bg-violet-500/10'
-                        : 'border-white/10'
+                        : 'border-white/10 hover:border-white/20'
                     }`}
                   >
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">{provider.icon}</span>
-                        <div>
-                          <div className="text-white font-medium">{provider.name}</div>
-                          <div className="text-white/60 text-sm">{provider.cost}</div>
-                        </div>
+                      <div>
+                        <div className="text-white font-medium text-sm">{model.name}</div>
+                        <div className="text-white/40 text-xs mt-0.5">{model.desc}</div>
                       </div>
-                      {selectedProvider === provider.id && (
-                        <CheckCircle className="w-5 h-5 text-violet-400" />
+                      {selectedModel === model.id && (
+                        <CheckCircle className="w-4 h-4 text-violet-400" />
                       )}
                     </div>
                   </div>
@@ -277,20 +714,47 @@ export default function VideoGenerationPage() {
                     onChange={(e) => setPrompt(e.target.value)}
                     placeholder="描述你想要生成的视频内容..."
                     disabled={status === 'generating'}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 h-24 resize-none"
+                    rows={5}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 resize-none"
                   />
+                  {shot?.prompt && prompt !== shot.prompt && (
+                    <button
+                      onClick={() => setPrompt(shot.prompt || '')}
+                      className="text-xs text-violet-400 hover:text-violet-300 mt-1"
+                    >
+                      使用镜头prompt
+                    </button>
+                  )}
                 </div>
 
-                {/* 参考图片（可选） */}
+                {/* 角色图像参考 */}
                 <div>
-                  <label className="text-white/80 mb-2 block">参考图片URL（可选）</label>
-                  <Input
-                    placeholder="输入图片URL用于图生视频"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    disabled={status === 'generating'}
-                    className="bg-white/5 border-white/10 text-white"
-                  />
+                  <label className="text-white/80 mb-2 block">角色图像参考（可选）</label>
+                  {characters.length > 0 ? (
+                    <select
+                      value={selectedCharacterId}
+                      onChange={(e) => handleCharacterChange(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white mb-2"
+                    >
+                      <option value="">不使用角色参考</option>
+                      {characters.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-white/40 text-sm mb-2">暂无带图像的角色</p>
+                  )}
+                  {imageUrl && (
+                    <div className="flex items-center gap-2">
+                      <img src={imageUrl} alt="参考" className="w-16 h-16 rounded object-cover border border-white/10" />
+                      <button
+                        onClick={() => { setImageUrl(''); setSelectedCharacterId(''); }}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        清除参考图
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* 时长 */}
@@ -317,7 +781,7 @@ export default function VideoGenerationPage() {
                 <div>
                   <label className="text-white/80 mb-2 block">分辨率</label>
                   <div className="flex gap-2">
-                    {['480p', '720p', '1080p'].map((res) => (
+                    {['480p', '720p', '1080p'].map(res => (
                       <Button
                         key={res}
                         variant={resolution === res ? 'default' : 'outline'}
@@ -337,39 +801,14 @@ export default function VideoGenerationPage() {
             {/* 生成按钮 */}
             <Button
               onClick={handleGenerate}
-              disabled={status === 'submitting' || status === 'generating'}
+              disabled={status === 'submitting' || status === 'generating' || !apiKey || apiKeyLoading}
               className="w-full bg-violet-600 hover:bg-violet-700 h-12"
             >
-              {status === 'submitting' && (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  提交中...
-                </>
-              )}
-              {status === 'generating' && (
-                <>
-                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                  生成中 {progress}%
-                </>
-              )}
-              {status === 'completed' && (
-                <>
-                  <CheckCircle className="w-5 h-5 mr-2" />
-                  生成完成
-                </>
-              )}
-              {status === 'error' && (
-                <>
-                  <AlertCircle className="w-5 h-5 mr-2" />
-                  重试
-                </>
-              )}
-              {(status === 'idle') && (
-                <>
-                  <Sparkles className="w-5 h-5 mr-2" />
-                  开始生成
-                </>
-              )}
+              {status === 'submitting' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />提交中...</>}
+              {status === 'generating' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />生成中 {progress}%</>}
+              {status === 'completed' && <><CheckCircle className="w-5 h-5 mr-2" />生成完成</>}
+              {status === 'error' && <><AlertCircle className="w-5 h-5 mr-2" />重试</>}
+              {status === 'idle' && <><Sparkles className="w-5 h-5 mr-2" />开始生成</>}
             </Button>
 
             {/* 错误信息 */}
@@ -382,7 +821,7 @@ export default function VideoGenerationPage() {
             )}
           </div>
 
-          {/* 右侧：预览和结果 */}
+          {/* 右侧：预览和历史 */}
           <div className="lg:col-span-2 space-y-4">
             {/* 预览区域 */}
             <Card className="bg-white/5 border-white/10">
@@ -400,54 +839,40 @@ export default function VideoGenerationPage() {
                       <p>输入描述并点击"开始生成"</p>
                     </div>
                   )}
-                  
+
                   {status === 'submitting' && (
                     <div className="text-center">
                       <Loader2 className="w-16 h-16 mx-auto mb-4 text-violet-400 animate-spin" />
                       <p className="text-white">正在提交任务...</p>
                     </div>
                   )}
-                  
+
                   {status === 'generating' && (
-                    <div className="text-center">
+                    <div className="text-center w-full px-4">
                       <Loader2 className="w-16 h-16 mx-auto mb-4 text-violet-400 animate-spin" />
                       <p className="text-white">正在生成视频...</p>
                       <p className="text-white/60 text-sm mt-2">{progress}%</p>
-                      {taskId && (
-                        <p className="text-white/40 text-xs mt-1">任务ID: {taskId}</p>
-                      )}
-                      
-                      {/* 进度条 */}
+                      {taskId && <p className="text-white/40 text-xs mt-1">任务ID: {taskId}</p>}
                       <div className="w-64 h-2 bg-white/10 rounded-full mt-4 mx-auto">
-                        <div 
-                          className="h-full bg-violet-500 rounded-full transition-all"
-                          style={{ width: `${progress}%` }}
-                        />
+                        <div className="h-full bg-violet-500 rounded-full transition-all" style={{ width: `${progress}%` }} />
                       </div>
                     </div>
                   )}
-                  
+
                   {status === 'completed' && videoUrl && (
                     <div className="text-center w-full px-4">
-                      <video 
-                        src={videoUrl}
-                        controls
-                        autoPlay
-                        className="w-full h-full rounded-lg max-h-[400px]"
-                      />
+                      <video src={videoUrl} controls autoPlay className="w-full h-full rounded-lg max-h-[400px]" />
                       <div className="flex gap-2 mt-4 justify-center">
                         <Button onClick={handleDownload} className="bg-violet-600 hover:bg-violet-700">
-                          <Download className="w-4 h-4 mr-2" />
-                          下载
+                          <Download className="w-4 h-4 mr-2" />下载
                         </Button>
                         <Button variant="outline" onClick={handleCopyUrl} className="border-white/20">
-                          <Copy className="w-4 h-4 mr-2" />
-                          复制链接
+                          <Copy className="w-4 h-4 mr-2" />复制链接
                         </Button>
                       </div>
                     </div>
                   )}
-                  
+
                   {status === 'error' && (
                     <div className="text-center">
                       <AlertCircle className="w-16 h-16 mx-auto mb-4 text-red-400" />
@@ -465,13 +890,7 @@ export default function VideoGenerationPage() {
                 <CardTitle className="text-white flex items-center gap-2">
                   <Clock className="w-5 h-5" />
                   生成历史
-                  <Button 
-                    variant="ghost" 
-                    size="sm"
-                    onClick={loadHistory}
-                    disabled={isLoadingHistory}
-                    className="ml-auto text-white/60"
-                  >
+                  <Button variant="ghost" size="sm" onClick={loadHistory} disabled={isLoadingHistory} className="ml-auto text-white/60">
                     <RefreshCw className={`w-4 h-4 ${isLoadingHistory ? 'animate-spin' : ''}`} />
                   </Button>
                 </CardTitle>
@@ -484,11 +903,8 @@ export default function VideoGenerationPage() {
                   </div>
                 ) : history.length > 0 ? (
                   <div className="space-y-3 max-h-80 overflow-y-auto">
-                    {history.map((job) => (
-                      <div
-                        key={job.id}
-                        className="flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors"
-                      >
+                    {history.map(job => (
+                      <div key={job.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           <div className="w-12 h-12 rounded bg-violet-500/20 flex items-center justify-center flex-shrink-0">
                             {job.status === 'succeeded' ? (
@@ -503,56 +919,45 @@ export default function VideoGenerationPage() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="text-white font-medium truncate">
-                              {job.title || job.prompt?.slice(0, 30) || '视频生成'}
+                              {job.title || job.prompt?.slice(0, 40) || '视频生成'}
                             </div>
                             <div className="text-white/60 text-sm flex items-center gap-2">
                               <span>{formatTime(job.created_at)}</span>
                               {job.duration && <span>{job.duration}秒</span>}
                               {job.resolution && <span>{job.resolution}</span>}
                             </div>
+                            {(job.novel_title || job.script_title || job.shot_number) && (
+                              <div className="text-white/40 text-xs flex items-center gap-2">
+                                {job.novel_title && <span>{job.novel_title}</span>}
+                                {job.script_title && <span> / {job.script_title}</span>}
+                                {job.shot_number && <span> / 镜头{job.shot_number}</span>}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
                           <span className={`px-2 py-1 text-xs rounded ${
-                            job.status === 'succeeded' 
-                              ? 'bg-green-500/20 text-green-400' 
-                              : job.status === 'failed'
-                              ? 'bg-red-500/20 text-red-400'
-                              : job.status === 'running'
-                              ? 'bg-blue-500/20 text-blue-400'
-                              : 'bg-yellow-500/20 text-yellow-400'
+                            job.status === 'succeeded' ? 'bg-green-500/20 text-green-400' :
+                            job.status === 'failed' ? 'bg-red-500/20 text-red-400' :
+                            job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-yellow-500/20 text-yellow-400'
                           }`}>
-                            {job.status === 'succeeded' ? '已完成' : 
-                             job.status === 'failed' ? '失败' : 
+                            {job.status === 'succeeded' ? '已完成' :
+                             job.status === 'failed' ? '失败' :
                              job.status === 'running' ? '生成中' : '等待'}
                           </span>
                           {(job.status === 'pending' || job.status === 'running') && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => handleRefreshStatus(job)}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => handleRefreshStatus(job)}>
                               <RefreshCw className="w-4 h-4" />
                             </Button>
                           )}
                           {job.video_url && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => {
-                                setVideoUrl(job.video_url!);
-                                setStatus('completed');
-                              }}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => { setVideoUrl(job.video_url!); setStatus('completed'); }}>
                               <Play className="w-4 h-4" />
                             </Button>
                           )}
                           {job.video_url && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => window.open(job.video_url, '_blank')}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => window.open(job.video_url, '_blank')}>
                               <Download className="w-4 h-4" />
                             </Button>
                           )}
@@ -574,13 +979,16 @@ export default function VideoGenerationPage() {
             <Card className="bg-blue-600/10 border-blue-500/30">
               <CardContent className="p-4">
                 <h4 className="font-medium text-blue-300 mb-2 flex items-center gap-2">
-                  当前使用
+                  <Settings className="w-4 h-4" /> 当前使用
                 </h4>
                 <ul className="text-sm text-white/60 space-y-1">
-                  <li>• <strong className="text-white/80">模型:</strong> Doubao-Seedance-1.5-pro</li>
-                  <li>• <strong className="text-white/80">ID:</strong> doubao-seedance-1-5-pro-251215</li>
+                  <li>• <strong className="text-white/80">模型:</strong> {VIDEO_MODELS.find(m => m.id === selectedModel)?.name}</li>
+                  <li>• <strong className="text-white/80">ID:</strong> {selectedModel}</li>
                   <li>• <strong className="text-white/80">提供商:</strong> 火山引擎</li>
                   <li>• <strong className="text-white/80">支持:</strong> 文生视频、图生视频</li>
+                  {currentShotId && <li>• <strong className="text-white/80">镜头ID:</strong> {currentShotId.slice(0, 8)}...</li>}
+                  {storyboardId && <li>• <strong className="text-white/80">分镜ID:</strong> {storyboardId.slice(0, 8)}...</li>}
+                  {scriptId && <li>• <strong className="text-white/80">剧本ID:</strong> {scriptId.slice(0, 8)}...</li>}
                 </ul>
               </CardContent>
             </Card>
@@ -588,5 +996,14 @@ export default function VideoGenerationPage() {
         </div>
       </div>
     </MainLayout>
+  );
+}
+
+// 包装 Suspense
+export default function VideoGenerationPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center py-20"><span className="text-white/60">加载中...</span></div>}>
+      <VideoGenerationPageInner />
+    </Suspense>
   );
 }
