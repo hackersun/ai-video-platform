@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
+from app.core.api_key_utils import get_user_volcano_api_key
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig
 from app.models import Storyboard, Shot
 
@@ -524,8 +525,9 @@ async def generate_storyboard_shot_images(
         prompt = " ".join(prompt_parts) if prompt_parts else shot.visual_description or shot.prompt or "cinematic scene"
 
         try:
+            api_key = await get_user_volcano_api_key(db, user_id)
             from app.services.volcano_service import VolcanoService
-            volcano = VolcanoService()
+            volcano = VolcanoService(api_key)
             result_img = await volcano.generate_image(prompt=prompt)
             task_id = result_img.get("task_id")
 
