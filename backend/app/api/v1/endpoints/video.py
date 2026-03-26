@@ -336,6 +336,12 @@ async def get_video_status(
             "failed": f"生成失败: {getattr(get_result, 'error', 'Unknown error')}"
         }.get(task_status, f"未知状态: {task_status}")
         
+        job = await db.execute(
+            select(VideoJob).where(VideoJob.task_id == task_id)
+        )
+        job_record = job.scalar_one_or_none()
+        job_id = job_record.id if job_record else None
+
         return VideoStatusResponse(
             task_id=task_id,
             job_id=job_id,
