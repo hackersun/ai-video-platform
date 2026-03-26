@@ -8,32 +8,45 @@ from app.core.database import Base, engine, sync_engine
 # Migration: Add shot image fields
 def migrate_add_shot_image_fields():
     """Add image_url, image_status, image_asset_id to shots table."""
-    from sqlalchemy import text
+    from sqlalchemy import text, inspect
     conn = sync_engine.connect()
-
     try:
-        conn.execute(text("SELECT image_url FROM shots LIMIT 1"))
-    except Exception:
-        conn.execute(text("ALTER TABLE shots ADD COLUMN image_url TEXT"))
-        conn.execute(text("ALTER TABLE shots ADD COLUMN image_status VARCHAR(20) DEFAULT 'pending'"))
-        conn.execute(text("ALTER TABLE shots ADD COLUMN image_asset_id VARCHAR(36)"))
+        inspector = inspect(sync_engine)
+        existing = {col["name"] for col in inspector.get_columns("shots")}
+        new_cols = {"image_url", "image_status", "image_asset_id"} - existing
+        if not new_cols:
+            return  # already migrated
+        for col in new_cols:
+            if col == "image_status":
+                conn.execute(text("ALTER TABLE shots ADD COLUMN image_status VARCHAR(20) DEFAULT 'pending'"))
+            elif col == "image_url":
+                conn.execute(text("ALTER TABLE shots ADD COLUMN image_url TEXT"))
+            elif col == "image_asset_id":
+                conn.execute(text("ALTER TABLE shots ADD COLUMN image_asset_id VARCHAR(36)"))
         conn.commit()
         print("✅ Shot image fields migration completed.")
-    conn.close()
+    finally:
+        conn.close()
 
 
 async def migrate_add_shot_image_fields_async():
     """Add image_url, image_status, image_asset_id to shots table (async)."""
-    from sqlalchemy import text
+    from sqlalchemy import text, inspect
 
     async with engine.begin() as conn:
-        try:
-            await conn.execute(text("SELECT image_url FROM shots LIMIT 1"))
-        except Exception:
-            await conn.execute(text("ALTER TABLE shots ADD COLUMN image_url TEXT"))
-            await conn.execute(text("ALTER TABLE shots ADD COLUMN image_status VARCHAR(20) DEFAULT 'pending'"))
-            await conn.execute(text("ALTER TABLE shots ADD COLUMN image_asset_id VARCHAR(36)"))
-            print("✅ Shot image fields migration completed (async).")
+        inspector = inspect(engine)
+        existing = {col["name"] for col in inspector.get_columns("shots")}
+        new_cols = {"image_url", "image_status", "image_asset_id"} - existing
+        if not new_cols:
+            return  # already migrated
+        for col in new_cols:
+            if col == "image_status":
+                await conn.execute(text("ALTER TABLE shots ADD COLUMN image_status VARCHAR(20) DEFAULT 'pending'"))
+            elif col == "image_url":
+                await conn.execute(text("ALTER TABLE shots ADD COLUMN image_url TEXT"))
+            elif col == "image_asset_id":
+                await conn.execute(text("ALTER TABLE shots ADD COLUMN image_asset_id VARCHAR(36)"))
+        print("✅ Shot image fields migration completed (async).")
 
 
 def init_db():
