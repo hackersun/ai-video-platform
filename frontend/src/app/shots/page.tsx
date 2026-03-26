@@ -295,11 +295,14 @@ export default function ShotsPage() {
               return updated ? { ...s, ...updated } : s;
             }));
           }
-          const nextProgress = { ...batchProgress, [shotId]: "succeeded" };
-          const vals = Object.values(nextProgress);
-          if (!vals.includes("generating") && !vals.includes("pending")) {
-            setBatchGenerating(false);
-          }
+          setBatchProgress(prev => {
+            const nextProgress = { ...prev, [shotId]: "succeeded" };
+            const vals = Object.values(nextProgress);
+            if (!vals.includes("generating") && !vals.includes("pending")) {
+              setBatchGenerating(false);
+            }
+            return nextProgress;
+          });
           return;
         }
         if (shot.image_status === "failed") {
