@@ -22,9 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from pydantic import BaseModel, Field
 
+from app.core.api_key_utils import get_user_volcano_api_key
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.video_job import VideoJob
+from app.api.v1.endpoints.dashboard import log_activity
 
 router = APIRouter(tags=["视频生成"])
 
@@ -43,9 +45,13 @@ class VideoGenerateRequest(BaseModel):
     model: str = Field(VIDEO_MODEL_ID, description="模型ID，默认 doubao-seedance-1-5-pro-251215")
     duration: int = Field(5, ge=4, le=10, description="视频时长（秒），支持4/8/10秒")
     resolution: str = Field("720p", description="分辨率: 480p, 720p, 1080p")
-    api_key: str = Field(..., description="火山引擎API Key")
+    api_key: Optional[str] = Field(None, description="火山引擎API Key（可选，默认使用用户在LLM配置中的密钥）")
     image_url: Optional[str] = Field(None, description="参考图片URL，用于图生视频")
     seed: Optional[int] = Field(None, description="随机种子")
+    shot_id: Optional[str] = Field(None, description="来源镜头ID")
+    storyboard_id: Optional[str] = Field(None, description="来源分镜ID")
+    script_id: Optional[str] = Field(None, description="来源剧本ID")
+    novel_id: Optional[str] = Field(None, description="来源小说ID")
 
 
 class VideoGenerateResponse(BaseModel):
@@ -75,6 +81,14 @@ class VideoJobResponse(BaseModel):
     task_id: Optional[str] = None
     title: Optional[str] = None
     prompt: Optional[str] = None
+    shot_id: Optional[str] = None
+    shot_number: Optional[int] = None
+    storyboard_id: Optional[str] = None
+    storyboard_title: Optional[str] = None
+    script_id: Optional[str] = None
+    script_title: Optional[str] = None
+    novel_id: Optional[str] = None
+    novel_title: Optional[str] = None
     model_name: Optional[str] = None
     status: str
     progress: int
@@ -104,41 +118,115 @@ async def generate_video(
 ):
     """
     生成视频 - 异步提交任务
-    
+
     使用火山引擎官方SDK调用视频生成API
     """
+    lineage_shot_id = request.shot_id
+    lineage_storyboard_id = request.storyboard_id
+    lineage_script_id = request.script_id
+
+    if request.shot_id:
+        from app.models import Shot, Storyboard
+
+        shot_result = await db.execute(
+            select(Shot).where(Shot.id == request.shot_id, Shot.user_id == user_id)
+        )
+        shot = shot_result.scalar_one_or_none()
+        if shot is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
+
+        storyboard_result = await db.execute(
+            select(Storyboard).where(Storyboard.id == shot.storyboard_id, Storyboard.user_id == user_id)
+        )
+        storyboard = storyboard_result.scalar_one_or_none()
+        if storyboard is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分镜不存在")
+
+        lineage_storyboard_id = str(storyboard.id)
+        lineage_script_id = storyboard.script_id
+
+        if request.storyboard_id and request.storyboard_id != lineage_storyboard_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="shot_id 与 storyboard_id 不匹配")
+        if request.script_id and request.script_id != lineage_script_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="shot_id 与 script_id 不匹配")
+    elif request.storyboard_id:
+        from app.models import Storyboard
+
+        storyboard_result = await db.execute(
+            select(Storyboard).where(Storyboard.id == request.storyboard_id, Storyboard.user_id == user_id)
+        )
+        storyboard = storyboard_result.scalar_one_or_none()
+        if storyboard is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分镜不存在")
+
+        lineage_script_id = storyboard.script_id
+
+        if request.script_id and request.script_id != lineage_script_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="storyboard_id 与 script_id 不匹配")
+    elif request.script_id:
+        from app.models import Script
+
+        script_result = await db.execute(
+            select(Script).where(Script.id == request.script_id, Script.user_id == user_id)
+        )
+        script = script_result.scalar_one_or_none()
+        if script is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="剧本不存在")
+
     try:
-        client = _create_ark_client(request.api_key)
-        
+        # 使用请求提供的 API key 或从用户的 LLMConfig 中获取
+        resolved_api_key = request.api_key or await get_user_volcano_api_key(db, user_id)
+        client = _create_ark_client(resolved_api_key)
+
         # 构建content
         content = []
-        
+
         # 如果有参考图片，添加图片
         if request.image_url:
             content.append({
                 "type": "image_url",
                 "image_url": {"url": request.image_url}
             })
-        
+
         # 构建提示词，包含参数
         duration_arg = f"--duration {request.duration}"
         camerafixed = "false"  # 相机运动
         watermark = "true"
         resolution_arg = f"--resolution {request.resolution}"
-        
+
         prompt_text = f"{request.prompt} {duration_arg} --camerafixed {camerafixed} --watermark {watermark}"
-        
+
         content.append({
             "type": "text",
             "text": prompt_text
         })
-        
+
         # 调用SDK创建任务
         create_result = client.content_generation.tasks.create(
             model=request.model,
             content=content
         )
-        
+
+        # 构建关联数据（ID + 标题）
+        from app.models import Novel, Script, Storyboard, Shot
+        extra_data = {}
+        if request.novel_id:
+            novel = await db.get(Novel, request.novel_id)
+            extra_data["novel_id"] = request.novel_id
+            extra_data["novel_title"] = novel.title if novel else None
+        if request.script_id:
+            script = await db.get(Script, request.script_id)
+            extra_data["script_id"] = request.script_id
+            extra_data["script_title"] = script.title if script else None
+        if request.storyboard_id:
+            storyboard = await db.get(Storyboard, request.storyboard_id)
+            extra_data["storyboard_id"] = request.storyboard_id
+            extra_data["storyboard_title"] = storyboard.title if storyboard else None
+        if request.shot_id:
+            shot = await db.get(Shot, request.shot_id)
+            extra_data["shot_id"] = request.shot_id
+            extra_data["shot_number"] = shot.shot_number if shot else None
+
         # 创建数据库记录
         job = VideoJob(
             id=str(uuid4()),
@@ -152,18 +240,29 @@ async def generate_video(
             resolution=request.resolution,
             image_url=request.image_url,
             status="pending",
-            progress=10
+            progress=10,
+            extra_data=extra_data,
         )
         db.add(job)
         await db.commit()
-        
+
+        await log_activity(
+            db=db,
+            user_id=user_id,
+            activity_type="created",
+            entity_type="video",
+            entity_id=job.id,
+            title=f"提交视频生成: {job.title}",
+        )
+        await db.commit()
+
         return VideoGenerateResponse(
             task_id=create_result.id,
             job_id=job.id,
             status="pending",
             message="视频生成任务已提交，请使用task_id查询状态"
         )
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -174,20 +273,20 @@ async def generate_video(
 @router.get("/status/{task_id}", response_model=VideoStatusResponse)
 async def get_video_status(
     task_id: str,
-    job_id: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
     api_key: Optional[str] = None
 ):
     """
-    查询视频生成状态
-    
-    使用task_id轮询任务状态，同时更新数据库
+    查询视频生成状态。
+
+    使用 task_id 轮询任务状态。API Key 优先使用请求参数，
+    否则从用户的 LLMConfig 中获取。
     """
-    # 如果没有提供api_key，使用默认的
-    if not api_key:
-        api_key = "be8feb9d-6b08-406e-8447-b22b87cd907a"
+    resolved_api_key = api_key or await get_user_volcano_api_key(db, user_id)
     
     try:
-        client = _create_ark_client(api_key)
+        client = _create_ark_client(resolved_api_key)
         
         get_result = client.content_generation.tasks.get(task_id=task_id)
         task_status = get_result.status
@@ -281,6 +380,14 @@ async def list_video_jobs(
             task_id=job.task_id,
             title=job.title,
             prompt=job.prompt,
+            shot_id=(job.extra_data or {}).get("shot_id") if isinstance(job.extra_data, dict) else None,
+            shot_number=(job.extra_data or {}).get("shot_number") if isinstance(job.extra_data, dict) else None,
+            storyboard_id=(job.extra_data or {}).get("storyboard_id") if isinstance(job.extra_data, dict) else None,
+            storyboard_title=(job.extra_data or {}).get("storyboard_title") if isinstance(job.extra_data, dict) else None,
+            script_id=(job.extra_data or {}).get("script_id") if isinstance(job.extra_data, dict) else None,
+            script_title=(job.extra_data or {}).get("script_title") if isinstance(job.extra_data, dict) else None,
+            novel_id=(job.extra_data or {}).get("novel_id") if isinstance(job.extra_data, dict) else None,
+            novel_title=(job.extra_data or {}).get("novel_title") if isinstance(job.extra_data, dict) else None,
             model_name=job.model_name,
             status=job.status,
             progress=job.progress,
@@ -324,6 +431,14 @@ async def get_video_job(
         task_id=job.task_id,
         title=job.title,
         prompt=job.prompt,
+        shot_id=(job.extra_data or {}).get("shot_id") if isinstance(job.extra_data, dict) else None,
+        shot_number=(job.extra_data or {}).get("shot_number") if isinstance(job.extra_data, dict) else None,
+        storyboard_id=(job.extra_data or {}).get("storyboard_id") if isinstance(job.extra_data, dict) else None,
+        storyboard_title=(job.extra_data or {}).get("storyboard_title") if isinstance(job.extra_data, dict) else None,
+        script_id=(job.extra_data or {}).get("script_id") if isinstance(job.extra_data, dict) else None,
+        script_title=(job.extra_data or {}).get("script_title") if isinstance(job.extra_data, dict) else None,
+        novel_id=(job.extra_data or {}).get("novel_id") if isinstance(job.extra_data, dict) else None,
+        novel_title=(job.extra_data or {}).get("novel_title") if isinstance(job.extra_data, dict) else None,
         model_name=job.model_name,
         status=job.status,
         progress=job.progress,
@@ -367,7 +482,9 @@ async def refresh_job_status(
         )
     
     try:
-        client = _create_ark_client(job.extra_data.get("api_key", ""))
+        # 从用户的 LLMConfig 获取 API 密钥
+        resolved_api_key = await get_user_volcano_api_key(db, user_id)
+        client = _create_ark_client(resolved_api_key)
         
         get_result = client.content_generation.tasks.get(task_id=job.task_id)
         task_status = get_result.status
@@ -380,6 +497,16 @@ async def refresh_job_status(
             if hasattr(get_result, 'output') and get_result.output:
                 job.video_url = getattr(get_result.output, 'video_url', None)
                 job.cover_url = getattr(get_result.output, 'last_frame_url', None)
+            # Log completion activity (commit happens below with job update)
+            await log_activity(
+                db=db,
+                user_id=job.user_id,
+                activity_type="completed",
+                entity_type="video",
+                entity_id=job.id,
+                title=f"视频生成完成: {job.title}",
+                description="视频生成任务已成功完成",
+            )
         elif task_status == "running":
             job.progress = 50
         elif task_status == "failed":
@@ -416,11 +543,23 @@ class OldVideoGenerateRequest(BaseModel):
 async def generate_video_legacy(
     request: OldVideoGenerateRequest
 ):
-    """旧版视频生成接口，保持向后兼容"""
+    """
+    旧版视频生成接口（已废弃）。
+
+    此接口仅用于向后兼容。不推荐在新代码中使用。
+    请使用 /video/generate 接口，并通过用户的 LLMConfig 配置 API Key。
+    """
     new_request = VideoGenerateRequest(
         prompt=request.prompt,
         duration=request.duration,
         api_key=request.api_key,
         image_url=request.image_url
     )
+    # legacy endpoint 无法获取 user_id，跳过 LLMConfig 查找
+    # 仅在明确提供了 api_key 时工作
+    if not new_request.api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Legacy 接口需要提供 api_key（请改用新版 /video/generate 接口）"
+        )
     return await generate_video(new_request)
