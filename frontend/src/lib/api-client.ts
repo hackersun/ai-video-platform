@@ -399,7 +399,7 @@ class ApiClient {
       body: JSON.stringify({
         prompt: params.prompt,
         model: 'doubao-seedream-3-0',
-        extra_data: { character_id: characterId },
+        character_id: characterId,
       }),
     });
   }
