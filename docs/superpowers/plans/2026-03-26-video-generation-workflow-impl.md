@@ -348,21 +348,20 @@ const [autoGenerateAvatar, setAutoGenerateAvatar] = useState(true);
 
 - [ ] **Step 4: Update handleCreateCharacter**
 
-After successfully creating the character, if `autoGenerateAvatar` is true:
+⚠️ **Important UX:** Close the modal immediately after creation, so the generating state is visible on the character card in the list (avatar area shows spinner). Don't keep the modal open — the user can see progress from the list view.
 
 ```typescript
 const handleCreate = async () => {
   const char = await apiClient.createCharacter(formData);
   setCharacters([...characters, char]);
-  setShowCreateModal(false);
+  setShowCreateModal(false);  // Close modal immediately
 
   if (autoGenerateAvatar) {
-    setGeneratingAvatarId(char.id);
+    setGeneratingAvatarId(char.id);  // Spinner shows on card in list
     try {
       const result = await apiClient.generateCharacterAvatar(char.id, {
         prompt: buildAvatarPrompt(char),
       });
-      // Poll for completion
       pollAvatarStatus(char.id, result.task_id);
     } catch (err) {
       console.error("Avatar generation failed:", err);
