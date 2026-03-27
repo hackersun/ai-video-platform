@@ -8,16 +8,18 @@ import aiohttp
 from typing import List, Dict, Optional, AsyncGenerator
 from datetime import datetime
 
+from fastapi import HTTPException
 from app.core.qwen_config import QWEN_MODELS, get_qwen_model, calculate_cost
 
 
 class DashScopeService:
     """DashScope API 服务类"""
-    
-    BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    
-    def __init__(self, api_key: str):
+
+    DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
+        self.base_url = base_url or self.DEFAULT_BASE_URL
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -46,7 +48,7 @@ class DashScopeService:
         Returns:
             API响应
         """
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
         
         # 验证模型
         model_config = get_qwen_model(model)
@@ -75,10 +77,83 @@ class DashScopeService:
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(f"API调用失败: {error_text}")
-                
+                    raise Exception(
+                        f"[HTTP {response.status}] API调用失败\n"
+                        f"请求地址: {url}\n"
+                        f"模型: {model}\n"
+                        f"错误详情: {error_text[:500]}"
+                    )
+
                 return await response.json()
-    
+
+    async def safe_chat_completion(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        max_context_tokens: Optional[int] = None,
+        **kwargs
+    ) -> Dict:
+        """
+        安全的聊天补全：自动处理上下文截断和中文错误信息
+        """
+        from app.services.ai_service_base import truncate_context, estimate_tokens
+        from app.core.qwen_config import QWEN_MODELS
+
+        # 提取 system prompt
+        system_prompt = ""
+        for msg in messages:
+            if msg.get("role") == "system":
+                system_prompt = msg.get("content", "")
+                break
+
+        # 计算上下文窗口
+        model_cfg = QWEN_MODELS.get(model, {})
+        context_window = model_cfg.get("context_window", 32000) if model_cfg else 8000
+        output_tokens = max_tokens or 4000
+        max_input = context_window - output_tokens - 200
+
+        if max_input < 500:
+            max_input = 500
+
+        if max_context_tokens:
+            max_input = min(max_input, max_context_tokens)
+
+        # 智能截断
+        truncated = truncate_context(
+            messages,
+            max_tokens=max_input,
+            preserve_system=True,
+            system_prompt=system_prompt
+        )
+
+        try:
+            return await self.chat_completion(
+                model=model,
+                messages=truncated,
+                temperature=temperature,
+                max_tokens=output_tokens,
+                **kwargs
+            )
+        except Exception as e:
+            error_str = str(e).lower()
+
+            if "context" in error_str or "length" in error_str or "exceed" in error_str:
+                raise HTTPException(status_code=400, detail="输入内容过长，已超出模型上下文窗口限制。请精简内容后重试。")
+            if "401" in str(e) or "unauthorized" in error_str:
+                raise HTTPException(status_code=401, detail="API密钥无效或已过期。")
+            if "403" in str(e) or "forbidden" in error_str:
+                raise HTTPException(status_code=403, detail="API权限不足或配额用尽。")
+            if "429" in str(e) or "rate limit" in error_str:
+                raise HTTPException(status_code=429, detail="请求过于频繁，请稍后重试。")
+            if any(x in error_str for x in ["500", "502", "503", "internal"]):
+                raise HTTPException(status_code=503, detail="AI服务暂时不可用，请稍后重试。")
+            if "timeout" in error_str:
+                raise HTTPException(status_code=504, detail="AI服务响应超时，请检查网络后重试。")
+
+            raise HTTPException(status_code=400, detail=f"AI生成失败：{str(e)[:200]}")
+
     async def chat_completion_stream(
         self,
         model: str,
@@ -93,7 +168,7 @@ class DashScopeService:
         Yields:
             SSE格式的数据块
         """
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
         
         payload = {
             "model": model,
@@ -115,8 +190,12 @@ class DashScopeService:
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()
-                    raise Exception(f"API调用失败: {error_text}")
-                
+                    raise Exception(
+                        f"[HTTP {response.status}] API调用失败\n"
+                        f"请求地址: {url}\n"
+                        f"错误详情: {error_text[:500]}"
+                    )
+
                 async for line in response.content:
                     line = line.decode('utf-8').strip()
                     if line.startswith('data:'):
