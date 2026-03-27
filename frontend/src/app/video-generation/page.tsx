@@ -140,8 +140,7 @@ function VideoGenerationPageInner() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [apiKeyLoading, setApiKeyLoading] = useState(true);
+  const [configLoading, setConfigLoading] = useState(true);
 
   // 关联数据
   const [novels, setNovels] = useState<Novel[]>([]);
@@ -170,9 +169,10 @@ function VideoGenerationPageInner() {
   const [history, setHistory] = useState<VideoJob[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  // 加载火山引擎 API Key
-  const loadApiKey = async () => {
-    setApiKeyLoading(true);
+  // 检查是否配置了火山引擎（通过provider_id判断，不再读取api_key）
+  const [hasVolcanoConfig, setHasVolcanoConfig] = useState(false);
+  const checkVolcanoConfig = async () => {
+    setConfigLoading(true);
     try {
       const response = await fetchWithAuth(`${API_BASE}/llm/configs`);
       if (response.ok) {
@@ -180,14 +180,12 @@ function VideoGenerationPageInner() {
         const volcanoConfig = Array.isArray(configs)
           ? configs.find((c: any) => c.provider_id === 'volcano')
           : null;
-        if (volcanoConfig?.api_key) {
-          setApiKey(volcanoConfig.api_key);
-        }
+        setHasVolcanoConfig(!!volcanoConfig);
       }
     } catch (err) {
-      console.error('加载API Key失败:', err);
+      console.error('检查LLM配置失败:', err);
     } finally {
-      setApiKeyLoading(false);
+      setConfigLoading(false);
     }
   };
 
@@ -302,7 +300,7 @@ function VideoGenerationPageInner() {
 
   // 初始化
   useEffect(() => {
-    loadApiKey();
+    checkVolcanoConfig();
     loadHistory();
     loadScripts();
     loadCharacters();
@@ -345,7 +343,7 @@ function VideoGenerationPageInner() {
   // 轮询任务状态
   const pollTaskStatus = async (tid: string, jid: string) => {
     try {
-      const response = await fetchWithAuth(`${API_BASE}/video/status/${tid}?api_key=${apiKey}&job_id=${jid}`);
+      const response = await fetchWithAuth(`${API_BASE}/video/status/${tid}?job_id=${jid}`);
       if (!response.ok) {
         throw new Error('查询失败');
       }
@@ -375,10 +373,6 @@ function VideoGenerationPageInner() {
   const handleGenerate = async () => {
     if (!prompt.trim()) {
       alert('请输入视频描述');
-      return;
-    }
-    if (!apiKey) {
-      alert('请先配置火山引擎 API Key。请前往「LLM 配置」页面进行配置。');
       return;
     }
 
@@ -441,8 +435,7 @@ function VideoGenerationPageInner() {
     if (!job.id) return;
     try {
       const response = await fetchWithAuth(`${API_BASE}/video/jobs/${job.id}/refresh`, {
-        method: 'POST',
-        body: JSON.stringify({ api_key: apiKey })
+        method: 'POST'
       });
       if (response.ok) {
         loadHistory();
@@ -514,20 +507,20 @@ function VideoGenerationPageInner() {
           </div>
         </div>
 
-        {/* API Key 配置提示 */}
-        {apiKeyLoading ? (
+        {/* API Key 配置提示（检查provider_id判断） */}
+        {configLoading ? (
           <div className="flex items-center gap-2 text-white/40 text-sm">
             <Loader2 className="w-4 h-4 animate-spin" />
             加载 API 配置...
           </div>
-        ) : !apiKey ? (
+        ) : !hasVolcanoConfig ? (
           <Card className="bg-yellow-500/10 border-yellow-500/30">
             <CardContent className="p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <AlertCircle className="w-5 h-5 text-yellow-400" />
                 <div>
-                  <p className="text-yellow-300 font-medium">未配置 API Key</p>
-                  <p className="text-yellow-400/60 text-sm">请先配置火山引擎 API Key 才能生成视频</p>
+                  <p className="text-yellow-300 font-medium">未配置火山引擎 API</p>
+                  <p className="text-yellow-400/60 text-sm">请先在「LLM 配置」中添加火山引擎配置，生成视频时将自动使用</p>
                 </div>
               </div>
               <Link href="/llm-config">
@@ -802,7 +795,7 @@ function VideoGenerationPageInner() {
             {/* 生成按钮 */}
             <Button
               onClick={handleGenerate}
-              disabled={status === 'submitting' || status === 'generating' || !apiKey || apiKeyLoading}
+              disabled={status === 'submitting' || status === 'generating' || configLoading}
               className="w-full bg-violet-600 hover:bg-violet-700 h-12"
             >
               {status === 'submitting' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />提交中...</>}

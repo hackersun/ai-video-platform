@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
 from pydantic import BaseModel, Field
 
-from app.core.api_key_utils import get_user_volcano_api_key
+from app.core.api_key_utils import get_user_api_key
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.video_job import VideoJob
@@ -106,11 +106,11 @@ class VideoJobResponse(BaseModel):
     updated_at: datetime
 
 
-def _create_ark_client(api_key: str):
+def _create_ark_client(api_key: str, base_url: Optional[str] = None):
     """创建ARK客户端"""
     from volcenginesdkarkruntime import Ark
     return Ark(
-        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        base_url=base_url or "https://ark.cn-beijing.volces.com/api/v3",
         api_key=api_key,
     )
 
@@ -190,8 +190,12 @@ async def generate_video(
 
     try:
         # 使用请求提供的 API key 或从用户的 LLMConfig 中获取
-        resolved_api_key = request.api_key or await get_user_volcano_api_key(db, user_id)
-        client = _create_ark_client(resolved_api_key)
+        if request.api_key:
+            resolved_api_key = request.api_key
+            resolved_base_url = None
+        else:
+            resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, "volcano")
+        client = _create_ark_client(resolved_api_key, resolved_base_url)
 
         # 构建content
         content = []
@@ -298,10 +302,14 @@ async def get_video_status(
     使用 task_id 轮询任务状态。API Key 优先使用请求参数，
     否则从用户的 LLMConfig 中获取。
     """
-    resolved_api_key = api_key or await get_user_volcano_api_key(db, user_id)
-    
+    if api_key:
+        resolved_api_key = api_key
+        resolved_base_url = None
+    else:
+        resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, "volcano")
+
     try:
-        client = _create_ark_client(resolved_api_key)
+        client = _create_ark_client(resolved_api_key, resolved_base_url)
         
         get_result = client.content_generation.tasks.get(task_id=task_id)
         task_status = get_result.status
@@ -504,8 +512,8 @@ async def refresh_job_status(
     
     try:
         # 从用户的 LLMConfig 获取 API 密钥
-        resolved_api_key = await get_user_volcano_api_key(db, user_id)
-        client = _create_ark_client(resolved_api_key)
+        resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, "volcano")
+        client = _create_ark_client(resolved_api_key, resolved_base_url)
         
         get_result = client.content_generation.tasks.get(task_id=job.task_id)
         task_status = get_result.status

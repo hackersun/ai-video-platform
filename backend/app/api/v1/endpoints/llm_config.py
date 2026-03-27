@@ -73,6 +73,7 @@ class LLMConfigResponse(BaseModel):
     id: str
     user_id: str
     model_id: str
+    provider_id: str  # 前端用于判断配置属于哪个服务商
     model_name: str
     provider_name: str
     name: str
@@ -1395,6 +1396,7 @@ async def list_configs(
             "id": config.id,
             "user_id": config.user_id,
             "model_id": config.model_id,
+            "provider_id": provider.name if provider else model.provider_id,
             "model_name": model.model_name_cn or model.model_name,
             "provider_name": provider.name_cn if provider else "未知",
             "name": config.name,
@@ -1470,6 +1472,7 @@ async def create_config(
         "id": config.id,
         "user_id": config.user_id,
         "model_id": config.model_id,
+        "provider_id": provider.name if provider else model.provider_id,
         "model_name": model.model_name_cn or model.model_name,
         "provider_name": provider.name_cn if provider else "未知",
         "name": config.name,
