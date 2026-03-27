@@ -33,8 +33,13 @@ router = APIRouter(tags=["视频生成"])
 
 # ============== 常量配置 ==============
 
-# 视频模型ID - 使用Doubao-Seedance-1.5-pro
-VIDEO_MODEL_ID = "doubao-seedance-1-5-pro-251215"
+VIDEO_MODEL_ID = "Doubao-Seedance-1.0-pro-fast"  # 已验证的快速视频模型
+
+# 所有可选视频模型（按VOLCANO_MODELS配置）
+VIDEO_MODEL_OPTIONS = [
+    {"id": "Doubao-Seedance-1.0-pro-fast", "label": "豆包Seedance-1.0-pro-fast", "desc": "快速版，速度快，支持文生视频/图生视频"},
+    {"id": "Doubao-Seedance-1.5-pro",        "label": "豆包Seedance-1.5-pro",        "desc": "Pro版，高质量（注：需账户有对应额度）"},
+]
 
 
 # ============== 请求/响应模型 ==============
@@ -42,8 +47,8 @@ VIDEO_MODEL_ID = "doubao-seedance-1-5-pro-251215"
 class VideoGenerateRequest(BaseModel):
     """视频生成请求"""
     prompt: str = Field(..., description="视频描述")
-    model: str = Field(VIDEO_MODEL_ID, description="模型ID，默认 doubao-seedance-1-5-pro-251215")
-    duration: int = Field(5, ge=4, le=10, description="视频时长（秒），支持4/8/10秒")
+    model: str = Field(VIDEO_MODEL_ID, description="模型ID，可选 Doubao-Seedance-1.0-pro-fast / Doubao-Seedance-1.5-pro")
+    duration: int = Field(5, ge=4, le=10, description="视频时长（秒），支持4/5/8/10秒")
     resolution: str = Field("720p", description="分辨率: 480p, 720p, 1080p")
     api_key: Optional[str] = Field(None, description="火山引擎API Key（可选，默认使用用户在LLM配置中的密钥）")
     image_url: Optional[str] = Field(None, description="参考图片URL，用于图生视频")

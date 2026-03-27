@@ -730,14 +730,19 @@ DEFAULT_MODELS = [
 
 async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
     """测试火山引擎API，根据模型类型走不同端点"""
-    from app.core.volcano_config import VOLCANO_MODELS
+    from app.core.volcano_config import VOLCANO_MODELS, get_endpoint_id
 
-    # 查找模型类型
-    model_type = "text-generation"  # 默认为文本模型
+    # 查找模型配置
+    model_config = {}
+    model_type = "text-generation"
     for m in VOLCANO_MODELS:
         if m["id"] == model_id:
+            model_config = m
             model_type = m.get("type", "text-generation")
             break
+
+    # 解析实际调用的 model（图像/视频用 endpoint_id，文本用 model_id）
+    actual_model = get_endpoint_id(model_id)  # volcano_config 会正确解析
 
     base_url = "https://ark.cn-beijing.volces.com/api/v3"
     headers = {
@@ -746,10 +751,9 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
     }
 
     if model_type == "video-generation":
-        # 视频生成模型 → POST /contents/generations/tasks
         url = f"{base_url}/contents/generations/tasks"
         data = {
-            "model": model_id,
+            "model": actual_model,
             "content": [
                 {"type": "text", "text": f"{message} --duration 4 --resolution 720p --camerafixed true --watermark true"}
             ]
@@ -757,10 +761,11 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
     elif model_type == "image-generation":
         # 图像生成模型 → POST /images/generations
         url = f"{base_url}/images/generations"
+        # 最小像素 3686400，2048x2048=4194304 满足要求
         data = {
-            "model": model_id,
+            "model": actual_model,
             "prompt": message[:200],
-            "size": "1024x1024",
+            "size": "2048x2048",  # 满足 min_pixels >= 3686400
             "n": 1,
             "response_format": "url"
         }
@@ -768,7 +773,7 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
         # 文本生成模型 → POST /chat/completions
         url = f"{base_url}/chat/completions"
         data = {
-            "model": model_id,
+            "model": actual_model,
             "messages": [{"role": "user", "content": message}],
             "max_tokens": 100
         }

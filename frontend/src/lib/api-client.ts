@@ -398,7 +398,7 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({
         prompt: params.prompt,
-        model: 'doubao-seedream-3-0',
+        model: 'Doubao-Seedream-4.5',
         character_id: characterId,
       }),
     });

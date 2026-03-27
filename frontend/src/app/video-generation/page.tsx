@@ -38,8 +38,8 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v
 
 // 视频模型配置
 const VIDEO_MODELS = [
-  { id: 'doubao-seedance-1-5-pro-251215', name: 'Doubao-Seedance-1.5-pro', desc: '最新Pro版，支持文生视频/图生视频', duration: '4/8/10秒' },
-  { id: 'ep-20260322134751-fbglz', name: 'Doubao-Seedance-1.0-pro-fast', desc: 'Seedance 1.0 快速版，速度快', duration: '4/5/8/10秒' },
+  { id: 'Doubao-Seedance-1.0-pro-fast', name: '豆包Seedance-1.0-pro-fast', desc: '快速版，速度快，支持文生视频/图生视频', duration: '4/5/8/10秒' },
+  { id: 'Doubao-Seedance-1.5-pro',        name: '豆包Seedance-1.5-pro',        desc: 'Pro版，高质量（注：需账户有对应额度）', duration: '4/8/10秒' },
 ];
 
 // 角色类型
@@ -158,7 +158,7 @@ function VideoGenerationPageInner() {
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState('720p');
   const [imageUrl, setImageUrl] = useState('');
-  const [selectedModel, setSelectedModel] = useState('doubao-seedance-1-5-pro-251215');
+  const [selectedModel, setSelectedModel] = useState('Doubao-Seedance-1.0-pro-fast');
   const [selectedShotId, setSelectedShotId] = useState<string>('');
 
   // 关联ID
