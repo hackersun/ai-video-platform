@@ -72,6 +72,20 @@ def init_llm_providers_and_models():
             "description": "OpenAI 提供 GPT-4o、DALL-E、Sora 等模型",
             "website_url": "https://platform.openai.com/",
             "doc_url": "https://platform.openai.com/docs"
+        },
+        {
+            "id": "minimax",
+            "name": "minimax",
+            "name_cn": "MiniMax",
+            "name_en": "MiniMax",
+            "provider_type": "cloud",
+            "base_url": "https://api.minimaxi.com/v1",
+            "auth_type": "bearer",
+            "is_active": True,
+            "is_builtin": True,
+            "description": "MiniMax 海螺AI，支持文本生成、图像生成、TTS语音合成",
+            "website_url": "https://www.minimaxi.com/",
+            "doc_url": "https://platform.minimaxi.com/document"
         }
     ]
     
@@ -459,6 +473,64 @@ def init_llm_providers_and_models():
             "is_recommended": False,
             "is_active": True,
             "description": "轻量级模型，响应速度快"
+        },
+
+        # MiniMax - 文本生成模型
+        {
+            "id": "minimax-m2-7",
+            "provider_id": "minimax",
+            "model_id": "MiniMax-M2.7",
+            "model_name": "MiniMax-M2.7",
+            "model_name_cn": "MiniMax-M2.7",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "function_calling", "json_mode", "reasoning"],
+            "context_window": 1000000,
+            "max_tokens": 8192,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "MiniMax 最新旗舰模型，超长上下文，支持函数调用和推理"
+        },
+        # MiniMax - 图像生成模型
+        {
+            "id": "minimax-image-01",
+            "provider_id": "minimax",
+            "model_id": "image-01",
+            "model_name": "MiniMax-image-01",
+            "model_name_cn": "MiniMax图像生成",
+            "model_type": "image",
+            "capabilities": ["text-to-image"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "MiniMax 高质量图像生成，支持文生图/图生图，生成快速"
+        },
+        # MiniMax - TTS语音合成模型
+        {
+            "id": "minimax-speech-2-6-hd",
+            "provider_id": "minimax",
+            "model_id": "speech-2.6-hd",
+            "model_name": "MiniMax-speech-2.6-hd",
+            "model_name_cn": "MiniMax语音合成-HD",
+            "model_type": "tts",
+            "capabilities": ["text-to-speech"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "MiniMax 高质量语音合成，支持中文/英文/多语种，多种音色可选"
         },
     ]
     

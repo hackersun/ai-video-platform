@@ -159,6 +159,19 @@ DEFAULT_PROVIDERS = [
         "icon_url": "/icons/openai.svg",
         "website_url": "https://platform.openai.com/",
         "doc_url": "https://platform.openai.com/docs"
+    },
+    {
+        "id": "minimax",
+        "name": "minimax",
+        "name_cn": "MiniMax",
+        "name_en": "MiniMax",
+        "provider_type": "cloud",
+        "base_url": "https://api.minimaxi.com/v1",
+        "auth_type": "bearer",
+        "description": "MiniMax 海螺AI，支持文本生成、图像生成、TTS语音合成",
+        "icon_url": "/icons/minimax.svg",
+        "website_url": "https://www.minimaxi.com/",
+        "doc_url": "https://platform.minimaxi.com/document"
     }
 ]
 
@@ -722,6 +735,75 @@ DEFAULT_MODELS = [
         "description": "OpenAI 视频生成模型（即将发布）",
         "version": "1.0",
         "release_date": "2024-02-15"
+    },
+    # MiniMax - 文本生成模型
+    {
+        "id": "minimax-m2.7",
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M2.7",
+        "model_name": "MiniMax-M2.7",
+        "model_name_cn": "MiniMax-M2.7",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode", "reasoning"],
+        "context_window": 1000000,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "MiniMax 最新旗舰模型，超长上下文，支持函数调用和推理",
+        "version": "M2.7",
+        "release_date": "2025-01-01"
+    },
+    # MiniMax - 图像生成模型
+    {
+        "id": "minimax-image-01",
+        "provider_id": "minimax",
+        "model_id": "image-01",
+        "model_name": "MiniMax-image-01",
+        "model_name_cn": "MiniMax图像生成",
+        "model_type": "image-generation",
+        "capabilities": ["text-to-image"],
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": False,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "MiniMax 高质量图像生成，支持文生图/图生图，生成快速",
+        "version": "image-01",
+        "release_date": "2025-01-01"
+    },
+    # MiniMax - TTS语音合成模型
+    {
+        "id": "minimax-speech-2.6-hd",
+        "provider_id": "minimax",
+        "model_id": "speech-2.6-hd",
+        "model_name": "MiniMax-speech-2.6-hd",
+        "model_name_cn": "MiniMax语音合成-HD",
+        "model_type": "tts",
+        "capabilities": ["text-to-speech"],
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": False,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "MiniMax 高质量语音合成，支持中文/英文/多语种，多种音色可选",
+        "version": "speech-2.6-hd",
+        "release_date": "2025-01-01"
     }
 ]
 
@@ -1102,6 +1184,121 @@ async def test_openai_api(api_key: str, model_id: str, message: str) -> dict:
         }
 
 
+async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
+    """测试 MiniMax API，根据模型类型走不同端点"""
+    from app.core.minimax_config import MINIMAX_MODELS, get_minimax_base_url
+
+    # 查找模型配置（支持内部ID和API model_id两种匹配）
+    model_config = {}
+    model_type = "text-generation"
+    for m in MINIMAX_MODELS:
+        if m["id"] == model_id or m.get("api_model_id") == model_id:
+            model_config = m
+            model_type = m.get("type", "text-generation")
+            break
+
+    # 解析实际调用的 model（优先用 api_model_id）
+    actual_model = model_config.get("api_model_id", model_id) if model_config else model_id
+    base_url = get_minimax_base_url(api_key)
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+
+    if model_type == "image-generation":
+        # 图像生成模型 → POST /v1/image_generation
+        url = f"{base_url}/image_generation"
+        data = {
+            "model": actual_model,
+            "prompt": message[:200],
+            "aspect_ratio": "1:1",
+            "n": 1,
+            "response_format": "url"
+        }
+    elif model_type == "tts":
+        # TTS模型 → POST /v1/t2a_v2
+        url = f"{base_url}/t2a_v2"
+        data = {
+            "model": actual_model,
+            "text": message[:50],
+            "stream": False,
+            "output_format": "url",
+            "voice_setting": {
+                "voice_id": "female-shaonv",
+                "speed": 1.0,
+                "vol": 1.0,
+                "pitch": 0,
+            }
+        }
+    else:
+        # 文本生成模型 → POST /v1/chat/completions
+        url = f"{base_url}/chat/completions"
+        data = {
+            "model": actual_model,
+            "messages": [{"role": "user", "content": message}],
+            "max_tokens": 100
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(url, json=data, headers=headers)
+
+            if response.status_code == 200:
+                result = response.json()
+
+                # 提取有意义的结果摘要
+                response_text = ""
+                if model_type == "text-generation":
+                    choices = result.get("choices", [])
+                    if choices:
+                        response_text = choices[0].get("message", {}).get("content", "响应成功")
+                    else:
+                        response_text = str(result)[:100]
+                elif model_type == "image-generation":
+                    items = result.get("data", {}).get("items", [])
+                    if items:
+                        response_text = f"生成图像成功，URL: {items[0].get('url', '')[:80]}"
+                    else:
+                        response_text = f"图像生成响应: {str(result)[:100]}"
+                elif model_type == "tts":
+                    response_text = f"TTS响应: {str(result)[:100]}"
+                else:
+                    response_text = str(result)[:100]
+
+                return {
+                    "success": True,
+                    "message": "MiniMax API 连接成功！",
+                    "response": response_text,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) if model_type == "text-generation" else 0
+                }
+            else:
+                error_msg = response.text[:150]
+                return {
+                    "success": False,
+                    "message": f"API错误 [{response.status_code}]: {error_msg}",
+                    "response": None,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": 0
+                }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络或API地址",
+            "response": None,
+            "response_time_ms": 60000,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)[:100]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
+
+
 # ============== API端点 ==============
 
 @router.get("/providers", response_model=List[LLMProviderResponse])
@@ -1320,6 +1517,8 @@ async def test_api_connection(
         return await test_baidu_api(request.api_key, model_id, request.message)
     elif model_provider_id == "openai":
         return await test_openai_api(request.api_key, model_id, request.message)
+    elif model_provider_id == "minimax":
+        return await test_minimax_api(request.api_key, model_id, request.message)
     else:
         return {
             "success": False,
