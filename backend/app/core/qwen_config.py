@@ -32,7 +32,7 @@ QIANLIAN_CONFIG = {
     "provider": "qianlian",
     "provider_name": "Alibaba Qianlian",
     "provider_name_cn": "阿里百炼",
-    "base_url": "https://coding.dashscope.aliyuncs.com/v1",
+    "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
     "auth_type": "bearer",
     "auth_header": "Authorization",
     "doc_url": "https://help.aliyun.com/document_detail/3096588.html",
