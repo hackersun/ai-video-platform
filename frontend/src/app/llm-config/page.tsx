@@ -445,6 +445,92 @@ export default function LLMConfigPage() {
       }
     }
 
+    // MiniMax测试
+    if (provider.id === 'minimax') {
+      try {
+        // MiniMax: 自动根据key前缀判断端点
+        const baseUrl = key.startsWith('sk-cp-')
+          ? 'https://api.minimax.io/v1'
+          : 'https://api.minimaxi.com/v1';
+        const res = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify({
+            model: model.model_id,
+            messages: [{ role: 'user', content: '你好' }],
+            max_tokens: 100
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            success: true,
+            message: '✅ MiniMax API 连接成功！',
+            response: data.choices?.[0]?.message?.content || '响应成功'
+          };
+        } else if (res.status === 401 || res.status === 403) {
+          return { success: false, message: '🔑 API Key无效或已过期，请检查Key是否正确' };
+        } else if (res.status === 429) {
+          return { success: false, message: '⏱️ 请求过于频繁，请稍后再试（配额可能已用完）' };
+        } else if (res.status >= 500) {
+          return { success: false, message: '🖥️ 服务端错误，请检查MiniMax服务状态' };
+        } else {
+          const error = await res.json().catch(() => ({}));
+          return { success: false, message: `❌ API错误: ${error.error?.message || res.statusText}` };
+        }
+      } catch (e: any) {
+        if (e.name === 'TypeError' && e.message.includes('fetch')) {
+          return { success: false, message: '🌐 网络连接失败，请检查网络或API地址是否正确' };
+        }
+        return { success: false, message: `❌ 连接失败: ${e.message}` };
+      }
+    }
+
+    // OpenAI测试
+    if (provider.id === 'openai') {
+      try {
+        const res = await fetch(`${provider.base_url}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify({
+            model: model.model_id,
+            messages: [{ role: 'user', content: '你好' }],
+            max_tokens: 100
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          return {
+            success: true,
+            message: '✅ OpenAI API 连接成功！',
+            response: data.choices?.[0]?.message?.content || '响应成功'
+          };
+        } else if (res.status === 401 || res.status === 403) {
+          return { success: false, message: '🔑 API Key无效或已过期，请检查Key是否正确' };
+        } else if (res.status === 429) {
+          return { success: false, message: '⏱️ 请求过于频繁，请稍后再试（配额可能已用完）' };
+        } else if (res.status >= 500) {
+          return { success: false, message: '🖥️ 服务端错误，请检查OpenAI服务状态' };
+        } else {
+          const error = await res.json().catch(() => ({}));
+          return { success: false, message: `❌ API错误: ${error.error?.message || res.statusText}` };
+        }
+      } catch (e: any) {
+        if (e.name === 'TypeError' && e.message.includes('fetch')) {
+          return { success: false, message: '🌐 网络连接失败，请检查网络或API地址是否正确' };
+        }
+        return { success: false, message: `❌ 连接失败: ${e.message}` };
+      }
+    }
+
     return { success: false, message: '❌ 不支持的提供商' };
   };
 
@@ -756,11 +842,38 @@ export default function LLMConfigPage() {
                     <div className="mt-2 p-2 rounded bg-white/5 border border-white/10">
                       <div className="flex items-center gap-2 text-xs text-white/60 mb-1">
                         <Globe className="w-3 h-3" />
-                        <span>API地址</span>
+                        <span>API地址（默认）</span>
                       </div>
                       <code className="text-xs text-violet-400 break-all">
                         {providers.find(p => p.id === selectedProvider)?.base_url}
                       </code>
+                      {/* 各模型类型的实际端点 */}
+                      {selectedProvider === 'volcano' && (
+                        <div className="mt-1 text-xs text-white/40">
+                          文本→/chat/completions | 图像→/images/generations | 视频→/contents/generations/tasks
+                        </div>
+                      )}
+                      {selectedProvider === 'minimax' && (
+                        <div className="mt-1 text-xs text-white/40">
+                          文本→/v1/chat/completions | 图像→/v1/image_generation | TTS→/v1/t2a_v2
+                          <br/>sk-api-前缀→国内(api.minimaxi.com) | sk-cp-前缀→海外(api.minimax.io)
+                        </div>
+                      )}
+                      {selectedProvider === 'qianlian' && (
+                        <div className="mt-1 text-xs text-white/40">
+                          端点: /apps/anthropic/v1/messages
+                        </div>
+                      )}
+                      {selectedProvider === 'dashscope' && (
+                        <div className="mt-1 text-xs text-white/40">
+                          端点: /chat/completions
+                        </div>
+                      )}
+                      {selectedProvider === 'openai' && (
+                        <div className="mt-1 text-xs text-white/40">
+                          文本→/chat/completions | 图像→/images/generations | 视频→/videos/generations
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

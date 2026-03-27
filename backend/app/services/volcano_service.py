@@ -26,10 +26,10 @@ from app.core.volcano_config import (
 class VolcanoService:
     """火山引擎 API 服务类"""
 
-    BASE_URL = VOLCANO_CONFIG["base_url"]  # https://ark.cn-beijing.volces.com/api/v3
-
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
+        # base_url: 支持用户自定义（如通过 LLMConfig.extra_params.base_url 传入）
+        self.base_url = base_url or VOLCANO_CONFIG["base_url"]
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -50,7 +50,7 @@ class VolcanoService:
         聊天补全（文本生成）
         端点: POST /chat/completions
         """
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
         payload = {
             "model": model,
             "messages": messages,
@@ -140,7 +140,7 @@ class VolcanoService:
         }
         payload.update(kwargs)
 
-        url = f"{self.BASE_URL}/images/generations"
+        url = f"{self.base_url}/images/generations"
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url, headers=self.headers, json=payload,
@@ -194,7 +194,7 @@ class VolcanoService:
             payload["seed"] = seed
         payload.update(kwargs)
 
-        url = f"{self.BASE_URL}/contents/generations/tasks"
+        url = f"{self.base_url}/contents/generations/tasks"
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url, headers=self.headers, json=payload,
@@ -208,7 +208,7 @@ class VolcanoService:
     async def get_video_status(self, task_id: str, model: str = DEFAULT_VIDEO_MODEL) -> Dict[str, Any]:
         """查询视频生成任务状态"""
         endpoint_id = ENDPOINT_IDS.get(model, model)
-        url = f"{self.BASE_URL}/contents/generations/tasks/{task_id}"
+        url = f"{self.base_url}/contents/generations/tasks/{task_id}"
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 url, headers=self.headers,
@@ -236,7 +236,7 @@ class VolcanoService:
         """
         import os
         import uuid
-        speech_url = f"{self.BASE_URL}/audio/speech"
+        speech_url = f"{self.base_url}/audio/speech"
         speech_headers = {"Authorization": f"Bearer {self.api_key}"}
 
         payload = {
@@ -296,7 +296,7 @@ class VolcanoService:
         """TTS 回退：通过 Responses API 调用"""
         import os
         import uuid
-        url = f"{self.BASE_URL}/responses"
+        url = f"{self.base_url}/responses"
         payload = {
             "model": model,
             "input": [{"role": "user", "content": [
