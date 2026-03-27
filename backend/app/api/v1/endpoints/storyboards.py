@@ -104,17 +104,27 @@ async def get_user_qwen_api_key(db: AsyncSession, user_id: str) -> tuple[str, st
         HTTPException: 如果未找到有效配置
     """
     result = await db.execute(
-        select(LLMConfig).where(
-            and_(LLMConfig.user_id == user_id, LLMConfig.is_active == True)
-        ).order_by(desc(LLMConfig.is_default), desc(LLMConfig.last_used_at))
+        select(LLMConfig, LLMModel, LLMProvider)
+        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+        .where(
+            and_(
+                LLMConfig.user_id == user_id,
+                LLMConfig.is_active == True,
+                LLMProvider.name.in_(["qianlian", "dashscope", "qwen"]),
+            )
+        )
+        .order_by(desc(LLMConfig.is_default), desc(LLMConfig.last_used_at))
     )
-    config = result.scalars().first()
+    row = result.first()
 
-    if not config:
+    if not row:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先配置大模型API密钥"
+            detail="请先配置千问/百炼大模型API密钥"
         )
+
+    config, model, provider = row
 
     if not config.api_key:
         raise HTTPException(
@@ -122,23 +132,7 @@ async def get_user_qwen_api_key(db: AsyncSession, user_id: str) -> tuple[str, st
             detail="大模型API密钥未设置"
         )
 
-    model_result = await db.execute(
-        select(LLMModel).where(LLMModel.id == config.model_id)
-    )
-    model = model_result.scalar_one_or_none()
-
-    provider_result = await db.execute(
-        select(LLMProvider).where(LLMProvider.id == model.provider_id) if model else select(LLMProvider).where(LLMProvider.name == "dashscope")
-    )
-    provider = provider_result.scalars().first()
-
-    if not provider:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="未找到大模型提供商配置"
-        )
-
-    return config.api_key, provider.name, model.model_id if model else "qwen-long", model.base_url if model else None
+    return config.api_key, provider.name, model.model_id, model.base_url
 
 
 async def get_script_for_user(db: AsyncSession, script_id: str, user_id: str):
