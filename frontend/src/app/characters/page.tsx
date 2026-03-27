@@ -71,8 +71,8 @@ export default function CharactersPage() {
   const [autoGenerateAvatar, setAutoGenerateAvatar] = useState(true);
   const [generatingAvatarId, setGeneratingAvatarId] = useState<string | null>(null);
 
-  // Extracted character avatar generation tracking
-  const [extractedChars, setExtractedChars] = useState<Array<{ id: string; name: string; avatar_status: 'pending' | 'generating' | 'succeeded' | 'failed' }>>([]);
+  // Extracted characters list (shows avatars from backend)
+  const [extractedChars, setExtractedChars] = useState<Array<{ id: string; name: string; avatar?: string }>>([]);
 
   // AI提取弹窗相关
   const [showExtractModal, setShowExtractModal] = useState(false);
@@ -180,7 +180,6 @@ export default function CharactersPage() {
     }
 
     setExtractingCharacters(true);
-    setExtractedChars([]);
     try {
       const result = await fetchJsonWithAuth(`${API_BASE}/characters/extract`, {
         method: 'POST', body: JSON.stringify(payload)
@@ -188,28 +187,15 @@ export default function CharactersPage() {
       const extracted = Array.isArray(result) ? result : [];
       if (extracted.length > 0) {
         await loadCharacters();
-        // Track extracted characters for avatar generation UI
-        setExtractedChars(extracted.map((c: Character) => ({ id: c.id, name: c.name, avatar_status: 'pending' as const })));
-        // Auto-generate avatars for extracted characters
-        for (const char of extracted) {
-          setExtractedChars(prev => prev.map(c => c.id === char.id ? { ...c, avatar_status: 'generating' } : c));
-          try {
-            const imgResult = await fetchJsonWithAuth(`${API_BASE}/images/generate`, {
-              method: 'POST', body: JSON.stringify({ prompt: buildAvatarPrompt(char), character_id: char.id })
-            }) as any;
-            pollAvatarStatus(char.id, imgResult.task_id);
-          } catch {
-            setExtractedChars(prev => prev.map(c => c.id === char.id ? { ...c, avatar_status: 'failed' } : c));
-          }
-        }
-        await loadCharacters();
+        setExtractedChars(extracted.map((c: Character) => ({ id: c.id, name: c.name, avatar: c.avatar })));
+        setExtractingCharacters(false);
       } else {
-        await loadCharacters();
-        setShowExtractModal(false);
+        setExtractError('未提取到角色，请检查输入内容');
+        setExtractingCharacters(false);
       }
     } catch (err: any) {
-      setExtractError(err.message || '提取角色失败，请稍后重试');
-    } finally {
+      const msg = err?.message || err?.detail || '提取失败，请稍后重试';
+      setExtractError(msg);
       setExtractingCharacters(false);
     }
   };
@@ -267,12 +253,19 @@ export default function CharactersPage() {
         if (autoGenerateAvatar) {
           setGeneratingAvatarId(newChar.id);
           try {
-            const result = await fetchJsonWithAuth(`${API_BASE}/images/generate`, {
+            const data = await fetchJsonWithAuth(`${API_BASE}/images/generate`, {
               method: 'POST', body: JSON.stringify({ prompt: buildAvatarPrompt(newChar), character_id: newChar.id })
             }) as any;
-            pollAvatarStatus(newChar.id, result.task_id);
+            const avatarUrl = (data.image_urls && data.image_urls[0]) || data.image_url;
+            if (avatarUrl) {
+              await fetchJsonWithAuth(`${API_BASE}/characters/${newChar.id}`, {
+                method: 'PUT', body: JSON.stringify({ avatar: avatarUrl })
+              });
+              await loadCharacters();
+            }
           } catch (err) {
             console.error("Avatar generation failed:", err);
+          } finally {
             setGeneratingAvatarId(null);
           }
         }
@@ -308,13 +301,19 @@ export default function CharactersPage() {
     try {
       const data = await fetchJsonWithAuth(`${API_BASE}/images/generate`, {
         method: 'POST', body: JSON.stringify({ prompt: `character portrait, ${char.name}, ${char.appearance}`, character_id: characterId })
-      });
-      await fetchJsonWithAuth(`${API_BASE}/characters/${characterId}`, {
-        method: 'PUT', body: JSON.stringify({ avatar: (data as any).image_url })
-      });
-      await loadCharacters();
-    } catch { alert('生成头像失败'); }
-    finally { setGeneratingAvatar(null); }
+      }) as any;
+      const avatarUrl = (data.image_urls && data.image_urls[0]) || data.image_url;
+      if (avatarUrl) {
+        await fetchJsonWithAuth(`${API_BASE}/characters/${characterId}`, {
+          method: 'PUT', body: JSON.stringify({ avatar: avatarUrl })
+        });
+        await loadCharacters();
+      }
+    } catch (err: any) {
+      alert(`生成头像失败: ${err?.message || err?.detail || '请检查火山引擎API配置'}`);
+    } finally {
+      setGeneratingAvatar(null);
+    }
   };
 
   const handleCancel = () => { setIsEditing(false); setIsCreating(false); };
@@ -327,33 +326,6 @@ export default function CharactersPage() {
     parts.push("anime style, high quality, portrait");
     return parts.join(", ");
   }
-
-  const pollAvatarStatus = async (charId: string, taskId: string) => {
-    const maxAttempts = 30;
-    for (let i = 0; i < maxAttempts; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      try {
-        const status = await fetchJsonWithAuth(`${API_BASE}/images/jobs/${taskId}`) as any;
-        if (status.status === "succeeded") {
-          const avatarUrl = status.image_url;
-          await fetchJsonWithAuth(`${API_BASE}/characters/${charId}`, {
-            method: 'PUT', body: JSON.stringify({ avatar: avatarUrl })
-          });
-          setCharacters(prev => prev.map(c => c.id === charId ? { ...c, avatar: avatarUrl } : c));
-          setExtractedChars(prev => prev.map(c => c.id === charId ? { ...c, avatar_status: 'succeeded' } : c));
-          setGeneratingAvatarId(null);
-          return;
-        } else if (status.status === "failed") {
-          setExtractedChars(prev => prev.map(c => c.id === charId ? { ...c, avatar_status: 'failed' } : c));
-          setGeneratingAvatarId(null);
-          return;
-        }
-      } catch {
-        // continue polling
-      }
-    }
-    setGeneratingAvatarId(null);
-  };
 
   return (
     <MainLayout>
@@ -720,38 +692,42 @@ export default function CharactersPage() {
                 </div>
               )}
 
-              {extractedChars.length > 0 && (
+              {extractedChars.length > 0 && !extractingCharacters && (
                 <div className="space-y-3">
-                  <div className="text-sm text-white/60">头像生成状态：</div>
+                  <div className="text-sm text-white/60">已提取角色（{extractedChars.length}个）：</div>
                   {extractedChars.map(char => (
                     <div key={char.id} className="flex items-center gap-3 p-2 bg-white/5 rounded-lg">
-                      {char.avatar_status === 'generating' ? (
-                        <Loader2 className="w-4 h-4 text-violet-400 animate-spin" />
-                      ) : char.avatar_status === 'succeeded' ? (
-                        <span className="w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
-                          <span className="w-2 h-2 bg-white rounded-full" />
-                        </span>
-                      ) : char.avatar_status === 'failed' ? (
-                        <AlertCircle className="w-4 h-4 text-red-400" />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border border-white/30" />
-                      )}
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center overflow-hidden flex-shrink-0">
+                        {char.avatar ? (
+                          <img src={char.avatar} alt={char.name} className="w-8 h-8 rounded-full object-cover" />
+                        ) : (
+                          <User className="w-4 h-4 text-white" />
+                        )}
+                      </div>
                       <span className="text-sm text-white flex-1">{char.name}</span>
-                      <span className="text-xs text-white/50">
-                        {char.avatar_status === 'generating' ? '生成中...' : char.avatar_status === 'succeeded' ? '完成' : char.avatar_status === 'failed' ? '失败' : '等待'}
-                      </span>
+                      {char.avatar ? (
+                        <span className="text-xs text-green-400">头像已生成</span>
+                      ) : (
+                        <span className="text-xs text-yellow-400">无头像</span>
+                      )}
                     </div>
                   ))}
+                  <p className="text-xs text-white/40">角色已保存到角色库，可在角色详情页手动生成头像</p>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button variant="outline" onClick={() => setShowExtractModal(false)}
+                      className="border-white/20 text-white">关闭</Button>
+                  </div>
                 </div>
               )}
 
               <div className="flex justify-end gap-2 pt-2">
                 <Button variant="outline" onClick={() => setShowExtractModal(false)}
                   className="border-white/20 text-white">取消</Button>
-                <Button onClick={handleDoExtract} disabled={extractingCharacters}
+                <Button onClick={handleDoExtract}
+                  disabled={extractingCharacters || extractedChars.length > 0}
                   className="bg-violet-600 hover:bg-violet-700">
                   {extractingCharacters ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
-                  {extractingCharacters ? '提取中...' : '开始提取'}
+                  {extractingCharacters ? '提取中...' : extractedChars.length > 0 ? '已完成' : '开始提取'}
                 </Button>
               </div>
             </div>

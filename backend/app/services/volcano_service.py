@@ -83,12 +83,9 @@ class VolcanoService:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        图像生成
+        图像生成（同步模式 - 等待完成返回URL）
         端点: POST /images/generations
         模型: Doubao-Seedream-4.5, Doubao-Seedream-5.0-lite
-
-        尺寸要求: width * height >= 3686400 pixels (约 2048x2048)
-        推荐尺寸: 2048x2048, 1024x1792, 960x3840, 3072x3072
         """
         endpoint_id = ENDPOINT_IDS.get(model, model)
 
@@ -149,7 +146,44 @@ class VolcanoService:
                 if resp.status != 200:
                     text = await resp.text()
                     raise Exception(f"图像生成失败 [{resp.status}]: {text}")
-                return await resp.json()
+                result = await resp.json()
+                # 如果返回了直接的图片URL（同步模式），直接返回
+                if result.get("data") and len(result["data"]) > 0:
+                    first = result["data"][0]
+                    if isinstance(first, dict) and first.get("url"):
+                        return result
+                # 否则需要查询任务状态（异步模式）
+                task_id = result.get("id")
+                if task_id:
+                    image_url = await self._poll_image_task(task_id, endpoint_id, timeout=60)
+                    return {"data": [{"url": image_url}], "id": task_id}
+                return result
+
+    async def _poll_image_task(self, task_id: str, model: str, timeout: int = 60) -> str:
+        """轮询图片生成任务直到完成，返回图片URL"""
+        import asyncio
+        import time
+        deadline = time.time() + timeout
+        status_url = f"{self.base_url}/images/generations/tasks/{task_id}"
+        async with aiohttp.ClientSession() as session:
+            while time.time() < deadline:
+                async with session.get(status_url, headers=self.headers,
+                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        await asyncio.sleep(2)
+                        continue
+                    result = await resp.json()
+                    status = result.get("status", "")
+                    if status == "succeeded":
+                        data = result.get("data", [])
+                        if data and isinstance(data[0], dict) and data[0].get("url"):
+                            return data[0]["url"]
+                        raise Exception("图片生成成功但未找到图片URL")
+                    elif status == "failed":
+                        raise Exception(f"图片生成失败: {result.get('message', 'unknown')}")
+                    # pending 或 processing，继续轮询
+                    await asyncio.sleep(3)
+            raise Exception(f"图片生成超时（{timeout}s）")
 
     # ============== 视频生成 ==============
 

@@ -487,7 +487,8 @@ async def extract_characters(
 
     await db.commit()
 
-    # 自动生成头像
+    # 自动生成头像（使用异步轮询，60s超时）
+    avatar_errors = []
     if request.auto_generate_avatar and created_characters:
         try:
             from app.core.api_key_utils import get_user_volcano_api_key
@@ -512,12 +513,15 @@ async def extract_characters(
                         char.avatar = image_url
                         db.add(char)
                         await db.commit()
-                except Exception:
-                    # Don't fail the whole extract if one avatar fails
-                    pass
-        except Exception:
-            # Don't fail if Volcano API key is not configured
-            pass
+                    else:
+                        avatar_errors.append(f"{char.name}: 未获取到头像URL")
+                except Exception as e:
+                    avatar_errors.append(f"{char.name}: {str(e)}")
+        except HTTPException:
+            # 没有配置火山引擎API Key
+            avatar_errors.append("未配置火山引擎API Key（请在LLM配置中添加）")
+        except Exception as e:
+            avatar_errors.append(f"头像生成服务异常: {str(e)}")
 
     # 刷新并返回
     for char in created_characters:
