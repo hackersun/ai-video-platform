@@ -220,9 +220,13 @@ async def generate_video(
             "text": prompt_text
         })
 
+        # 视频模型需要 endpoint_id，不是模型名
+        from app.core.volcano_config import get_endpoint_id
+        video_model = get_endpoint_id(request.model)
+
         # 调用SDK创建任务
         create_result = client.content_generation.tasks.create(
-            model=request.model,
+            model=video_model,
             content=content
         )
 
