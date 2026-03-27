@@ -31,6 +31,7 @@ import {
   KeyRound,
   Edit2
 } from 'lucide-react';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
 
 // 模型分类
 const MODEL_CATEGORIES = {
@@ -106,7 +107,7 @@ export default function LLMConfigPage() {
   // 获取提供商列表
   const fetchProviders = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/llm/providers`);
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/providers`);
       if (res.ok) {
         const data = await res.json();
         setProviders(data);
@@ -131,7 +132,7 @@ export default function LLMConfigPage() {
       const url = providerId 
         ? `${API_BASE_URL}/llm/models?provider=${providerId}`
         : `${API_BASE_URL}/llm/models`;
-      const res = await fetch(url);
+      const res = await fetchWithAuth(url);
       if (res.ok) {
         const data = await res.json();
         setModels(data);
@@ -149,7 +150,7 @@ export default function LLMConfigPage() {
   // 获取已保存的配置
   const fetchConfigs = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/llm/configs`);
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs`);
       if (res.ok) {
         const data = await res.json();
         setSavedConfigs(data);
@@ -171,6 +172,7 @@ export default function LLMConfigPage() {
       volcano: 'volcano',
       qianlian: 'qianlian',
       dashscope: 'dashscope',
+      minimax: 'minimax',
       external: ''
     };
     setSelectedProvider(providerMap[activeTab] || '');
@@ -201,9 +203,8 @@ export default function LLMConfigPage() {
       const provider = providers.find(p => p.id === selectedProvider);
       
       // 调用测试API
-      const res = await fetch(`${API_BASE_URL}/llm/configs`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model_id: selectedModel,
           name: '测试配置',
@@ -216,10 +217,14 @@ export default function LLMConfigPage() {
 
       if (res.ok) {
         // 模拟实际API测试
-        const testRes = await fetch(`${API_BASE_URL}/llm/configs/test`, {
+        const testRes = await fetchWithAuth(`${API_BASE_URL}/llm/configs/test`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: '你好，请介绍一下自己' })
+          body: JSON.stringify({
+            api_key: apiKey,
+            provider_id: selectedProvider,
+            model_id: selectedModel,
+            message: '你好，请介绍一下自己'
+          })
         });
         
         if (testRes.ok) {
@@ -460,9 +465,8 @@ export default function LLMConfigPage() {
     
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/llm/configs`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model_id: selectedModel,
           name: configName,
@@ -495,7 +499,7 @@ export default function LLMConfigPage() {
   // 删除配置
   const handleDelete = async (configId: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/llm/configs/${configId}`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs/${configId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -510,7 +514,7 @@ export default function LLMConfigPage() {
   // 设置默认配置
   const handleSetDefault = async (configId: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/llm/configs/${configId}/set-default`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs/${configId}/set-default`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -556,9 +560,8 @@ export default function LLMConfigPage() {
     setTestResult(null);
     
     try {
-      const res = await fetch(`${API_BASE_URL}/llm/configs/${config.id}/test`, {
+      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs/${config.id}/test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: '你好，请介绍一下自己' })
       });
       
@@ -631,10 +634,17 @@ export default function LLMConfigPage() {
                   >
                     🐱 阿里千问
                   </Button>
+                  <Button
+                    variant={activeTab === 'minimax' ? 'default' : 'outline'}
+                    onClick={() => setActiveTab('minimax')}
+                    className={activeTab === 'minimax' ? 'bg-violet-600' : 'border-white/10'}
+                  >
+                    🌀 MiniMax
+                  </Button>
                 </div>
 
-                {/* 火山引擎/百炼/千问模型 */}
-                {(activeTab === 'volcano' || activeTab === 'qianlian' || activeTab === 'dashscope') && (
+                {/* 火山引擎/百炼/千问/MiniMax模型 */}
+                {(activeTab === 'volcano' || activeTab === 'qianlian' || activeTab === 'dashscope' || activeTab === 'minimax') && (
                   <div className="space-y-3">
                     {filteredModels.length > 0 ? filteredModels.map((model) => (
                       <div
@@ -654,6 +664,8 @@ export default function LLMConfigPage() {
                               {model.model_type === 'video' && <Video className="w-4 h-4 text-pink-400" />}
                               {model.model_type === 'image-generation' && <ImageIcon className="w-4 h-4 text-orange-400" />}
                               {model.model_type === 'video-generation' && <Video className="w-4 h-4 text-red-400" />}
+                              {model.model_type === 'image' && <ImageIcon className="w-4 h-4 text-orange-400" />}
+                              {model.model_type === 'tts' && <Music className="w-4 h-4 text-green-400" />}
                               {model.model_name_cn || model.model_name}
                               {model.is_recommended && (
                                 <span className="px-2 py-0.5 text-xs bg-violet-500/20 text-violet-400 rounded">
@@ -664,9 +676,11 @@ export default function LLMConfigPage() {
                             <div className="text-white/60 text-sm mt-1">
                               {model.model_type === 'image-generation' && '图像生成'}
                               {model.model_type === 'video-generation' && '视频生成'}
+                              {model.model_type === 'image' && '图像生成'}
+                              {model.model_type === 'tts' && '语音合成'}
                               {model.model_type === 'chat' && `上下文${model.context_window}`}
-                              {!['image-generation', 'video-generation', 'chat'].includes(model.model_type) && `上下文${model.context_window}`}
-                              {model.model_type !== 'image-generation' && model.model_type !== 'video-generation' && ` • 输入¥${model.input_cost_per_1k}/千token`}
+                              {!['image-generation', 'video-generation', 'chat', 'image', 'tts'].includes(model.model_type) && `上下文${model.context_window}`}
+                              {model.model_type !== 'image-generation' && model.model_type !== 'video-generation' && model.model_type !== 'tts' && ` • 输入¥${model.input_cost_per_1k}/千token`}
                             </div>
                             {model.description && (
                               <div className="text-white/40 text-xs mt-1">{model.description}</div>
