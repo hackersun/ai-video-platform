@@ -52,6 +52,7 @@ class LLMModelResponse(BaseModel):
     is_active: bool
     is_recommended: bool
     description: Optional[str]
+    base_url: Optional[str] = None
 
 
 class LLMConfigCreateRequest(BaseModel):
@@ -145,6 +146,19 @@ DEFAULT_PROVIDERS = [
         "icon_url": "/icons/baidu.svg",
         "website_url": "https://console.bce.baidu.com/qianfan",
         "doc_url": "https://cloud.baidu.com/doc/WenxinWorkshop/index.html"
+    },
+    {
+        "id": "openai",
+        "name": "openai",
+        "name_cn": "OpenAI",
+        "name_en": "OpenAI",
+        "provider_type": "cloud",
+        "base_url": "https://api.openai.com/v1",
+        "auth_type": "bearer",
+        "description": "OpenAI 提供 GPT-4o、DALL-E、Sora 等模型",
+        "icon_url": "/icons/openai.svg",
+        "website_url": "https://platform.openai.com/",
+        "doc_url": "https://platform.openai.com/docs"
     }
 ]
 
@@ -551,6 +565,163 @@ DEFAULT_MODELS = [
         "description": "文心轻量版，成本最低",
         "version": "lite",
         "release_date": "2024-03-01"
+    },
+    # OpenAI - 文本模型
+    {
+        "id": "openai-gpt-4o",
+        "provider_id": "openai",
+        "model_id": "gpt-4o",
+        "model_name": "GPT-4o",
+        "model_name_cn": "GPT-4o",
+        "model_type": "chat",
+        "capabilities": ["chat", "vision", "function_calling", "json_mode"],
+        "context_window": 128000,
+        "max_tokens": 16384,
+        "input_cost_per_1k": 2.5,
+        "output_cost_per_1k": 10.0,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": True,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "OpenAI 最强旗舰模型，支持文本和图像理解",
+        "version": "2024-05-13",
+        "release_date": "2024-05-13"
+    },
+    {
+        "id": "openai-gpt-4o-mini",
+        "provider_id": "openai",
+        "model_id": "gpt-4o-mini",
+        "model_name": "GPT-4o-mini",
+        "model_name_cn": "GPT-4o-mini",
+        "model_type": "chat",
+        "capabilities": ["chat", "vision", "function_calling", "json_mode"],
+        "context_window": 128000,
+        "max_tokens": 16384,
+        "input_cost_per_1k": 0.15,
+        "output_cost_per_1k": 0.60,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": True,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "轻量级旗舰模型，性价比高，支持文本和图像理解",
+        "version": "2024-07-18",
+        "release_date": "2024-07-18"
+    },
+    {
+        "id": "openai-gpt-4-turbo",
+        "provider_id": "openai",
+        "model_id": "gpt-4-turbo",
+        "model_name": "GPT-4-Turbo",
+        "model_name_cn": "GPT-4 Turbo",
+        "model_type": "chat",
+        "capabilities": ["chat", "vision", "function_calling", "json_mode"],
+        "context_window": 128000,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 10.0,
+        "output_cost_per_1k": 30.0,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": True,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "GPT-4 高性能版，上下文窗口大",
+        "version": "2024-04-09",
+        "release_date": "2024-04-09"
+    },
+    {
+        "id": "openai-gpt-3-5-turbo",
+        "provider_id": "openai",
+        "model_id": "gpt-3.5-turbo",
+        "model_name": "GPT-3.5-Turbo",
+        "model_name_cn": "GPT-3.5 Turbo",
+        "model_type": "chat",
+        "capabilities": ["chat", "function_calling", "json_mode"],
+        "context_window": 16385,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0.5,
+        "output_cost_per_1k": 1.5,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "轻量快速模型，适合简单任务",
+        "version": "0125",
+        "release_date": "2024-01-25"
+    },
+    # OpenAI - 图像生成模型
+    {
+        "id": "openai-dall-e-3",
+        "provider_id": "openai",
+        "model_id": "dall-e-3",
+        "model_name": "DALL-E-3",
+        "model_name_cn": "DALL-E 3",
+        "model_type": "image-generation",
+        "capabilities": ["text-to-image"],
+        "context_window": 4096,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": False,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "OpenAI 高质量图像生成模型，支持精细控制和多种尺寸",
+        "version": "3",
+        "release_date": "2023-11-06"
+    },
+    {
+        "id": "openai-dall-e-2",
+        "provider_id": "openai",
+        "model_id": "dall-e-2",
+        "model_name": "DALL-E-2",
+        "model_name_cn": "DALL-E 2",
+        "model_type": "image-generation",
+        "capabilities": ["text-to-image", "image-edit", "variation"],
+        "context_window": 4096,
+        "max_tokens": 4096,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": False,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "OpenAI 图像生成模型，支持图像编辑和变体生成",
+        "version": "2",
+        "release_date": "2022-11-03"
+    },
+    # OpenAI - 视频生成模型 (Sora, 预留)
+    {
+        "id": "openai-sora",
+        "provider_id": "openai",
+        "model_id": "sora",
+        "model_name": "Sora",
+        "model_name_cn": "OpenAI Sora",
+        "model_type": "video-generation",
+        "capabilities": ["text-to-video", "image-to-video"],
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": False,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "OpenAI 视频生成模型（即将发布）",
+        "version": "1.0",
+        "release_date": "2024-02-15"
     }
 ]
 
@@ -558,36 +729,90 @@ DEFAULT_MODELS = [
 # ============== 辅助函数 ==============
 
 async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试火山引擎API"""
-    url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    """测试火山引擎API，根据模型类型走不同端点"""
+    from app.core.volcano_config import VOLCANO_MODELS
+
+    # 查找模型类型
+    model_type = "text-generation"  # 默认为文本模型
+    for m in VOLCANO_MODELS:
+        if m["id"] == model_id:
+            model_type = m.get("type", "text-generation")
+            break
+
+    base_url = "https://ark.cn-beijing.volces.com/api/v3"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-    
+
+    if model_type == "video-generation":
+        # 视频生成模型 → POST /contents/generations/tasks
+        url = f"{base_url}/contents/generations/tasks"
+        data = {
+            "model": model_id,
+            "content": [
+                {"type": "text", "text": f"{message} --duration 4 --resolution 720p --camerafixed true --watermark true"}
+            ]
+        }
+    elif model_type == "image-generation":
+        # 图像生成模型 → POST /images/generations
+        url = f"{base_url}/images/generations"
+        data = {
+            "model": model_id,
+            "prompt": message[:200],
+            "size": "1024x1024",
+            "n": 1,
+            "response_format": "url"
+        }
+    else:
+        # 文本生成模型 → POST /chat/completions
+        url = f"{base_url}/chat/completions"
+        data = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": message}],
+            "max_tokens": 100
+        }
+
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(url, json=data, headers=headers)
-            
+
             if response.status_code == 200:
                 result = response.json()
-                return {
-                    "success": True,
-                    "message": "火山引擎 API 连接成功！",
-                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                }
+                if model_type == "video-generation":
+                    task_id = result.get("id", "unknown")
+                    return {
+                        "success": True,
+                        "message": f"火山引擎视频模型 API 连接成功！任务ID: {task_id}",
+                        "response": f"任务已提交: {task_id}",
+                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                        "tokens_used": 0
+                    }
+                elif model_type == "image-generation":
+                    return {
+                        "success": True,
+                        "message": "火山引擎图像模型 API 连接成功！",
+                        "response": result.get("data", [{}])[0].get("url", "响应成功"),
+                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                        "tokens_used": 0
+                    }
+                else:
+                    return {
+                        "success": True,
+                        "message": "火山引擎 API 连接成功！",
+                        "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
+                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                        "tokens_used": result.get("usage", {}).get("total_tokens", 0)
+                    }
             else:
-                error = response.json().get("error", {})
+                try:
+                    err_json = response.json()
+                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
+                except Exception:
+                    err_msg = response.text[:200]
                 return {
                     "success": False,
-                    "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "message": f"[HTTP {response.status_code}] API错误: {err_msg}\n模型ID: {model_id} | 端点: {url}",
                     "response": None,
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
                     "tokens_used": 0
@@ -595,15 +820,23 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
     except httpx.TimeoutException:
         return {
             "success": False,
-            "message": "连接超时，请检查网络或API地址",
+            "message": f"连接超时(30s)，请检查网络或API地址是否正确\n请求地址: {url}",
             "response": None,
             "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except httpx.ConnectError as e:
+        return {
+            "success": False,
+            "message": f"连接失败，无法访问API地址: {e}\n请求地址: {url}",
+            "response": None,
+            "response_time_ms": 0,
             "tokens_used": 0
         }
     except Exception as e:
         return {
             "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
+            "message": f"测试异常: {str(e)[:300]}",
             "response": None,
             "response_time_ms": 0,
             "tokens_used": 0
@@ -638,10 +871,14 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
                     "tokens_used": result.get("usage", {}).get("total_tokens", 0) or result.get("usage", {}).get("input_tokens", 0) + result.get("usage", {}).get("output_tokens", 0)
                 }
             else:
-                error = response.json().get("error", {})
+                try:
+                    err_json = response.json()
+                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
+                except Exception:
+                    err_msg = response.text[:200]
                 return {
                     "success": False,
-                    "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "message": f"[HTTP {response.status_code}] API错误: {err_msg}",
                     "response": None,
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
                     "tokens_used": 0
@@ -649,15 +886,23 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
     except httpx.TimeoutException:
         return {
             "success": False,
-            "message": "连接超时，请检查网络或API地址",
+            "message": f"连接超时(30s)，请检查网络或API地址是否正确\n请求地址: {url}",
             "response": None,
             "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except httpx.ConnectError as e:
+        return {
+            "success": False,
+            "message": f"连接失败，无法访问API地址: {e}\n请求地址: {url}",
+            "response": None,
+            "response_time_ms": 0,
             "tokens_used": 0
         }
     except Exception as e:
         return {
             "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
+            "message": f"测试异常: {str(e)[:300]}",
             "response": None,
             "response_time_ms": 0,
             "tokens_used": 0
@@ -665,37 +910,45 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
 
 
 async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试阿里百炼API (Coding Plan)"""
-    url = "https://coding.dashscope.aliyuncs.com/v1/chat/completions"
+    """测试阿里百炼API (Anthropic 兼容格式)"""
+    url = "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages"
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
+        "Authorization": f"Bearer {api_key}",
+        "anthropic-version": "2023-06-01"
     }
     data = {
         "model": model_id,
         "messages": [{"role": "user", "content": message}],
         "max_tokens": 100
     }
-    
+
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(url, json=data, headers=headers)
-            
+
             if response.status_code == 200:
                 result = response.json()
-                content = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
+                contents = result.get("content", [])
+                content = next((c.get("text", "") for c in contents if c.get("type") == "text"), "响应成功")
                 return {
                     "success": True,
                     "message": "阿里百炼 API 连接成功！",
                     "response": content[:500] if content else "响应成功",
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
+                    "tokens_used": result.get("usage", {}).get("output_tokens", 0)
                 }
             else:
-                error = response.json().get("error", {})
+                try:
+                    err_json = response.json()
+                    err_type = err_json.get("type", "unknown")
+                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
+                    error_detail = f"[HTTP {response.status_code}] {err_type}: {err_msg}"
+                except Exception:
+                    error_detail = f"[HTTP {response.status_code}] {response.text[:200]}"
                 return {
                     "success": False,
-                    "message": f"API错误: {error.get('message', response.text[:100])}",
+                    "message": f"API错误: {error_detail}",
                     "response": None,
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
                     "tokens_used": 0
@@ -703,9 +956,25 @@ async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
     except httpx.TimeoutException:
         return {
             "success": False,
-            "message": "连接超时，请检查网络或API地址",
+            "message": "连接超时(60s)，请检查网络或API地址是否正确",
             "response": None,
-            "response_time_ms": 30000,
+            "response_time_ms": 60000,
+            "tokens_used": 0
+        }
+    except httpx.ConnectError as e:
+        return {
+            "success": False,
+            "message": f"连接失败，无法访问API地址: {e}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"测试异常: {str(e)[:300]}",
+            "response": None,
+            "response_time_ms": 0,
             "tokens_used": 0
         }
     except Exception as e:
@@ -749,6 +1018,60 @@ async def test_baidu_api(api_key: str, model_id: str, message: str) -> dict:
             else:
                 error_data = response.json() if response.content else {}
                 error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(error_data)[:100]
+                return {
+                    "success": False,
+                    "message": f"API错误: {error_msg}",
+                    "response": None,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": 0
+                }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": "连接超时，请检查网络或API地址",
+            "response": None,
+            "response_time_ms": 30000,
+            "tokens_used": 0
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"连接失败: {str(e)[:100]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0
+        }
+
+
+async def test_openai_api(api_key: str, model_id: str, message: str) -> dict:
+    """测试 OpenAI API"""
+    url = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}"
+    }
+    data = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": message}],
+        "max_tokens": 100
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=data, headers=headers)
+
+            if response.status_code == 200:
+                result = response.json()
+                return {
+                    "success": True,
+                    "message": "OpenAI API 连接成功！",
+                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
+                }
+            else:
+                error_data = response.json() if response.content else {}
+                error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(response.text)[:100]
                 return {
                     "success": False,
                     "message": f"API错误: {error_msg}",
@@ -990,6 +1313,8 @@ async def test_api_connection(
         return await test_qianlian_api(request.api_key, model_id, request.message)
     elif model_provider_id == "baidu":
         return await test_baidu_api(request.api_key, model_id, request.message)
+    elif model_provider_id == "openai":
+        return await test_openai_api(request.api_key, model_id, request.message)
     else:
         return {
             "success": False,
@@ -1044,6 +1369,8 @@ async def test_config(
         test_result = await test_qianlian_api(config.api_key, model.model_id, request.message)
     elif provider_id == "baidu":
         test_result = await test_baidu_api(config.api_key, model.model_id, request.message)
+    elif provider_id == "openai":
+        test_result = await test_openai_api(config.api_key, model.model_id, request.message)
     else:
         test_result = {
             "success": False,

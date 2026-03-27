@@ -110,6 +110,16 @@ def _create_ark_client(api_key: str):
     )
 
 
+def _get_volcano_model_name(model_id: str) -> str:
+    """根据模型ID获取模型名称"""
+    from app.core.volcano_config import VOLCANO_MODELS
+    for m in VOLCANO_MODELS:
+        if m["id"] == model_id:
+            return m.get("name_cn", m.get("name", model_id))
+    # 未知模型，返回ID本身
+    return model_id
+
+
 @router.post("/generate", response_model=VideoGenerateResponse)
 async def generate_video(
     request: VideoGenerateRequest,
@@ -235,7 +245,7 @@ async def generate_video(
             title=request.prompt[:50] if len(request.prompt) > 50 else request.prompt,
             prompt=request.prompt,
             model_id=request.model,
-            model_name="Doubao-Seedance-1.5-pro",
+            model_name=_get_volcano_model_name(request.model),
             duration=request.duration,
             resolution=request.resolution,
             image_url=request.image_url,
