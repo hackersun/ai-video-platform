@@ -55,6 +55,9 @@ export default function LoginPage() {
 
       if (data.success) {
         setSuccess('登录成功！正在跳转...');
+        // 清理旧token后保存新的
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
         // 保存token到localStorage
         if (data.access_token) {
           localStorage.setItem('auth_token', data.access_token);
@@ -63,9 +66,9 @@ export default function LoginPage() {
         // 2秒后跳转到控制台
         setTimeout(() => {
           router.push('/dashboard');
-        }, 2000);
+        }, 1500);
       } else {
-        setError(data.message || '登录失败');
+        setError(data.detail || data.message || '登录失败');
       }
     } catch (err) {
       setError('网络错误，请稍后重试');

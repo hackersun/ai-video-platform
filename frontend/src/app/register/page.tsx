@@ -74,17 +74,19 @@ export default function RegisterPage() {
 
       if (data.success) {
         setSuccess('注册成功！正在跳转...');
-        // 保存token到localStorage
+        // 清理旧token后保存新的
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
         if (data.access_token) {
           localStorage.setItem('auth_token', data.access_token);
           localStorage.setItem('user', JSON.stringify(data.user));
         }
-        // 3秒后跳转到登录页
+        // 1.5秒后跳转到控制台
         setTimeout(() => {
-          router.push('/login');
-        }, 2000);
+          router.push('/dashboard');
+        }, 1500);
       } else {
-        setError(data.message || '注册失败');
+        setError(data.detail || data.message || '注册失败');
       }
     } catch (err) {
       setError('网络错误，请稍后重试');
