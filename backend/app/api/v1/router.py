@@ -7,8 +7,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     llm_config, external_api, qwen, coding_plan, usage_stats,
     characters, dashboard, auth, novels, scripts, video,
-    chapters, storyboards, storyboard_ai, shots, tts, synthesis,
-    workflow, images, projects, assets, timelines, openai
+    chapters, storyboards, shots, synthesis, tts
 )
 
 api_router = APIRouter()
@@ -34,7 +33,7 @@ api_router.include_router(usage_stats.router, prefix="/usage-stats", tags=["使�
 # 角色管理API
 api_router.include_router(characters.router, prefix="/characters", tags=["角色管理"])
 
-# Dashboard API
+# Dashboard API  
 api_router.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
 
 # 小说管理API
@@ -49,35 +48,14 @@ api_router.include_router(chapters.router, prefix="/chapters", tags=["章节管�
 # 分镜管理API
 api_router.include_router(storyboards.router, prefix="/storyboards", tags=["分镜管理"])
 
-# AI分镜生成API
-api_router.include_router(storyboard_ai.router, prefix="/storyboard-ai", tags=["AI分镜生成"])
-
-# 图像生成API
-api_router.include_router(images.router, prefix="/images", tags=["图像生成"])
-
 # 镜头管理API
 api_router.include_router(shots.router, prefix="/shots", tags=["镜头管理"])
 
 # 视频生成API
 api_router.include_router(video.router, prefix="/video", tags=["视频生成"])
 
-# TTS API
-api_router.include_router(tts.router, prefix="/tts", tags=["TTS语音合成"])
-
-# 音视频合成 API
+# 音视频合成API
 api_router.include_router(synthesis.router, prefix="/synthesis", tags=["音视频合成"])
 
-# 工作流 API
-api_router.include_router(workflow.router, prefix="/workflow", tags=["工作流"])
-
-# 项目管理 API
-api_router.include_router(projects.router, prefix="/projects", tags=["项目管理"])
-
-# 资产库 API
-api_router.include_router(assets.router, prefix="/assets", tags=["资产库"])
-
-# 时间线编辑 API
-api_router.include_router(timelines.router, prefix="/timelines", tags=["时间线编辑"])
-
-# OpenAI API
-api_router.include_router(openai.router, prefix="/openai", tags=["OpenAI"])
+# 语音合成API
+api_router.include_router(tts.router, prefix="/tts", tags=["语音合成"])

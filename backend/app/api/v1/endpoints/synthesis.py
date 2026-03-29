@@ -1,159 +1,184 @@
 """
 音视频合成 API 端点
+支持将视频与音频合并
 """
 
-from datetime import datetime
 from typing import List, Optional
+from datetime import datetime
 from uuid import uuid4
 
-from urllib.parse import urlparse
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, desc
+from pydantic import BaseModel, Field
 
-from app.core.api_key_utils import get_user_volcano_api_key
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.synthesis_job import SynthesisJob
-from app.services.volcano_service import VolcanoService
 
 router = APIRouter(tags=["音视频合成"])
 
 
-class SynthesisGenerateRequest(BaseModel):
-    video_url: str = Field(..., min_length=1, description="原始视频URL")
-    audio_url: str = Field(..., min_length=1, description="要合成的音频URL")
-    title: Optional[str] = Field(None, description="任务标题")
-    api_key: Optional[str] = Field(None, description="火山引擎 API Key（可选，不填则自动使用用户配置的 Key）")
-    video_job_id: Optional[str] = Field(None, description="来源视频任务ID")
-    tts_job_id: Optional[str] = Field(None, description="来源TTS任务ID")
+# ============== 请求/响应模型 ==============
 
-    @field_validator("video_url", "audio_url")
-    @classmethod
-    def validate_non_blank(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("must not be blank")
-        return value
-
-    @field_validator("video_url", "audio_url")
-    @classmethod
-    def validate_urls(cls, value: str) -> str:
-        parsed = urlparse(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("must be a valid http or https URL")
-        return value
+class SynthesisCreateRequest(BaseModel):
+    """创建合成任务请求"""
+    video_job_id: Optional[str] = Field(None, description="视频任务ID")
+    tts_job_id: Optional[str] = Field(None, description="TTS任务ID")
+    title: str = Field(..., description="作品标题")
 
 
-class SynthesisGenerateResponse(BaseModel):
-    task_id: str
-    job_id: str
-    status: str
-    message: str
+class SynthesisStatusUpdate(BaseModel):
+    """更新合成状态"""
+    status: str = Field(..., description="状态: pending, running, succeeded, failed")
+    progress: Optional[int] = Field(None, ge=0, le=100, description="进度百分比")
+    output_url: Optional[str] = Field(None, description="输出URL")
+    error_message: Optional[str] = Field(None, description="错误信息")
 
 
 class SynthesisJobResponse(BaseModel):
+    """合成任务响应"""
     id: str
-    task_id: Optional[str] = None
-    title: Optional[str] = None
-    model_name: Optional[str] = None
-    video_url: Optional[str] = None
-    audio_url: Optional[str] = None
+    user_id: str
     video_job_id: Optional[str] = None
     tts_job_id: Optional[str] = None
+    title: Optional[str] = None
     status: str
     progress: int
     output_url: Optional[str] = None
-    cover_url: Optional[str] = None
-    duration_seconds: Optional[float] = None
+    output_type: Optional[str] = None
+    duration: Optional[float] = None
+    cost: Optional[int] = 0
     error_message: Optional[str] = None
+    extra_data: Optional[str] = '{}'
+    is_active: Optional[int] = 1
     created_at: datetime
     updated_at: datetime
 
 
-@router.post("/generate", response_model=SynthesisGenerateResponse)
-async def generate_synthesis(
-    request: SynthesisGenerateRequest,
+# ============== API 端点 ==============
+
+@router.post("/create", response_model=SynthesisJobResponse)
+async def create_synthesis(
+    request: SynthesisCreateRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id)
 ):
-    resolved_api_key = request.api_key or await get_user_volcano_api_key(db, user_id)
-    service = VolcanoService(resolved_api_key)
-    try:
-        result = await service.video_voice_synthesis(
-            video_url=request.video_url,
-            audio_url=request.audio_url,
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Synthesis service request failed",
-        ) from exc
-
-    job_status = result.get("status", "succeeded")
-
+    """创建合成任务"""
+    job_id = str(uuid4())
+    
     job = SynthesisJob(
-        id=str(uuid4()),
+        id=job_id,
         user_id=user_id,
-        task_id=result.get("task_id"),
-        title=request.title or "音视频合成",
-        model_id="volcano-synthesis",
-        model_name="volcano-synthesis",
-        video_url=request.video_url,
-        audio_url=request.audio_url,
-        status=job_status,
-        progress=100 if job_status == "succeeded" else 0,
-        output_url=result.get("output_url"),
-        duration_seconds=result.get("duration"),
-        cost=0,
-        extra_data={
-            "video_job_id": request.video_job_id,
-            "tts_job_id": request.tts_job_id,
-        },
+        video_job_id=request.video_job_id,
+        tts_job_id=request.tts_job_id,
+        title=request.title,
+        status="pending",
+        progress=0
     )
+    
     db.add(job)
     await db.commit()
-
-    return SynthesisGenerateResponse(
-        task_id=result.get("task_id", job.id),
-        job_id=job.id,
-        status=job.status,
-        message=result.get("message", "合成任务已完成"),
-    )
+    await db.refresh(job)
+    
+    return job
 
 
 @router.get("/jobs", response_model=List[SynthesisJobResponse])
 async def list_synthesis_jobs(
+    limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(get_current_user_id)
 ):
-    result = await db.execute(
+    """获取用户的合成任务列表"""
+    query = (
         select(SynthesisJob)
-        .where(SynthesisJob.user_id == user_id, SynthesisJob.is_active == True)
+        .where(SynthesisJob.user_id == user_id)
         .order_by(desc(SynthesisJob.created_at))
-        .limit(50)
+        .limit(limit)
     )
+    
+    result = await db.execute(query)
     jobs = result.scalars().all()
-    return [
-        SynthesisJobResponse(
-            id=job.id,
-            task_id=job.task_id,
-            title=job.title,
-            model_name=job.model_name,
-            video_url=job.video_url,
-            audio_url=job.audio_url,
-            video_job_id=(job.extra_data or {}).get("video_job_id") if isinstance(job.extra_data, dict) else None,
-            tts_job_id=(job.extra_data or {}).get("tts_job_id") if isinstance(job.extra_data, dict) else None,
-            status=job.status,
-            progress=job.progress,
-            output_url=job.output_url,
-            cover_url=job.cover_url,
-            duration_seconds=job.duration_seconds,
-            error_message=job.error_message,
-            created_at=job.created_at,
-            updated_at=job.updated_at,
-        )
-        for job in jobs
-    ]
+    
+    return jobs
+
+
+@router.get("/jobs/{job_id}", response_model=SynthesisJobResponse)
+async def get_synthesis_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """获取合成任务详情"""
+    query = select(SynthesisJob).where(
+        SynthesisJob.id == job_id,
+        SynthesisJob.user_id == user_id
+    )
+    
+    result = await db.execute(query)
+    job = result.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    return job
+
+
+@router.put("/jobs/{job_id}", response_model=SynthesisJobResponse)
+async def update_synthesis_job(
+    job_id: str,
+    update: SynthesisStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """更新合成任务状态"""
+    query = select(SynthesisJob).where(
+        SynthesisJob.id == job_id,
+        SynthesisJob.user_id == user_id
+    )
+    
+    result = await db.execute(query)
+    job = result.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    # 更新字段
+    if update.status:
+        job.status = update.status
+    if update.progress is not None:
+        job.progress = update.progress
+    if update.output_url:
+        job.output_url = update.output_url
+    if update.error_message:
+        job.error_message = update.error_message
+    
+    await db.commit()
+    await db.refresh(job)
+    
+    return job
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_synthesis_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """删除合成任务"""
+    query = select(SynthesisJob).where(
+        SynthesisJob.id == job_id,
+        SynthesisJob.user_id == user_id
+    )
+    
+    result = await db.execute(query)
+    job = result.scalar_one_or_none()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    await db.delete(job)
+    await db.commit()
+    
+    return {"message": "删除成功"}

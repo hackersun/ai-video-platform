@@ -77,7 +77,7 @@ function NovelsContent() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/novels`);
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/novels`);
       if (!response.ok) {
         throw new Error('加载失败');
       }
@@ -125,7 +125,7 @@ function NovelsContent() {
     if (!confirm('确定要删除这本小说吗？')) return;
     
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/novels/${id}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/novels/${id}`, {
         method: 'DELETE'
       });
       
@@ -143,7 +143,7 @@ function NovelsContent() {
   // 复制小说
   const handleDuplicate = async (novel: Novel) => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/novels`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/v1/novels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
