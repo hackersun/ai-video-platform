@@ -228,6 +228,35 @@ export default function ShotsPage() {
     router.push(`/video-generation?shot_id=${shot.id}&prompt=${encodeURIComponent(shot.prompt || shot.visual_description || '')}`);
   };
 
+  // 生成语音（单个）
+  const handleGenerateTTS = async (shot: Shot) => {
+    if (!shot.dialogue) {
+      alert('该镜头没有对话文本，无法生成语音');
+      return;
+    }
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/tts/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text_content: shot.dialogue,
+          title: `镜头${shot.shot_number}语音`,
+          shot_id: shot.id,
+          storyboard_id: shot.storyboard_id,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`语音生成任务已创建: ${data.status}`);
+      } else {
+        const err = await res.json();
+        alert(`生成失败: ${err.detail || err.message || '未知错误'}`);
+      }
+    } catch (err: any) {
+      alert(`生成失败: ${err.message}`);
+    }
+  };
+
   // 批量生成视频
   const handleBatchGenerate = () => {
     const ids = Array.from(selectedShots).join(',');
@@ -239,7 +268,7 @@ export default function ShotsPage() {
     if (selectedShots.size === 0) return;
     // Find a common storyboard for the selected shots
     const shotArray = shots.filter(s => selectedShots.has(s.id));
-    const storyboardIds = [...new Set(shotArray.map(s => s.storyboard_id))];
+    const storyboardIds = Array.from(new Set(shotArray.map(s => s.storyboard_id)));
     if (storyboardIds.length === 0) return;
 
     setBatchGenerating(true);
@@ -696,6 +725,7 @@ export default function ShotsPage() {
                             {VIDEO_STATUS_LABELS[shot.video_status] || shot.video_status}
                           </span>
                           {shot.video_status === 'pending' && (
+                            <>
                             <Button
                               size="sm"
                               variant="outline"
@@ -703,8 +733,20 @@ export default function ShotsPage() {
                               onClick={(e) => { e.stopPropagation(); handleGenerateVideo(shot); }}
                             >
                               <Sparkles className="w-3 h-3 mr-1" />
-                              生成
+                              视频
                             </Button>
+                            {shot.dialogue && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 text-xs border-blue-500/50 text-blue-400 hover:bg-blue-500/10 ml-1"
+                                onClick={(e) => { e.stopPropagation(); handleGenerateTTS(shot); }}
+                              >
+                                <Mic className="w-3 h-3 mr-1" />
+                                语音
+                              </Button>
+                            )}
+                            </>
                           )}
                         </div>
                       </div>

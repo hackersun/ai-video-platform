@@ -11,7 +11,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc
+from sqlalchemy import select, update, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -1437,9 +1437,9 @@ async def create_config(
     # 如果设为默认，取消其他默认配置
     if request.is_default:
         await db.execute(
-            select(LLMConfig)
+            update(LLMConfig)
             .where(and_(LLMConfig.user_id == user_id, LLMConfig.is_default == True))
-            .update({"is_default": False})
+            .values(is_default=False)
         )
     
     # TODO: 加密存储API密钥
@@ -1704,9 +1704,9 @@ async def set_default_config(
     """设为默认配置"""
     # 取消其他默认配置
     await db.execute(
-        select(LLMConfig)
+        update(LLMConfig)
         .where(and_(LLMConfig.user_id == user_id, LLMConfig.is_default == True))
-        .update({"is_default": False})
+        .values(is_default=False)
     )
     
     # 设置新的默认配置
@@ -1728,5 +1728,26 @@ async def set_default_config(
     
     config.is_default = True
     await db.commit()
-    
+
     return {"message": "已设为默认配置"}
+
+
+@router.get("/api-key/{provider}", response_model=dict)
+async def get_api_key_by_provider(
+    provider: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """
+    获取用户配置的指定 Provider API Key（解密后）。
+
+    用于前端页面（如视频生成）从用户已保存的配置中获取 API Key。
+    支持的 provider: volcano, qianlian, minimax, dashscope, openai
+    """
+    from app.core.api_key_utils import get_user_api_key
+    api_key, base_url = await get_user_api_key(
+        db, user_id, provider, raise_if_missing=False
+    )
+    if not api_key:
+        return {"api_key": None, "base_url": None, "configured": False}
+    return {"api_key": api_key, "base_url": base_url, "configured": True}

@@ -1,9 +1,12 @@
 """
 TTS (文本转语音) API 端点
-支持火山引擎豆包语音合成
+支持 MiniMax TTS（优先）、火山引擎 TTS
+支持多角色对话分段生成
 """
 
-from typing import List, Optional
+import re
+import json
+from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import uuid4
 
@@ -14,41 +17,100 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
+from app.core.api_key_utils import get_user_api_key
 from app.models.tts_job import TTSJob
+from app.models.shot import Shot
+from app.models.character import Character
 
 router = APIRouter(tags=["语音合成"])
+
+
+# ============== 辅助函数 ==============
+
+def parse_dialogue(dialogue: str) -> List[Dict[str, str]]:
+    """
+    解析多角色对话文本，返回分段列表。
+    支持格式: "角色名: 对话文本" 每行一个
+    返回: [{'character': '小明', 'text': '对话内容'}, ...]
+    """
+    if not dialogue:
+        return []
+    lines = dialogue.strip().split('\n')
+    segments = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # 匹配 "角色名: 对话" 或 "角色名：对话"
+        match = re.match(r'^([^:：]+?)[:：]\s*(.+)$', line)
+        if match:
+            segments.append({
+                'character': match.group(1).strip(),
+                'text': match.group(2).strip()
+            })
+        else:
+            # 无角色名前缀，整段作为默认
+            segments.append({
+                'character': '',
+                'text': line
+            })
+    return segments
+
+
+def is_multi_character(segments: List[Dict]) -> bool:
+    """判断是否为多角色对话"""
+    chars = set(s['character'] for s in segments if s['character'])
+    return len(chars) > 1
 
 
 # ============== 请求/响应模型 ==============
 
 class TTSGenerateRequest(BaseModel):
     """TTS生成请求"""
-    text_content: str = Field(..., description="要转换的文本")
+    text_content: str = Field(..., description="要转换的文本（支持多角色格式）")
     title: Optional[str] = Field(None, description="任务标题")
-    voice_model: str = Field("default", description="语音模型")
-    api_provider: str = Field("volcano", description="API提供商: volcano, azure")
+    voice_model: str = Field("female-shaonj", description="语音音色ID")
+    speed: float = Field(1.0, description="语速")
+    api_provider: str = Field("minimax", description="API提供商: minimax, volcano")
+    novel_id: Optional[str] = Field(None, description="关联的小说ID")
+    chapter_id: Optional[str] = Field(None, description="关联的章节ID")
     script_id: Optional[str] = Field(None, description="关联的剧本ID")
+    storyboard_id: Optional[str] = Field(None, description="关联的分镜ID")
     shot_id: Optional[str] = Field(None, description="关联的镜头ID")
+    character_id: Optional[str] = Field(None, description="关联的角色ID")
+
+
+class TTSSegmentResponse(BaseModel):
+    """单角色语音段"""
+    character: str
+    text: str
+    voice: str
+    audio_url: Optional[str] = None
+    duration: Optional[float] = None
 
 
 class TTSJobResponse(BaseModel):
     """TTS任务响应"""
     id: str
     user_id: str
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
     script_id: Optional[str] = None
+    storyboard_id: Optional[str] = None
     shot_id: Optional[str] = None
+    character_id: Optional[str] = None
     title: Optional[str] = None
-    text_content: Optional[str] = None
-    voice_model: Optional[str] = None
+    text: Optional[str] = None
+    voice: Optional[str] = None
     api_provider: Optional[str] = None
     status: str
     progress: int
     audio_url: Optional[str] = None
-    duration: Optional[float] = None
+    duration_seconds: Optional[float] = None
     cost: Optional[int] = 0
     error_message: Optional[str] = None
-    extra_data: Optional[str] = '{}'
-    is_active: Optional[int] = 1
+    extra_data: Optional[Dict] = {}
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
 
@@ -61,29 +123,246 @@ async def generate_tts(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
-    """创建TTS任务"""
+    """
+    创建并执行 TTS 任务。
+
+    支持多角色对话：文本中每行 "角色名: 对话内容" 会被解析为独立语音段，
+    为每个角色单独调用 TTS API，保持音色一致性。
+    """
     job_id = str(uuid4())
-    
+
+    # 解析对话，判断是否多角色
+    segments = parse_dialogue(request.text_content)
+    is_multi = is_multi_character(segments)
+
+    # 如果指定了 shot_id，自动从镜头获取对话和角色信息
+    if request.shot_id and not request.text_content:
+        shot_result = await db.execute(
+            select(Shot).where(Shot.id == request.shot_id, Shot.user_id == user_id)
+        )
+        shot = shot_result.scalar_one_or_none()
+        if shot:
+            if not request.text_content and shot.dialogue:
+                request.text_content = shot.dialogue
+                segments = parse_dialogue(shot.dialogue)
+                is_multi = is_multi_character(segments)
+            if not request.storyboard_id and shot.storyboard_id:
+                request.storyboard_id = shot.storyboard_id
+
+    # 如果指定了 character_id，自动获取角色音色
+    voice_to_use = request.voice_model
+    if request.character_id:
+        char_result = await db.execute(
+            select(Character).where(
+                Character.id == request.character_id,
+                Character.user_id == user_id
+            )
+        )
+        char = char_result.scalar_one_or_none()
+        if char and char.voice:
+            voice_to_use = char.voice
+
+    # 获取用户 API Key
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    if request.api_provider == "minimax":
+        api_key, base_url = await get_user_api_key(
+            db, user_id, "minimax", raise_if_missing=False
+        )
+    elif request.api_provider == "volcano":
+        api_key, base_url = await get_user_api_key(
+            db, user_id, "volcano", raise_if_missing=False
+        )
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"未配置 {request.api_provider} API Key，请在设置页面配置"
+        )
+
+    # 创建 TTSJob 记录
     job = TTSJob(
         id=job_id,
         user_id=user_id,
         title=request.title or f"TTS任务_{job_id[:8]}",
-        text_content=request.text_content,
-        voice_model=request.voice_model,
+        text=request.text_content or "",
+        voice=voice_to_use,
+        speed=request.speed,
         api_provider=request.api_provider,
+        novel_id=request.novel_id,
+        chapter_id=request.chapter_id,
         script_id=request.script_id,
+        storyboard_id=request.storyboard_id,
         shot_id=request.shot_id,
-        status="pending",
+        character_id=request.character_id,
+        status="generating",
         progress=0
     )
-    
     db.add(job)
+    await db.flush()  # 获取 job.id
+
+    all_segments = []
+    all_audio_urls = []
+    total_duration = 0.0
+
+    try:
+        if request.api_provider == "minimax":
+            from app.services.minimax_service import MiniMaxService
+            svc = MiniMaxService(api_key, base_url)
+
+            if is_multi and len(segments) > 1:
+                # 多角色：为每个角色单独生成
+                for i, seg in enumerate(segments):
+                    # 查找角色音色
+                    seg_voice = voice_to_use
+                    if seg['character']:
+                        char_result = await db.execute(
+                            select(Character).where(
+                                Character.name == seg['character'],
+                                Character.user_id == user_id
+                            )
+                        )
+                        char = char_result.scalar_one_or_none()
+                        if char and char.voice:
+                            seg_voice = char.voice
+
+                    try:
+                        result = await svc.text_to_speech(
+                            text=seg['text'],
+                            voice_id=seg_voice,
+                            speed=request.speed
+                        )
+                        seg_audio_url = result.get('audio_url')
+                        seg_duration = result.get('duration', 0.0)
+                        all_segments.append({
+                            'character': seg['character'],
+                            'text': seg['text'],
+                            'voice': seg_voice,
+                            'audio_url': seg_audio_url,
+                            'duration': seg_duration,
+                        })
+                        if seg_audio_url:
+                            all_audio_urls.append(seg_audio_url)
+                        total_duration += seg_duration or 0.0
+                    except Exception as e:
+                        all_segments.append({
+                            'character': seg['character'],
+                            'text': seg['text'],
+                            'voice': seg_voice,
+                            'audio_url': None,
+                            'duration': 0.0,
+                            'error': str(e),
+                        })
+
+                job.extra_data = {'segments': all_segments}
+                job.progress = 100
+                job.status = "completed"
+            else:
+                # 单角色：整段生成
+                try:
+                    result = await svc.text_to_speech(
+                        text=request.text_content,
+                        voice_id=voice_to_use,
+                        speed=request.speed
+                    )
+                    job.audio_url = result.get('audio_url')
+                    job.duration_seconds = result.get('duration', 0.0)
+                    total_duration = job.duration_seconds or 0.0
+                    if job.audio_url:
+                        all_audio_urls.append(job.audio_url)
+                except Exception as e:
+                    job.status = "failed"
+                    job.error_message = str(e)
+                    job.progress = 100
+                    await db.commit()
+                    raise
+
+                job.progress = 100
+                job.status = "completed"
+
+        elif request.api_provider == "volcano":
+            from app.services.volcano_service import VolcanoService
+            svc = VolcanoService(api_key, base_url)
+
+            if is_multi and len(segments) > 1:
+                for seg in segments:
+                    seg_voice = voice_to_use
+                    if seg['character']:
+                        char_result = await db.execute(
+                            select(Character).where(
+                                Character.name == seg['character'],
+                                Character.user_id == user_id
+                            )
+                        )
+                        char = char_result.scalar_one_or_none()
+                        if char and char.voice:
+                            seg_voice = char.voice
+                    try:
+                        result = await svc.text_to_speech(
+                            text=seg['text'],
+                            voice=seg_voice,
+                            speed=request.speed
+                        )
+                        seg_audio_url = result.get('audio_url')
+                        seg_duration = result.get('duration', 0.0)
+                        all_segments.append({
+                            'character': seg['character'],
+                            'text': seg['text'],
+                            'voice': seg_voice,
+                            'audio_url': seg_audio_url,
+                            'duration': seg_duration,
+                        })
+                        if seg_audio_url:
+                            all_audio_urls.append(seg_audio_url)
+                        total_duration += seg_duration or 0.0
+                    except Exception as e:
+                        all_segments.append({
+                            'character': seg['character'],
+                            'text': seg['text'],
+                            'voice': seg_voice,
+                            'audio_url': None,
+                            'duration': 0.0,
+                            'error': str(e),
+                        })
+                job.extra_data = {'segments': all_segments}
+                job.progress = 100
+                job.status = "completed"
+            else:
+                result = await svc.text_to_speech(
+                    text=request.text_content,
+                    voice=voice_to_use,
+                    speed=request.speed
+                )
+                job.audio_url = result.get('audio_url')
+                job.duration_seconds = result.get('duration', 0.0)
+                total_duration = job.duration_seconds or 0.0
+                if job.audio_url:
+                    all_audio_urls.append(job.audio_url)
+                job.progress = 100
+                job.status = "completed"
+
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的 TTS 提供商: {request.api_provider}"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        job.status = "failed"
+        job.error_message = str(e)
+        job.progress = 100
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"TTS 生成失败: {str(e)}"
+        )
+
+    job.duration_seconds = total_duration if total_duration > 0 else None
     await db.commit()
     await db.refresh(job)
-    
-    # TODO: 实际调用TTS API生成音频
-    # 目前返回成功，实际异步生成由后台任务处理
-    
+
     return job
 
 
@@ -91,21 +370,55 @@ async def generate_tts(
 async def list_tts_jobs(
     limit: int = 50,
     status_filter: Optional[str] = None,
+    novel_id: Optional[str] = None,
+    shot_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
     """获取用户的TTS任务列表"""
-    query = select(TTSJob).where(TTSJob.user_id == user_id)
-    
+    query = select(TTSJob).where(TTSJob.user_id == user_id, TTSJob.is_active == True)
+
     if status_filter:
         query = query.where(TTSJob.status == status_filter)
-    
+    if novel_id:
+        query = query.where(TTSJob.novel_id == novel_id)
+    if shot_id:
+        query = query.where(TTSJob.shot_id == shot_id)
+
     query = query.order_by(desc(TTSJob.created_at)).limit(limit)
-    
+
     result = await db.execute(query)
     jobs = result.scalars().all()
-    
-    return jobs
+
+    # 序列化 extra_data
+    resp_jobs = []
+    for job in jobs:
+        extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+        resp_jobs.append(TTSJobResponse(
+            id=job.id,
+            user_id=job.user_id,
+            novel_id=job.novel_id,
+            chapter_id=job.chapter_id,
+            script_id=job.script_id,
+            storyboard_id=job.storyboard_id,
+            shot_id=job.shot_id,
+            character_id=job.character_id,
+            title=job.title,
+            text=job.text,
+            voice=job.voice,
+            api_provider=job.api_provider,
+            status=job.status,
+            progress=job.progress,
+            audio_url=job.audio_url,
+            duration_seconds=job.duration_seconds,
+            cost=job.cost,
+            error_message=job.error_message,
+            extra_data=extra,
+            is_active=job.is_active,
+            created_at=job.created_at,
+            updated_at=job.updated_at,
+        ))
+    return resp_jobs
 
 
 @router.get("/jobs/{job_id}", response_model=TTSJobResponse)
@@ -119,24 +432,48 @@ async def get_tts_job(
         TTSJob.id == job_id,
         TTSJob.user_id == user_id
     )
-    
+
     result = await db.execute(query)
     job = result.scalar_one_or_none()
-    
+
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    return job
+
+    extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+    return TTSJobResponse(
+        id=job.id,
+        user_id=job.user_id,
+        novel_id=job.novel_id,
+        chapter_id=job.chapter_id,
+        script_id=job.script_id,
+        storyboard_id=job.storyboard_id,
+        shot_id=job.shot_id,
+        character_id=job.character_id,
+        title=job.title,
+        text=job.text,
+        voice=job.voice,
+        api_provider=job.api_provider,
+        status=job.status,
+        progress=job.progress,
+        audio_url=job.audio_url,
+        duration_seconds=job.duration_seconds,
+        cost=job.cost,
+        error_message=job.error_message,
+        extra_data=extra,
+        is_active=job.is_active,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
 
 @router.put("/jobs/{job_id}", response_model=TTSJobResponse)
 async def update_tts_job(
     job_id: str,
-    status_update: str = None,
-    progress: int = None,
-    audio_url: str = None,
-    duration: float = None,
-    error_message: str = None,
+    status_update: Optional[str] = None,
+    progress: Optional[int] = None,
+    audio_url: Optional[str] = None,
+    duration_seconds: Optional[float] = None,
+    error_message: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
@@ -145,28 +482,52 @@ async def update_tts_job(
         TTSJob.id == job_id,
         TTSJob.user_id == user_id
     )
-    
+
     result = await db.execute(query)
     job = result.scalar_one_or_none()
-    
+
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
+
     if status_update:
         job.status = status_update
     if progress is not None:
         job.progress = progress
     if audio_url:
         job.audio_url = audio_url
-    if duration is not None:
-        job.duration = duration
+    if duration_seconds is not None:
+        job.duration_seconds = duration_seconds
     if error_message:
         job.error_message = error_message
-    
+
     await db.commit()
     await db.refresh(job)
-    
-    return job
+
+    extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+    return TTSJobResponse(
+        id=job.id,
+        user_id=job.user_id,
+        novel_id=job.novel_id,
+        chapter_id=job.chapter_id,
+        script_id=job.script_id,
+        storyboard_id=job.storyboard_id,
+        shot_id=job.shot_id,
+        character_id=job.character_id,
+        title=job.title,
+        text=job.text,
+        voice=job.voice,
+        api_provider=job.api_provider,
+        status=job.status,
+        progress=job.progress,
+        audio_url=job.audio_url,
+        duration_seconds=job.duration_seconds,
+        cost=job.cost,
+        error_message=job.error_message,
+        extra_data=extra,
+        is_active=job.is_active,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
 
 
 @router.delete("/jobs/{job_id}")
@@ -175,19 +536,35 @@ async def delete_tts_job(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
-    """删除TTS任务"""
+    """删除TTS任务（软删除）"""
     query = select(TTSJob).where(
         TTSJob.id == job_id,
         TTSJob.user_id == user_id
     )
-    
+
     result = await db.execute(query)
     job = result.scalar_one_or_none()
-    
+
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
-    
-    await db.delete(job)
+
+    job.is_active = False
     await db.commit()
-    
+
     return {"message": "删除成功"}
+
+
+@router.get("/voices")
+async def list_available_voices(
+    provider: str = "minimax",
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """获取可用的语音音色列表"""
+    if provider == "minimax":
+        try:
+            from app.core.minimax_config import TTS_VOICES
+            return {"provider": "minimax", "voices": TTS_VOICES}
+        except ImportError:
+            pass
+    return {"provider": provider, "voices": []}

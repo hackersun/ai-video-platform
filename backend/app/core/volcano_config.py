@@ -33,6 +33,11 @@ ENDPOINT_IDS = {
     # 视频生成模型
     "Doubao-Seedance-1.5-pro":   "doubao-seedance-1-5-pro-251215",
     "Doubao-Seedance-1.0-pro-fast": "ep-20260322134751-fbglz",
+    # 数据库模型ID映射（llm_models表的model_id字段）
+    "volcano-seedance-1-5-pro":   "doubao-seedance-1-5-pro-251215",
+    "volcano-seedance-1-0-pro-fast": "ep-20260322134751-fbglz",
+    "volcano-seedream-4.5":       "ep-20260320112226-rgndq",
+    "volcano-seedream-5.0-lite":  "ep-20260320113731-jzjkn",
 }
 
 

@@ -16,7 +16,12 @@ class TTSJob(Base):
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), nullable=False, index=True)
     task_id = Column(String(64), index=True)
+    novel_id = Column(String(36), index=True)
+    chapter_id = Column(String(36), index=True)
+    script_id = Column(String(36), index=True)
+    storyboard_id = Column(String(36), index=True)
     shot_id = Column(String(36), ForeignKey("shots.id", ondelete="SET NULL"), nullable=True, index=True)
+    character_id = Column(String(36), ForeignKey("characters.id", ondelete="SET NULL"), nullable=True, index=True)
 
     title = Column(String(200))
     text = Column(Text, nullable=False)
@@ -24,6 +29,7 @@ class TTSJob(Base):
     model_name = Column(String(100))
     voice = Column(String(50), default="default")
     speed = Column(Float, default=1.0)
+    api_provider = Column(String(20), default="minimax")
 
     status = Column(String(20), default="pending")
     progress = Column(Integer, default=0)

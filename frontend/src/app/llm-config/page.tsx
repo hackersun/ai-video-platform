@@ -576,8 +576,9 @@ export default function LLMConfigPage() {
         const error = await res.json().catch(() => ({}));
         setTestResult({ success: false, message: `保存失败: ${error.detail || '未知错误'}` });
       }
-    } catch (error) {
-      setTestResult({ success: false, message: '保存失败，请检查网络连接' });
+    } catch (error: any) {
+      const msg = error?.message || String(error) || '未知错误';
+      setTestResult({ success: false, message: `保存失败: ${msg}` });
     }
     setIsLoading(false);
   };

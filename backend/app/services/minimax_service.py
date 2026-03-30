@@ -162,7 +162,7 @@ class MiniMaxService:
 
         # 解析响应
         # 同步返回: { "audio_content": "base64..." } 或
-        # MiniMax v2: { "data": { "audio": "hex..." } }
+        # MiniMax v2: { "data": { "audio": "hex..." } } 或 { "data": { "audio_file": "url" } }
         audio_url = None
         audio_content = None
         task_id = str(uuid.uuid4())
@@ -173,10 +173,27 @@ class MiniMaxService:
             task_id = result.get("task_id", task_id)
         elif "data" in result and isinstance(result["data"], dict):
             data = result["data"]
+            # 支持多种字段名
             audio_content = data.get("audio") or data.get("audio_content")
+            audio_file = data.get("audio_file")
+            # audio_file 可能是 URL 或相对路径
+            if audio_file and isinstance(audio_file, str):
+                if audio_file.startswith("http"):
+                    audio_url = audio_file
+                elif audio_file.startswith("/"):
+                    # 相对路径，拼接到 base_url
+                    audio_url = self.base_url.rstrip("/") + audio_file
+                else:
+                    audio_url = audio_file
+                audio_content = None  # 不需要编码转换
             task_id = result.get("task_id") or data.get("task_id") or task_id
         elif isinstance(result, dict):
             audio_content = result.get("audio_content") or result.get("audio")
+            # 也可能直接返回 audio_file URL
+            audio_file = result.get("audio_file")
+            if audio_file and isinstance(audio_file, str) and audio_file.startswith("http"):
+                audio_url = audio_file
+                audio_content = None
 
         if audio_content:
             # 如果是 hex 编码，转换为 mp3 文件保存

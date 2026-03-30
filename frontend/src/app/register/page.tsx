@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { 
+import {
   Sparkles,
   User,
   Mail,
@@ -16,11 +16,11 @@ import {
   XCircle,
   ArrowRight
 } from 'lucide-react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { register } = useAuth();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -58,38 +58,18 @@ export default function RegisterPage() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username,
-          email,
-          password,
-        }),
-      });
+      const result = await register(username, email, password);
 
-      const data = await res.json();
-
-      if (data.success) {
+      if (result.success) {
         setSuccess('注册成功！正在跳转...');
-        // 清理旧token后保存新的
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
-        if (data.access_token) {
-          localStorage.setItem('auth_token', data.access_token);
-          localStorage.setItem('user', JSON.stringify(data.user));
-        }
-        // 1.5秒后跳转到控制台
         setTimeout(() => {
           router.push('/dashboard');
         }, 1500);
       } else {
-        setError(data.detail || data.message || '注册失败');
+        setError(result.detail || result.message || '注册失败');
       }
-    } catch (err) {
-      setError('网络错误，请稍后重试');
+    } catch (err: any) {
+      setError(err?.message || '网络错误，请稍后重试');
     } finally {
       setIsLoading(false);
     }

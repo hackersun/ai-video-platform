@@ -1,96 +1,220 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Slider } from '@/components/ui/slider';
+import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
-import { 
-  Volume2, 
-  Play, 
-  Pause, 
-  Download, 
-  Loader2,
-  AlertCircle,
-  Copy,
-  RefreshCw,
-  Clock,
-  Settings
+import {
+  Volume2, Play, Pause, Download, Loader2, AlertCircle,
+  Copy, RefreshCw, Clock, Settings, User, ChevronRight, BookOpen
 } from 'lucide-react';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
-// TTS提供商配置
+// TTS提供商
 const TTS_PROVIDERS = [
+  { id: 'minimax', name: 'MiniMax', icon: '🎵', description: '海螺AI语音，音色丰富自然（推荐）' },
   { id: 'volcano', name: '火山引擎', icon: '🔥', description: '豆包语音合成' },
-  { id: 'azure', name: 'Azure TTS', icon: '☁️', description: '微软Azure语音服务' },
 ];
 
+// MiniMax 音色列表
+const MINIMAX_VOICES = [
+  { id: 'female-shaonj', label: '少女音', gender: '女' },
+  { id: 'female-tianmei', label: '甜美音', gender: '女' },
+  { id: 'male-yunshu', label: '云书（男）', gender: '男' },
+  { id: 'male-baba', label: '爸爸（男）', gender: '男' },
+  { id: 'male-john', label: 'John（男）', gender: '男' },
+  { id: 'male-yunting', label: '云庭（男）', gender: '男' },
+  { id: 'male-znliang', label: '知宁（男）', gender: '男' },
+];
+
+// 火山引擎音色
+const VOLCANO_VOICES = [
+  { id: 'female_nvsheng', label: '女声（nvsheng）', gender: '女' },
+  { id: 'female_tianmei', label: '甜美女声', gender: '女' },
+  { id: 'male_jiaqi', label: '男声嘉琪', gender: '男' },
+  { id: 'male_zhichang', label: '职场男声', gender: '男' },
+  { id: 'male_dashu', label: '大树（旁白）', gender: '男' },
+];
+
+interface Novel { id: string; title: string; }
+interface Chapter { id: string; title: string; novel_id: string; }
+interface Script { id: string; title: string; novel_id?: string; }
+interface Storyboard { id: string; title: string; script_id: string; }
+interface Shot {
+  id: string; shot_number: number; prompt: string; dialogue?: string;
+  character_refs?: any[]; storyboard_id: string;
+}
 interface TTSJob {
-  id: string;
-  title: string;
-  text_content: string;
-  voice_model: string;
-  status: string;
-  audio_url?: string;
-  duration?: number;
-  created_at: string;
+  id: string; title?: string; text?: string; voice?: string;
+  api_provider?: string; status: string; progress: number;
+  audio_url?: string; duration_seconds?: number; error_message?: string;
+  extra_data?: any; created_at: string;
+  shot_id?: string; novel_id?: string; character_id?: string;
+}
+
+interface TTSSegment {
+  character: string; text: string; voice: string;
+  audio_url?: string; duration?: number; error?: string;
 }
 
 export default function TTSPage() {
-  const [selectedProvider, setSelectedProvider] = useState('volcano');
+  const [selectedProvider, setSelectedProvider] = useState('minimax');
+  const [selectedVoice, setSelectedVoice] = useState('female-shaonj');
   const [text, setText] = useState('');
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
-  const [voicePitch, setVoicePitch] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [currentAudio, setCurrentAudio] = useState<string | null>(null);
+  const [currentSegments, setCurrentSegments] = useState<TTSSegment[]>([]);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
-  // 历史记录
   const [history, setHistory] = useState<TTSJob[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  // 页面加载时获取历史记录
+  // 创作链路
+  const [novels, setNovels] = useState<Novel[]>([]);
+  const [selectedNovel, setSelectedNovel] = useState('');
+  const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [selectedChapter, setSelectedChapter] = useState('');
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [selectedScript, setSelectedScript] = useState('');
+  const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
+  const [selectedStoryboard, setSelectedStoryboard] = useState('');
+  const [shots, setShots] = useState<Shot[]>([]);
+  const [selectedShot, setSelectedShot] = useState('');
+
+  const [loadingChain, setLoadingChain] = useState(false);
+
+  // 音色列表
+  const voiceList = selectedProvider === 'minimax' ? MINIMAX_VOICES : VOLCANO_VOICES;
+
+  // 加载小说列表
   useEffect(() => {
+    loadNovels();
     loadHistory();
   }, []);
 
-  const handleGenerate = async () => {
-    if (!text.trim()) {
-      alert('请输入要转换的文本');
-      return;
+  // 小说变化 → 加载章节
+  useEffect(() => {
+    if (selectedNovel) {
+      loadChapters(selectedNovel);
+      setSelectedChapter(''); setScripts([]); setSelectedScript('');
+      setStoryboards([]); setSelectedStoryboard(''); setShots([]); setSelectedShot('');
     }
-    
-    setGenerating(true);
-    setError(null);
-    
+  }, [selectedNovel]);
+
+  // 章节变化 → 加载剧本
+  useEffect(() => {
+    if (selectedChapter) {
+      loadScripts(selectedChapter);
+      setSelectedScript(''); setStoryboards([]); setSelectedStoryboard(''); setShots([]); setSelectedShot('');
+    }
+  }, [selectedChapter]);
+
+  // 剧本变化 → 加载分镜
+  useEffect(() => {
+    if (selectedScript) {
+      loadStoryboards(selectedScript);
+      setSelectedStoryboard(''); setShots([]); setSelectedShot('');
+    }
+  }, [selectedScript]);
+
+  // 分镜变化 → 加载镜头
+  useEffect(() => {
+    if (selectedStoryboard) {
+      loadShots(selectedStoryboard);
+      setSelectedShot('');
+    }
+  }, [selectedStoryboard]);
+
+  // 镜头变化 → 自动填入对话
+  useEffect(() => {
+    if (selectedShot) {
+      const shot = shots.find(s => s.id === selectedShot);
+      if (shot && shot.dialogue) {
+        setText(shot.dialogue);
+      }
+    }
+  }, [selectedShot]);
+
+  const loadNovels = async () => {
     try {
-      const token = localStorage.getItem('token');
-      
-      // 调用TTS生成API
-      const response = await fetch(`${API_BASE}/api/v1/tts/generate`, {
+      const res = await fetchWithAuth(`${API_BASE}/novels`);
+      if (res.ok) setNovels(await res.json());
+    } catch {}
+  };
+  const loadChapters = async (novelId: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/novels/${novelId}/chapters`);
+      if (res.ok) setChapters(await res.json());
+    } catch {}
+  };
+  const loadScripts = async (chapterId: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/scripts?chapter_id=${chapterId}`);
+      if (res.ok) setScripts(await res.json());
+    } catch {}
+  };
+  const loadStoryboards = async (scriptId: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/storyboards?script_id=${scriptId}`);
+      if (res.ok) setStoryboards(await res.json());
+    } catch {}
+  };
+  const loadShots = async (storyboardId: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/shots?storyboard_id=${storyboardId}`);
+      if (res.ok) setShots(await res.json());
+    } catch {}
+  };
+
+  const loadHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/tts/jobs`);
+      if (res.ok) setHistory(await res.json());
+    } catch {} finally { setLoadingHistory(false); }
+  };
+
+  const handleGenerate = async () => {
+    if (!text.trim()) { alert('请输入要转换的文本'); return; }
+    setGenerating(true); setError(null); setCurrentAudio(null); setCurrentSegments([]);
+
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/tts/generate`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
         body: JSON.stringify({
           text_content: text,
-          voice_model: 'default',
-          api_provider: selectedProvider,
+          title: selectedShot ? `镜头TTS_${selectedShot.slice(0, 8)}` : 'TTS任务',
+          voice_model: selectedVoice,
           speed: voiceSpeed,
-          pitch: voicePitch
-        })
+          api_provider: selectedProvider,
+          shot_id: selectedShot || undefined,
+          storyboard_id: selectedStoryboard || undefined,
+          script_id: selectedScript || undefined,
+        }),
       });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setCurrentAudio(data.audio_url);
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'completed') {
+          // 多角色
+          if (data.extra_data?.segments?.length > 0) {
+            setCurrentSegments(data.extra_data.segments);
+          }
+          if (data.audio_url) {
+            setCurrentAudio(`${API_BASE.replace('/api/v1', '')}${data.audio_url}`);
+          }
+        } else if (data.status === 'failed') {
+          throw new Error(data.error_message || 'TTS生成失败');
+        }
         loadHistory();
       } else {
-        const errData = await response.json();
+        const errData = await res.json();
         throw new Error(errData.detail || '生成失败');
       }
     } catch (err: any) {
@@ -100,58 +224,127 @@ export default function TTSPage() {
     }
   };
 
-  const loadHistory = async () => {
-    setLoadingHistory(true);
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/v1/tts/jobs`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setHistory(Array.isArray(data) ? data : []);
-      }
-    } catch (err) {
-      console.error('加载历史失败:', err);
-    } finally {
-      setLoadingHistory(false);
-    }
+  const playAudio = (url: string) => {
+    if (audioRef.current) { audioRef.current.pause(); }
+    const fullUrl = url.startsWith('http') ? url : `${API_BASE.replace('/api/v1', '')}${url}`;
+    audioRef.current = new Audio(fullUrl);
+    audioRef.current.play();
+    audioRef.current.onended = () => setPlaying(false);
+    setPlaying(true);
   };
 
-  const togglePlayback = () => {
-    if (!currentAudio) return;
-    
-    // 简单的播放/暂停逻辑
-    setPlaying(!playing);
+  const stopAudio = () => {
+    audioRef.current?.pause();
+    setPlaying(false);
   };
 
-  const downloadAudio = () => {
-    if (currentAudio) {
-      window.open(currentAudio, '_blank');
-    }
+  const getFullAudioUrl = (url: string) => {
+    return url.startsWith('http') ? url : `${API_BASE.replace('/api/v1', '')}${url}`;
   };
 
-  const copyText = () => {
-    navigator.clipboard.writeText(text);
+  const getStatusBadge = (status: string) => {
+    if (status === 'completed' || status === 'succeeded') return 'bg-green-500/20 text-green-400';
+    if (status === 'failed') return 'bg-red-500/20 text-red-400';
+    return 'bg-yellow-500/20 text-yellow-400';
+  };
+
+  const getStatusText = (status: string) => {
+    if (status === 'completed' || status === 'succeeded') return '完成';
+    if (status === 'failed') return '失败';
+    return '处理中';
   };
 
   return (
     <MainLayout>
+      <audio ref={audioRef} />
       <div className="space-y-6">
-        {/* 页面标题 */}
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <Volume2 className="w-6 h-6" />
             语音合成 (TTS)
           </h1>
-          <p className="text-white/60 mt-1">将文本转换为自然语音</p>
+          <p className="text-white/60 mt-1">将文本转换为自然语音，支持多角色对话分段生成</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 左侧：TTS配置 */}
+          {/* 左侧配置 */}
           <div className="lg:col-span-1 space-y-4">
-            {/* 提供商选择 */}
+            {/* 创作链路选择 */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <BookOpen className="w-5 h-5" />
+                  从创作链路选择
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {/* 小说 */}
+                <select
+                  value={selectedNovel}
+                  onChange={e => setSelectedNovel(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                >
+                  <option value="">选择小说</option>
+                  {novels.map(n => <option key={n.id} value={n.id}>{n.title}</option>)}
+                </select>
+
+                {/* 章节 */}
+                {chapters.length > 0 && (
+                  <select
+                    value={selectedChapter}
+                    onChange={e => setSelectedChapter(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                  >
+                    <option value="">选择章节</option>
+                    {chapters.map(c => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                )}
+
+                {/* 剧本 */}
+                {scripts.length > 0 && (
+                  <select
+                    value={selectedScript}
+                    onChange={e => setSelectedScript(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                  >
+                    <option value="">选择剧本</option>
+                    {scripts.map(s => <option key={s.id} value={s.id}>{s.title}</option>)}
+                  </select>
+                )}
+
+                {/* 分镜 */}
+                {storyboards.length > 0 && (
+                  <select
+                    value={selectedStoryboard}
+                    onChange={e => setSelectedStoryboard(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                  >
+                    <option value="">选择分镜</option>
+                    {storyboards.map(sb => <option key={sb.id} value={sb.id}>{sb.title}</option>)}
+                  </select>
+                )}
+
+                {/* 镜头 */}
+                {shots.length > 0 && (
+                  <select
+                    value={selectedShot}
+                    onChange={e => setSelectedShot(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                  >
+                    <option value="">选择镜头（自动填入对话）</option>
+                    {shots.map(s => <option key={s.id} value={s.id}>镜头{s.shot_number}: {s.dialogue?.slice(0, 30) || s.prompt?.slice(0, 30) || ''}</option>)}
+                  </select>
+                )}
+
+                {shots.length > 0 && (
+                  <p className="text-white/40 text-xs">
+                    共 {shots.length} 个镜头，选择后可自动提取对话文本
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* 提供商 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
@@ -160,21 +353,16 @@ export default function TTSPage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {TTS_PROVIDERS.map((provider) => (
-                  <div
-                    key={provider.id}
-                    onClick={() => setSelectedProvider(provider.id)}
-                    className={`p-4 rounded-lg border cursor-pointer transition-all ${
-                      selectedProvider === provider.id
-                        ? 'border-violet-500 bg-violet-500/10'
-                        : 'border-white/10'
-                    }`}
-                  >
+                {TTS_PROVIDERS.map(p => (
+                  <div key={p.id} onClick={() => {
+                    setSelectedProvider(p.id);
+                    setSelectedVoice(p.id === 'minimax' ? 'female-shaonj' : 'female_nvsheng');
+                  }} className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedProvider === p.id ? 'border-violet-500 bg-violet-500/10' : 'border-white/10 hover:border-white/20'}`}>
                     <div className="flex items-center gap-3">
-                      <span className="text-2xl">{provider.icon}</span>
+                      <span className="text-2xl">{p.icon}</span>
                       <div>
-                        <div className="text-white font-medium">{provider.name}</div>
-                        <div className="text-white/60 text-sm">{provider.description}</div>
+                        <div className="text-white font-medium text-sm">{p.name}</div>
+                        <div className="text-white/50 text-xs">{p.description}</div>
                       </div>
                     </div>
                   </div>
@@ -182,148 +370,145 @@ export default function TTSPage() {
               </CardContent>
             </Card>
 
-            {/* 参数配置 */}
+            {/* 音色 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
-                <CardTitle className="text-white">语音参数</CardTitle>
+                <CardTitle className="text-white">音色选择</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent>
+                <select
+                  value={selectedVoice}
+                  onChange={e => setSelectedVoice(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm mb-4"
+                >
+                  {voiceList.map(v => (
+                    <option key={v.id} value={v.id}>{v.gender} - {v.label}</option>
+                  ))}
+                </select>
                 {/* 语速 */}
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <label className="text-white/80">语速</label>
-                    <span className="text-white">{voiceSpeed}x</span>
+                <div className="mb-2">
+                  <div className="flex justify-between mb-1">
+                    <label className="text-white/80 text-sm">语速</label>
+                    <span className="text-white text-sm">{voiceSpeed.toFixed(1)}x</span>
                   </div>
-                  <Slider
-                    value={[voiceSpeed * 10]}
-                    onValueChange={(v) => setVoiceSpeed(v[0] / 10)}
-                    min={5}
-                    max={20}
-                    step={1}
-                    className="w-full"
-                  />
+                  <Slider value={[voiceSpeed * 10]} onValueChange={v => setVoiceSpeed(v[0] / 10)}
+                    min={5} max={20} step={1} className="w-full" />
                   <div className="flex justify-between text-white/40 text-xs mt-1">
-                    <span>0.5x</span>
-                    <span>2.0x</span>
-                  </div>
-                </div>
-
-                {/* 音调 */}
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <label className="text-white/80">音调</label>
-                    <span className="text-white">{voicePitch > 0 ? '+' : ''}{voicePitch}</span>
-                  </div>
-                  <Slider
-                    value={[voicePitch + 50]}
-                    onValueChange={(v) => setVoicePitch(v[0] - 50)}
-                    min={0}
-                    max={100}
-                    step={1}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-white/40 text-xs mt-1">
-                    <span>低沉</span>
-                    <span>高亢</span>
+                    <span>慢</span><span>正常</span><span>快</span>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* 右侧：文本输入和预览 */}
+          {/* 右侧：文本和预览 */}
           <div className="lg:col-span-2 space-y-4">
             {/* 文本输入 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-white">文本内容</CardTitle>
-                <Button variant="ghost" size="sm" onClick={copyText}>
-                  <Copy className="w-4 h-4 mr-2" />
-                  复制
+                <CardTitle className="text-white">
+                  文本内容
+                  {selectedShot && (
+                    <span className="ml-2 text-xs text-violet-400 font-normal">
+                      ← 已从镜头自动填入
+                    </span>
+                  )}
+                </CardTitle>
+                <Button variant="ghost" size="sm" onClick={() => navigator.clipboard.writeText(text)}>
+                  <Copy className="w-4 h-4 mr-1" />复制
                 </Button>
               </CardHeader>
               <CardContent>
                 <textarea
                   value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  placeholder="输入要转换为语音的文本..."
+                  onChange={e => setText(e.target.value)}
+                  placeholder={"输入要转换为语音的文本...\n\n支持多角色对话格式：\n小明: 今天天气真好！\n小红: 是啊，我们去公园吧。\n\n每个角色会自动使用对应的音色。" + "\n"}
                   disabled={generating}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 min-h-[200px] resize-none"
+                  rows={8}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/30 min-h-[200px] resize-none"
                 />
-                <div className="flex justify-between items-center mt-2">
-                  <span className="text-white/40 text-sm">
-                    {text.length} 字符
-                  </span>
-                  <Button 
-                    onClick={handleGenerate}
-                    disabled={generating || !text.trim()}
-                    className="bg-violet-600 hover:bg-violet-700"
-                  >
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-white/40 text-sm">{text.length} 字符</span>
+                  <Button onClick={handleGenerate} disabled={generating || !text.trim()}
+                    className="bg-violet-600 hover:bg-violet-700">
                     {generating && <Loader2 className="w-5 h-5 mr-2 animate-spin" />}
-                    生成语音
+                    {generating ? '生成中...' : '生成语音'}
                   </Button>
                 </div>
               </CardContent>
             </Card>
 
-            {/* 错误提示 */}
+            {/* 错误 */}
             {error && (
               <Card className="bg-red-500/10 border-red-500/30">
                 <CardContent className="p-3 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-red-400" />
+                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
                   <p className="text-red-400 text-sm">{error}</p>
                 </CardContent>
               </Card>
             )}
 
-            {/* 音频预览 */}
-            {currentAudio && (
-              <Card className="bg-white/5 border-white/10">
+            {/* 多角色结果 */}
+            {currentSegments.length > 0 && (
+              <Card className="bg-white/5 border-violet-500/30">
                 <CardHeader>
-                  <CardTitle className="text-white">音频预览</CardTitle>
+                  <CardTitle className="text-white">多角色语音</CardTitle>
                 </CardHeader>
+                <CardContent className="space-y-3">
+                  {currentSegments.map((seg, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
+                      <User className="w-5 h-5 text-violet-400 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          {seg.character && (
+                            <span className="text-violet-400 text-sm font-medium">{seg.character}</span>
+                          )}
+                          <span className="text-white/40 text-xs">{voiceList.find(v => v.id === seg.voice)?.label || seg.voice}</span>
+                        </div>
+                        <p className="text-white/80 text-sm truncate">"{seg.text}"</p>
+                      </div>
+                      {seg.audio_url ? (
+                        <Button variant="ghost" size="sm" onClick={() => playAudio(seg.audio_url!)}>
+                          <Play className="w-4 h-4" />
+                        </Button>
+                      ) : (
+                        <span className="text-red-400 text-xs">失败</span>
+                      )}
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 单段音频预览 */}
+            {currentAudio && currentSegments.length === 0 && (
+              <Card className="bg-white/5 border-white/10">
+                <CardHeader><CardTitle className="text-white">音频预览</CardTitle></CardHeader>
                 <CardContent>
                   <div className="flex items-center gap-4">
-                    <Button
-                      onClick={togglePlayback}
-                      className="w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-700"
-                    >
-                      {playing ? (
-                        <Pause className="w-6 h-6" />
-                      ) : (
-                        <Play className="w-6 h-6 ml-1" />
-                      )}
+                    <Button onClick={() => playing ? stopAudio() : playAudio(currentAudio)}
+                      className="w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-700">
+                      {playing ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
                     </Button>
-                    
-                    {/* 简易音频波形（占位） */}
                     <div className="flex-1 h-12 bg-white/10 rounded flex items-center justify-center">
-                      <span className="text-white/60 text-sm">
-                        {playing ? '播放中...' : '点击播放预览'}
-                      </span>
+                      <span className="text-white/60 text-sm">{playing ? '播放中...' : '点击播放'}</span>
                     </div>
-                    
-                    <Button variant="outline" onClick={downloadAudio}>
-                      <Download className="w-4 h-4 mr-2" />
-                      下载
+                    <Button variant="outline" onClick={() => window.open(getFullAudioUrl(currentAudio), '_blank')}>
+                      <Download className="w-4 h-4 mr-2" />下载
                     </Button>
                   </div>
                 </CardContent>
               </Card>
             )}
 
-            {/* 历史记录 */}
+            {/* 生成历史 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-white flex items-center gap-2">
                   <Clock className="w-5 h-5" />
                   生成历史
                 </CardTitle>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={loadHistory}
-                  disabled={loadingHistory}
-                >
+                <Button variant="ghost" size="sm" onClick={loadHistory} disabled={loadingHistory}>
                   <RefreshCw className={`w-4 h-4 ${loadingHistory ? 'animate-spin' : ''}`} />
                 </Button>
               </CardHeader>
@@ -334,40 +519,48 @@ export default function TTSPage() {
                     <p className="text-white/40">加载中...</p>
                   </div>
                 ) : history.length > 0 ? (
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
-                    {history.map((job) => (
-                      <div
-                        key={job.id}
-                        className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
-                      >
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {history.map(job => (
+                      <div key={job.id} className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors">
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           <Volume2 className="w-5 h-5 text-violet-400 flex-shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <div className="text-white font-medium truncate">
-                              {job.title || job.text_content?.slice(0, 30) || 'TTS音频'}
+                            <div className="text-white font-medium text-sm truncate">
+                              {job.title || job.text?.slice(0, 40) || 'TTS音频'}
                             </div>
-                            <div className="text-white/60 text-sm flex items-center gap-2">
+                            <div className="text-white/50 text-xs flex items-center gap-2">
                               <span>{new Date(job.created_at).toLocaleString()}</span>
-                              {job.duration && <span>{job.duration}秒</span>}
+                              {job.voice && <span>🎤 {voiceList.find(v => v.id === job.voice)?.label || job.voice}</span>}
+                              {job.duration_seconds && <span>⏱ {job.duration_seconds}秒</span>}
+                              {job.shot_id && <span>📷 镜头关联</span>}
                             </div>
+                            {job.error_message && (
+                              <div className="text-red-400 text-xs mt-0.5">{job.error_message}</div>
+                            )}
+                            {/* 多角色片段 */}
+                            {job.extra_data?.segments?.length > 0 && (
+                              <div className="mt-1 space-y-1">
+                                {job.extra_data.segments.map((seg: TTSSegment, i: number) => (
+                                  <div key={i} className="flex items-center gap-2 text-xs">
+                                    {seg.character && <span className="text-violet-400">{seg.character}:</span>}
+                                    <span className="text-white/60 truncate">"{seg.text.slice(0, 30)}"</span>
+                                    {seg.audio_url ? (
+                                      <button onClick={() => playAudio(seg.audio_url)} className="text-green-400 ml-1">▶</button>
+                                    ) : (
+                                      <span className="text-red-400 ml-1">✗</span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className={`px-2 py-1 text-xs rounded ${
-                            job.status === 'succeeded' 
-                              ? 'bg-green-500/20 text-green-400' 
-                              : job.status === 'failed'
-                              ? 'bg-red-500/20 text-red-400'
-                              : 'bg-yellow-500/20 text-yellow-400'
-                          }`}>
-                            {job.status === 'succeeded' ? '完成' : job.status === 'failed' ? '失败' : '处理中'}
+                          <span className={`px-2 py-1 text-xs rounded ${getStatusBadge(job.status)}`}>
+                            {getStatusText(job.status)}
                           </span>
                           {job.audio_url && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => setCurrentAudio(job.audio_url!)}
-                            >
+                            <Button variant="ghost" size="sm" onClick={() => playAudio(job.audio_url!)}>
                               <Play className="w-4 h-4" />
                             </Button>
                           )}
@@ -377,8 +570,7 @@ export default function TTSPage() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-white/40">
-                    <Volume2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>暂无生成历史</p>
+                    暂无生成记录
                   </div>
                 )}
               </CardContent>
