@@ -457,19 +457,6 @@ function ProducerCenterContent() {
     }
   }, [filteredWorkflows, searchParams, selectedNovelId, workflowId]);
 
-  // Load batch jobs on mount
-  useEffect(() => {
-    loadBatchJobs();
-  }, [loadBatchJobs]);
-
-  // Auto-load shots when storyboard is available
-  useEffect(() => {
-    const storyboardId = workflowStatus?.storyboard_id || productionStatus?.storyboard_id;
-    if (storyboardId) {
-      loadShotsForStoryboard(storyboardId);
-    }
-  }, [workflowStatus?.storyboard_id, productionStatus?.storyboard_id, loadShotsForStoryboard]);
-
   const workflowMetrics = useMemo(() => {
     const videoCount = workflowStatus?.video_jobs?.length || selectedWorkflow?.video_job_ids?.length || 0;
     const ttsCount = workflowStatus?.tts_jobs?.length || selectedWorkflow?.tts_job_ids?.length || 0;
@@ -612,6 +599,7 @@ function ProducerCenterContent() {
     }
   }, []);
 
+  // Load batch jobs on mount
   const loadBatchJobs = useCallback(async () => {
     try {
       const data = await apiClient.getBatchJobs({ limit: 10 });
@@ -621,6 +609,10 @@ function ProducerCenterContent() {
       console.error('加载批量任务失败:', err);
     }
   }, []);
+
+  useEffect(() => {
+    loadBatchJobs();
+  }, [loadBatchJobs]);
 
   const loadBatchJobProgress = useCallback(async (jobId: string) => {
     try {

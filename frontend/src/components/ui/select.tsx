@@ -4,10 +4,19 @@ import { cn } from "@/lib/utils"
 export interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
   options: { value: string; label: string; disabled?: boolean }[]
   placeholder?: string
+  onValueChange?: (value: string) => void
 }
 
 const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
-  ({ className, options, placeholder, ...props }, ref) => {
+  ({ className, options, placeholder, onValueChange, onChange, ...props }, ref) => {
+    const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (onValueChange) {
+        onValueChange(e.target.value)
+      }
+      if (onChange) {
+        onChange(e)
+      }
+    }
     return (
       <select
         className={cn(
@@ -19,6 +28,7 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           className
         )}
         ref={ref}
+        onChange={handleChange}
         {...props}
       >
         {placeholder && (
@@ -27,8 +37,8 @@ const Select = React.forwardRef<HTMLSelectElement, SelectProps>(
           </option>
         )}
         {options.map((option) => (
-          <option 
-            key={option.value} 
+          <option
+            key={option.value}
             value={option.value}
             disabled={option.disabled}
             className="bg-gray-900"

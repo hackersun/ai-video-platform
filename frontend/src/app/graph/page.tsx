@@ -58,6 +58,8 @@ interface RelationEdge {
   to_entity_id: string;
   relation_type: string;
   description?: string;
+  source: string | EntityNode;
+  target: string | EntityNode;
 }
 
 interface GraphData {
