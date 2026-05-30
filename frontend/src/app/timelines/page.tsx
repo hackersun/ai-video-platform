@@ -1,15 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Captions,
   Check,
-  Clock,
   Edit3,
   Film,
   Loader2,
   Lock,
   Music,
+  Pause,
+  Play,
+  Plus,
   RefreshCw,
   Save,
   Trash2,
@@ -62,12 +64,18 @@ type Clip = {
   track_id: string;
   source_type: string;
   source_url?: string;
+  source_thumbnail?: string;
+  source_duration: number;
   position: number;
   duration: number;
   volume: number;
   text_content?: string;
   name?: string;
   is_locked: boolean;
+  in_point: number;
+  out_point?: number;
+  speed: number;
+  opacity: number;
 };
 
 const trackTypeLabel: Record<string, string> = {
@@ -77,17 +85,28 @@ const trackTypeLabel: Record<string, string> = {
   effect: '效果轨',
 };
 
+const trackTypeColors: Record<string, string> = {
+  video: '#8B5CF6', // violet
+  audio: '#10B981', // emerald
+  subtitle: '#F59E0B', // amber
+  effect: '#EC4899', // pink
+};
+
 const trackTypeIcon = (trackType: string) => {
   if (trackType === 'audio') return Music;
   if (trackType === 'subtitle') return Captions;
   return Film;
 };
 
+const formatTime = (seconds: number): string => {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+};
+
 const formatSeconds = (seconds?: number) => {
   const value = Math.max(0, Number(seconds || 0));
-  const mins = Math.floor(value / 60);
-  const secs = Math.round(value % 60);
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return formatTime(value);
 };
 
 const normalizeNumber = (value: string, fallback: number) => {
@@ -118,6 +137,23 @@ export default function TimelinesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Clip | null>(null);
   const [clipDrafts, setClipDrafts] = useState<Record<string, Partial<Clip>>>({});
 
+  // ========== Visual Timeline State ==========
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+  const [draggingClip, setDraggingClip] = useState<{ clipId: string; type: 'move' | 'resize-left' | 'resize-right' } | null>(null);
+  const [dragStartX, setDragStartX] = useState(0);
+  const [dragStartPosition, setDragStartPosition] = useState(0);
+  const [dragStartDuration, setDragStartDuration] = useState(0);
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const playIntervalRef = useRef<number | null>(null);
+
+  // Timeline display constants
+  const PIXELS_PER_SECOND = 50;
+  const TRACK_HEIGHT = 60;
+  const RULER_HEIGHT = 30;
+  const TRACK_LABEL_WIDTH = 180;
+
   const selectedTimeline = useMemo(
     () => timelines.find((timeline) => timeline.id === selectedTimelineId),
     [selectedTimelineId, timelines],
@@ -137,6 +173,177 @@ export default function TimelinesPage() {
     const clipEnd = clips.reduce((max, clip) => Math.max(max, Number(clip.position || 0) + Number(clip.duration || 0)), 0);
     return Math.max(clipEnd, selectedTimeline?.total_duration || 0, 1);
   }, [clips, selectedTimeline?.total_duration]);
+
+  const pixelsToSeconds = useCallback((pixels: number) => {
+    return pixels / PIXELS_PER_SECOND;
+  }, []);
+
+  const secondsToPixels = useCallback((seconds: number) => {
+    return seconds * PIXELS_PER_SECOND;
+  }, []);
+
+  // Playback controls
+  const togglePlayback = useCallback(() => {
+    if (isPlaying) {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
+        playIntervalRef.current = null;
+      }
+      setIsPlaying(false);
+    } else {
+      if (playbackTime >= maxDuration) {
+        setPlaybackTime(0);
+      }
+      setIsPlaying(true);
+      const fps = selectedTimeline?.fps || 24;
+      const interval = 1000 / fps;
+      playIntervalRef.current = window.setInterval(() => {
+        setPlaybackTime((prev) => {
+          if (prev >= maxDuration) {
+            if (playIntervalRef.current) clearInterval(playIntervalRef.current);
+            setIsPlaying(false);
+            return maxDuration;
+          }
+          return prev + 0.04;
+        });
+      }, interval) as unknown as number;
+    }
+  }, [isPlaying, playbackTime, maxDuration, selectedTimeline?.fps]);
+
+  const seekTo = useCallback((time: number) => {
+    setPlaybackTime(Math.max(0, Math.min(maxDuration, time)));
+  }, [maxDuration]);
+
+  const handleTimelineClick = useCallback((e: React.MouseEvent) => {
+    if (!timelineRef.current) return;
+    const rect = timelineRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left - TRACK_LABEL_WIDTH;
+    if (x >= 0) {
+      seekTo(pixelsToSeconds(x));
+    }
+  }, [pixelsToSeconds, seekTo]);
+
+  // Clip drag handlers
+  const handleClipMouseDown = useCallback((
+    e: React.MouseEvent,
+    clip: Clip,
+    dragType: 'move' | 'resize-left' | 'resize-right'
+  ) => {
+    e.stopPropagation();
+    if (clip.is_locked) return;
+
+    setDraggingClip({ clipId: clip.id, type: dragType });
+    setDragStartX(e.clientX);
+    setDragStartPosition(clip.position);
+    setDragStartDuration(clip.duration);
+  }, []);
+
+  // Drag mouse event handlers
+  useEffect(() => {
+    if (!draggingClip) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const deltaX = e.clientX - dragStartX;
+      const deltaSeconds = pixelsToSeconds(deltaX);
+
+      setClips((prev) => prev.map((clip) => {
+        if (clip.id !== draggingClip.clipId) return clip;
+
+        if (draggingClip.type === 'move') {
+          const newPosition = Math.max(0, dragStartPosition + deltaSeconds);
+          return { ...clip, position: newPosition };
+        } else if (draggingClip.type === 'resize-right') {
+          const newDuration = Math.max(0.5, dragStartDuration + deltaSeconds);
+          return { ...clip, duration: newDuration };
+        } else if (draggingClip.type === 'resize-left') {
+          const newPosition = Math.max(0, dragStartPosition + deltaSeconds);
+          const newDuration = Math.max(0.5, dragStartDuration - deltaSeconds);
+          if (newDuration >= 0.5) {
+            return { ...clip, position: newPosition, duration: newDuration };
+          }
+        }
+        return clip;
+      }));
+    };
+
+    const handleMouseUp = async () => {
+      if (draggingClip) {
+        const updatedClip = clips.find((c) => c.id === draggingClip.clipId);
+        if (updatedClip && selectedTimelineId) {
+          try {
+            await apiClient.updateTimelineClip(selectedTimelineId, draggingClip.clipId, {
+              position: updatedClip.position,
+              duration: updatedClip.duration,
+            });
+            setMessage('片段位置已更新');
+          } catch (err: any) {
+            setError(err?.message || '保存失败');
+          }
+        }
+      }
+      setDraggingClip(null);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [draggingClip, dragStartX, dragStartPosition, dragStartDuration, clips, selectedTimelineId, pixelsToSeconds]);
+
+  // Generate timeline preview
+  const generatePreview = async () => {
+    if (!selectedTimelineId) return;
+    setIsGeneratingPreview(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${API_BASE}/timelines/${selectedTimelineId}/preview`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+        },
+      });
+      if (!response.ok) throw new Error('生成预览失败');
+      const result = await response.json();
+      setMessage('预览生成成功');
+      // Update timeline with new preview URL
+      setTimelines((prev) => prev.map((t) =>
+        t.id === selectedTimelineId ? { ...t, preview_url: result.preview_url } : t
+      ));
+    } catch (err: any) {
+      setError(err?.message || '生成预览失败');
+    } finally {
+      setIsGeneratingPreview(false);
+    }
+  };
+
+  // Cleanup playback on unmount
+  useEffect(() => {
+    return () => {
+      if (playIntervalRef.current) {
+        clearInterval(playIntervalRef.current);
+      }
+    };
+  }, []);
+
+  // Generate time ruler marks
+  const timeMarks = useMemo(() => {
+    const marks: { time: number; label: string; major: boolean }[] = [];
+    const step = maxDuration <= 10 ? 1 : maxDuration <= 60 ? 5 : 10;
+    for (let t = 0; t <= maxDuration; t += step) {
+      marks.push({ time: t, label: formatTime(t), major: t % (step * 2) === 0 });
+    }
+    return marks;
+  }, [maxDuration]);
+
+  // Playhead position
+  const playheadX = secondsToPixels(playbackTime);
+
+  // Timeline width
+  const timelineWidth = Math.max(760, secondsToPixels(maxDuration) + 200);
 
   const loadProjects = async () => {
     setLoading(true);
@@ -186,6 +393,12 @@ export default function TimelinesPage() {
     }
     setTimelineLoading(true);
     setError(null);
+    setPlaybackTime(0);
+    setIsPlaying(false);
+    if (playIntervalRef.current) {
+      clearInterval(playIntervalRef.current);
+      playIntervalRef.current = null;
+    }
     try {
       const [trackData, clipData] = await Promise.all([
         apiClient.getTimelineTracks(timelineId),
@@ -326,7 +539,7 @@ export default function TimelinesPage() {
             </div>
             <h1 className="mt-2 text-3xl font-bold text-white">时间线编辑</h1>
             <p className="mt-2 max-w-3xl text-sm text-white/60">
-              管理 workflow 生成的可编辑视频轨、对白轨和字幕轨。这里的改动会直接保存到 Timeline/Track/Clip 数据库表。
+              可视化轨道编辑：拖拽调整片段位置和时长，预览播放，与 SynthesisJob 联动生成成片。
             </p>
           </div>
           <Button variant="outline" onClick={() => selectedTimelineId ? loadTimelineDetail(selectedTimelineId) : loadProjects()} disabled={loading || timelineLoading}>
@@ -378,16 +591,48 @@ export default function TimelinesPage() {
                 ))}
                 {timelines.length === 0 && selectedProjectId && !timelineLoading && (
                   <div className="rounded-md border border-white/10 bg-black/20 p-3 text-sm text-white/45">
-                    当前项目暂无时间线。可在工作流合成步骤点击“生成可编辑时间线”。
+                    当前项目暂无时间线。可在工作流合成步骤点击"生成可编辑时间线"。
                   </div>
                 )}
               </div>
             </section>
+
+            {/* Quick Stats */}
+            {selectedTimeline && (
+              <section className="rounded-lg border border-white/10 bg-white/5 p-4">
+                <div className="text-sm font-medium text-white mb-3">统计信息</div>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-white/50">视频轨</span>
+                    <span className="text-white">{tracks.filter((t) => t.track_type === 'video').length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/50">音频轨</span>
+                    <span className="text-white">{tracks.filter((t) => t.track_type === 'audio').length}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/50">字幕轨</span>
+                    <span className="text-white">{tracks.filter((t) => t.track_type === 'subtitle').length}</span>
+                  </div>
+                  <div className="border-t border-white/10 pt-2 mt-2">
+                    <div className="flex justify-between">
+                      <span className="text-white/50">总片段</span>
+                      <span className="text-white">{clips.length}</span>
+                    </div>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-white/50">总时长</span>
+                      <span className="text-white">{formatSeconds(maxDuration)}</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
           </aside>
 
           <section className="min-w-0 space-y-4">
             {selectedTimeline ? (
               <>
+                {/* Header with controls */}
                 <div className="rounded-lg border border-white/10 bg-white/5 p-4">
                   <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
@@ -395,167 +640,266 @@ export default function TimelinesPage() {
                       <div className="mt-1 flex flex-wrap gap-3 text-sm text-white/50">
                         <span>{selectedTimeline.aspect_ratio}</span>
                         <span>{selectedTimeline.fps}fps</span>
-                        <span>{trackTypeLabel.video || '视频轨'} {tracks.filter((track) => track.track_type === 'video').length}</span>
                         <span>片段 {clips.length}</span>
                         <span>时长 {formatSeconds(maxDuration)}</span>
                       </div>
                     </div>
-                    {selectedTimeline.preview_url && (
-                      <a
-                        href={toMediaUrl(selectedTimeline.preview_url)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="rounded-md border border-white/15 px-3 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
+                    <div className="flex flex-wrap gap-2">
+                      {/* Playback Controls */}
+                      <div className="flex items-center gap-1 rounded-md border border-white/10 bg-black/30 p-1">
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={togglePlayback}
+                          className="h-8 w-8 text-white hover:bg-white/10"
+                        >
+                          {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                        </Button>
+                        <div className="px-2 text-sm font-mono text-white/70">
+                          {formatTime(playbackTime)} / {formatTime(maxDuration)}
+                        </div>
+                      </div>
+
+                      {/* Generate Preview Button */}
+                      <Button
+                        variant="outline"
+                        onClick={generatePreview}
+                        disabled={isGeneratingPreview || clips.length === 0}
+                        className="border-white/15"
                       >
-                        打开预览
-                      </a>
-                    )}
-                    <Button
-                      variant="outline"
-                      onClick={addSubtitleClip}
-                      disabled={addingSubtitle || tracks.every((track) => track.track_type !== 'subtitle')}
-                      className="border-white/15"
-                    >
-                      {addingSubtitle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Captions className="mr-2 h-4 w-4" />}
-                      添加字幕片段
-                    </Button>
+                        {isGeneratingPreview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Film className="mr-2 h-4 w-4" />}
+                        生成预览
+                      </Button>
+
+                      {/* Open Preview Button */}
+                      {selectedTimeline.preview_url && (
+                        <a
+                          href={toMediaUrl(selectedTimeline.preview_url)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-2 rounded-md border border-white/15 px-3 py-2 text-sm text-white/70 hover:bg-white/10 hover:text-white"
+                        >
+                          <Play className="h-4 w-4" />
+                          打开预览
+                        </a>
+                      )}
+
+                      {/* Add Subtitle Button */}
+                      <Button
+                        variant="outline"
+                        onClick={addSubtitleClip}
+                        disabled={addingSubtitle || tracks.every((track) => track.track_type !== 'subtitle')}
+                        className="border-white/15"
+                      >
+                        {addingSubtitle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                        添加字幕
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto rounded-lg border border-white/10 bg-slate-950/70 p-3">
-                  <div className="min-w-[760px] space-y-3">
-                    <div className="grid grid-cols-[180px_1fr] gap-3 px-2 text-xs text-white/35">
-                      <div>轨道</div>
-                      <div className="flex items-center justify-between">
-                        <span>片段时间轴</span>
-                        <span><Clock className="mr-1 inline h-3 w-3" />{formatSeconds(maxDuration)}</span>
+                {/* Visual Timeline Editor */}
+                <div className="rounded-lg border border-white/10 bg-slate-950/70 overflow-hidden">
+                  {/* Time Ruler */}
+                  <div
+                    className="relative bg-slate-900/50 border-b border-white/5 cursor-pointer select-none"
+                    style={{ height: RULER_HEIGHT, marginLeft: TRACK_LABEL_WIDTH }}
+                    onClick={handleTimelineClick}
+                  >
+                    {/* Time marks */}
+                    {timeMarks.map(({ time, label, major }) => (
+                      <div
+                        key={time}
+                        className="absolute top-0 flex flex-col items-center"
+                        style={{ left: secondsToPixels(time), transform: 'translateX(-50%)' }}
+                      >
+                        <div className={`w-px ${major ? 'h-3 bg-white/40' : 'h-2 bg-white/20'}`} />
+                        <span className={`text-[10px] ${major ? 'text-white/50' : 'text-white/30'}`}>
+                          {label}
+                        </span>
                       </div>
+                    ))}
+
+                    {/* Playhead marker on ruler */}
+                    <div
+                      className="absolute top-0 w-0.5 bg-red-500 z-10 pointer-events-none"
+                      style={{ left: playheadX, height: RULER_HEIGHT }}
+                    >
+                      <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-3 h-3 bg-red-500 rounded-full" />
                     </div>
+                  </div>
 
-                    {clipsByTrack.map(({ track, clips: trackClips }) => {
-                      const Icon = trackTypeIcon(track.track_type);
-                      return (
-                        <div key={track.id} className="grid grid-cols-[180px_1fr] gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-2">
-                          <div className="flex min-h-24 flex-col justify-between rounded-md bg-black/25 p-3">
-                            <div>
-                              <div className="flex items-center gap-2 text-white">
-                                <Icon className="h-4 w-4 text-violet-200" />
-                                <span className="truncate text-sm font-medium">{track.name || trackTypeLabel[track.track_type] || track.track_type}</span>
+                  {/* Tracks */}
+                  <div
+                    ref={timelineRef}
+                    className="relative overflow-x-auto"
+                    style={{ minWidth: timelineWidth + TRACK_LABEL_WIDTH }}
+                  >
+                    <div style={{ width: timelineWidth + TRACK_LABEL_WIDTH, minWidth: timelineWidth + TRACK_LABEL_WIDTH }}>
+                      {clipsByTrack.map(({ track, clips: trackClips }) => {
+                        const Icon = trackTypeIcon(track.track_type);
+                        const trackColor = trackTypeColors[track.track_type] || '#8B5CF6';
+
+                        return (
+                          <div
+                            key={track.id}
+                            className="flex border-b border-white/5"
+                            style={{ height: TRACK_HEIGHT }}
+                          >
+                            {/* Track Label */}
+                            <div
+                              className="flex-shrink-0 flex items-center gap-2 px-3 border-r border-white/5"
+                              style={{ width: TRACK_LABEL_WIDTH, backgroundColor: `${trackColor}08` }}
+                            >
+                              <Icon className="h-4 w-4 flex-shrink-0" style={{ color: trackColor }} />
+                              <div className="min-w-0 flex-1">
+                                <div className="truncate text-sm font-medium text-white">
+                                  {track.name || trackTypeLabel[track.track_type]}
+                                </div>
+                                <div className="text-[10px] text-white/40">{trackTypeLabel[track.track_type]}</div>
                               </div>
-                              <div className="mt-1 text-xs text-white/40">{trackTypeLabel[track.track_type] || track.track_type}</div>
+                              {track.is_locked && <Lock className="h-3 w-3 text-white/30 flex-shrink-0" />}
                             </div>
-                            <div className="mt-3 flex gap-2">
-                              <Button
-                                title={track.is_locked ? '解锁轨道' : '锁定轨道'}
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => toggleTrack(track, { is_locked: !track.is_locked })}
-                                disabled={savingTrackId === track.id}
-                                className="h-8 w-8 text-white/70 hover:bg-white/10 hover:text-white"
-                              >
-                                {track.is_locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
-                              </Button>
-                              <Button
-                                title={track.is_muted ? '取消静音' : '静音轨道'}
-                                size="icon"
-                                variant="ghost"
-                                onClick={() => toggleTrack(track, { is_muted: !track.is_muted })}
-                                disabled={savingTrackId === track.id}
-                                className="h-8 w-8 text-white/70 hover:bg-white/10 hover:text-white"
-                              >
-                                {track.is_muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-                              </Button>
-                            </div>
-                          </div>
 
-                          <div className="relative min-h-24 rounded-md border border-white/5 bg-black/20 p-2">
-                            {trackClips.length === 0 ? (
-                              <div className="flex h-full min-h-20 items-center text-sm text-white/35">暂无片段</div>
-                            ) : (
-                              <div className="space-y-2">
-                                {trackClips.map((clip) => {
-                                  const draft = clipDrafts[clip.id] || {};
-                                  const left = Math.min(92, Math.max(0, ((Number(draft.position ?? clip.position) || 0) / maxDuration) * 100));
-                                  const width = Math.min(100 - left, Math.max(8, ((Number(draft.duration ?? clip.duration) || 0.1) / maxDuration) * 100));
-                                  return (
-                                    <div key={clip.id} className="rounded-md border border-violet-500/25 bg-violet-500/10 p-2">
-                                      <div className="mb-2 h-3 rounded bg-white/5">
-                                        <div
-                                          className="h-3 rounded bg-violet-400/70"
-                                          style={{ marginLeft: `${left}%`, width: `${width}%` }}
-                                        />
-                                      </div>
-                                      <div className="grid grid-cols-1 gap-2 lg:grid-cols-[1.2fr_90px_90px_1fr_auto] lg:items-center">
-                                        <Input
-                                          value={String(draft.name ?? clip.name ?? '')}
-                                          onChange={(event) => updateClipDraft(clip.id, { name: event.target.value })}
-                                          placeholder="片段名称"
-                                          className="border-white/10 bg-slate-950 text-white"
-                                        />
-                                        <Input
-                                          type="number"
-                                          min="0"
-                                          step="0.1"
-                                          value={String(draft.position ?? clip.position ?? 0)}
-                                          onChange={(event) => updateClipDraft(clip.id, { position: normalizeNumber(event.target.value, clip.position) })}
-                                          title="起始秒"
-                                          className="border-white/10 bg-slate-950 text-white"
-                                        />
-                                        <Input
-                                          type="number"
-                                          min="0.1"
-                                          step="0.1"
-                                          value={String(draft.duration ?? clip.duration ?? 0.1)}
-                                          onChange={(event) => updateClipDraft(clip.id, { duration: normalizeNumber(event.target.value, clip.duration) })}
-                                          title="时长秒"
-                                          className="border-white/10 bg-slate-950 text-white"
-                                        />
-                                        {track.track_type === 'subtitle' ? (
-                                          <Input
-                                            value={String(draft.text_content ?? clip.text_content ?? '')}
-                                            onChange={(event) => updateClipDraft(clip.id, { text_content: event.target.value })}
-                                            placeholder="字幕文本"
-                                            className="border-white/10 bg-slate-950 text-white"
-                                          />
-                                        ) : (
-                                          <div className="truncate text-xs text-white/45">{clip.source_type}</div>
-                                        )}
-                                        <div className="flex justify-end gap-1">
-                                          <Button
-                                            title="保存片段"
-                                            size="icon"
-                                            variant="ghost"
-                                            onClick={() => saveClip(clip)}
-                                            disabled={savingClipId === clip.id}
-                                            className="h-9 w-9 text-green-200 hover:bg-green-500/10 hover:text-green-100"
-                                          >
-                                            {savingClipId === clip.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                                          </Button>
-                                          <Button
-                                            title="删除片段"
-                                            size="icon"
-                                            variant="ghost"
-                                            onClick={() => setDeleteTarget(clip)}
-                                            disabled={savingClipId === clip.id}
-                                            className="h-9 w-9 text-red-200 hover:bg-red-500/10 hover:text-red-100"
-                                          >
-                                            <Trash2 className="h-4 w-4" />
-                                          </Button>
+                            {/* Track Content */}
+                            <div
+                              className="relative flex-1 bg-black/20 cursor-pointer"
+                              style={{ width: timelineWidth }}
+                              onClick={handleTimelineClick}
+                            >
+                              {/* Grid lines */}
+                              {timeMarks.filter((m) => m.major).map(({ time }) => (
+                                <div
+                                  key={time}
+                                  className="absolute top-0 bottom-0 w-px bg-white/5 pointer-events-none"
+                                  style={{ left: secondsToPixels(time) }}
+                                />
+                              ))}
+
+                              {/* Clips */}
+                              {trackClips.map((clip) => {
+                                const clipX = secondsToPixels(clip.position);
+                                const clipWidth = Math.max(20, secondsToPixels(clip.duration));
+
+                                return (
+                                  <div
+                                    key={clip.id}
+                                    className={`absolute top-1 bottom-1 rounded-md border-2 cursor-move select-none transition-shadow ${
+                                      clip.is_locked
+                                        ? 'opacity-50 cursor-not-allowed'
+                                        : 'hover:shadow-lg hover:shadow-black/30'
+                                    } ${draggingClip?.clipId === clip.id ? 'ring-2 ring-white/50' : ''}`}
+                                    style={{
+                                      left: clipX,
+                                      width: clipWidth,
+                                      backgroundColor: `${trackColor}30`,
+                                      borderColor: trackColor,
+                                    }}
+                                    onMouseDown={(e) => handleClipMouseDown(e, clip, 'move')}
+                                  >
+                                    {/* Resize handles */}
+                                    <div
+                                      className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/20 rounded-l-md"
+                                      onMouseDown={(e) => handleClipMouseDown(e, clip, 'resize-left')}
+                                    />
+                                    <div
+                                      className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize hover:bg-white/20 rounded-r-md"
+                                      onMouseDown={(e) => handleClipMouseDown(e, clip, 'resize-right')}
+                                    />
+
+                                    {/* Clip Content */}
+                                    <div className="px-2 py-1 overflow-hidden relative z-10">
+                                      {track.track_type === 'subtitle' ? (
+                                        <div className="text-[11px] text-white truncate">{clip.text_content}</div>
+                                      ) : (
+                                        <div className="text-[11px] text-white truncate">
+                                          {clip.name || clip.source_type}
                                         </div>
+                                      )}
+                                      <div className="text-[10px] text-white/40">
+                                        {formatSeconds(clip.duration)}
                                       </div>
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+
+                                    {/* Thumbnail if available */}
+                                    {clip.source_thumbnail && (
+                                      <div
+                                        className="absolute inset-0 opacity-30 bg-cover bg-center rounded-md pointer-events-none"
+                                        style={{ backgroundImage: `url(${toMediaUrl(clip.source_thumbnail)})` }}
+                                      />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+
+                      {/* Playhead line */}
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-red-500 pointer-events-none z-20"
+                        style={{ left: TRACK_LABEL_WIDTH + playheadX }}
+                      >
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full" />
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                {/* Clip Properties Panel */}
+                <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+                  <div className="text-sm font-medium text-white mb-3">片段详情</div>
+                  {clips.length === 0 ? (
+                    <div className="text-sm text-white/45">暂无片段 - 拖拽下方片段进行调整</div>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {clips.map((clip) => {
+                        const track = tracks.find((t) => t.id === clip.track_id);
+                        return (
+                          <div
+                            key={clip.id}
+                            className="flex items-center gap-3 rounded-md border border-white/10 bg-black/20 p-2"
+                          >
+                            <div
+                              className="w-3 h-3 rounded-sm flex-shrink-0"
+                              style={{ backgroundColor: trackTypeColors[track?.track_type || 'video'] }}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm text-white truncate">
+                                {clip.name || clip.source_type}
+                              </div>
+                              <div className="text-xs text-white/40">
+                                {formatSeconds(clip.position)} - {formatSeconds(clip.position + clip.duration)}
+                              </div>
+                            </div>
+                            <div className="flex gap-1">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => seekTo(clip.position)}
+                                className="h-7 w-7 text-white/50 hover:bg-white/10 hover:text-white"
+                              >
+                                <Play className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                onClick={() => setDeleteTarget(clip)}
+                                className="h-7 w-7 text-red-200 hover:bg-red-500/10 hover:text-red-100"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Stats Cards */}
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
                   <div className="rounded-lg border border-white/10 bg-white/5 p-4">
                     <div className="flex items-center gap-2 text-sm text-white/50"><Check className="h-4 w-4" />已落库</div>
                     <div className="mt-2 text-2xl font-semibold text-white">{clips.length}</div>
@@ -570,6 +914,11 @@ export default function TimelinesPage() {
                     <div className="flex items-center gap-2 text-sm text-white/50"><Edit3 className="h-4 w-4" />轨道控制</div>
                     <div className="mt-2 text-2xl font-semibold text-white">{tracks.length}</div>
                     <div className="mt-1 text-xs text-white/45">锁定和静音会即时保存</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-center gap-2 text-sm text-white/50"><Play className="h-4 w-4" />可视化</div>
+                    <div className="mt-2 text-2xl font-semibold text-white">{formatSeconds(maxDuration)}</div>
+                    <div className="mt-1 text-xs text-white/45">拖拽调整，实时预览</div>
                   </div>
                 </div>
               </>
@@ -586,7 +935,7 @@ export default function TimelinesPage() {
       <ConfirmDialog
         open={Boolean(deleteTarget)}
         title="删除时间线片段"
-        description={`确认删除片段「${deleteTarget?.name || deleteTarget?.source_type || ''}」？删除后该片段会从当前时间线移除。`}
+        description={`确认删除片段"${deleteTarget?.name || deleteTarget?.source_type || ''}"？删除后该片段会从当前时间线移除。`}
         confirmText="删除片段"
         destructive
         loading={Boolean(deleteTarget && savingClipId === deleteTarget.id)}

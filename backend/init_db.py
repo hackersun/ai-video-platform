@@ -713,6 +713,8 @@ def init_db():
     from app.models.media_generation_job import MediaGenerationJob
     from app.models.subtitle import SubtitleTrack, SubtitleSegment
     from app.models.batch_job import BatchJob, BatchJobItem
+    from app.models.template import Template
+    from app.models.version import Version, VersionRule
 
     Base.metadata.create_all(bind=sync_engine)
     print("✅ 数据库表创建成功！")
@@ -728,6 +730,56 @@ def init_db():
     migrate_add_entity_asset_scope_fields()
     migrate_add_story_entity_extended_fields()
     migrate_add_project_id_fields()
+    migrate_add_version_tables()
+
+
+def migrate_add_version_tables():
+    """Add version and version_rules tables."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+
+        # Create versions table
+        if not inspector.has_table("versions"):
+            conn.execute(text("""
+                CREATE TABLE versions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    user_id VARCHAR(36) NOT NULL,
+                    resource_type VARCHAR(20) NOT NULL,
+                    resource_id VARCHAR(36) NOT NULL,
+                    version_number INTEGER NOT NULL,
+                    version_label VARCHAR(100),
+                    snapshot JSON,
+                    change_summary TEXT,
+                    created_at DATETIME,
+                    created_by VARCHAR(36),
+                    INDEX idx_versions_user_id (user_id),
+                    INDEX idx_versions_resource (resource_type, resource_id)
+                )
+            """))
+            conn.commit()
+            print("✅ Versions table created.")
+
+        # Create version_rules table
+        if not inspector.has_table("version_rules"):
+            conn.execute(text("""
+                CREATE TABLE version_rules (
+                    resource_type VARCHAR(20) PRIMARY KEY,
+                    max_versions INTEGER DEFAULT 10,
+                    auto_snapshot BOOLEAN DEFAULT 1,
+                    auto_cleanup BOOLEAN DEFAULT 1
+                )
+            """))
+            conn.commit()
+            print("✅ Version rules table created.")
+
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 async def init_db_async():
@@ -758,6 +810,9 @@ async def init_db_async():
     from app.models.story_entity import StoryEntity
     from app.models.media_generation_job import MediaGenerationJob
     from app.models.subtitle import SubtitleTrack, SubtitleSegment
+    from app.models.batch_job import BatchJob, BatchJobItem
+    from app.models.template import Template
+    from app.models.version import Version, VersionRule
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -774,6 +829,52 @@ async def init_db_async():
     await migrate_add_entity_asset_scope_fields_async()
     await migrate_add_story_entity_extended_fields_async()
     await migrate_add_project_id_fields_async()
+    await migrate_add_version_tables_async()
+
+
+async def migrate_add_version_tables_async():
+    """Add version and version_rules tables (async)."""
+    from sqlalchemy import text, inspect
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                "versions": inspector.has_table("versions"),
+                "version_rules": inspector.has_table("version_rules"),
+            }
+
+        tables = await conn.run_sync(_inspect)
+
+        if not tables["versions"]:
+            await conn.execute(text("""
+                CREATE TABLE versions (
+                    id VARCHAR(36) PRIMARY KEY,
+                    user_id VARCHAR(36) NOT NULL,
+                    resource_type VARCHAR(20) NOT NULL,
+                    resource_id VARCHAR(36) NOT NULL,
+                    version_number INTEGER NOT NULL,
+                    version_label VARCHAR(100),
+                    snapshot JSON,
+                    change_summary TEXT,
+                    created_at DATETIME,
+                    created_by VARCHAR(36)
+                )
+            """))
+            await conn.execute(text("CREATE INDEX idx_versions_user_id ON versions(user_id)"))
+            await conn.execute(text("CREATE INDEX idx_versions_resource ON versions(resource_type, resource_id)"))
+            print("✅ Versions table created (async).")
+
+        if not tables["version_rules"]:
+            await conn.execute(text("""
+                CREATE TABLE version_rules (
+                    resource_type VARCHAR(20) PRIMARY KEY,
+                    max_versions INTEGER DEFAULT 10,
+                    auto_snapshot BOOLEAN DEFAULT 1,
+                    auto_cleanup BOOLEAN DEFAULT 1
+                )
+            """))
+            print("✅ Version rules table created (async).")
 
 
 if __name__ == "__main__":

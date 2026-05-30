@@ -1018,6 +1018,30 @@ class ApiClient {
     });
   }
 
+  async reorderTimelineClips(timelineId: string, clipOrders: Array<{ clip_id: string; position: number; track_id?: string }>) {
+    return this.request<any>(`/timelines/${timelineId}/clips/reorder`, {
+      method: 'POST',
+      body: JSON.stringify(clipOrders),
+    });
+  }
+
+  async generateTimelinePreview(timelineId: string) {
+    return this.request<any>(`/timelines/${timelineId}/preview`, {
+      method: 'POST',
+    });
+  }
+
+  async syncTimelineFromSynthesis(timelineId: string, params: { synthesis_job_id: string; name?: string }) {
+    return this.request<any>(`/timelines/${timelineId}/sync`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async exportTimeline(timelineId: string) {
+    return this.request<any>(`/timelines/${timelineId}/export`);
+  }
+
   async generateWorkflowMediaBatch(workflowId: string, params: {
     strategy?: string;
     shot_ids?: string[];
@@ -1411,6 +1435,75 @@ class ApiClient {
     return this.request<any>(`/assets/${assetId}/scope`, {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  // ========== 模板市场 ==========
+
+  async getTemplateCategories() {
+    return this.request<any[]>('/templates/categories');
+  }
+
+  async getTemplates(params: {
+    category?: string;
+    is_public?: boolean;
+    search?: string;
+    include_presets?: boolean;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.category) searchParams.set('category', params.category);
+    if (params.is_public !== undefined) searchParams.set('is_public', String(params.is_public));
+    if (params.search) searchParams.set('search', params.search);
+    if (params.include_presets !== undefined) searchParams.set('include_presets', String(params.include_presets));
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/templates${qs ? `?${qs}` : ''}`);
+  }
+
+  async getPresetTemplates(category?: string) {
+    const qs = category ? `?category=${category}` : '';
+    return this.request<any[]>(`/templates/presets${qs}`);
+  }
+
+  async getTemplate(templateId: string) {
+    return this.request<any>(`/templates/${templateId}`);
+  }
+
+  async createTemplate(data: {
+    name: string;
+    description?: string;
+    category?: string;
+    tags?: string[];
+    content: any;
+    is_public?: boolean;
+  }) {
+    return this.request<any>('/templates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTemplate(templateId: string, data: any) {
+    return this.request<any>(`/templates/${templateId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTemplate(templateId: string) {
+    return this.request<any>(`/templates/${templateId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async useTemplate(templateId: string) {
+    return this.request<any>(`/templates/${templateId}/use`, {
+      method: 'POST',
+    });
+  }
+
+  async cloneTemplate(templateId: string) {
+    return this.request<any>(`/templates/${templateId}/clone`, {
+      method: 'POST',
     });
   }
 
@@ -2169,6 +2262,76 @@ class ApiClient {
     return this.request<void>(`/batch/${jobId}`, {
       method: 'DELETE',
     });
+  }
+
+  // ========== 版本管理相关 ==========
+
+  /**
+   * 获取资源的所有版本历史
+   */
+  async getVersions(resourceType: string, resourceId: string, limit: number = 50) {
+    return this.request<any[]>(`/versions/${resourceType}/${resourceId}?limit=${limit}`);
+  }
+
+  /**
+   * 获取版本数量
+   */
+  async getVersionCount(resourceType: string, resourceId: string) {
+    return this.request<{ count: number }>(`/versions/count/${resourceType}/${resourceId}`);
+  }
+
+  /**
+   * 获取版本详情
+   */
+  async getVersionDetail(versionId: string) {
+    return this.request<any>(`/versions/detail/${versionId}`);
+  }
+
+  /**
+   * 创建新版本
+   */
+  async createVersion(resourceType: string, resourceId: string, data: {
+    version_label?: string;
+    change_summary?: string;
+  }) {
+    return this.request<any>(`/versions/${resourceType}/${resourceId}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+   * 回滚到指定版本
+   */
+  async rollbackVersion(versionId: string, confirm: boolean = true) {
+    return this.request<any>(`/versions/${versionId}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm }),
+    });
+  }
+
+  /**
+   * 获取版本差异
+   */
+  async getVersionDiff(versionId: string, compareWithCurrent: boolean = false) {
+    const qs = compareWithCurrent ? '?compare_with_current=true' : '';
+    return this.request<any>(`/versions/${versionId}/diff${qs}`);
+  }
+
+  /**
+   * 删除版本
+   */
+  async deleteVersion(versionId: string) {
+    return this.request<any>(`/versions/${versionId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
+   * 获取版本规则
+   */
+  async getVersionRule(resourceType: string) {
+    return this.request<any>(`/versions/rules/${resourceType}`);
   }
 }
 

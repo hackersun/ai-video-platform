@@ -642,3 +642,234 @@ async def reorder_clips(
             clip.updated_at = utc_now()
     await db.commit()
     return {"message": "排序已更新"}
+
+
+# ========== Preview & Export API ==========
+
+@router.post("/{timeline_id}/preview")
+async def generate_timeline_preview(
+    timeline_id: str,
+    request: Optional[dict] = None,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """生成时间线预览（基于当前时间线的片段生成预览视频）"""
+    timeline = await get_timeline_for_user(db, timeline_id, user_id)
+
+    # 获取所有轨道和片段
+    tracks_result = await db.execute(
+        select(Track).where(Track.timeline_id == timeline_id).order_by(Track.track_index)
+    )
+    tracks = tracks_result.scalars().all()
+
+    clips_result = await db.execute(
+        select(Clip).where(and_(Clip.timeline_id == timeline_id, Clip.is_active == True)).order_by(Clip.position)
+    )
+    clips = clips_result.scalars().all()
+
+    if not clips:
+        raise HTTPException(status_code=400, detail="时间线中没有片段")
+
+    # 按轨道类型分组收集媒体URL
+    video_urls = []
+    audio_urls = []
+    subtitles = []
+
+    for clip in clips:
+        if clip.source_url:
+            if clip.track_id in [t.id for t in tracks if t.track_type == "video"]:
+                video_urls.append(clip.source_url)
+            elif clip.track_id in [t.id for t in tracks if t.track_type == "audio"]:
+                audio_urls.append(clip.source_url)
+
+        # 字幕片段处理
+        if clip.text_content:
+            subtitles.append({
+                "text": clip.text_content,
+                "start_time": clip.position,
+                "end_time": clip.position + clip.duration,
+                "style": {
+                    "font_family": clip.font_family,
+                    "font_size": clip.font_size,
+                    "font_color": clip.font_color,
+                }
+            })
+
+    if not video_urls:
+        raise HTTPException(status_code=400, detail="时间线中没有视频片段")
+
+    # 调用合成服务生成预览
+    from app.services.synthesis_executor import SynthesisExecutor, SubtitleSegment
+
+    executor = SynthesisExecutor()
+    subtitle_segments = [
+        SubtitleSegment(
+            text=s["text"],
+            start_time=s["start_time"],
+            end_time=s["end_time"],
+            style=s.get("style")
+        ) for s in subtitles
+    ]
+
+    try:
+        result = await executor.synthesize(
+            video_urls=video_urls,
+            audio_urls=audio_urls if audio_urls else None,
+            subtitles=subtitle_segments if subtitle_segments else None,
+            output_format="mp4",
+            quality="medium"
+        )
+
+        # 更新时间线的预览URL
+        if result.get("video_url"):
+            timeline.preview_url = result["video_url"]
+            timeline.updated_at = utc_now()
+            await db.commit()
+
+        return {
+            "status": result.get("status", "succeeded"),
+            "preview_url": result.get("video_url"),
+            "duration_seconds": result.get("duration_seconds"),
+            "job_id": result.get("job_id"),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成预览失败: {str(e)}")
+
+
+@router.post("/{timeline_id}/sync")
+async def sync_timeline_from_synthesis(
+    timeline_id: str,
+    request: dict,  # {"synthesis_job_id": "...", "name": "可选的名称"}
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """从合成任务同步时间线片段"""
+    timeline = await get_timeline_for_user(db, timeline_id, user_id)
+    synthesis_job_id = request.get("synthesis_job_id")
+
+    if not synthesis_job_id:
+        raise HTTPException(status_code=422, detail="synthesis_job_id 不能为空")
+
+    # 获取合成任务
+    from app.models.synthesis_job import SynthesisJob
+    synth_result = await db.execute(
+        select(SynthesisJob).where(
+            and_(SynthesisJob.id == synthesis_job_id, SynthesisJob.user_id == user_id)
+        )
+    )
+    synthesis_job = synth_result.scalar_one_or_none()
+    if not synthesis_job:
+        raise HTTPException(status_code=404, detail="合成任务不存在")
+
+    # 查找对应的VideoJob获取片段列表
+    extra_data = synthesis_job.extra_data or {}
+    video_job_ids = extra_data.get("video_job_ids", [])
+    tts_job_ids = extra_data.get("tts_job_ids", [])
+
+    # 收集所有片段信息
+    new_clips = []
+    current_position = 0.0
+
+    # 视频片段
+    for vid in video_job_ids:
+        from app.models.video_job import VideoJob
+        vjob_result = await db.execute(
+            select(VideoJob).where(and_(VideoJob.id == vid, VideoJob.user_id == user_id))
+        )
+        vjob = vjob_result.scalar_one_or_none()
+        if vjob and vjob.video_url:
+            new_clips.append({
+                "source_type": "video_job",
+                "source_id": vid,
+                "source_url": vjob.video_url,
+                "source_duration": vjob.duration_seconds or 5,
+                "position": current_position,
+            })
+            current_position += (vjob.duration_seconds or 5)
+
+    # TTS片段
+    for tid in tts_job_ids:
+        from app.models.tts_job import TTSJob
+        tts_result = await db.execute(
+            select(TTSJob).where(and_(TTSJob.id == tid, TTSJob.user_id == user_id))
+        )
+        tts_job = tts_result.scalar_one_or_none()
+        if tts_job and tts_job.audio_url:
+            new_clips.append({
+                "source_type": "tts_job",
+                "source_id": tid,
+                "source_url": tts_job.audio_url,
+                "source_duration": tts_job.duration_seconds or 3,
+                "position": current_position,
+            })
+            current_position += (tts_job.duration_seconds or 3)
+
+    # 查找默认视频轨道
+    video_track_result = await db.execute(
+        select(Track).where(
+            and_(Track.timeline_id == timeline_id, Track.track_type == "video")
+        ).order_by(Track.track_index)
+    )
+    video_track = video_track_result.scalar_one_or_none()
+
+    # 查找默认音频轨道
+    audio_track_result = await db.execute(
+        select(Track).where(
+            and_(Track.timeline_id == timeline_id, Track.track_type == "audio")
+        ).order_by(Track.track_index)
+    )
+    audio_track = audio_track_result.scalar_one_or_none()
+
+    # 创建新的片段
+    for clip_data in new_clips:
+        clip = Clip(
+            id=str(uuid4()),
+            user_id=user_id,
+            timeline_id=timeline_id,
+            track_id=video_track.id if clip_data["source_type"] == "video_job" else (audio_track.id if audio_track else video_track.id),
+            source_type=clip_data["source_type"],
+            source_id=clip_data["source_id"],
+            source_url=clip_data["source_url"],
+            source_duration=clip_data["source_duration"],
+            position=clip_data["position"],
+            duration=clip_data["source_duration"],
+        )
+        db.add(clip)
+
+    # 更新总时长
+    timeline.total_duration = current_position
+    timeline.updated_at = utc_now()
+    await db.commit()
+
+    return {
+        "message": "同步成功",
+        "clips_created": len(new_clips),
+        "total_duration": current_position,
+    }
+
+
+@router.get("/{timeline_id}/export")
+async def export_timeline_json(
+    timeline_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """导出一个时间线的完整JSON数据"""
+    timeline = await get_timeline_for_user(db, timeline_id, user_id)
+
+    # 获取所有轨道和片段
+    tracks_result = await db.execute(
+        select(Track).where(Track.timeline_id == timeline_id).order_by(Track.track_index)
+    )
+    tracks = tracks_result.scalars().all()
+
+    clips_result = await db.execute(
+        select(Clip).where(and_(Clip.timeline_id == timeline_id, Clip.is_active == True)).order_by(Clip.position)
+    )
+    clips = clips_result.scalars().all()
+
+    return {
+        "timeline": build_timeline_response(timeline),
+        "tracks": [build_track_response(t) for t in tracks],
+        "clips": [build_clip_response(c) for c in clips],
+    }

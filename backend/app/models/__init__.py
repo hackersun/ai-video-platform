@@ -28,6 +28,8 @@ from app.models.story_entity import StoryEntity
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleTrack, SubtitleSegment
 from app.models.batch_job import BatchJob, BatchJobItem
+from app.models.template import Template
+from app.models.version import Version, VersionRule
 
 __all__ = [
     "LLMProvider",
@@ -65,4 +67,7 @@ __all__ = [
     "SubtitleSegment",
     "BatchJob",
     "BatchJobItem",
+    "Template",
+    "Version",
+    "VersionRule",
 ]
