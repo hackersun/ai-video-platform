@@ -1068,3 +1068,163 @@ async def get_storyboard_quality_summary(
         blocked_shots=summary.blocked_shots,
         warning_shots=summary.warning_shots,
     )
+
+
+# ============== Prompt重建API ==============
+
+class BatchRebuildPromptsRequest(BaseModel):
+    """批量重建prompt请求"""
+    use_locked_assets: bool = Field(True, description="是否锁定资产")
+    use_entity_refs: bool = Field(True, description="是否重新填充实体引用")
+
+
+class BatchRebuildPromptsResponse(BaseModel):
+    """批量重建prompt响应"""
+    status: str
+    total_shots: int
+    rebuilt_count: int
+    skipped_count: int
+    rebuilt_ids: List[str]
+    skipped_ids: List[str]
+    errors: List[dict]
+
+
+class RebuildShotPromptResponse(BaseModel):
+    """重建单个镜头prompt响应"""
+    status: str
+    shot_id: str
+    prompt: str
+
+
+@router.post("/shots/batch-rebuild-prompts")
+async def batch_rebuild_consistency_prompts(
+    storyboard_id: str = Body(..., description="分镜ID"),
+    use_locked_assets: bool = Body(True, description="是否锁定资产"),
+    use_entity_refs: bool = Body(True, description="是否重新填充实体引用"),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """批量重新构建镜头的连贯性prompt"""
+    # 验证分镜所有权
+    result = await db.execute(
+        select(Storyboard).where(and_(Storyboard.id == storyboard_id, Storyboard.user_id == user_id))
+    )
+    storyboard = result.scalar_one_or_none()
+    if not storyboard:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+
+    # 获取所有镜头
+    shots_result = await db.execute(
+        select(Shot).where(and_(Shot.storyboard_id == storyboard_id, Shot.user_id == user_id))
+    )
+    shots = list(shots_result.scalars().all())
+
+    rebuilt = []
+    skipped = []
+    errors = []
+
+    for shot in shots:
+        try:
+            # 重新填充entity_refs
+            if use_entity_refs:
+                from app.services.consistency_context import auto_fill_shot_entity_refs
+                await auto_fill_shot_entity_refs(
+                    db, shot, storyboard.novel_id, storyboard.chapter_id
+                )
+
+            # 锁定资产
+            if use_locked_assets:
+                from app.services.asset_lock_service import AssetLockService
+                asset_service = AssetLockService()
+                await asset_service.lock_shot_assets(db, shot)
+
+            # 重新构建prompt
+            context = await build_consistency_prompt(
+                db=db,
+                user_id=user_id,
+                task="shot_video",
+                story_bible_id=storyboard.story_bible_id,
+                novel_id=storyboard.novel_id,
+                shot_id=shot.id
+            )
+            new_prompt = context.get("prompt", "")
+
+            if new_prompt:
+                shot.prompt = new_prompt
+
+            # 清除审查标记
+            if shot.extra_data and isinstance(shot.extra_data, dict):
+                shot.extra_data.pop("needs_review", None)
+                shot.extra_data.pop("review_reason", None)
+                shot.extra_data.pop("review_at", None)
+
+            rebuilt.append(str(shot.id))
+
+        except Exception as e:
+            errors.append({"shot_id": str(shot.id), "error": str(e)})
+            skipped.append(str(shot.id))
+
+    if rebuilt:
+        await db.commit()
+
+    return {
+        "status": "success",
+        "total_shots": len(shots),
+        "rebuilt_count": len(rebuilt),
+        "skipped_count": len(skipped),
+        "rebuilt_ids": rebuilt,
+        "skipped_ids": skipped,
+        "errors": errors
+    }
+
+
+@router.post("/{shot_id}/rebuild-prompt", response_model=RebuildShotPromptResponse)
+async def rebuild_shot_prompt(
+    shot_id: str,
+    use_locked_assets: bool = True,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """重新构建单个镜头的连贯性prompt"""
+    result = await db.execute(
+        select(Shot).where(and_(Shot.id == shot_id, Shot.user_id == user_id))
+    )
+    shot = result.scalar_one_or_none()
+    if not shot:
+        raise HTTPException(status_code=404, detail="镜头不存在")
+
+    # 获取storyboard
+    storyboard = await get_storyboard_for_user(db, shot.storyboard_id, user_id)
+
+    # 锁定资产
+    if use_locked_assets:
+        from app.services.asset_lock_service import AssetLockService
+        asset_service = AssetLockService()
+        await asset_service.lock_shot_assets(db, shot)
+
+    # 重新构建prompt
+    context = await build_consistency_prompt(
+        db=db,
+        user_id=user_id,
+        task="shot_video",
+        story_bible_id=storyboard.story_bible_id,
+        novel_id=storyboard.novel_id,
+        shot_id=shot.id
+    )
+    new_prompt = context.get("prompt", "")
+
+    shot.prompt = new_prompt
+
+    # 清除审查标记
+    if shot.extra_data and isinstance(shot.extra_data, dict):
+        shot.extra_data.pop("needs_review", None)
+        shot.extra_data.pop("review_reason", None)
+        shot.extra_data.pop("review_at", None)
+
+    await db.commit()
+
+    return {
+        "status": "success",
+        "shot_id": shot_id,
+        "prompt": new_prompt
+    }

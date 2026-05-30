@@ -1977,3 +1977,142 @@ async def compose_prompt(
         shot_id=request.shot_id,
         character_ids=[character.id for character in characters],
     )
+
+
+class PropagateChangeRequest(BaseModel):
+    """变更传播请求"""
+    change_type: str = Field(
+        ...,
+        description="变更类型: character_update, scene_update, prop_update, event_update, voice_update"
+    )
+    affected_entity_ids: List[str] = Field(default_factory=list, description="受影响的实体ID列表")
+
+
+class AffectedShotInfo(BaseModel):
+    """受影响的镜头信息"""
+    id: str
+    shot_number: int
+    review_reason: Optional[str] = None
+    review_at: Optional[str] = None
+
+
+class AffectedShotsResponse(BaseModel):
+    """受影响的镜头列表响应"""
+    shots: List[AffectedShotInfo]
+    total: int
+
+
+class PropagateChangeResponse(BaseModel):
+    """变更传播响应"""
+    status: str
+    affected_shots: int
+    change_type: str
+    affected_entity_ids: List[str]
+    action: str
+
+
+@router.post("/{story_bible_id}/propagate-change", response_model=PropagateChangeResponse)
+async def propagate_story_bible_change(
+    story_bible_id: str,
+    request: PropagateChangeRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """将Story Bible变更传播到相关镜头"""
+    # 1. 验证Story Bible所有权
+    story_bible = await _get_story_bible_or_404(db, story_bible_id, user_id)
+
+    # 2. 如果没有指定实体ID，从变更类型推断
+    affected_entity_ids = list(request.affected_entity_ids)
+    if not affected_entity_ids:
+        # 从character_rules/scene_rules/prop_rules/event_timeline获取所有实体
+        rules = list(story_bible.character_rules or [])
+        rules.extend(story_bible.scene_rules or [])
+        rules.extend(story_bible.prop_rules or [])
+        rules.extend(story_bible.event_timeline or [])
+        for rule in rules:
+            if rule.get("id"):
+                affected_entity_ids.append(rule["id"])
+
+    # 3. 确定变更类型对应的引用字段
+    entity_ref_field = "entity_refs"
+    change_type_mapping = {
+        "character_update": "characters",
+        "scene_update": "scenes",
+        "prop_update": "props",
+        "event_update": "events",
+        "voice_update": "voices",
+    }
+    ref_key = change_type_mapping.get(request.change_type, "entities")
+
+    # 4. 查找使用这些实体的所有镜头
+    affected_shots: List[Shot] = []
+    existing_shot_ids = set()
+
+    for entity_id in affected_entity_ids:
+        # 查询所有镜头并过滤
+        result = await db.execute(select(Shot).where(Shot.user_id == user_id))
+        for shot in result.scalars().all():
+            if shot.id in existing_shot_ids:
+                continue
+            # 检查shot.extra_data中的entity_refs
+            extra_data = shot.extra_data or {}
+            entity_refs = extra_data.get(entity_ref_field, {})
+            ref_list = entity_refs.get(ref_key, [])
+            if entity_id in ref_list:
+                affected_shots.append(shot)
+                existing_shot_ids.add(shot.id)
+
+    # 5. 标记这些镜头需要审查
+    now = utc_now()
+    for shot in affected_shots:
+        extra_data = shot.extra_data or {}
+        extra_data["needs_review"] = True
+        extra_data["review_reason"] = f"Story Bible {request.change_type} changed"
+        extra_data["review_at"] = now.isoformat()
+        shot.extra_data = extra_data
+        shot.updated_at = now
+
+    await db.commit()
+
+    return PropagateChangeResponse(
+        status="success",
+        affected_shots=len(affected_shots),
+        change_type=request.change_type,
+        affected_entity_ids=affected_entity_ids,
+        action="marked_for_review",
+    )
+
+
+@router.get("/{story_bible_id}/affected-shots", response_model=AffectedShotsResponse)
+async def get_affected_shots(
+    story_bible_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> Dict[str, Any]:
+    """获取Story Bible变更影响的镜头列表"""
+    # 验证Story Bible所有权
+    await _get_story_bible_or_404(db, story_bible_id, user_id)
+
+    # 查找所有需要审查的镜头
+    result = await db.execute(
+        select(Shot).where(
+            Shot.extra_data.contains({"needs_review": True}),
+            Shot.user_id == user_id,
+        )
+    )
+
+    shots: List[AffectedShotInfo] = []
+    for shot in result.scalars().all():
+        extra_data = shot.extra_data or {}
+        review_reason = extra_data.get("review_reason", "")
+        # 只返回Story Bible相关的镜头
+        if review_reason and review_reason.startswith("Story Bible"):
+            shots.append(AffectedShotInfo(
+                id=shot.id,
+                shot_number=shot.shot_number,
+                review_reason=review_reason,
+                review_at=extra_data.get("review_at"),
+            ))
+
+    return AffectedShotsResponse(shots=shots, total=len(shots))
