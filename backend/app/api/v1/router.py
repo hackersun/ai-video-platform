@@ -9,7 +9,7 @@ from app.api.v1.endpoints import (
     characters, dashboard, auth, novels, scripts, video,
     chapters, storyboards, shots, synthesis, tts,
     workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
-    media, subtitles, short_video, production_control,
+    media, subtitles, short_video, production_control, graph, batch,
 )
 
 api_router = APIRouter()
@@ -94,3 +94,9 @@ api_router.include_router(short_video.router, prefix="/short-video", tags=["短�
 
 # 生产控制API
 api_router.include_router(production_control.router, prefix="/production-control", tags=["生产控制"])
+
+# 角色关系图API
+api_router.include_router(graph.router, prefix="/graph", tags=["角色关系图"])
+
+# 批量任务API
+api_router.include_router(batch.router, prefix="/batch", tags=["批量任务"])

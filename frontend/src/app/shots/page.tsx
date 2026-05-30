@@ -41,7 +41,8 @@ import {
   ChevronDown,
   X,
   ImageIcon,
-  ShieldCheck
+  ShieldCheck,
+  RefreshCw
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -1256,6 +1257,16 @@ export default function ShotsPage() {
                           }`}>
                             {VIDEO_STATUS_LABELS[shot.video_status] || shot.video_status}
                           </span>
+                          {/* 质量状态徽章 */}
+                          {shot.extra_data?.quality_report?.score !== undefined && (
+                            <span className={`px-2 py-0.5 rounded text-xs ${
+                              shot.extra_data?.quality_report?.status === 'blocked' ? 'bg-red-500/20 text-red-400' :
+                              shot.extra_data?.quality_report?.status === 'warning' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-green-500/20 text-green-400'
+                            }`}>
+                              质量 {shot.extra_data.quality_report.score}分
+                            </span>
+                          )}
                           {shot.video_status === 'pending' && (
                             <>
                             <Button
@@ -1279,6 +1290,31 @@ export default function ShotsPage() {
                               </Button>
                             )}
                             </>
+                          )}
+                          {/* 视频失败重试按钮 */}
+                          {shot.video_status === 'failed' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 text-xs border-orange-500/50 text-orange-400 hover:bg-orange-500/10"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                try {
+                                  const result = await apiClient.retryShotVideo(shot.id);
+                                  if (result.success) {
+                                    toast({ title: '视频重试已提交', description: `第${result.attempts}次尝试`, type: 'success' });
+                                    loadShots();
+                                  } else {
+                                    toast({ title: '重试失败', description: result.message, type: 'error' });
+                                  }
+                                } catch (err: any) {
+                                  toast({ title: '重试失败', description: err.message || '请稍后重试', type: 'error' });
+                                }
+                              }}
+                            >
+                              <RefreshCw className="w-3 h-3 mr-1" />
+                              重试
+                            </Button>
                           )}
                         </div>
                       </div>

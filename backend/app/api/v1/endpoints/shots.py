@@ -868,3 +868,203 @@ async def generate_shot_image(
         asyncio.create_task(poll_and_update_shot_image(shot_id, task_id, user_id))
 
     return {"shot_id": shot_id, "task_id": task_id, "status": shot.image_status}
+
+
+# ============== 镜头质量检查 & 重试API ==============
+
+class ShotQualityReportResponse(BaseModel):
+    """增强版镜头质量报告响应"""
+    shot_id: str
+    shot_number: int
+    score: int
+    status: str
+    issues: List[dict]
+    blockers: List[str]
+    warnings: List[str]
+    suggestions: List[str]
+    summary: Optional[dict] = None
+    metadata: dict
+
+
+class RetryResponse(BaseModel):
+    """重试响应"""
+    shot_id: str
+    success: bool
+    job_id: Optional[str] = None
+    task_id: Optional[str] = None
+    attempts: int
+    message: str
+
+
+class StoryboardQualitySummaryResponse(BaseModel):
+    """分镜质量汇总响应"""
+    storyboard_id: str
+    storyboard_title: Optional[str] = None
+    total_shots: int
+    avg_score: float
+    shots_by_status: dict
+    error_count: int
+    warning_count: int
+    ready_count: int
+    blocked_shots: List[dict]
+    warning_shots: List[dict]
+
+
+@router.get("/{shot_id}/quality-report", response_model=ShotQualityReportResponse)
+async def get_shot_quality_report(
+    shot_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    获取增强版镜头质量报告（使用新质量检查服务）
+
+    返回详细的质量问题和评分
+    """
+    from app.services.shot_quality_service import ShotQualityService
+
+    result = await db.execute(
+        select(Shot).where(and_(Shot.id == shot_id, Shot.user_id == user_id))
+    )
+    shot = result.scalar_one_or_none()
+    if not shot:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
+
+    service = ShotQualityService()
+    report = service.check_shot_quality(shot)
+
+    return ShotQualityReportResponse(
+        shot_id=str(shot.id),
+        shot_number=shot.shot_number or 1,
+        score=report.score,
+        status=report.status,
+        issues=[issue.to_dict() for issue in report.issues],
+        blockers=report.blockers,
+        warnings=report.warnings,
+        suggestions=report.suggestions,
+        summary=report.summary,
+        metadata=report.metadata,
+    )
+
+
+@router.post("/{shot_id}/retry", response_model=RetryResponse)
+async def retry_shot_video(
+    shot_id: str,
+    max_attempts: Optional[int] = Field(None, description="最大重试次数，默认3"),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    重试失败的视频生成
+
+    最多重试3次（可配置），通过 VideoGenerateRequest 提交新任务
+    """
+    from app.services.shot_quality_service import ShotQualityService
+    from app.api.v1.endpoints.video import VideoGenerateRequest, generate_video
+
+    result = await db.execute(
+        select(Shot).where(and_(Shot.id == shot_id, Shot.user_id == user_id))
+    )
+    shot = result.scalar_one_or_none()
+    if not shot:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
+
+    service = ShotQualityService(max_retry=max_attempts or 3)
+
+    if shot.video_status == "succeeded":
+        return RetryResponse(
+            shot_id=shot_id,
+            success=True,
+            job_id=None,
+            task_id=None,
+            attempts=0,
+            message="视频已生成成功，无需重试"
+        )
+
+    extra_data = shot.extra_data if isinstance(shot.extra_data, dict) else {}
+    retry_count = (extra_data.get("video_retry_count") or 0)
+
+    if retry_count >= (max_attempts or service.max_retry):
+        return RetryResponse(
+            shot_id=shot_id,
+            success=False,
+            job_id=None,
+            task_id=None,
+            attempts=retry_count,
+            message=f"已达最大重试次数({max_attempts or service.max_retry})，请手动检查问题"
+        )
+
+    prompt = shot.prompt or shot.visual_description or "shot video"
+    request = VideoGenerateRequest(
+        prompt=prompt,
+        duration=shot.duration or 4,
+        shot_id=shot_id,
+        storyboard_id=shot.storyboard_id,
+        image_url=shot.image_url,
+        use_consistency_context=True,
+    )
+
+    try:
+        response = await generate_video(request, db, user_id)
+
+        extra_data["video_retry_count"] = retry_count + 1
+        extra_data["retry_attempt"] = retry_count + 1
+        shot.extra_data = extra_data
+        shot.video_status = "pending"
+        await db.commit()
+
+        return RetryResponse(
+            shot_id=shot_id,
+            success=True,
+            job_id=response.job_id,
+            task_id=response.task_id,
+            attempts=retry_count + 1,
+            message="视频重试任务已提交"
+        )
+    except Exception as e:
+        return RetryResponse(
+            shot_id=shot_id,
+            success=False,
+            job_id=None,
+            task_id=None,
+            attempts=retry_count,
+            message=f"视频重试失败: {str(e)}"
+        )
+
+
+@router.get("/storyboard/{storyboard_id}/quality-summary", response_model=StoryboardQualitySummaryResponse)
+async def get_storyboard_quality_summary(
+    storyboard_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    获取分镜质量汇总
+
+    遍历所有镜头，计算平均分和各类问题统计
+    """
+    from app.services.shot_quality_service import build_storyboard_quality_summary
+
+    storyboard = await get_storyboard_for_user(db, storyboard_id, user_id)
+
+    result = await db.execute(
+        select(Shot)
+        .where(and_(Shot.storyboard_id == storyboard_id, Shot.user_id == user_id))
+        .order_by(Shot.shot_number)
+    )
+    shots = result.scalars().all()
+
+    summary = build_storyboard_quality_summary(storyboard_id, shots)
+
+    return StoryboardQualitySummaryResponse(
+        storyboard_id=storyboard_id,
+        storyboard_title=storyboard.title,
+        total_shots=summary.total_shots,
+        avg_score=summary.avg_score,
+        shots_by_status=summary.shots_by_status,
+        error_count=summary.error_count,
+        warning_count=summary.warning_count,
+        ready_count=summary.ready_count,
+        blocked_shots=summary.blocked_shots,
+        warning_shots=summary.warning_shots,
+    )

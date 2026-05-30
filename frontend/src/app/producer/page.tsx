@@ -45,6 +45,13 @@ import {
   Zap,
   FileText as FileTextIcon,
   Clapperboard,
+  Image as ImageIcon2,
+  Volume2,
+  Film as FilmIcon2,
+  Pause,
+  Play,
+  RotateCw,
+  X,
 } from 'lucide-react';
 
 type WorkflowItem = {
@@ -195,6 +202,15 @@ function ProducerCenterContent() {
   const [productionStatus, setProductionStatus] = useState<any>(null);
   const [generationMode, setGenerationMode] = useState<'script' | 'storyboard' | 'all' | null>(null);
   const [generationProgress, setGenerationProgress] = useState<string>('');
+
+  // Batch operations state
+  const [shots, setShots] = useState<any[]>([]);
+  const [selectedShotIds, setSelectedShotIds] = useState<Set<string>>(new Set());
+  const [batchJobs, setBatchJobs] = useState<any[]>([]);
+  const [activeBatchJob, setActiveBatchJob] = useState<any>(null);
+  const [batchJobItems, setBatchJobItems] = useState<any[]>([]);
+  const [loadingShots, setLoadingShots] = useState(false);
+  const [batchModalOpen, setBatchModalOpen] = useState(false);
 
   const selectedWorkflow = useMemo(
     () => workflows.find((item) => item.workflow_id === workflowId) || null,
@@ -441,6 +457,19 @@ function ProducerCenterContent() {
     }
   }, [filteredWorkflows, searchParams, selectedNovelId, workflowId]);
 
+  // Load batch jobs on mount
+  useEffect(() => {
+    loadBatchJobs();
+  }, [loadBatchJobs]);
+
+  // Auto-load shots when storyboard is available
+  useEffect(() => {
+    const storyboardId = workflowStatus?.storyboard_id || productionStatus?.storyboard_id;
+    if (storyboardId) {
+      loadShotsForStoryboard(storyboardId);
+    }
+  }, [workflowStatus?.storyboard_id, productionStatus?.storyboard_id, loadShotsForStoryboard]);
+
   const workflowMetrics = useMemo(() => {
     const videoCount = workflowStatus?.video_jobs?.length || selectedWorkflow?.video_job_ids?.length || 0;
     const ttsCount = workflowStatus?.tts_jobs?.length || selectedWorkflow?.tts_job_ids?.length || 0;
@@ -562,6 +591,144 @@ function ProducerCenterContent() {
     } finally {
       setLoadingAction('');
     }
+  };
+
+  // ========== Batch Operations ==========
+
+  const loadShotsForStoryboard = useCallback(async (storyboardId: string) => {
+    if (!storyboardId) {
+      setShots([]);
+      return;
+    }
+    setLoadingShots(true);
+    try {
+      const data = await apiClient.getShots(storyboardId);
+      setShots(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error('加载镜头失败:', err);
+      setShots([]);
+    } finally {
+      setLoadingShots(false);
+    }
+  }, []);
+
+  const loadBatchJobs = useCallback(async () => {
+    try {
+      const data = await apiClient.getBatchJobs({ limit: 10 });
+      const list = data.jobs || [];
+      setBatchJobs(list);
+    } catch (err: any) {
+      console.error('加载批量任务失败:', err);
+    }
+  }, []);
+
+  const loadBatchJobProgress = useCallback(async (jobId: string) => {
+    try {
+      const progress = await apiClient.getBatchJobProgress(jobId);
+      setActiveBatchJob(progress);
+      return progress;
+    } catch (err: any) {
+      console.error('加载批量任务进度失败:', err);
+      return null;
+    }
+  }, []);
+
+  const createBatchJob = async (jobType: 'image' | 'tts' | 'video') => {
+    if (selectedShotIds.size === 0) {
+      toast({ title: '请先选择镜头', description: '需要至少选择一个镜头才能创建批量任务。', type: 'info' });
+      return;
+    }
+    const storyboardId = workflowStatus?.storyboard_id || productionStatus?.storyboard_id;
+    if (!storyboardId) {
+      toast({ title: '请先选择有分镜的工作流', description: '需要关联分镜才能创建批量任务。', type: 'info' });
+      return;
+    }
+    setLoadingAction(`batch-${jobType}`);
+    setError(null);
+    try {
+      const result = await apiClient.createBatchJob({
+        job_type: jobType,
+        title: `批量生成${jobType === 'image' ? '参考图' : jobType === 'tts' ? '配音' : '视频'} (${selectedShotIds.size}个)`,
+        shot_ids: Array.from(selectedShotIds),
+        storyboard_id: storyboardId,
+        workflow_id: workflowId || undefined,
+      });
+      setActiveBatchJob(result);
+      await loadBatchJobs();
+      toast({
+        title: '批量任务已创建',
+        description: `已创建 ${selectedShotIds.size} 个${jobType === 'image' ? '参考图' : jobType === 'tts' ? '配音' : '视频'}生成任务`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      const message = err.message || '创建批量任务失败';
+      setError(message);
+      toast({ title: '创建失败', description: message, type: 'error' });
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
+  const pauseBatchJob = async () => {
+    if (!activeBatchJob) return;
+    setLoadingAction('pause-batch');
+    try {
+      await apiClient.pauseBatchJob(activeBatchJob.job_id);
+      await loadBatchJobProgress(activeBatchJob.job_id);
+      toast({ title: '已暂停批量任务', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '暂停失败', description: err.message, type: 'error' });
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
+  const resumeBatchJob = async () => {
+    if (!activeBatchJob) return;
+    setLoadingAction('resume-batch');
+    try {
+      await apiClient.resumeBatchJob(activeBatchJob.job_id);
+      await loadBatchJobProgress(activeBatchJob.job_id);
+      toast({ title: '已恢复批量任务', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '恢复失败', description: err.message, type: 'error' });
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
+  const retryFailedBatchJob = async () => {
+    if (!activeBatchJob) return;
+    setLoadingAction('retry-batch');
+    try {
+      await apiClient.retryFailedBatchJob(activeBatchJob.job_id);
+      await loadBatchJobProgress(activeBatchJob.job_id);
+      toast({ title: '已重试失败项', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '重试失败', description: err.message, type: 'error' });
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
+  const toggleShotSelection = (shotId: string) => {
+    setSelectedShotIds((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(shotId)) {
+        newSet.delete(shotId);
+      } else {
+        newSet.add(shotId);
+      }
+      return newSet;
+    });
+  };
+
+  const selectAllShots = () => {
+    setSelectedShotIds(new Set(shots.map((s) => s.id)));
+  };
+
+  const deselectAllShots = () => {
+    setSelectedShotIds(new Set());
   };
 
   const novelOptions = novels.map((item) => ({
@@ -1376,6 +1543,213 @@ function ProducerCenterContent() {
             ) : (
               <div className="rounded-lg border border-white/10 bg-black/20 p-4 text-sm text-white/60">
                 这里会显示 AI 制片检查、资产定稿、媒体巡检和质量检查的执行结果。先选择工作流，再点击上面的动作按钮。
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Batch Operations Panel */}
+        <Card className="border-white/10 bg-white/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-white">
+              <Layers3 className="h-4 w-4 text-cyan-300" />
+              批量操作
+              {selectedShotIds.size > 0 && (
+                <Badge variant="outline" className="border-cyan-500/25 text-cyan-300 ml-2">
+                  已选 {selectedShotIds.size} 个镜头
+                </Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Shot Selection Section */}
+            <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-sm font-medium text-white">选择镜头</div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" className="text-cyan-400" onClick={selectAllShots} disabled={shots.length === 0}>
+                    全选
+                  </Button>
+                  <Button size="sm" variant="ghost" className="text-white/60" onClick={deselectAllShots} disabled={selectedShotIds.size === 0}>
+                    取消
+                  </Button>
+                  {(workflowStatus?.storyboard_id || productionStatus?.storyboard_id) && (
+                    <Button size="sm" variant="outline" className="border-white/20" onClick={() => loadShotsForStoryboard(workflowStatus?.storyboard_id || productionStatus?.storyboard_id)} disabled={loadingShots}>
+                      {loadingShots ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      加载镜头
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {shots.length > 0 ? (
+                <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 max-h-48 overflow-y-auto">
+                  {shots.map((shot) => (
+                    <div
+                      key={shot.id}
+                      className={`relative rounded-lg border p-2 cursor-pointer transition-all ${
+                        selectedShotIds.has(shot.id)
+                          ? 'border-cyan-500 bg-cyan-500/10'
+                          : 'border-white/10 bg-white/5 hover:border-white/30'
+                      }`}
+                      onClick={() => toggleShotSelection(shot.id)}
+                    >
+                      {shot.image_url && (
+                        <img src={toMediaUrl(shot.image_url)} alt={`镜头 ${shot.shot_number}`} className="w-full h-16 object-cover rounded mb-1" />
+                      )}
+                      {!shot.image_url && (
+                        <div className="w-full h-16 bg-white/10 rounded mb-1 flex items-center justify-center">
+                          <Film className="h-6 w-6 text-white/30" />
+                        </div>
+                      )}
+                      <div className="text-xs text-center text-white/70">镜头 {shot.shot_number}</div>
+                      {selectedShotIds.has(shot.id) && (
+                        <div className="absolute top-1 right-1 w-5 h-5 bg-cyan-500 rounded-full flex items-center justify-center">
+                          <Check className="h-3 w-3 text-white" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-sm text-white/50 py-4 text-center">
+                  {loadingShots ? '加载中...' : '点击"加载镜头"获取分镜下的镜头列表'}
+                </div>
+              )}
+            </div>
+
+            {/* Batch Action Buttons */}
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="outline"
+                className="border-cyan-500/25 text-cyan-300 hover:bg-cyan-500/10"
+                onClick={() => createBatchJob('image')}
+                disabled={selectedShotIds.size === 0 || loadingAction?.startsWith('batch-')}
+              >
+                {loadingAction === 'batch-image' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ImageIcon2 className="mr-2 h-4 w-4" />}
+                批量生成参考图
+              </Button>
+              <Button
+                variant="outline"
+                className="border-violet-500/25 text-violet-300 hover:bg-violet-500/10"
+                onClick={() => createBatchJob('tts')}
+                disabled={selectedShotIds.size === 0 || loadingAction?.startsWith('batch-')}
+              >
+                {loadingAction === 'batch-tts' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Volume2 className="mr-2 h-4 w-4" />}
+                批量生成配音
+              </Button>
+              <Button
+                className="bg-gradient-to-r from-cyan-600 to-violet-600 hover:from-cyan-500 hover:to-violet-500"
+                onClick={() => createBatchJob('video')}
+                disabled={selectedShotIds.size === 0 || loadingAction?.startsWith('batch-')}
+              >
+                {loadingAction === 'batch-video' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FilmIcon2 className="mr-2 h-4 w-4" />}
+                批量生成视频
+              </Button>
+            </div>
+
+            {/* Batch Job Progress */}
+            {activeBatchJob && (
+              <div className="rounded-lg border border-cyan-500/25 bg-cyan-500/5 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-medium text-white">批量任务进度</div>
+                  <div className="flex gap-2">
+                    {activeBatchJob.status === 'running' && (
+                      <Button size="sm" variant="outline" className="border-amber-500/25 text-amber-300" onClick={pauseBatchJob} disabled={loadingAction === 'pause-batch'}>
+                        {loadingAction === 'pause-batch' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
+                        暂停
+                      </Button>
+                    )}
+                    {activeBatchJob.status === 'paused' && (
+                      <Button size="sm" variant="outline" className="border-emerald-500/25 text-emerald-300" onClick={resumeBatchJob} disabled={loadingAction === 'resume-batch'}>
+                        {loadingAction === 'resume-batch' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                        恢复
+                      </Button>
+                    )}
+                    {activeBatchJob.failed_count > 0 && (
+                      <Button size="sm" variant="outline" className="border-red-500/25 text-red-300" onClick={retryFailedBatchJob} disabled={loadingAction === 'retry-batch'}>
+                        {loadingAction === 'retry-batch' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+                        重试失败
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-white/70">状态</span>
+                    <Badge variant="outline" className={
+                      activeBatchJob.status === 'completed' ? 'border-emerald-500/25 text-emerald-300' :
+                      activeBatchJob.status === 'failed' ? 'border-red-500/25 text-red-300' :
+                      activeBatchJob.status === 'paused' ? 'border-amber-500/25 text-amber-300' :
+                      'border-cyan-500/25 text-cyan-300'
+                    }>
+                      {activeBatchJob.status === 'completed' ? '已完成' :
+                       activeBatchJob.status === 'failed' ? '失败' :
+                       activeBatchJob.status === 'paused' ? '已暂停' :
+                       activeBatchJob.status === 'running' ? '进行中' : '待处理'}
+                    </Badge>
+                  </div>
+                  <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-cyan-500 to-violet-500 transition-all duration-300"
+                      style={{ width: `${activeBatchJob.progress_percent || 0}%` }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                    <div className="rounded bg-black/20 p-2">
+                      <div className="text-lg font-bold text-white">{activeBatchJob.succeeded_count || 0}</div>
+                      <div className="text-white/50">成功</div>
+                    </div>
+                    <div className="rounded bg-black/20 p-2">
+                      <div className="text-lg font-bold text-amber-300">{activeBatchJob.pending_count || 0}</div>
+                      <div className="text-white/50">待处理</div>
+                    </div>
+                    <div className="rounded bg-black/20 p-2">
+                      <div className="text-lg font-bold text-red-300">{activeBatchJob.failed_count || 0}</div>
+                      <div className="text-white/50">失败</div>
+                    </div>
+                    <div className="rounded bg-black/20 p-2">
+                      <div className="text-lg font-bold text-white/50">{activeBatchJob.skipped_count || 0}</div>
+                      <div className="text-white/50">跳过</div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-white/50 text-center">
+                    {activeBatchJob.message}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Recent Batch Jobs */}
+            {batchJobs.length > 0 && (
+              <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+                <div className="text-sm font-medium text-white mb-3">最近批量任务</div>
+                <div className="space-y-2">
+                  {batchJobs.slice(0, 5).map((job) => (
+                    <div
+                      key={job.id}
+                      className="flex items-center justify-between rounded border border-white/10 bg-white/5 p-3 cursor-pointer hover:bg-white/10"
+                      onClick={() => loadBatchJobProgress(job.id)}
+                    >
+                      <div>
+                        <div className="text-sm text-white">{job.title || `批量${job.job_type}`}</div>
+                        <div className="text-xs text-white/50">{job.total_count} 项</div>
+                      </div>
+                      <Badge variant="outline" className={
+                        job.status === 'completed' ? 'border-emerald-500/25 text-emerald-300' :
+                        job.status === 'failed' ? 'border-red-500/25 text-red-300' :
+                        job.status === 'paused' ? 'border-amber-500/25 text-amber-300' :
+                        job.status === 'running' ? 'border-cyan-500/25 text-cyan-300' :
+                        'border-white/10 text-white/50'
+                      }>
+                        {job.status === 'completed' ? '完成' :
+                         job.status === 'failed' ? '失败' :
+                         job.status === 'paused' ? '暂停' :
+                         job.status === 'running' ? '进行' :
+                         job.status === 'pending' ? '待处理' : job.status}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>

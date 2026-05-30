@@ -1230,6 +1230,21 @@ class ApiClient {
     });
   }
 
+  async getShotQualityReport(shotId: string) {
+    return this.request<any>(`/shots/${shotId}/quality-report`);
+  }
+
+  async retryShotVideo(shotId: string, maxAttempts?: number) {
+    const params = maxAttempts ? `?max_attempts=${maxAttempts}` : '';
+    return this.request<any>(`/shots/${shotId}/retry${params}`, {
+      method: 'POST',
+    });
+  }
+
+  async getStoryboardQualitySummary(storyboardId: string) {
+    return this.request<any>(`/shots/storyboard/${storyboardId}/quality-summary`);
+  }
+
   // ========== Production Control 相关 ==========
 
   async getNovelProductionPack(novelId: string, params: {
@@ -1685,6 +1700,64 @@ class ApiClient {
     });
   }
 
+  // ========== Graph / Character Relations 相关 ==========
+
+  async getNovelGraph(novelId: string) {
+    return this.request<any>(`/graph/novel/${novelId}`);
+  }
+
+  async getCharacterRelations(characterId: string) {
+    return this.request<any>(`/graph/character/${characterId}`);
+  }
+
+  async createRelation(data: {
+    from_entity_id: string;
+    from_entity_type?: string;
+    to_entity_id: string;
+    to_entity_type?: string;
+    relation_type: string;
+    description?: string;
+  }) {
+    return this.request<any>('/graph/relation', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteRelation(fromEntityId: string, toEntityId: string, relationType: string) {
+    return this.request<any>(`/graph/relation?from_entity_id=${fromEntityId}&to_entity_id=${toEntityId}&relation_type=${relationType}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getPropTrajectory(propId: string) {
+    return this.request<any[]>(`/graph/prop/${propId}/trajectory`);
+  }
+
+  async getNovelTimeline(novelId: string) {
+    return this.request<any[]>(`/graph/novel/${novelId}/timeline`);
+  }
+
+  async getRelationTypes() {
+    return this.request<any>('/graph/relation-types');
+  }
+
+  async getGraphStatus() {
+    return this.request<any>('/graph/status');
+  }
+
+  async syncCharacterToGraph(characterId: string) {
+    return this.request<any>(`/graph/character/${characterId}/sync`, {
+      method: 'POST',
+    });
+  }
+
+  async buildNovelGraph(novelId: string) {
+    return this.request<any>(`/graph/novel/${novelId}/build-graph`, {
+      method: 'POST',
+    });
+  }
+
   // ========== Story Bible 相关 ==========
 
   async getStoryBibles(params?: { novel_id?: string; project_id?: string }) {
@@ -1998,6 +2071,104 @@ class ApiClient {
    */
   async getCurrentUser() {
     return this.request<any>('/auth/me');
+  }
+
+  // ========== 批量任务相关 ==========
+
+  async createBatchJob(params: {
+    job_type: 'image' | 'tts' | 'video';
+    title?: string;
+    shot_ids: string[];
+    storyboard_id?: string;
+    workflow_id?: string;
+    extra_data?: Record<string, any>;
+  }) {
+    return this.request<any>('/batch/create', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async getBatchJobs(params?: {
+    job_type?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const searchParams = new URLSearchParams();
+    if (params?.job_type) searchParams.set('job_type', params.job_type);
+    if (params?.status) searchParams.set('status', params.status);
+    if (params?.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params?.offset !== undefined) searchParams.set('offset', String(params.offset));
+    const qs = searchParams.toString();
+    return this.request<any>(`/batch/list${qs ? `?${qs}` : ''}`);
+  }
+
+  async getBatchJob(jobId: string) {
+    return this.request<any>(`/batch/${jobId}`);
+  }
+
+  async getBatchJobProgress(jobId: string) {
+    return this.request<any>(`/batch/${jobId}/progress`);
+  }
+
+  async getBatchJobItems(jobId: string, status?: string) {
+    const searchParams = new URLSearchParams();
+    if (status) searchParams.set('status', status);
+    const qs = searchParams.toString();
+    return this.request<any>(`/batch/${jobId}/items${qs ? `?${qs}` : ''}`);
+  }
+
+  async startBatchJob(jobId: string) {
+    return this.request<any>(`/batch/${jobId}/start`, {
+      method: 'POST',
+    });
+  }
+
+  async pauseBatchJob(jobId: string) {
+    return this.request<any>(`/batch/${jobId}/pause`, {
+      method: 'POST',
+    });
+  }
+
+  async resumeBatchJob(jobId: string) {
+    return this.request<any>(`/batch/${jobId}/resume`, {
+      method: 'POST',
+    });
+  }
+
+  async retryFailedBatchJob(jobId: string) {
+    return this.request<any>(`/batch/${jobId}/retry-failed`, {
+      method: 'POST',
+    });
+  }
+
+  async skipBatchItem(jobId: string, itemId: string) {
+    return this.request<any>(`/batch/${jobId}/skip/${itemId}`, {
+      method: 'POST',
+    });
+  }
+
+  async updateBatchItem(jobId: string, itemId: string, data: {
+    status?: string;
+    image_url?: string;
+    video_url?: string;
+    audio_url?: string;
+    image_job_id?: string;
+    video_job_id?: string;
+    tts_job_id?: string;
+    error_message?: string;
+  }) {
+    return this.request<any>(`/batch/${jobId}/items/${itemId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteBatchJob(jobId: string) {
+    return this.request<void>(`/batch/${jobId}`, {
+      method: 'DELETE',
+    });
   }
 }
 

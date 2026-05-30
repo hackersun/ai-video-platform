@@ -712,6 +712,7 @@ def init_db():
     from app.models.story_entity import StoryEntity
     from app.models.media_generation_job import MediaGenerationJob
     from app.models.subtitle import SubtitleTrack, SubtitleSegment
+    from app.models.batch_job import BatchJob, BatchJobItem
 
     Base.metadata.create_all(bind=sync_engine)
     print("✅ 数据库表创建成功！")
