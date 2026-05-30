@@ -8,10 +8,16 @@ from datetime import datetime, timedelta
 from uuid import uuid4
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Path as PathParam
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc, or_, case
 from pydantic import BaseModel
+from app.core.database import get_db
+from app.core.security import get_current_user_id
+from app.models import Shot, Storyboard, ImageJob, VideoJob, TTSJob, SynthesisJob
+
+
+router = APIRouter(prefix="/costs", tags=["成本预算"])
 
 
 # ============== 响应模型 ==============
