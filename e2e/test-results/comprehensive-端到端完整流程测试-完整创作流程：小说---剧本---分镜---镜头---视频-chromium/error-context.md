@@ -1,0 +1,103 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - heading "剧本管理" [level=1] [ref=e65]
+            - paragraph [ref=e66]: 管理视频剧本和分镜脚本
+          - generic [ref=e67]:
+            - button "AI生成剧本" [ref=e68] [cursor=pointer]:
+              - img [ref=e69]
+              - text: AI生成剧本
+            - button "创建剧本" [ref=e71] [cursor=pointer]:
+              - img [ref=e72]
+              - text: 创建剧本
+        - generic [ref=e73]:
+          - generic [ref=e75]:
+            - generic [ref=e76]: "0"
+            - generic [ref=e77]: 全部剧本
+          - generic [ref=e79]:
+            - generic [ref=e80]: "0"
+            - generic [ref=e81]: 草稿
+          - generic [ref=e83]:
+            - generic [ref=e84]: "0"
+            - generic [ref=e85]: 连载中
+          - generic [ref=e87]:
+            - generic [ref=e88]: "0"
+            - generic [ref=e89]: 已完成
+        - generic [ref=e93]:
+          - img [ref=e94]
+          - textbox "搜索剧本标题或描述..." [active] [ref=e97]: E2E 测试剧本
+        - generic [ref=e99]:
+          - img [ref=e100]
+          - generic [ref=e102]: 加载失败，请检查后端服务
+          - button "重试" [ref=e103] [cursor=pointer]
+      - generic [ref=e105]:
+        - generic [ref=e106]:
+          - heading "创建剧本" [level=3] [ref=e107]
+          - button [ref=e108] [cursor=pointer]:
+            - img [ref=e109]
+        - generic [ref=e112]:
+          - generic [ref=e113]:
+            - generic [ref=e114]: 剧本标题 *
+            - textbox "例如：第一章：星际启航" [ref=e115]
+          - generic [ref=e116]:
+            - generic [ref=e117]: 剧本描述
+            - textbox "简要描述剧本内容..." [ref=e118]
+          - generic [ref=e119]:
+            - generic [ref=e120]:
+              - generic [ref=e121]: 题材
+              - textbox "例如：仙侠" [ref=e122]
+            - generic [ref=e123]:
+              - generic [ref=e124]: 风格
+              - textbox "例如：热血" [ref=e125]
+          - generic [ref=e126]:
+            - button "取消" [ref=e127] [cursor=pointer]
+            - button "保存剧本" [ref=e128] [cursor=pointer]:
+              - img [ref=e129]
+              - text: 保存剧本
+  - alert [ref=e133]
+```

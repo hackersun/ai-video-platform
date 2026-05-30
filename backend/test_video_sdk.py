@@ -4,12 +4,17 @@
 import os
 import time
 
+import pytest
 from volcenginesdkarkruntime import Ark
 
 # 初始化客户端
+api_key = os.getenv("VOLCENGINE_API_KEY")
+if not api_key:
+    pytest.skip("VOLCENGINE_API_KEY 未设置，跳过火山引擎真实 SDK 测试", allow_module_level=True)
+
 client = Ark(
     base_url="https://ark.cn-beijing.volces.com/api/v3",
-    api_key="be8feb9d-6b08-406e-8447-b22b87cd907a",
+    api_key=api_key,
 )
 
 def test_video_generation():

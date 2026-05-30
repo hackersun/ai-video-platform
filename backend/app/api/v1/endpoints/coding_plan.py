@@ -9,8 +9,11 @@ API格式: Anthropic 兼容 (coding.dashscope.aliyuncs.com/apps/anthropic)
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.qianlian_service import QianlianService, create_qianlian_service
+from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.database import get_db
+from app.core.security import get_current_user_id
 
 router = APIRouter(tags=["Coding Plan"])
 
@@ -20,10 +23,11 @@ router = APIRouter(tags=["Coding Plan"])
 class CodingPlanRequest(BaseModel):
     """代码规划请求"""
     requirement: str = Field(..., description="需求描述")
-    model: str = Field("qwen3.5-plus", description="模型ID，默认 qwen3.5-plus（百炼）")
+    model: Optional[str] = Field(None, description="模型ID，不传则使用用户默认文本模型")
+    model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
     context: Optional[str] = Field(None, description="额外上下文")
     language: Optional[str] = Field(None, description="目标编程语言")
-    api_key: str = Field(..., description="百炼 API Key")
+    api_key: Optional[str] = Field(None, description="兼容旧字段：百炼 API Key")
 
 
 class CodingPlanResponse(BaseModel):
@@ -37,8 +41,9 @@ class CodingPlanResponse(BaseModel):
 class NovelWithPlanRequest(BaseModel):
     """带规划的小说生成请求"""
     prompt: str = Field(..., description="小说主题")
-    model: str = Field("qwen3.5-plus", description="生成模型，默认使用 qwen3.5-plus（百炼）")
-    api_key: str = Field(..., description="百炼 API Key")
+    model: Optional[str] = Field(None, description="生成模型，不传则使用用户默认文本模型")
+    model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
+    api_key: Optional[str] = Field(None, description="兼容旧字段：百炼 API Key")
 
 
 class NovelWithPlanResponse(BaseModel):
@@ -53,8 +58,9 @@ class TechnicalStoryboardRequest(BaseModel):
     """技术分镜请求"""
     scene_description: str = Field(..., description="场景描述")
     technical_requirements: Optional[str] = Field(None, description="技术要求")
-    model: str = Field("qwen3.5-plus", description="模型ID，默认 qwen3.5-plus（百炼）")
-    api_key: str = Field(..., description="百炼 API Key")
+    model: Optional[str] = Field(None, description="模型ID，不传则使用用户默认文本模型")
+    model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
+    api_key: Optional[str] = Field(None, description="兼容旧字段：百炼 API Key")
 
 
 class TechnicalStoryboardResponse(BaseModel):
@@ -70,7 +76,8 @@ class AutoGenerateRequest(BaseModel):
     user_input: str = Field(..., description="用户输入")
     generate_type: str = Field(..., description="生成类型：novel/storyboard/code")
     context: Optional[List[dict]] = Field(None, description="对话上下文")
-    api_key: str = Field(..., description="百炼 API Key")
+    model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
+    api_key: Optional[str] = Field(None, description="兼容旧字段：百炼 API Key")
 
 
 class AutoGenerateResponse(BaseModel):
@@ -84,19 +91,40 @@ class AutoGenerateResponse(BaseModel):
 
 # ============== API端点 ==============
 
+async def resolve_text_service(
+    request_api_key: Optional[str],
+    request_model: Optional[str],
+    model_config_id: Optional[str],
+    db: AsyncSession,
+    user_id: str,
+) -> tuple[object, str]:
+    if request_api_key:
+        return create_text_generation_service(request_api_key, "qianlian", None), request_model or "qwen3.5-plus"
+    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
+        db,
+        user_id,
+        config_id=model_config_id,
+    )
+    service = create_text_generation_service(api_key or "", provider_name or "", base_url)
+    return service, request_model or model_id or "qwen-plus"
+
 @router.post("/generate", response_model=CodingPlanResponse)
-async def generate_coding_plan(request: CodingPlanRequest):
+async def generate_coding_plan(
+    request: CodingPlanRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     """
     生成 Coding Plan（代码规划）
     
     使用百炼 qwen3.5-plus 进行技术方案设计
     """
     try:
-        service = await create_qianlian_service(request.api_key)
+        service, model = await resolve_text_service(request.api_key, request.model, request.model_config_id, db, user_id)
         
         response = await service.generate_coding_plan(
             requirement=request.requirement,
-            model=request.model,
+            model=model,
             context=request.context,
             language=request.language
         )
@@ -105,18 +133,20 @@ async def generate_coding_plan(request: CodingPlanRequest):
         usage = response.get("usage", {})
         
         cost = service.calculate_request_cost(
-            request.model,
+            model,
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0)
         )
         
         return CodingPlanResponse(
             plan=plan,
-            model=request.model,
+            model=model,
             usage=usage,
             cost=cost
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -125,7 +155,11 @@ async def generate_coding_plan(request: CodingPlanRequest):
 
 
 @router.post("/novel", response_model=NovelWithPlanResponse)
-async def generate_novel_with_plan(request: NovelWithPlanRequest):
+async def generate_novel_with_plan(
+    request: NovelWithPlanRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     """
     使用 Coding Plan 方式生成小说
     
@@ -133,11 +167,11 @@ async def generate_novel_with_plan(request: NovelWithPlanRequest):
     使用百炼 qwen3.5-plus 模型
     """
     try:
-        service = await create_qianlian_service(request.api_key)
+        service, model = await resolve_text_service(request.api_key, request.model, request.model_config_id, db, user_id)
         
         response = await service.generate_novel_with_plan(
             prompt=request.prompt,
-            model=request.model  # qwen3.5-plus
+            model=model
         )
         
         plan = response["plan"]
@@ -146,7 +180,7 @@ async def generate_novel_with_plan(request: NovelWithPlanRequest):
         
         # 计算总成本
         cost = service.calculate_request_cost(
-            request.model,
+            model,
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0)
         )
@@ -158,6 +192,8 @@ async def generate_novel_with_plan(request: NovelWithPlanRequest):
             cost=cost
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -166,7 +202,11 @@ async def generate_novel_with_plan(request: NovelWithPlanRequest):
 
 
 @router.post("/storyboard", response_model=TechnicalStoryboardResponse)
-async def generate_technical_storyboard(request: TechnicalStoryboardRequest):
+async def generate_technical_storyboard(
+    request: TechnicalStoryboardRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     """
     生成技术分镜方案
     
@@ -174,30 +214,32 @@ async def generate_technical_storyboard(request: TechnicalStoryboardRequest):
     使用百炼 qwen3.5-plus 模型
     """
     try:
-        service = await create_qianlian_service(request.api_key)
+        service, model = await resolve_text_service(request.api_key, request.model, request.model_config_id, db, user_id)
         
         response = await service.generate_technical_storyboard(
             scene_description=request.scene_description,
             technical_requirements=request.technical_requirements,
-            model=request.model
+            model=model
         )
         
         storyboard = response["choices"][0]["message"]["content"]
         usage = response.get("usage", {})
         
         cost = service.calculate_request_cost(
-            request.model,
+            model,
             usage.get("prompt_tokens", 0),
             usage.get("completion_tokens", 0)
         )
         
         return TechnicalStoryboardResponse(
             storyboard=storyboard,
-            model=request.model,
+            model=model,
             usage=usage,
             cost=cost
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -206,7 +248,11 @@ async def generate_technical_storyboard(request: TechnicalStoryboardRequest):
 
 
 @router.post("/auto-generate", response_model=AutoGenerateResponse)
-async def auto_generate(request: AutoGenerateRequest):
+async def auto_generate(
+    request: AutoGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
     """
     自动生成（对话理解 + 规划 + 生成）
     
@@ -218,13 +264,13 @@ async def auto_generate(request: AutoGenerateRequest):
     使用百炼 qwen3.5-plus 模型
     """
     try:
-        service = await create_qianlian_service(request.api_key)
+        service, model = await resolve_text_service(request.api_key, None, request.model_config_id, db, user_id)
         
         # 第一步：对话理解
         understanding_response = await service.understand_dialogue(
             user_input=request.user_input,
             context=request.context,
-            model="qwen3.5-plus"
+            model=model
         )
         
         understanding = understanding_response["choices"][0]["message"]["content"]
@@ -238,7 +284,7 @@ async def auto_generate(request: AutoGenerateRequest):
             # 小说生成
             novel_response = await service.generate_novel_with_plan(
                 prompt=request.user_input,
-                model="qwen3.5-plus"
+                model=model
             )
             plan = novel_response.get("plan", "")
             result = novel_response.get("content", "")
@@ -247,7 +293,7 @@ async def auto_generate(request: AutoGenerateRequest):
             # 分镜生成
             storyboard_response = await service.generate_technical_storyboard(
                 scene_description=request.user_input,
-                model="qwen3.5-plus"
+                model=model
             )
             result = storyboard_response["choices"][0]["message"]["content"]
             
@@ -255,7 +301,7 @@ async def auto_generate(request: AutoGenerateRequest):
             # 代码生成
             code_response = await service.generate_coding_plan(
                 requirement=request.user_input,
-                model="qwen3.5-plus"
+                model=model
             )
             result = code_response["choices"][0]["message"]["content"]
         else:
@@ -268,10 +314,12 @@ async def auto_generate(request: AutoGenerateRequest):
             understanding=understanding,
             plan=plan,
             result=result,
-            model_used=request.generate_type,
+            model_used=model,
             total_cost=total_cost
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

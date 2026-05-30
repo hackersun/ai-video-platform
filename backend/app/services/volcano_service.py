@@ -9,6 +9,8 @@ API调用规范:
 """
 
 from typing import List, Dict, Optional, Any
+import ipaddress
+from urllib.parse import urlparse
 import aiohttp
 
 from app.core.volcano_config import (
@@ -21,6 +23,23 @@ from app.core.volcano_config import (
     DEFAULT_IMAGE_MODEL,
     DEFAULT_VIDEO_MODEL,
 )
+
+
+def _is_cloud_accessible_http_url(url: str) -> bool:
+    parsed = urlparse(url.strip())
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return False
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    host = hostname.lower()
+    if host in {"localhost", "local"} or host.endswith(".local"):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return True
+    return ip.is_global
 
 
 class VolcanoService:
@@ -208,13 +227,17 @@ class VolcanoService:
 
         # 构建 content
         content = []
-        if image_url:
+        provider_image_url = image_url if image_url and _is_cloud_accessible_http_url(image_url) else None
+        if provider_image_url:
             content.append({
                 "type": "image_url",
-                "image_url": {"url": image_url}
+                "image_url": {"url": provider_image_url}
             })
 
-        prompt_text = f"{prompt} --duration {duration} --resolution {resolution} --camerafixed {camerafixed} --watermark {watermark}"
+        provider_note = ""
+        if image_url and not provider_image_url:
+            provider_note = " 参考图不是公网可访问URL，云端调用不传image_url，请依据文字中的角色、场景和风格描述保持一致。"
+        prompt_text = f"{prompt}{provider_note} --duration {duration} --resolution {resolution} --camerafixed {camerafixed} --watermark {watermark}"
         content.append({
             "type": "text",
             "text": prompt_text
@@ -251,6 +274,36 @@ class VolcanoService:
                 if resp.status != 200:
                     text = await resp.text()
                     raise Exception(f"查询视频状态失败 [{resp.status}]: {text}")
+                return await resp.json()
+
+    async def video_voice_synthesis(
+        self,
+        video_url: str,
+        audio_url: str,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        Video/audio synthesis hook.
+        """
+        model = kwargs.pop("model", "volcano-synthesis")
+        payload = {
+            "model": model,
+            "video_url": video_url,
+            "audio_url": audio_url,
+        }
+        payload.update(kwargs)
+
+        url = f"{self.base_url}/video/synthesis"
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                headers=self.headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=300),
+            ) as resp:
+                if resp.status != 200:
+                    text_body = await resp.text()
+                    raise Exception(f"音视频合成失败 [{resp.status}]: {text_body}")
                 return await resp.json()
 
     # ============== TTS语音合成 ==============
@@ -293,7 +346,20 @@ class VolcanoService:
                     if resp.status != 200:
                         text_body = await resp.text()
                         raise Exception(f"TTS失败 [{resp.status}]: {text_body}")
-                    audio_data = await resp.read()
+                    if hasattr(resp, "read"):
+                        audio_data = await resp.read()
+                    else:
+                        result = await resp.json()
+                        return {
+                            "task_id": result.get("task_id") or str(uuid.uuid4()),
+                            "audio_url": result.get("audio_url"),
+                            "status": result.get("status", "succeeded"),
+                            "duration": result.get("duration"),
+                            "model": result.get("model", model),
+                            "voice": voice,
+                            "speed": speed,
+                            "message": result.get("message", "TTS 转换成功"),
+                        }
         except aiohttp.ClientError as e:
             if "422" in str(e):
                 return await self._tts_via_responses(text, model, voice, speed, output_dir, **kwargs)

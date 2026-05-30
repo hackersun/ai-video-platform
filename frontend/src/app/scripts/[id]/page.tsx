@@ -7,8 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MainLayout } from '@/components/layout/main-layout';
+import { useToast } from '@/components/ui/toast';
 import { 
   FileText, 
   ArrowLeft,
@@ -19,15 +21,16 @@ import {
   Sparkles,
   Film,
   LayoutGrid,
-  Clock,
   Plus,
-  Edit2,
-  Trash2,
-  Play
+  ShieldCheck,
+  History,
+  RotateCcw
 } from 'lucide-react';
 import Link from 'next/link';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { apiClient } from '@/lib/api-client';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 interface Script {
   id: string;
@@ -39,6 +42,7 @@ interface Script {
   duration?: number;
   status: 'draft' | 'writing' | 'completed';
   novel_id?: string;
+  chapter_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -52,6 +56,7 @@ interface Storyboard {
 }
 
 export default function ScriptDetailPage() {
+  const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
   const scriptId = params.id as string;
@@ -63,6 +68,12 @@ export default function ScriptDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [generatingStoryboard, setGeneratingStoryboard] = useState(false);
+  const [consistency, setConsistency] = useState<any | null>(null);
+  const [checkingConsistency, setCheckingConsistency] = useState(false);
+  const [versions, setVersions] = useState<any[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
+  const [restoringVersion, setRestoringVersion] = useState(false);
   
   // 编辑状态
   const [title, setTitle] = useState('');
@@ -78,7 +89,7 @@ export default function ScriptDetailPage() {
   const loadScript = async () => {
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/api/v1/scripts/${scriptId}`);
+      const response = await fetchWithAuth(`${API_BASE}/scripts/${scriptId}`);
       
       if (response.ok) {
         const data = await response.json();
@@ -101,7 +112,7 @@ export default function ScriptDetailPage() {
 
   const loadStoryboards = async (sid: string) => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/storyboards?script_id=${sid}`);
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/script/${sid}`);
       if (response.ok) {
         const data = await response.json();
         setStoryboards(Array.isArray(data) ? data : []);
@@ -111,15 +122,67 @@ export default function ScriptDetailPage() {
     }
   };
 
+  const loadConsistency = async () => {
+    if (!scriptId) return;
+    setCheckingConsistency(true);
+    try {
+      const result = await apiClient.checkScriptConsistency(scriptId);
+      setConsistency(result);
+    } catch (err: any) {
+      setConsistency({ issue_count: 1, issues: [{ code: 'check_failed', severity: 'warning', message: err?.message || '一致性检查失败' }] });
+    } finally {
+      setCheckingConsistency(false);
+    }
+  };
+
+  const loadVersions = async () => {
+    if (!scriptId) return;
+    setLoadingVersions(true);
+    try {
+      const result = await apiClient.getScriptVersions(scriptId);
+      setVersions(Array.isArray(result) ? result : []);
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  const createVersion = async () => {
+    try {
+      await apiClient.createScriptVersion(scriptId, '手动保存版本');
+      await loadVersions();
+      toast({ title: '版本已保存', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '保存版本失败', description: err?.message || '请稍后重试。', type: 'error' });
+    }
+  };
+
+  const restoreVersion = async (snapshotId: string) => {
+    setRestoringVersion(true);
+    try {
+      const restored = await apiClient.restoreScriptVersion(scriptId, snapshotId);
+      setScript(restored);
+      setTitle(restored.title || '');
+      setDescription(restored.description || '');
+      setContent(restored.content || '');
+      setHasChanges(false);
+      await loadVersions();
+      toast({ title: '版本已恢复', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '恢复版本失败', description: err?.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setRestoringVersion(false);
+    }
+  };
+
   const handleSave = async () => {
     if (!title.trim()) {
-      alert('请输入剧本标题');
+      toast({ title: '请输入剧本标题', type: 'info' });
       return;
     }
     
     setSaving(true);
     try {
-      const response = await fetch(`${API_BASE}/api/v1/scripts/${scriptId}`, {
+      const response = await fetchWithAuth(`${API_BASE}/scripts/${scriptId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,12 +195,13 @@ export default function ScriptDetailPage() {
       
       if (response.ok) {
         setHasChanges(false);
-        alert('保存成功！');
+        await loadVersions();
+        toast({ title: '保存成功', type: 'success' });
       } else {
         throw new Error('保存失败');
       }
     } catch (err: any) {
-      alert(err.message || '保存失败');
+      toast({ title: '保存失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setSaving(false);
     }
@@ -148,7 +212,7 @@ export default function ScriptDetailPage() {
     
     setGeneratingStoryboard(true);
     try {
-      const response = await fetch(`${API_BASE}/api/v1/storyboards`, {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -160,14 +224,14 @@ export default function ScriptDetailPage() {
       
       if (response.ok) {
         const newStoryboard = await response.json();
-        alert('分镜创建成功！');
+        toast({ title: '分镜创建成功', type: 'success' });
         // 刷新分镜列表
         loadStoryboards(scriptId);
       } else {
         throw new Error('创建失败');
       }
     } catch (err: any) {
-      alert(err.message || '生成分镜失败');
+      toast({ title: '生成分镜失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setGeneratingStoryboard(false);
     }
@@ -275,6 +339,14 @@ export default function ScriptDetailPage() {
               <LayoutGrid className="w-4 h-4 mr-2" />
               分镜 ({storyboards.length})
             </TabsTrigger>
+            <TabsTrigger value="consistency" className="data-[state=active]:bg-blue-600" onClick={loadConsistency}>
+              <ShieldCheck className="w-4 h-4 mr-2" />
+              一致性
+            </TabsTrigger>
+            <TabsTrigger value="versions" className="data-[state=active]:bg-blue-600" onClick={loadVersions}>
+              <History className="w-4 h-4 mr-2" />
+              版本
+            </TabsTrigger>
           </TabsList>
 
           {/* 剧本内容 */}
@@ -316,10 +388,91 @@ export default function ScriptDetailPage() {
                   <Textarea
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
-                    placeholder="输入或粘贴剧本内容..."
+                    placeholder="输入或粘贴剧本内容…"
                     className="bg-white/10 border-white/20 text-white min-h-[400px] resize-none"
                   />
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="consistency">
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-white">剧本一致性检查</CardTitle>
+                <Button variant="outline" onClick={loadConsistency} disabled={checkingConsistency} className="border-white/20">
+                  {checkingConsistency ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+                  重新检查
+                </Button>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!consistency && (
+                  <div className="text-white/50">检查剧本是否正确承接小说、章节、人物、场景、道具和事件线。</div>
+                )}
+                {consistency && (
+                  <>
+                    <div className={`rounded-lg px-3 py-2 text-sm ${consistency.issue_count ? 'bg-yellow-500/10 text-yellow-100 border border-yellow-500/20' : 'bg-green-500/10 text-green-100 border border-green-500/20'}`}>
+                      共发现 {consistency.issue_count || 0} 个提示
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <div className="rounded-lg bg-white/5 p-3 text-sm text-white/60">
+                        <div className="text-white/80 mb-1">已识别角色</div>
+                        {(consistency.summary?.known_names?.characters || []).join('、') || '无'}
+                      </div>
+                      <div className="rounded-lg bg-white/5 p-3 text-sm text-white/60">
+                        <div className="text-white/80 mb-1">对白说话人</div>
+                        {(consistency.summary?.dialogue_speakers || []).join('、') || '无'}
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {(consistency.issues || []).map((issue: any, index: number) => (
+                        <div key={`${issue.code}-${index}`} className="rounded-md bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/70">
+                          <span className="text-white/90">{issue.message}</span>
+                          {issue.evidence && <span className="ml-2 text-white/40">{issue.evidence}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="versions">
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-white">版本管理</CardTitle>
+                <Button onClick={createVersion} className="bg-blue-600 hover:bg-blue-700">
+                  <Plus className="w-4 h-4 mr-2" />
+                  保存版本
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {loadingVersions ? (
+                  <div className="flex items-center gap-2 text-white/60">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    加载版本中...
+                  </div>
+                ) : versions.length === 0 ? (
+                  <div className="text-white/50">暂无版本快照。</div>
+                ) : (
+                  <div className="space-y-2">
+                    {versions.map((version) => (
+                      <div key={version.id} className="flex items-center justify-between gap-3 rounded-lg bg-white/5 p-3">
+                        <div className="min-w-0">
+                          <div className="text-white font-medium truncate">{version.title}</div>
+                          <div className="text-sm text-white/40">
+                            {version.note || '版本快照'} · {new Date(version.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => setRestoreTargetId(version.id)} className="text-violet-300">
+                          <RotateCcw className="w-4 h-4 mr-1" />
+                          恢复
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -368,18 +521,18 @@ export default function ScriptDetailPage() {
                           </div>
                         </div>
                         <div className="flex gap-2">
-                          <Link href={`/storyboards?sb=${sb.id}`}>
-                            <Button variant="ghost" size="sm">
+                          <Button asChild variant="ghost" size="sm">
+                            <Link href={`/storyboards?sb=${sb.id}`}>
                               <Eye className="w-4 h-4 mr-1" />
                               查看
-                            </Button>
-                          </Link>
-                          <Link href={`/video-generation?storyboard=${sb.id}`}>
-                            <Button variant="ghost" size="sm" className="text-purple-400">
+                            </Link>
+                          </Button>
+                          <Button asChild variant="ghost" size="sm" className="text-purple-400">
+                            <Link href={`/video-generation?storyboard=${sb.id}`}>
                               <Film className="w-4 h-4 mr-1" />
                               生成视频
-                            </Button>
-                          </Link>
+                            </Link>
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -414,6 +567,21 @@ export default function ScriptDetailPage() {
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={Boolean(restoreTargetId)}
+        title="恢复剧本版本"
+        description="确定恢复该剧本版本吗？当前内容会先自动生成恢复前快照。"
+        confirmText="恢复版本"
+        loading={restoringVersion}
+        onOpenChange={(open) => {
+          if (!open) setRestoreTargetId(null);
+        }}
+        onConfirm={async () => {
+          if (!restoreTargetId) return;
+          await restoreVersion(restoreTargetId);
+          setRestoreTargetId(null);
+        }}
+      />
     </MainLayout>
   );
 }

@@ -1,0 +1,45 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e7]
+        - generic [ref=e9]: AI视频平台
+      - paragraph [ref=e10]: 创建账号，开始创作之旅
+    - generic [ref=e11]:
+      - heading "用户注册" [level=3] [ref=e13]
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - generic [ref=e17]: 用户名
+            - generic [ref=e18]:
+              - img [ref=e19]
+              - textbox "请输入用户名" [ref=e22]
+          - generic [ref=e23]:
+            - generic [ref=e24]: 邮箱
+            - generic [ref=e25]:
+              - img [ref=e26]
+              - textbox "请输入邮箱" [ref=e29]
+          - generic [ref=e30]:
+            - generic [ref=e31]: 密码
+            - generic [ref=e32]:
+              - img [ref=e33]
+              - textbox "请输入密码（至少6位）" [ref=e36]
+          - generic [ref=e37]:
+            - generic [ref=e38]: 确认密码
+            - generic [ref=e39]:
+              - img [ref=e40]
+              - textbox "请再次输入密码" [ref=e43]
+          - button "注册" [ref=e44] [cursor=pointer]:
+            - text: 注册
+            - img [ref=e45]
+        - paragraph [ref=e48]:
+          - text: 已有账号？
+          - link "立即登录" [ref=e49] [cursor=pointer]:
+            - /url: /login
+    - link "← 返回首页" [ref=e51] [cursor=pointer]:
+      - /url: /
+  - alert [ref=e52]
+```

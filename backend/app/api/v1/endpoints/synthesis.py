@@ -3,18 +3,26 @@
 支持将视频与音频合并
 """
 
-from typing import List, Optional
+from app.core.time_utils import utc_now
+import json
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl
 
 from app.core.database import get_db
+from app.core.dev_generation import dev_synthesis_url, is_dev_mode
+from app.core.permissions import require_project_role
 from app.core.security import get_current_user_id
+from app.models.publication import Publication
 from app.models.synthesis_job import SynthesisJob
+from app.models.tts_job import TTSJob
+from app.models.video_job import VideoJob
 
 router = APIRouter(tags=["音视频合成"])
 
@@ -25,7 +33,12 @@ class SynthesisCreateRequest(BaseModel):
     """创建合成任务请求"""
     video_job_id: Optional[str] = Field(None, description="视频任务ID")
     tts_job_id: Optional[str] = Field(None, description="TTS任务ID")
-    title: str = Field(..., description="作品标题")
+    video_url: Optional[str] = Field(None, description="视频URL")
+    audio_url: Optional[str] = Field(None, description="音频URL")
+    title: Optional[str] = Field(None, description="作品标题")
+    project_id: Optional[str] = Field(None, description="关联的项目ID")
+    workflow_id: Optional[str] = Field(None, description="关联的工作流ID")
+    api_key: Optional[str] = Field(None, description="兼容旧字段：直接传入API Key")
 
 
 class SynthesisStatusUpdate(BaseModel):
@@ -39,21 +52,242 @@ class SynthesisStatusUpdate(BaseModel):
 class SynthesisJobResponse(BaseModel):
     """合成任务响应"""
     id: str
+    job_id: Optional[str] = None
     user_id: str
+    task_id: Optional[str] = None
+    project_id: Optional[str] = None
+    workflow_id: Optional[str] = None
     video_job_id: Optional[str] = None
     tts_job_id: Optional[str] = None
     title: Optional[str] = None
+    model_id: Optional[str] = None
+    model_name: Optional[str] = None
+    video_url: Optional[str] = None
+    audio_url: Optional[str] = None
     status: str
     progress: int
     output_url: Optional[str] = None
-    output_type: Optional[str] = None
-    duration: Optional[float] = None
+    cover_url: Optional[str] = None
+    duration_seconds: Optional[float] = None
     cost: Optional[int] = 0
     error_message: Optional[str] = None
-    extra_data: Optional[str] = '{}'
-    is_active: Optional[int] = 1
+    extra_data: Optional[Dict[str, Any]] = None
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
+
+
+class PublicationCreateRequest(BaseModel):
+    """创建本地导出/发布记录请求"""
+    synthesis_job_id: Optional[str] = Field(None, description="合成任务ID")
+    project_id: Optional[str] = Field(None, description="项目ID")
+    title: Optional[str] = Field(None, max_length=200, description="导出标题")
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict, description="导出元数据")
+
+
+class PublicationUpdateRequest(BaseModel):
+    title: Optional[str] = Field(None, max_length=200, description="发布标题")
+    status: Optional[str] = Field(None, description="发布状态")
+    visibility: Optional[str] = Field(None, description="可见性")
+    tags: Optional[List[str]] = Field(None, description="标签")
+    description: Optional[str] = Field(None, description="描述")
+    format: Optional[str] = Field(None, description="格式")
+    resolution: Optional[str] = Field(None, description="分辨率")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="元数据")
+
+
+class SubtitleSegmentInput(BaseModel):
+    """字幕片段输入"""
+    text: str
+    start_time: float
+    end_time: float
+    style: Optional[Dict[str, Any]] = None
+
+
+class SynthesisExecuteRequest(BaseModel):
+    """执行真实合成请求"""
+    video_urls: List[str] = Field(..., description="视频URL列表")
+    audio_urls: Optional[List[str]] = Field(None, description="音频URL列表")
+    subtitles: Optional[List[SubtitleSegmentInput]] = Field(None, description="字幕片段")
+    title: Optional[str] = Field(None, max_length=200, description="作品标题")
+    output_format: str = Field("mp4", description="输出格式")
+    quality: str = Field("high", description="质量: low, medium, high")
+    project_id: Optional[str] = Field(None, description="项目ID")
+    workflow_id: Optional[str] = Field(None, description="工作流ID")
+
+
+class SynthesisExecuteResponse(BaseModel):
+    """执行合成响应"""
+    job_id: str
+    status: str
+    video_url: Optional[str] = None
+    cover_url: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    error: Optional[str] = None
+
+
+class PublicationResponse(BaseModel):
+    """发布响应"""
+    id: str
+    user_id: str
+    project_id: Optional[str] = None
+    synthesis_job_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    status: str
+    visibility: str
+    video_url: Optional[str] = None
+    cover_url: Optional[str] = None
+    format: str = "mp4"
+    resolution: str = "1080p"
+    duration_seconds: Optional[float] = None
+    tags: List[str] = Field(default_factory=list)
+    view_count: int = 0
+    like_count: int = 0
+    export_url: Optional[str] = None
+    provider: str = "local"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+async def get_publication_or_404(db: AsyncSession, publication_id: str, user_id: str) -> Publication:
+    result = await db.execute(
+        select(Publication).where(Publication.id == publication_id, Publication.user_id == user_id)
+    )
+    publication = result.scalar_one_or_none()
+    if not publication:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="发布记录不存在")
+    return publication
+
+
+def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
+    """Build a stable API response from the current SynthesisJob schema."""
+    extra_data = job.extra_data or {}
+    return SynthesisJobResponse(
+        id=job.id,
+        job_id=job.id,
+        user_id=job.user_id,
+        task_id=job.task_id,
+        project_id=job.project_id or extra_data.get("project_id"),
+        workflow_id=job.workflow_id or extra_data.get("workflow_id"),
+        video_job_id=extra_data.get("video_job_id"),
+        tts_job_id=extra_data.get("tts_job_id"),
+        title=job.title,
+        model_id=job.model_id,
+        model_name=job.model_name,
+        video_url=job.video_url,
+        audio_url=job.audio_url,
+        status=job.status,
+        progress=job.progress or 0,
+        output_url=job.output_url,
+        cover_url=job.cover_url,
+        duration_seconds=job.duration_seconds,
+        cost=job.cost or 0,
+        error_message=job.error_message,
+        extra_data=extra_data,
+        is_active=job.is_active if job.is_active is not None else True,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+def build_publication_response(publication: Publication) -> PublicationResponse:
+    return PublicationResponse(
+        id=publication.id,
+        user_id=publication.user_id,
+        project_id=publication.project_id,
+        synthesis_job_id=publication.synthesis_job_id,
+        title=publication.title,
+        description=publication.description,
+        status=publication.status,
+        visibility=publication.visibility or "private",
+        video_url=publication.video_url,
+        cover_url=publication.cover_url,
+        format=publication.format or "mp4",
+        resolution=publication.resolution or "1080p",
+        duration_seconds=publication.duration_seconds,
+        tags=publication.tags or [],
+        view_count=publication.view_count or 0,
+        like_count=publication.like_count or 0,
+        export_url=publication.export_url,
+        provider=publication.provider,
+        metadata=publication.publication_metadata or {},
+        created_at=publication.created_at,
+        updated_at=publication.updated_at,
+    )
+
+
+def write_local_export_artifact(export_id: str, payload: Dict[str, Any]) -> tuple[Path, str]:
+    export_dir = Path(__file__).resolve().parents[4] / "static" / "exports"
+    export_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = export_dir / f"{export_id}.json"
+    artifact_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+    return artifact_path, f"/static/exports/{artifact_path.name}"
+
+
+async def resolve_media_urls(
+    request: SynthesisCreateRequest,
+    db: AsyncSession,
+    user_id: str,
+) -> tuple[str, Optional[str], Dict[str, Any]]:
+    """Resolve job IDs to media URLs while still allowing direct URL input."""
+    video_url = request.video_url
+    audio_url = request.audio_url
+    extra_data: Dict[str, Any] = {}
+
+    if request.video_job_id:
+        extra_data["video_job_id"] = request.video_job_id
+        if not video_url:
+            result = await db.execute(
+                select(VideoJob).where(VideoJob.id == request.video_job_id, VideoJob.user_id == user_id)
+            )
+            video_job = result.scalar_one_or_none()
+            if not video_job:
+                raise HTTPException(status_code=404, detail="视频任务不存在")
+            video_url = video_job.video_url
+            extra_data["project_id"] = video_job.project_id
+            extra_data["workflow_id"] = video_job.workflow_id
+            extra_data["video_task_id"] = video_job.task_id
+
+    if request.tts_job_id:
+        extra_data["tts_job_id"] = request.tts_job_id
+        if not audio_url:
+            result = await db.execute(
+                select(TTSJob).where(TTSJob.id == request.tts_job_id, TTSJob.user_id == user_id)
+            )
+            tts_job = result.scalar_one_or_none()
+            if not tts_job:
+                raise HTTPException(status_code=404, detail="TTS任务不存在")
+            audio_url = tts_job.audio_url
+            extra_data["project_id"] = extra_data.get("project_id") or tts_job.project_id
+            extra_data["workflow_id"] = extra_data.get("workflow_id") or tts_job.workflow_id
+            extra_data["tts_task_id"] = tts_job.task_id
+
+    if request.project_id:
+        extra_data["project_id"] = request.project_id
+    if request.workflow_id:
+        extra_data["workflow_id"] = request.workflow_id
+
+    if not video_url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="请选择已有视频任务或提供 video_url")
+
+    return video_url, audio_url, extra_data
+
+
+def validate_legacy_generate_request(request: SynthesisCreateRequest) -> None:
+    """Validate direct synthesis calls that execute immediately."""
+    if request.api_key is None or not request.api_key.strip():
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="api_key 不能为空")
+    if not request.video_url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="video_url 不能为空")
+    if not request.audio_url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="audio_url 不能为空")
+    try:
+        HttpUrl(request.video_url)
+        HttpUrl(request.audio_url)
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="URL 格式不正确")
 
 
 # ============== API 端点 ==============
@@ -64,44 +298,470 @@ async def create_synthesis(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
-    """创建合成任务"""
+    """创建合成任务。
+
+    当前阶段先创建可追踪的合成记录；真正的转码/混音导出后续接入任务执行器。
+    """
     job_id = str(uuid4())
+    video_url, audio_url, extra_data = await resolve_media_urls(request, db, user_id)
+    project_id = request.project_id or extra_data.get("project_id")
+    if project_id:
+        await require_project_role(db, project_id, user_id, "editor")
     
+    dev_complete = is_dev_mode()
     job = SynthesisJob(
         id=job_id,
         user_id=user_id,
-        video_job_id=request.video_job_id,
-        tts_job_id=request.tts_job_id,
-        title=request.title,
-        status="pending",
-        progress=0
+        project_id=project_id,
+        workflow_id=request.workflow_id or extra_data.get("workflow_id"),
+        title=request.title or "音视频合成",
+        model_id="local-synthesis",
+        model_name="DEV_MODE 本地合成" if dev_complete else "本地合成占位",
+        video_url=video_url,
+        audio_url=audio_url,
+        status="succeeded" if dev_complete else "pending",
+        progress=100 if dev_complete else 0,
+        output_url=dev_synthesis_url(job_id) if dev_complete else None,
+        extra_data=extra_data,
     )
     
     db.add(job)
+    if job.workflow_id:
+        from app.models import Workflow
+
+        workflow_result = await db.execute(
+            select(Workflow).where(Workflow.id == job.workflow_id, Workflow.user_id == user_id)
+        )
+        workflow = workflow_result.scalar_one_or_none()
+        if workflow:
+            workflow.synthesis_job_ids = list(dict.fromkeys((workflow.synthesis_job_ids or []) + [job.id]))
     await db.commit()
     await db.refresh(job)
     
-    return job
+    return build_synthesis_response(job)
+
+
+@router.post("/generate", response_model=SynthesisJobResponse)
+async def generate_synthesis(
+    request: SynthesisCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    """兼容旧接口：直接执行一次音视频合成并记录任务。"""
+    validate_legacy_generate_request(request)
+    job_id = str(uuid4())
+    video_url, audio_url, extra_data = await resolve_media_urls(request, db, user_id)
+    project_id = request.project_id or extra_data.get("project_id")
+    if project_id:
+        await require_project_role(db, project_id, user_id, "editor")
+
+    try:
+        from app.services.volcano_service import VolcanoService
+
+        service = VolcanoService(request.api_key)
+        result = await service.video_voice_synthesis(video_url=video_url, audio_url=audio_url)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"音视频合成失败: {str(e)}")
+
+    job = SynthesisJob(
+        id=job_id,
+        user_id=user_id,
+        task_id=result.get("task_id"),
+        project_id=project_id,
+        workflow_id=request.workflow_id or extra_data.get("workflow_id"),
+        title=request.title or "音视频合成",
+        model_id=result.get("model", "volcano-synthesis"),
+        model_name="volcano-synthesis",
+        video_url=video_url,
+        audio_url=audio_url,
+        status=result.get("status", "succeeded"),
+        progress=100,
+        output_url=result.get("output_url", video_url),
+        duration_seconds=result.get("duration"),
+        extra_data=extra_data,
+    )
+    db.add(job)
+    if job.workflow_id:
+        from app.models import Workflow
+
+        workflow_result = await db.execute(
+            select(Workflow).where(Workflow.id == job.workflow_id, Workflow.user_id == user_id)
+        )
+        workflow = workflow_result.scalar_one_or_none()
+        if workflow:
+            workflow.synthesis_job_ids = list(dict.fromkeys((workflow.synthesis_job_ids or []) + [job.id]))
+    await db.commit()
+    await db.refresh(job)
+    return build_synthesis_response(job)
+
+
+@router.post("/publish", response_model=PublicationResponse, status_code=status.HTTP_201_CREATED)
+async def publish_export(
+    request: PublicationCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """创建本地导出记录。
+
+    DEV_MODE/local 模式下生成可下载的静态 JSON artifact，不声明云端发布。
+    """
+    if not request.synthesis_job_id and not request.metadata:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="请提供 synthesis_job_id 或 metadata",
+        )
+
+    synthesis_job: Optional[SynthesisJob] = None
+    if request.synthesis_job_id:
+        result = await db.execute(
+            select(SynthesisJob).where(
+                SynthesisJob.id == request.synthesis_job_id,
+                SynthesisJob.user_id == user_id,
+            )
+        )
+        synthesis_job = result.scalar_one_or_none()
+        if not synthesis_job:
+            raise HTTPException(status_code=404, detail="合成任务不存在")
+
+    project_id = request.project_id or (synthesis_job.project_id if synthesis_job else None)
+    if project_id:
+        await require_project_role(db, project_id, user_id, "viewer")
+
+    export_id = str(uuid4())
+    title = request.title or (synthesis_job.title if synthesis_job else None) or "本地导出"
+    metadata = dict(request.metadata or {})
+    artifact_payload = {
+        "id": export_id,
+        "title": title,
+        "provider": "local",
+        "project_id": project_id,
+        "synthesis_job_id": synthesis_job.id if synthesis_job else None,
+        "source_output_url": synthesis_job.output_url if synthesis_job else metadata.get("source_output_url"),
+        "metadata": metadata,
+        "created_at": utc_now().isoformat(),
+    }
+    artifact_path, export_url = write_local_export_artifact(export_id, artifact_payload)
+
+    publication = Publication(
+        id=export_id,
+        user_id=user_id,
+        project_id=project_id,
+        synthesis_job_id=synthesis_job.id if synthesis_job else None,
+        title=title,
+        status="succeeded",
+        export_url=export_url,
+        artifact_path=str(artifact_path),
+        provider="local",
+        publication_metadata=artifact_payload,
+    )
+    db.add(publication)
+    await db.commit()
+    await db.refresh(publication)
+    return build_publication_response(publication)
+
+
+@router.get("/publications", response_model=List[PublicationResponse])
+async def list_publications(
+    project_id: Optional[str] = None,
+    synthesis_job_id: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    include_archived: bool = False,
+    limit: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取发布/导出记录列表。"""
+    query = select(Publication).where(Publication.user_id == user_id)
+    if project_id:
+        await require_project_role(db, project_id, user_id, "viewer")
+        query = query.where(Publication.project_id == project_id)
+    if synthesis_job_id:
+        query = query.where(Publication.synthesis_job_id == synthesis_job_id)
+    if status_filter:
+        query = query.where(Publication.status == status_filter)
+    elif not include_archived:
+        query = query.where(Publication.status != "archived")
+    result = await db.execute(query.order_by(desc(Publication.created_at)).limit(limit))
+    return [build_publication_response(item) for item in result.scalars().all()]
+
+
+@router.get("/publications/{publication_id}", response_model=PublicationResponse)
+async def get_publication(
+    publication_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    publication = await get_publication_or_404(db, publication_id, user_id)
+    if publication.project_id:
+        await require_project_role(db, publication.project_id, user_id, "viewer")
+    return build_publication_response(publication)
+
+
+@router.put("/publications/{publication_id}", response_model=PublicationResponse)
+async def update_publication(
+    publication_id: str,
+    request: PublicationUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    publication = await get_publication_or_404(db, publication_id, user_id)
+    if publication.project_id:
+        await require_project_role(db, publication.project_id, user_id, "editor")
+
+    if request.title is not None:
+        publication.title = request.title
+    if request.status is not None:
+        if request.status not in {"succeeded", "draft", "published", "revoked", "archived"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的发布状态")
+        publication.status = request.status
+    if request.metadata is not None:
+        publication.publication_metadata = {
+            **(publication.publication_metadata or {}),
+            "metadata": request.metadata,
+        }
+
+    await db.commit()
+    await db.refresh(publication)
+    return build_publication_response(publication)
+
+
+@router.post("/publications/{publication_id}/revoke", response_model=PublicationResponse)
+async def revoke_publication(
+    publication_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    publication = await get_publication_or_404(db, publication_id, user_id)
+    if publication.project_id:
+        await require_project_role(db, publication.project_id, user_id, "editor")
+    publication.status = "revoked"
+    await db.commit()
+    await db.refresh(publication)
+    return build_publication_response(publication)
+
+
+@router.delete("/publications/{publication_id}")
+async def delete_publication(
+    publication_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    publication = await get_publication_or_404(db, publication_id, user_id)
+    if publication.project_id:
+        await require_project_role(db, publication.project_id, user_id, "editor")
+    publication.status = "archived"
+    await db.commit()
+    return {"message": "发布记录已归档", "publication_id": publication_id}
+
+
+@router.post("/execute", response_model=SynthesisExecuteResponse)
+async def execute_synthesis(
+    request: SynthesisExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """执行真实FFmpeg合成：拼接视频+音频混合+字幕烧录+封面生成"""
+    if not request.video_urls:
+        raise HTTPException(status_code=422, detail="video_urls不能为空")
+
+    # 权限检查
+    if request.project_id:
+        await require_project_role(db, request.project_id, user_id, "editor")
+
+    # 转换字幕格式
+    subtitles = None
+    if request.subtitles:
+        from app.services.synthesis_executor import SubtitleSegment
+        subtitles = [
+            SubtitleSegment(
+                text=seg.text,
+                start_time=seg.start_time,
+                end_time=seg.end_time,
+                style=seg.style
+            )
+            for seg in request.subtitles
+        ]
+
+    # 执行合成
+    from app.services.synthesis_executor import SynthesisExecutor
+    executor = SynthesisExecutor()
+
+    result = await executor.synthesize(
+        video_urls=request.video_urls,
+        audio_urls=request.audio_urls,
+        subtitles=subtitles,
+        output_format=request.output_format,
+        quality=request.quality
+    )
+
+    # 创建合成任务记录
+    job_id = result["job_id"]
+    synthesis_job = SynthesisJob(
+        id=job_id,
+        user_id=user_id,
+        project_id=request.project_id,
+        workflow_id=request.workflow_id,
+        title=request.title or "FFmpeg合成",
+        model_id="ffmpeg-synthesis",
+        model_name="FFmpeg本地合成",
+        status=result["status"],
+        progress=100 if result["status"] == "succeeded" else 0,
+        output_url=result.get("video_url"),
+        cover_url=result.get("cover_url"),
+        duration_seconds=result.get("duration_seconds"),
+        extra_data={
+            "output_format": request.output_format,
+            "quality": request.quality,
+        }
+    )
+    db.add(synthesis_job)
+    await db.commit()
+
+    return SynthesisExecuteResponse(
+        job_id=job_id,
+        status=result["status"],
+        video_url=result.get("video_url"),
+        cover_url=result.get("cover_url"),
+        duration_seconds=result.get("duration_seconds"),
+        error=result.get("error")
+    )
+
+
+@router.post("/synthesize", response_model=SynthesisJobResponse)
+async def synthesize_video(
+    request: SynthesisExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """完整合成流程：创建合成任务并执行真实FFmpeg合成"""
+    if not request.video_urls:
+        raise HTTPException(status_code=422, detail="video_urls不能为空")
+
+    # 权限检查
+    if request.project_id:
+        await require_project_role(db, request.project_id, user_id, "editor")
+
+    # 转换字幕格式
+    subtitles = None
+    if request.subtitles:
+        from app.services.synthesis_executor import SubtitleSegment
+        subtitles = [
+            SubtitleSegment(
+                text=seg.text,
+                start_time=seg.start_time,
+                end_time=seg.end_time,
+                style=seg.style
+            )
+            for seg in request.subtitles
+        ]
+
+    # 执行合成
+    from app.services.synthesis_executor import SynthesisExecutor
+    executor = SynthesisExecutor()
+
+    result = await executor.synthesize(
+        video_urls=request.video_urls,
+        audio_urls=request.audio_urls,
+        subtitles=subtitles,
+        output_format=request.output_format,
+        quality=request.quality
+    )
+
+    # 创建合成任务记录
+    job_id = result["job_id"]
+    synthesis_job = SynthesisJob(
+        id=job_id,
+        user_id=user_id,
+        project_id=request.project_id,
+        workflow_id=request.workflow_id,
+        title=request.title or "完整合成",
+        model_id="ffmpeg-synthesis",
+        model_name="FFmpeg本地合成",
+        video_url=request.video_urls[0] if request.video_urls else None,
+        audio_url=request.audio_urls[0] if request.audio_urls else None,
+        status=result["status"],
+        progress=100 if result["status"] == "succeeded" else 0,
+        output_url=result.get("video_url"),
+        cover_url=result.get("cover_url"),
+        duration_seconds=result.get("duration_seconds"),
+        extra_data={
+            "output_format": request.output_format,
+            "quality": request.quality,
+            "video_urls": request.video_urls,
+            "audio_urls": request.audio_urls,
+        }
+    )
+    db.add(synthesis_job)
+    await db.commit()
+    await db.refresh(synthesis_job)
+
+    return build_synthesis_response(synthesis_job)
+
+
+@router.post("/publications/{publication_id}/publish", response_model=PublicationResponse)
+async def publish_video(
+    publication_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """发布作品"""
+    publication = await get_publication_or_404(db, publication_id, user_id)
+    if publication.project_id:
+        await require_project_role(db, publication.project_id, user_id, "editor")
+    publication.status = "published"
+    await db.commit()
+    await db.refresh(publication)
+    return build_publication_response(publication)
+
+
+@router.get("/publications/{publication_id}/download")
+async def download_publication(
+    publication_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取发布作品下载信息"""
+    publication = await get_publication_or_404(db, publication_id, user_id)
+    if publication.project_id:
+        await require_project_role(db, publication.project_id, user_id, "viewer")
+
+    # 增加下载计数
+    publication.view_count = (publication.view_count or 0) + 1
+    await db.commit()
+
+    return {
+        "id": publication.id,
+        "title": publication.title,
+        "video_url": publication.video_url,
+        "cover_url": publication.cover_url,
+        "format": publication.format,
+        "resolution": publication.resolution,
+        "duration_seconds": publication.duration_seconds,
+    }
 
 
 @router.get("/jobs", response_model=List[SynthesisJobResponse])
 async def list_synthesis_jobs(
     limit: int = 50,
+    project_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
     """获取用户的合成任务列表"""
-    query = (
-        select(SynthesisJob)
-        .where(SynthesisJob.user_id == user_id)
-        .order_by(desc(SynthesisJob.created_at))
-        .limit(limit)
-    )
+    query = select(SynthesisJob).where(SynthesisJob.user_id == user_id)
+    if project_id:
+        query = query.where(SynthesisJob.project_id == project_id)
+    if workflow_id:
+        query = query.where(SynthesisJob.workflow_id == workflow_id)
+    query = query.order_by(desc(SynthesisJob.created_at)).limit(limit)
     
     result = await db.execute(query)
     jobs = result.scalars().all()
     
-    return jobs
+    return [build_synthesis_response(job) for job in jobs]
 
 
 @router.get("/jobs/{job_id}", response_model=SynthesisJobResponse)
@@ -122,7 +782,7 @@ async def get_synthesis_job(
     if not job:
         raise HTTPException(status_code=404, detail="任务不存在")
     
-    return job
+    return build_synthesis_response(job)
 
 
 @router.put("/jobs/{job_id}", response_model=SynthesisJobResponse)
@@ -157,7 +817,7 @@ async def update_synthesis_job(
     await db.commit()
     await db.refresh(job)
     
-    return job
+    return build_synthesis_response(job)
 
 
 @router.delete("/jobs/{job_id}")

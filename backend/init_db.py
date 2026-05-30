@@ -29,13 +29,273 @@ def migrate_add_shot_image_fields():
         conn.close()
 
 
+def migrate_add_job_lineage_fields():
+    """Add project_id/workflow_id lineage columns to generation job tables."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        table_columns = {
+            table_name: {col["name"] for col in inspector.get_columns(table_name)}
+            for table_name in ("video_jobs", "tts_jobs", "synthesis_jobs")
+            if inspector.has_table(table_name)
+        }
+        expected_columns = {
+            "video_jobs": ("project_id", "workflow_id"),
+            "tts_jobs": (
+                "project_id",
+                "workflow_id",
+                "novel_id",
+                "chapter_id",
+                "script_id",
+                "storyboard_id",
+                "shot_id",
+                "character_id",
+            ),
+            "synthesis_jobs": ("project_id", "workflow_id"),
+        }
+        for table_name, existing in table_columns.items():
+            for col in expected_columns.get(table_name, ()):
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} VARCHAR(36)"))
+        conn.commit()
+        print("✅ Job lineage fields migration completed.")
+    finally:
+        conn.close()
+
+
+def migrate_add_workflow_context_fields():
+    """Add workflow context columns used by current ORM models."""
+    from sqlalchemy import text, inspect
+
+    column_specs = {
+        "storyboards": {
+            "novel_id": "VARCHAR(36)",
+            "style": "VARCHAR(50)",
+            "genre": "VARCHAR(50)",
+            "characters": "JSON",
+        },
+        "tts_jobs": {
+            "novel_id": "VARCHAR(36)",
+            "chapter_id": "VARCHAR(36)",
+            "script_id": "VARCHAR(36)",
+            "storyboard_id": "VARCHAR(36)",
+            "shot_id": "VARCHAR(36)",
+            "character_id": "VARCHAR(36)",
+            "api_provider": "VARCHAR(20)",
+        },
+        "shots": {
+            "camera_movement": "VARCHAR(50)",
+            "movement_speed": "FLOAT DEFAULT 1.0",
+            "movement_start_pos": "VARCHAR(50)",
+            "movement_end_pos": "VARCHAR(50)",
+            "emotion": "VARCHAR(50)",
+            "emotion_intensity": "FLOAT DEFAULT 0.5",
+            "lighting": "VARCHAR(50)",
+            "color_grading": "VARCHAR(50)",
+            "music_cue": "VARCHAR(500)",
+            "sfx_cue": "VARCHAR(500)",
+            "ambient_sound": "VARCHAR(500)",
+            "keyframes": "JSON",
+            "version": "INTEGER DEFAULT 1",
+            "parent_shot_id": "VARCHAR(36)",
+            "version_note": "VARCHAR(200)",
+            "timeline_track": "INTEGER DEFAULT 0",
+            "timeline_position": "FLOAT DEFAULT 0.0",
+            "character_refs": "JSON",
+            "extra_data": "JSON",
+        },
+        "llm_models": {
+            "base_url": "VARCHAR(500)",
+        },
+    }
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        for table_name, specs in column_specs.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {col["name"] for col in inspector.get_columns(table_name)}
+            for col, sql_type in specs.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type}"))
+        conn.commit()
+        print("✅ Workflow context fields migration completed.")
+    finally:
+        conn.close()
+
+
+def migrate_add_character_scope_fields():
+    """Add novel/chapter ownership columns to characters."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        if not inspector.has_table("characters"):
+            return
+        existing = {col["name"] for col in inspector.get_columns("characters")}
+        for col in ("novel_id", "chapter_id"):
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE characters ADD COLUMN {col} VARCHAR(36)"))
+        conn.commit()
+        print("✅ Character scope fields migration completed.")
+    finally:
+        conn.close()
+
+
+def migrate_add_media_subtitle_fields():
+    """Add compatibility columns for media/subtitle production objects."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        table_specs = {
+            "media_generation_jobs": {
+                "capabilities": "JSON",
+                "input_assets": "JSON",
+                "source_job_ids": "JSON",
+                "quality_report": "JSON",
+                "extra_data": "JSON",
+                "is_active": "BOOLEAN DEFAULT 1",
+            },
+            "subtitle_tracks": {
+                "export_urls": "JSON",
+                "metadata": "JSON",
+                "is_active": "BOOLEAN DEFAULT 1",
+            },
+            "subtitle_segments": {
+                "style": "JSON",
+                "metadata": "JSON",
+                "is_active": "BOOLEAN DEFAULT 1",
+            },
+            "video_jobs": {
+                "audio_url": "TEXT",
+                "subtitle_track_id": "VARCHAR(36)",
+                "media_type": "VARCHAR(50)",
+                "task_type": "VARCHAR(50)",
+            },
+        }
+        for table_name, specs in table_specs.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {col["name"] for col in inspector.get_columns(table_name)}
+            for col, sql_type in specs.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type}"))
+        conn.commit()
+        print("✅ Media/subtitle compatibility migration completed.")
+    finally:
+        conn.close()
+
+
+def migrate_add_user_account_fields():
+    """Add account recovery/profile columns to users."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        if not inspector.has_table("users"):
+            return
+        existing = {col["name"] for col in inspector.get_columns("users")}
+        specs = {
+            "avatar": "VARCHAR(500)",
+            "reset_token_hash": "VARCHAR(128)",
+            "reset_token_expires_at": "DATETIME",
+        }
+        for col, sql_type in specs.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {sql_type}"))
+        conn.commit()
+        print("✅ User account fields migration completed.")
+    finally:
+        conn.close()
+
+
+def migrate_add_script_chapter_field():
+    """Add direct chapter lineage column to scripts and backfill from extra_data."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        if not inspector.has_table("scripts"):
+            return
+        existing = {col["name"] for col in inspector.get_columns("scripts")}
+        if "chapter_id" not in existing:
+            conn.execute(text("ALTER TABLE scripts ADD COLUMN chapter_id VARCHAR(36)"))
+        conn.execute(
+            text(
+                """
+                UPDATE scripts
+                SET chapter_id = json_extract(extra_data, '$.chapter_id')
+                WHERE (chapter_id IS NULL OR chapter_id = '')
+                  AND extra_data IS NOT NULL
+                  AND json_valid(extra_data)
+                  AND json_extract(extra_data, '$.chapter_id') IS NOT NULL
+                """
+            )
+        )
+        conn.commit()
+        print("✅ Script chapter lineage migration completed.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def migrate_add_entity_asset_scope_fields():
+    """Add novel/chapter/script/entity scope columns for entities and assets."""
+    from sqlalchemy import text, inspect
+
+    table_specs = {
+        "story_entities": {
+            "script_id": "VARCHAR(36)",
+        },
+        "assets": {
+            "novel_id": "VARCHAR(36)",
+            "chapter_id": "VARCHAR(36)",
+            "script_id": "VARCHAR(36)",
+            "entity_id": "VARCHAR(36)",
+        },
+    }
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        for table_name, specs in table_specs.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {col["name"] for col in inspector.get_columns(table_name)}
+            for col, sql_type in specs.items():
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type}"))
+        conn.commit()
+        print("✅ Entity/asset scope fields migration completed.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 async def migrate_add_shot_image_fields_async():
     """Add image_url, image_status, image_asset_id to shots table (async)."""
     from sqlalchemy import text, inspect
 
     async with engine.begin() as conn:
-        inspector = inspect(engine)
-        existing = {col["name"] for col in inspector.get_columns("shots")}
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("shots"):
+                return set()
+            return {col["name"] for col in inspector.get_columns("shots")}
+
+        existing = await conn.run_sync(_inspect)
         new_cols = {"image_url", "image_status", "image_asset_id"} - existing
         if not new_cols:
             return  # already migrated
@@ -47,6 +307,381 @@ async def migrate_add_shot_image_fields_async():
             elif col == "image_asset_id":
                 await conn.execute(text("ALTER TABLE shots ADD COLUMN image_asset_id VARCHAR(36)"))
         print("✅ Shot image fields migration completed (async).")
+
+
+async def migrate_add_job_lineage_fields_async():
+    """Add project_id/workflow_id lineage columns to generation job tables (async)."""
+    from sqlalchemy import text, inspect
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                table_name: {col["name"] for col in inspector.get_columns(table_name)}
+                for table_name in ("video_jobs", "tts_jobs", "synthesis_jobs")
+                if inspector.has_table(table_name)
+            }
+
+        table_columns = await conn.run_sync(_inspect)
+        expected_columns = {
+            "video_jobs": ("project_id", "workflow_id"),
+            "tts_jobs": (
+                "project_id",
+                "workflow_id",
+                "novel_id",
+                "chapter_id",
+                "script_id",
+                "storyboard_id",
+                "shot_id",
+                "character_id",
+            ),
+            "synthesis_jobs": ("project_id", "workflow_id"),
+        }
+        for table_name, existing in table_columns.items():
+            for col in expected_columns.get(table_name, ()):
+                if col not in existing:
+                    await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} VARCHAR(36)"))
+        print("✅ Job lineage fields migration completed (async).")
+
+
+async def migrate_add_workflow_context_fields_async():
+    """Add workflow context columns used by current ORM models (async)."""
+    from sqlalchemy import text, inspect
+
+    column_specs = {
+        "storyboards": {
+            "novel_id": "VARCHAR(36)",
+            "style": "VARCHAR(50)",
+            "genre": "VARCHAR(50)",
+            "characters": "JSON",
+        },
+        "tts_jobs": {
+            "novel_id": "VARCHAR(36)",
+            "chapter_id": "VARCHAR(36)",
+            "script_id": "VARCHAR(36)",
+            "storyboard_id": "VARCHAR(36)",
+            "shot_id": "VARCHAR(36)",
+            "character_id": "VARCHAR(36)",
+            "api_provider": "VARCHAR(20)",
+        },
+        "shots": {
+            "camera_movement": "VARCHAR(50)",
+            "movement_speed": "FLOAT DEFAULT 1.0",
+            "movement_start_pos": "VARCHAR(50)",
+            "movement_end_pos": "VARCHAR(50)",
+            "emotion": "VARCHAR(50)",
+            "emotion_intensity": "FLOAT DEFAULT 0.5",
+            "lighting": "VARCHAR(50)",
+            "color_grading": "VARCHAR(50)",
+            "music_cue": "VARCHAR(500)",
+            "sfx_cue": "VARCHAR(500)",
+            "ambient_sound": "VARCHAR(500)",
+            "keyframes": "JSON",
+            "version": "INTEGER DEFAULT 1",
+            "parent_shot_id": "VARCHAR(36)",
+            "version_note": "VARCHAR(200)",
+            "timeline_track": "INTEGER DEFAULT 0",
+            "timeline_position": "FLOAT DEFAULT 0.0",
+            "character_refs": "JSON",
+            "extra_data": "JSON",
+        },
+        "llm_models": {
+            "base_url": "VARCHAR(500)",
+        },
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                table_name: {col["name"] for col in inspector.get_columns(table_name)}
+                for table_name in column_specs
+                if inspector.has_table(table_name)
+            }
+
+        table_columns = await conn.run_sync(_inspect)
+        for table_name, existing in table_columns.items():
+            for col, sql_type in column_specs[table_name].items():
+                if col not in existing:
+                    await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type}"))
+        print("✅ Workflow context fields migration completed (async).")
+
+
+async def migrate_add_character_scope_fields_async():
+    """Add novel/chapter ownership columns to characters (async)."""
+    from sqlalchemy import text, inspect
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("characters"):
+                return set()
+            return {col["name"] for col in inspector.get_columns("characters")}
+
+        existing = await conn.run_sync(_inspect)
+        for col in ("novel_id", "chapter_id"):
+            if col not in existing:
+                await conn.execute(text(f"ALTER TABLE characters ADD COLUMN {col} VARCHAR(36)"))
+        print("✅ Character scope fields migration completed (async).")
+
+
+async def migrate_add_media_subtitle_fields_async():
+    """Add compatibility columns for media/subtitle production objects (async)."""
+    from sqlalchemy import text, inspect
+
+    table_specs = {
+        "media_generation_jobs": {
+            "capabilities": "JSON",
+            "input_assets": "JSON",
+            "source_job_ids": "JSON",
+            "quality_report": "JSON",
+            "extra_data": "JSON",
+            "is_active": "BOOLEAN DEFAULT 1",
+        },
+        "subtitle_tracks": {
+            "export_urls": "JSON",
+            "metadata": "JSON",
+            "is_active": "BOOLEAN DEFAULT 1",
+        },
+        "subtitle_segments": {
+            "style": "JSON",
+            "metadata": "JSON",
+            "is_active": "BOOLEAN DEFAULT 1",
+        },
+        "video_jobs": {
+            "audio_url": "TEXT",
+            "subtitle_track_id": "VARCHAR(36)",
+            "media_type": "VARCHAR(50)",
+            "task_type": "VARCHAR(50)",
+        },
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                table_name: {col["name"] for col in inspector.get_columns(table_name)}
+                for table_name in table_specs
+                if inspector.has_table(table_name)
+            }
+
+        table_columns = await conn.run_sync(_inspect)
+        for table_name, existing in table_columns.items():
+            for col, sql_type in table_specs[table_name].items():
+                if col not in existing:
+                    await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type}"))
+        print("✅ Media/subtitle compatibility migration completed (async).")
+
+
+async def migrate_add_user_account_fields_async():
+    """Add account recovery/profile columns to users (async)."""
+    from sqlalchemy import text, inspect
+
+    specs = {
+        "avatar": "VARCHAR(500)",
+        "reset_token_hash": "VARCHAR(128)",
+        "reset_token_expires_at": "DATETIME",
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("users"):
+                return set()
+            return {col["name"] for col in inspector.get_columns("users")}
+
+        existing = await conn.run_sync(_inspect)
+        for col, sql_type in specs.items():
+            if col not in existing:
+                await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {sql_type}"))
+        print("✅ User account fields migration completed (async).")
+
+
+async def migrate_add_script_chapter_field_async():
+    """Add direct chapter lineage column to scripts and backfill from extra_data (async)."""
+    from sqlalchemy import text, inspect
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("scripts"):
+                return set()
+            return {col["name"] for col in inspector.get_columns("scripts")}
+
+        existing = await conn.run_sync(_inspect)
+        if not existing:
+            return
+        if "chapter_id" not in existing:
+            await conn.execute(text("ALTER TABLE scripts ADD COLUMN chapter_id VARCHAR(36)"))
+        await conn.execute(
+            text(
+                """
+                UPDATE scripts
+                SET chapter_id = json_extract(extra_data, '$.chapter_id')
+                WHERE (chapter_id IS NULL OR chapter_id = '')
+                  AND extra_data IS NOT NULL
+                  AND json_valid(extra_data)
+                  AND json_extract(extra_data, '$.chapter_id') IS NOT NULL
+                """
+            )
+        )
+        print("✅ Script chapter lineage migration completed (async).")
+
+
+async def migrate_add_entity_asset_scope_fields_async():
+    """Add novel/chapter/script/entity scope columns for entities and assets (async)."""
+    from sqlalchemy import text, inspect
+
+    table_specs = {
+        "story_entities": {
+            "script_id": "VARCHAR(36)",
+        },
+        "assets": {
+            "novel_id": "VARCHAR(36)",
+            "chapter_id": "VARCHAR(36)",
+            "script_id": "VARCHAR(36)",
+            "entity_id": "VARCHAR(36)",
+        },
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                table_name: {col["name"] for col in inspector.get_columns(table_name)}
+                for table_name in table_specs
+                if inspector.has_table(table_name)
+            }
+
+        table_columns = await conn.run_sync(_inspect)
+        for table_name, existing in table_columns.items():
+            for col, sql_type in table_specs[table_name].items():
+                if col not in existing:
+                    await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {col} {sql_type}"))
+        print("✅ Entity/asset scope fields migration completed (async).")
+
+
+def migrate_add_story_entity_extended_fields():
+    """Add extended fields for story entity model: canonical_name, appearance, visual_prompt, relations, state_changes, etc."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        if not inspector.has_table("story_entities"):
+            return
+        existing = {col["name"] for col in inspector.get_columns("story_entities")}
+        new_fields = {
+            "canonical_name": "VARCHAR(200)",
+            "appearance": "TEXT",
+            "visual_prompt": "TEXT",
+            "first_seen_chapter_id": "VARCHAR(36)",
+            "relations": "JSON DEFAULT '[]'",
+            "state_changes": "JSON DEFAULT '[]'",
+            "version": "INTEGER DEFAULT 1",
+            "is_approved": "BOOLEAN DEFAULT 0",
+            "consistency_score": "FLOAT DEFAULT 1.0",
+            "tags": "JSON DEFAULT '[]'",
+            "extra_data": "JSON DEFAULT '{}'",
+        }
+        for col, sql_type in new_fields.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE story_entities ADD COLUMN {col} {sql_type}"))
+        conn.commit()
+        print("✅ Story entity extended fields migration completed.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+async def migrate_add_story_entity_extended_fields_async():
+    """Add extended fields for story entity model (async)."""
+    from sqlalchemy import text, inspect
+
+    new_fields = {
+        "canonical_name": "VARCHAR(200)",
+        "appearance": "TEXT",
+        "visual_prompt": "TEXT",
+        "first_seen_chapter_id": "VARCHAR(36)",
+        "relations": "JSON DEFAULT '[]'",
+        "state_changes": "JSON DEFAULT '[]'",
+        "version": "INTEGER DEFAULT 1",
+        "is_approved": "BOOLEAN DEFAULT 0",
+        "consistency_score": "FLOAT DEFAULT 1.0",
+        "tags": "JSON DEFAULT '[]'",
+        "extra_data": "JSON DEFAULT '{}'",
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("story_entities"):
+                return set()
+            return {col["name"] for col in inspector.get_columns("story_entities")}
+
+        existing = await conn.run_sync(_inspect)
+        for col, sql_type in new_fields.items():
+            if col not in existing:
+                await conn.execute(text(f"ALTER TABLE story_entities ADD COLUMN {col} {sql_type}"))
+        print("✅ Story entity extended fields migration completed (async).")
+
+
+def migrate_add_project_id_fields():
+    """Add project_id to resource tables for permission isolation."""
+    from sqlalchemy import text, inspect
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        table_specs = {
+            "novels": "VARCHAR(36)",
+            "characters": "VARCHAR(36)",
+            "scripts": "VARCHAR(36)",
+            "storyboards": "VARCHAR(36)",
+            "shots": "VARCHAR(36)",
+            "workflows": "VARCHAR(36)",
+        }
+        for table_name, sql_type in table_specs.items():
+            if not inspector.has_table(table_name):
+                continue
+            existing = {col["name"] for col in inspector.get_columns(table_name)}
+            if "project_id" not in existing:
+                conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN project_id {sql_type}"))
+        conn.commit()
+        print("✅ Project ID fields migration completed.")
+    finally:
+        conn.close()
+
+
+async def migrate_add_project_id_fields_async():
+    """Add project_id to resource tables for permission isolation (async)."""
+    from sqlalchemy import text, inspect
+
+    table_specs = {
+        "novels": "VARCHAR(36)",
+        "characters": "VARCHAR(36)",
+        "scripts": "VARCHAR(36)",
+        "storyboards": "VARCHAR(36)",
+        "shots": "VARCHAR(36)",
+        "workflows": "VARCHAR(36)",
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            return {
+                table_name: {col["name"] for col in inspector.get_columns(table_name)}
+                for table_name in table_specs
+                if inspector.has_table(table_name)
+            }
+
+        table_columns = await conn.run_sync(_inspect)
+        for table_name, existing in table_columns.items():
+            if "project_id" not in existing:
+                await conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN project_id {table_specs[table_name]}"))
+        print("✅ Project ID fields migration completed (async).")
 
 
 def init_db():
@@ -71,12 +706,27 @@ def init_db():
     from app.models.activity import Activity
     from app.models.image_job import ImageJob
     from app.models.workflow import Workflow
+    from app.models.story_bible import StoryBible
+    from app.models.publication import Publication
+    from app.models.novel_import import NovelImportJob
+    from app.models.story_entity import StoryEntity
+    from app.models.media_generation_job import MediaGenerationJob
+    from app.models.subtitle import SubtitleTrack, SubtitleSegment
 
     Base.metadata.create_all(bind=sync_engine)
     print("✅ 数据库表创建成功！")
 
     # Run migrations
     migrate_add_shot_image_fields()
+    migrate_add_job_lineage_fields()
+    migrate_add_workflow_context_fields()
+    migrate_add_character_scope_fields()
+    migrate_add_media_subtitle_fields()
+    migrate_add_user_account_fields()
+    migrate_add_script_chapter_field()
+    migrate_add_entity_asset_scope_fields()
+    migrate_add_story_entity_extended_fields()
+    migrate_add_project_id_fields()
 
 
 async def init_db_async():
@@ -101,6 +751,12 @@ async def init_db_async():
     from app.models.activity import Activity
     from app.models.image_job import ImageJob
     from app.models.workflow import Workflow
+    from app.models.story_bible import StoryBible
+    from app.models.publication import Publication
+    from app.models.novel_import import NovelImportJob
+    from app.models.story_entity import StoryEntity
+    from app.models.media_generation_job import MediaGenerationJob
+    from app.models.subtitle import SubtitleTrack, SubtitleSegment
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -108,6 +764,15 @@ async def init_db_async():
 
     # Run migrations
     await migrate_add_shot_image_fields_async()
+    await migrate_add_job_lineage_fields_async()
+    await migrate_add_workflow_context_fields_async()
+    await migrate_add_character_scope_fields_async()
+    await migrate_add_media_subtitle_fields_async()
+    await migrate_add_user_account_fields_async()
+    await migrate_add_script_chapter_field_async()
+    await migrate_add_entity_asset_scope_fields_async()
+    await migrate_add_story_entity_extended_fields_async()
+    await migrate_add_project_id_fields_async()
 
 
 if __name__ == "__main__":

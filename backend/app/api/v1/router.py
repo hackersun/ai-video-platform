@@ -7,7 +7,9 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     llm_config, external_api, qwen, coding_plan, usage_stats,
     characters, dashboard, auth, novels, scripts, video,
-    chapters, storyboards, shots, synthesis, tts
+    chapters, storyboards, shots, synthesis, tts,
+    workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
+    media, subtitles, short_video, production_control,
 )
 
 api_router = APIRouter()
@@ -59,3 +61,36 @@ api_router.include_router(synthesis.router, prefix="/synthesis", tags=["音视�
 
 # 语音合成API
 api_router.include_router(tts.router, prefix="/tts", tags=["语音合成"])
+
+# 工作流API
+api_router.include_router(workflow.router, prefix="/workflow", tags=["工作流"])
+
+# 图像生成API
+api_router.include_router(images.router, prefix="/images", tags=["图像生成"])
+
+# 资产库API
+api_router.include_router(assets.router, prefix="/assets", tags=["资产库"])
+
+# 项目管理API
+api_router.include_router(projects.router, prefix="/projects", tags=["项目管理"])
+
+# 时间线API
+api_router.include_router(timelines.router, prefix="/timelines", tags=["时间线"])
+
+# 分镜AI辅助API
+api_router.include_router(storyboard_ai.router, prefix="/storyboard-ai", tags=["分镜AI辅助"])
+
+# 故事圣经/一致性API
+api_router.include_router(story_bible.router, prefix="/story-bibles", tags=["故事圣经"])
+
+# 统一媒体生成API
+api_router.include_router(media.router, prefix="/media", tags=["统一媒体生成"])
+
+# 字幕轨API
+api_router.include_router(subtitles.router, prefix="/subtitles", tags=["字幕轨"])
+
+# 短视频生产API
+api_router.include_router(short_video.router, prefix="/short-video", tags=["短视频生产"])
+
+# 生产控制API
+api_router.include_router(production_control.router, prefix="/production-control", tags=["生产控制"])

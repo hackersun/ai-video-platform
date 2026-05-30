@@ -8,9 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
 
+from app.core.api_key_utils import get_user_text_generation_service
 from app.core.database import get_db
 from app.core.security import get_current_user_id
-from app.services.qianlian_service import QianlianService, create_qianlian_service
 
 router = APIRouter(tags=["分镜AI生成"])
 
@@ -58,58 +58,6 @@ class BatchGenerateShotsResponse(BaseModel):
     total_duration: int
 
 
-async def get_default_api_key(db: AsyncSession, user_id: str) -> str:
-    """获取用户默认的千问/百炼 API Key"""
-    from sqlalchemy import select, and_
-    from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
-
-    # 查询用户的默认千问/百炼配置
-    result = await db.execute(
-        select(LLMConfig, LLMModel, LLMProvider)
-        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
-        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
-        .where(
-            and_(
-                LLMConfig.user_id == user_id,
-                LLMConfig.is_active == True,
-                LLMProvider.name.in_(["qianlian", "dashscope", "qwen"]),
-                LLMConfig.is_default == True
-            )
-        )
-    )
-    row = result.first()
-
-    if row:
-        config, model, provider = row
-        return config.api_key
-
-    # 如果没有默认配置，尝试获取任意千问/百炼活跃配置
-    result = await db.execute(
-        select(LLMConfig, LLMModel, LLMProvider)
-        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
-        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
-        .where(
-            and_(
-                LLMConfig.user_id == user_id,
-                LLMConfig.is_active == True,
-                LLMProvider.name.in_(["qianlian", "dashscope", "qwen"]),
-            )
-        )
-        .order_by(LLMConfig.created_at.desc())
-        .limit(1)
-    )
-    row = result.first()
-
-    if row:
-        config, model, provider = row
-        return config.api_key
-
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="请先在【LLM配置】页面配置并保存千问/百炼的 API Key"
-    )
-
-
 @router.post("/generate-dialogue", response_model=GenerateDialogueResponse)
 async def generate_dialogue(
     request: GenerateDialogueRequest,
@@ -125,8 +73,7 @@ async def generate_dialogue(
     - 镜头角度建议
     """
     try:
-        api_key = await get_default_api_key(db, user_id)
-        service = await create_qianlian_service(api_key)
+        service, _provider_name, model_id, _base_url = await get_user_text_generation_service(db, user_id)
 
         # 构建提示词
         system_prompt = """你是一个专业的动画分镜师，擅长创作台词和视觉描述。
@@ -158,7 +105,7 @@ async def generate_dialogue(
         ]
 
         response = await service.chat_completion(
-            model="qwen3.5-plus",
+            model=model_id,
             messages=messages,
             temperature=0.8,
             max_tokens=500
@@ -213,8 +160,7 @@ async def generate_shots(
     根据场景描述，生成多个镜头组成完整的分镜序列
     """
     try:
-        api_key = await get_default_api_key(db, user_id)
-        service = await create_qianlian_service(api_key)
+        service, _provider_name, model_id, _base_url = await get_user_text_generation_service(db, user_id)
 
         # 构建提示词 - 明确要求中文输出
         system_prompt = """你是一个专业的视频分镜师，擅长将场景描述转化为详细的分镜脚本。
@@ -268,7 +214,7 @@ async def generate_shots(
         ]
 
         response = await service.chat_completion(
-            model="qwen3.5-plus",
+            model=model_id,
             messages=messages,
             temperature=0.3,
             max_tokens=2000

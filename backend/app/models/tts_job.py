@@ -1,6 +1,7 @@
 """
 TTS 语音合成任务模型
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
@@ -15,6 +16,8 @@ class TTSJob(Base):
 
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), nullable=False, index=True)
+    project_id = Column(String(36), nullable=True, index=True)
+    workflow_id = Column(String(36), nullable=True, index=True)
     task_id = Column(String(64), index=True)
     novel_id = Column(String(36), index=True)
     chapter_id = Column(String(36), index=True)
@@ -41,8 +44,8 @@ class TTSJob(Base):
     extra_data = Column(JSON, default=dict)
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     def __repr__(self):
         return f"<TTSJob {self.id} status={self.status}>"

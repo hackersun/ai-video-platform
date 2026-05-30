@@ -6,19 +6,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
+import { useToast } from '@/components/ui/toast';
 import {
   Volume2, Play, Pause, Download, Loader2, AlertCircle,
-  Copy, RefreshCw, Clock, Settings, User, ChevronRight, BookOpen
+  Copy, RefreshCw, Clock, Settings, User, ChevronRight, BookOpen, CheckCircle
 } from 'lucide-react';
+import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import {
+  getConfigsByCapability,
+  getDefaultConfigForCapability,
+  modelStatusClass,
+  modelStatusLabel,
+  type SavedModelConfig,
+} from '@/lib/model-configs';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-
-// TTS提供商
-const TTS_PROVIDERS = [
-  { id: 'minimax', name: 'MiniMax', icon: '🎵', description: '海螺AI语音，音色丰富自然（推荐）' },
-  { id: 'volcano', name: '火山引擎', icon: '🔥', description: '豆包语音合成' },
-];
 
 // MiniMax 音色列表
 const MINIMAX_VOICES = [
@@ -62,7 +65,10 @@ interface TTSSegment {
 }
 
 export default function TTSPage() {
+  const { toast } = useToast();
   const [selectedProvider, setSelectedProvider] = useState('minimax');
+  const [llmConfigs, setLlmConfigs] = useState<SavedModelConfig[]>([]);
+  const [selectedModelConfigId, setSelectedModelConfigId] = useState('');
   const [selectedVoice, setSelectedVoice] = useState('female-shaonj');
   const [text, setText] = useState('');
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
@@ -91,12 +97,24 @@ export default function TTSPage() {
 
   // 音色列表
   const voiceList = selectedProvider === 'minimax' ? MINIMAX_VOICES : VOLCANO_VOICES;
+  const ttsConfigs = getConfigsByCapability(llmConfigs, 'audio');
+  const selectedTTSConfig = ttsConfigs.find(config => config.id === selectedModelConfigId);
 
   // 加载小说列表
   useEffect(() => {
     loadNovels();
     loadHistory();
+    loadLLMConfigs();
   }, []);
+
+  useEffect(() => {
+    if (ttsConfigs.length === 0 || selectedModelConfigId) return;
+    const defaultConfig = getDefaultConfigForCapability(llmConfigs, 'audio');
+    if (defaultConfig) {
+      setSelectedModelConfigId(defaultConfig.id);
+      setSelectedProvider(defaultConfig.provider_id);
+    }
+  }, [llmConfigs, selectedModelConfigId]);
 
   // 小说变化 → 加载章节
   useEffect(() => {
@@ -149,25 +167,30 @@ export default function TTSPage() {
   };
   const loadChapters = async (novelId: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/novels/${novelId}/chapters`);
+      const res = await fetchWithAuth(`${API_BASE}/chapters/novel/${novelId}`);
       if (res.ok) setChapters(await res.json());
     } catch {}
   };
-  const loadScripts = async (chapterId: string) => {
+  const loadScripts = async (_chapterId: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/scripts?chapter_id=${chapterId}`);
-      if (res.ok) setScripts(await res.json());
+      const res = await fetchWithAuth(`${API_BASE}/scripts`);
+      if (res.ok) {
+        const data = await res.json();
+        setScripts((Array.isArray(data) ? data : []).filter((script: Script) =>
+          !selectedNovel || script.novel_id === selectedNovel
+        ));
+      }
     } catch {}
   };
   const loadStoryboards = async (scriptId: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/storyboards?script_id=${scriptId}`);
+      const res = await fetchWithAuth(`${API_BASE}/storyboards/script/${scriptId}`);
       if (res.ok) setStoryboards(await res.json());
     } catch {}
   };
   const loadShots = async (storyboardId: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/shots?storyboard_id=${storyboardId}`);
+      const res = await fetchWithAuth(`${API_BASE}/shots/storyboard/${storyboardId}`);
       if (res.ok) setShots(await res.json());
     } catch {}
   };
@@ -180,8 +203,21 @@ export default function TTSPage() {
     } catch {} finally { setLoadingHistory(false); }
   };
 
+  const loadLLMConfigs = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (res.ok) {
+        const configs = await res.json();
+        setLlmConfigs(Array.isArray(configs) ? configs : []);
+      }
+    } catch {}
+  };
+
   const handleGenerate = async () => {
-    if (!text.trim()) { alert('请输入要转换的文本'); return; }
+    if (!text.trim()) {
+      toast({ title: '请输入要转换的文本', type: 'info' });
+      return;
+    }
     setGenerating(true); setError(null); setCurrentAudio(null); setCurrentSegments([]);
 
     try {
@@ -192,7 +228,9 @@ export default function TTSPage() {
           title: selectedShot ? `镜头TTS_${selectedShot.slice(0, 8)}` : 'TTS任务',
           voice_model: selectedVoice,
           speed: voiceSpeed,
-          api_provider: selectedProvider,
+          api_provider: selectedTTSConfig?.provider_id || selectedProvider || undefined,
+          model_config_id: selectedTTSConfig?.id || undefined,
+          model_id: selectedTTSConfig?.api_model_id || selectedTTSConfig?.model_id || undefined,
           shot_id: selectedShot || undefined,
           storyboard_id: selectedStoryboard || undefined,
           script_id: selectedScript || undefined,
@@ -265,6 +303,14 @@ export default function TTSPage() {
           </h1>
           <p className="text-white/60 mt-1">将文本转换为自然语音，支持多角色对话分段生成</p>
         </div>
+
+        {ttsConfigs.length > 0 && selectedTTSConfig?.test_status !== 'success' && (
+          <Card className="bg-yellow-500/10 border-yellow-500/30">
+            <CardContent className="p-3 text-sm text-yellow-100">
+              当前语音模型配置为“{modelStatusLabel(selectedTTSConfig?.test_status)}”。建议先在大模型配置页测试通过，避免生成时才发现 Key、权限或套餐问题。
+            </CardContent>
+          </Card>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 左侧配置 */}
@@ -344,29 +390,67 @@ export default function TTSPage() {
               </CardContent>
             </Card>
 
-            {/* 提供商 */}
+            {/* 语音模型配置 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <Settings className="w-5 h-5" />
-                  提供商
+                  语音模型配置
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                {TTS_PROVIDERS.map(p => (
-                  <div key={p.id} onClick={() => {
-                    setSelectedProvider(p.id);
-                    setSelectedVoice(p.id === 'minimax' ? 'female-shaonj' : 'female_nvsheng');
-                  }} className={`p-3 rounded-lg border cursor-pointer transition-all ${selectedProvider === p.id ? 'border-violet-500 bg-violet-500/10' : 'border-white/10 hover:border-white/20'}`}>
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{p.icon}</span>
-                      <div>
-                        <div className="text-white font-medium text-sm">{p.name}</div>
-                        <div className="text-white/50 text-xs">{p.description}</div>
+                {ttsConfigs.length > 0 ? (
+                  ttsConfigs.map(config => (
+                    <div
+                      key={config.id}
+                      onClick={() => {
+                        setSelectedModelConfigId(config.id);
+                        setSelectedProvider(config.provider_id);
+                        setSelectedVoice(config.provider_id === 'volcano' ? 'female_nvsheng' : 'female-shaonj');
+                      }}
+                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                        selectedModelConfigId === config.id
+                          ? 'border-violet-500 bg-violet-500/10'
+                          : 'border-white/10 hover:border-white/20'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="text-white font-medium text-sm truncate">{config.name}</div>
+                          <div className="text-white/50 text-xs mt-0.5">
+                            {config.provider_name || config.provider_id} / {config.model_name}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                            <span className="rounded bg-white/10 px-2 py-0.5 text-white/55">
+                              {config.is_default ? '默认语音配置' : '语音配置'}
+                            </span>
+                            <span className={`rounded border px-2 py-0.5 ${modelStatusClass(config.test_status)}`}>
+                              {modelStatusLabel(config.test_status)}
+                            </span>
+                          </div>
+                          {config.test_status !== 'success' && (
+                            <div className="mt-1 text-xs text-yellow-100/70">
+                              建议先到大模型配置页测试通过后再用于正式生成。
+                            </div>
+                          )}
+                        </div>
+                        {selectedModelConfigId === config.id && (
+                          <CheckCircle className="w-4 h-4 text-violet-400 flex-shrink-0" />
+                        )}
                       </div>
                     </div>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-3">
+                    <div className="text-yellow-100 text-sm font-medium">暂无已保存的语音模型配置</div>
+                    <div className="text-yellow-100/60 text-xs mt-1">
+                      请先在大模型配置中新增 TTS/语音模型，并测试通过。
+                    </div>
+                    <Link href="/llm-config" className="mt-3 inline-flex h-8 items-center rounded-md border border-yellow-400/40 px-3 text-xs text-yellow-100 hover:bg-yellow-500/10">
+                      前往配置
+                    </Link>
                   </div>
-                ))}
+                )}
               </CardContent>
             </Card>
 
@@ -429,10 +513,10 @@ export default function TTSPage() {
                 />
                 <div className="flex items-center justify-between mt-2">
                   <span className="text-white/40 text-sm">{text.length} 字符</span>
-                  <Button onClick={handleGenerate} disabled={generating || !text.trim()}
+                  <Button onClick={handleGenerate} disabled={generating || !text.trim() || ttsConfigs.length === 0}
                     className="bg-violet-600 hover:bg-violet-700">
                     {generating && <Loader2 className="w-5 h-5 mr-2 animate-spin" />}
-                    {generating ? '生成中...' : '生成语音'}
+                    {generating ? '生成中…' : '生成语音'}
                   </Button>
                 </div>
               </CardContent>
@@ -516,7 +600,7 @@ export default function TTSPage() {
                 {loadingHistory && history.length === 0 ? (
                   <div className="text-center py-8">
                     <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-white/40" />
-                    <p className="text-white/40">加载中...</p>
+                    <p className="text-white/40">加载中…</p>
                   </div>
                 ) : history.length > 0 ? (
                   <div className="space-y-2 max-h-80 overflow-y-auto">
@@ -545,7 +629,15 @@ export default function TTSPage() {
                                     {seg.character && <span className="text-violet-400">{seg.character}:</span>}
                                     <span className="text-white/60 truncate">"{seg.text.slice(0, 30)}"</span>
                                     {seg.audio_url ? (
-                                      <button onClick={() => playAudio(seg.audio_url)} className="text-green-400 ml-1">▶</button>
+                                      <button
+                                        type="button"
+                                        onClick={() => playAudio(seg.audio_url)}
+                                        aria-label={`播放 ${seg.character || '片段'} 音频`}
+                                        title="播放音频"
+                                        className="ml-1 rounded text-green-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                                      >
+                                        ▶
+                                      </button>
                                     ) : (
                                       <span className="text-red-400 ml-1">✗</span>
                                     )}

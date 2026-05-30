@@ -9,6 +9,7 @@ from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON, F
 from sqlalchemy.sql import func
 
 from app.core.database import Base
+from app.models.llm_config import decrypt_key, encrypt_key
 
 
 class ExternalAPIProvider(Base):
@@ -94,6 +95,22 @@ class ExternalAPIConfig(Base):
     
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    def get_api_key_decrypted(self) -> str:
+        if not self.api_key:
+            return ""
+        return decrypt_key(self.api_key)
+
+    def set_api_key_encrypted(self, plain_key: str) -> None:
+        self.api_key = encrypt_key(plain_key) if plain_key else ""
+
+    def get_api_secret_decrypted(self) -> str:
+        if not self.api_secret:
+            return ""
+        return decrypt_key(self.api_secret)
+
+    def set_api_secret_encrypted(self, plain_secret: Optional[str]) -> None:
+        self.api_secret = encrypt_key(plain_secret) if plain_secret else None
 
 
 class ExternalAPIUsageLog(Base):

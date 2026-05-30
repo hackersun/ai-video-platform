@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -32,6 +32,15 @@ import {
   Edit2
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import {
+  MODEL_CAPABILITY_LABELS,
+  getConfigsByCapability,
+  getDefaultConfigForCapability,
+  getModelCapability,
+  modelStatusClass,
+  modelStatusLabel,
+  type ModelCapability,
+} from '@/lib/model-configs';
 
 // 模型分类
 const MODEL_CATEGORIES = {
@@ -65,11 +74,23 @@ interface Model {
   output_cost_per_1k: number;
   is_recommended?: boolean;
   description?: string;
+  user_config_id?: string;
+  user_config_name?: string;
+  user_configured?: boolean;
+  user_config_count?: number;
+  user_is_default?: boolean;
+  user_test_status?: string | null;
+  user_test_message?: string | null;
 }
 
 interface SavedConfig {
   id: string;
   model_id: string;
+  config_model_id?: string;
+  api_model_id?: string;
+  model_type?: string;
+  model_capabilities?: string[];
+  provider_id: string;
   model_name: string;
   provider_name: string;
   name: string;
@@ -84,6 +105,8 @@ interface SavedConfig {
 }
 
 export default function LLMConfigPage() {
+  const configFormRef = useRef<HTMLDivElement | null>(null);
+  const configNameInputRef = useRef<HTMLInputElement | null>(null);
   const [activeTab, setActiveTab] = useState('volcano');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [models, setModels] = useState<Model[]>([]);
@@ -92,7 +115,7 @@ export default function LLMConfigPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{success: boolean; message: string; response?: string} | null>(null);
-  
+
   // 配置表单状态
   const [selectedProvider, setSelectedProvider] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
@@ -103,6 +126,30 @@ export default function LLMConfigPage() {
   const [topP, setTopP] = useState(0.9);
   const [maxTokens, setMaxTokens] = useState(2048);
   const [isDefault, setIsDefault] = useState(false);
+
+  const currentProvider = providers.find(p => p.id === selectedProvider);
+  const providerTabs = providers.filter((provider) => provider.id !== 'external');
+  const activeProvider = providers.find((provider) => provider.id === activeTab);
+  const filteredModels = models.filter(m => m.provider_id === selectedProvider);
+  const selectedModelInfo = models.find(m => m.id === selectedModel);
+  const selectedModelExistingConfig = selectedModelInfo?.user_config_id
+    ? savedConfigs.find(config => config.id === selectedModelInfo.user_config_id)
+    : undefined;
+  const agentPlanSelected = selectedProvider === 'volcano_agent_plan';
+  const capabilityOrder: ModelCapability[] = ['text', 'image', 'audio', 'video', 'embedding'];
+  const selectedCapability = selectedModelInfo ? getModelCapability(selectedModelInfo) : null;
+  const modelSelectOptions = filteredModels.map(m => {
+    const markers = [
+      m.user_is_default ? '默认' : null,
+      m.user_configured ? '已配置' : null,
+      m.user_configured ? modelStatusLabel(m.user_test_status) : null,
+    ].filter(Boolean);
+    const suffix = markers.length > 0 ? `（${markers.join(' / ')}）` : '';
+    return {
+      value: m.id,
+      label: `${m.model_name_cn || m.model_name}${suffix}`,
+    };
+  });
 
   // 获取提供商列表
   const fetchProviders = async () => {
@@ -120,6 +167,7 @@ export default function LLMConfigPage() {
       // 使用默认提供商
       setProviders([
         { id: 'volcano', name: 'volcano', name_cn: '火山引擎', base_url: 'https://ark.cn-beijing.volces.com/api/v3', description: '字节跳动豆包大模型' },
+        { id: 'volcano_agent_plan', name: 'volcano_agent_plan', name_cn: '火山方舟 Agent Plan', base_url: 'https://ark.cn-beijing.volces.com/api/plan/v3', description: '火山方舟订阅式 Agent Plan' },
         { id: 'qianlian', name: 'qianlian', name_cn: '阿里百炼', base_url: 'https://coding.dashscope.aliyuncs.com/apps/anthropic', description: '阿里云百炼平台' },
         { id: 'dashscope', name: 'dashscope', name_cn: '阿里千问', base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', description: '阿里云千问DashScope' },
       ]);
@@ -129,19 +177,31 @@ export default function LLMConfigPage() {
   // 获取模型列表
   const fetchModels = async (providerId?: string) => {
     try {
-      const url = providerId 
+      const url = providerId
         ? `${API_BASE_URL}/llm/models?provider=${providerId}`
         : `${API_BASE_URL}/llm/models`;
       const res = await fetchWithAuth(url);
       if (res.ok) {
         const data = await res.json();
         setModels(data);
+        if (selectedProvider) {
+          const selectedStillExists = data.some((item: Model) => item.id === selectedModel);
+          if (!selectedStillExists) {
+            const configured = data.find((item: Model) => item.user_is_default || item.user_configured);
+            if (configured) {
+              setSelectedModel(configured.id);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('获取模型失败:', error);
       // 使用默认模型
       setModels([
         { id: 'doubao-seed-1-8', provider_id: 'volcano', model_id: 'doubao-seed-1-8-251228', model_name: 'Doubao-Seed-1.8', model_name_cn: '豆包Seed-1.8', model_type: 'chat', context_window: 4096, max_tokens: 2048, input_cost_per_1k: 0.5, output_cost_per_1k: 1.0, is_recommended: true },
+        { id: 'vplan-ark-code-latest', provider_id: 'volcano_agent_plan', model_id: 'ark-code-latest', model_name: 'ark-code-latest', model_name_cn: 'Ark Code Latest', model_type: 'chat', context_window: 256000, max_tokens: 4096, input_cost_per_1k: 2.5, output_cost_per_1k: 2.5, is_recommended: true },
+        { id: 'vplan-seedream-5-0-lite', provider_id: 'volcano_agent_plan', model_id: 'doubao-seedream-5.0-lite', model_name: 'doubao-seedream-5.0-lite', model_name_cn: '豆包 Seedream 5.0 Lite', model_type: 'image-generation', context_window: 0, max_tokens: 0, input_cost_per_1k: 0, output_cost_per_1k: 0, is_recommended: true },
+        { id: 'vplan-seedance-2-0-fast', provider_id: 'volcano_agent_plan', model_id: 'doubao-seedance-2.0-fast', model_name: 'doubao-seedance-2.0-fast', model_name_cn: '豆包 Seedance 2.0 Fast', model_type: 'video-generation', context_window: 0, max_tokens: 0, input_cost_per_1k: 0, output_cost_per_1k: 0, is_recommended: true },
         { id: 'qwen-turbo', provider_id: 'dashscope', model_id: 'qwen-turbo', model_name: 'qwen-turbo', model_name_cn: '千问Turbo', model_type: 'chat', context_window: 8192, max_tokens: 2048, input_cost_per_1k: 0.5, output_cost_per_1k: 1.0 },
       ]);
     }
@@ -168,20 +228,11 @@ export default function LLMConfigPage() {
 
   // 切换Tab时更新provider
   useEffect(() => {
-    const providerMap: Record<string, string> = {
-      volcano: 'volcano',
-      qianlian: 'qianlian',
-      dashscope: 'dashscope',
-      minimax: 'minimax',
-      external: ''
-    };
-    setSelectedProvider(providerMap[activeTab] || '');
+    const nextProvider = activeTab === 'external' ? '' : activeTab;
+    setSelectedProvider(nextProvider);
     setSelectedModel('');
-    fetchModels(providerMap[activeTab]);
+    fetchModels(nextProvider);
   }, [activeTab]);
-
-  // 过滤当前provider的模型
-  const filteredModels = models.filter(m => m.provider_id === selectedProvider);
 
   // 测试连接
   const handleTest = async () => {
@@ -189,88 +240,48 @@ export default function LLMConfigPage() {
       setTestResult({ success: false, message: '请输入API Key' });
       return;
     }
-    
+
     if (!selectedModel) {
       setTestResult({ success: false, message: '请先选择一个模型' });
       return;
     }
-    
+
     setIsTesting(true);
     setTestResult(null);
-    
+
     try {
       const model = models.find(m => m.id === selectedModel);
       const provider = providers.find(p => p.id === selectedProvider);
-      
-      // 调用测试API
-      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs`, {
+
+      const testRes = await fetchWithAuth(`${API_BASE_URL}/llm/configs/test`, {
         method: 'POST',
         body: JSON.stringify({
-          model_id: selectedModel,
-          name: '测试配置',
           api_key: apiKey,
-          temperature,
-          top_p: topP,
-          max_tokens: maxTokens
+          provider_id: selectedProvider,
+          model_id: selectedModel,
+          message: '你好，请介绍一下自己'
         })
       });
 
-      if (res.ok) {
-        // 模拟实际API测试
-        const testRes = await fetchWithAuth(`${API_BASE_URL}/llm/configs/test`, {
-          method: 'POST',
-          body: JSON.stringify({
-            api_key: apiKey,
-            provider_id: selectedProvider,
-            model_id: selectedModel,
-            message: '你好，请介绍一下自己'
-          })
+      if (testRes.ok) {
+        const result = await testRes.json();
+        setTestResult({
+          success: result.success,
+          message: result.message || (result.success ? `${provider?.name_cn || '模型'} API Key 验证通过` : '连接测试失败'),
+          response: result.response
         });
-        
-        if (testRes.ok) {
-          const result = await testRes.json();
-          setTestResult({ 
-            success: true, 
-            message: `连接成功！${provider?.name_cn || '模型'} API Key 验证通过`,
-            response: result.response
-          });
-        } else {
-          // 直接测试API连接
-          const directTest = await testApiConnection(provider, model, apiKey);
-          if (directTest.success) {
-            setTestResult({ success: true, message: directTest.message, response: directTest.response });
-          } else {
-            setTestResult({ success: false, message: directTest.message });
-          }
-        }
       } else {
-        // API创建失败，尝试直接测试
-        const directTest = await testApiConnection(provider, model, apiKey);
-        if (directTest.success) {
-          setTestResult({ success: true, message: directTest.message, response: directTest.response });
-        } else {
-          setTestResult({ success: false, message: directTest.message });
-        }
+        const error = await testRes.json().catch(() => ({}));
+        setTestResult({
+          success: false,
+          message: error.detail || error.message || `连接测试失败：HTTP ${testRes.status}`,
+        });
       }
     } catch (error) {
-      // API不可用，使用模拟测试
-      const model = models.find(m => m.id === selectedModel);
-      const provider = providers.find(p => p.id === selectedProvider);
-      
-      // 模拟测试结果
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      if (apiKey.length >= 20) {
-        setTestResult({ 
-          success: true, 
-          message: `连接成功！${provider?.name_cn || '模型'} API Key 验证通过 (模拟模式)`,
-          response: `你好！我是${model?.model_name_cn || 'AI助手'}，这是一次模拟测试响应。`
-        });
-      } else {
-        setTestResult({ success: false, message: 'API Key 无效，请检查后重试' });
-      }
+      const message = error instanceof Error ? error.message : '连接测试失败';
+      setTestResult({ success: false, message });
     }
-    
+
     setIsTesting(false);
   };
 
@@ -548,11 +559,17 @@ export default function LLMConfigPage() {
       setTestResult({ success: false, message: '请选择模型' });
       return;
     }
-    
+
     setIsLoading(true);
     try {
-      const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs`, {
-        method: 'POST',
+      const updatingExisting = !editingConfig && selectedModelInfo?.user_config_id;
+      const url = editingConfig
+        ? `${API_BASE_URL}/llm/configs/${editingConfig.id}`
+        : updatingExisting
+          ? `${API_BASE_URL}/llm/configs/${selectedModelInfo.user_config_id}`
+          : `${API_BASE_URL}/llm/configs`;
+      const res = await fetchWithAuth(url, {
+        method: editingConfig || updatingExisting ? 'PUT' : 'POST',
         body: JSON.stringify({
           model_id: selectedModel,
           name: configName,
@@ -561,13 +578,18 @@ export default function LLMConfigPage() {
           temperature,
           top_p: topP,
           max_tokens: maxTokens,
+          extra_params: agentPlanSelected ? { base_url: currentProvider?.base_url } : undefined,
           is_default: isDefault
         })
       });
-      
+
       if (res.ok) {
-        setTestResult({ success: true, message: '配置已保存成功！' });
-        fetchConfigs();
+        const saved = await res.json();
+        setTestResult({ success: true, message: editingConfig || updatingExisting ? '已有配置已更新，不会重复创建。' : '配置已保存成功！' });
+        await fetchConfigs();
+        await fetchModels(selectedProvider || undefined);
+        setSelectedModel(saved.config_model_id || selectedModel);
+        setEditingConfig(null);
         // 重置表单
         setConfigName('');
         setApiKey('');
@@ -620,12 +642,15 @@ export default function LLMConfigPage() {
   const handleEdit = (config: SavedConfig) => {
     setEditingConfig(config);
     setConfigName(config.name);
-    setSelectedModel(config.model_id);
+    setSelectedModel(config.config_model_id || config.model_id);
     // 查找对应的provider
-    const model = models.find(m => m.id === config.model_id);
+    const model = models.find(m => m.id === (config.config_model_id || config.model_id) || m.model_id === config.api_model_id || m.model_id === config.model_id);
     if (model) {
       setSelectedProvider(model.provider_id);
       setActiveTab(model.provider_id);
+    } else if (config.provider_id) {
+      setSelectedProvider(config.provider_id);
+      setActiveTab(config.provider_id);
     }
     // 注意：出于安全考虑，不回填API Key
     setApiKey('');
@@ -634,35 +659,34 @@ export default function LLMConfigPage() {
     setTopP(config.top_p);
     setMaxTokens(config.max_tokens || 2048);
     setIsDefault(config.is_default);
+    requestAnimationFrame(() => {
+      configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      configNameInputRef.current?.focus({ preventScroll: true });
+    });
   };
 
   // 测试指定配置
   const handleTestConfig = async (config: SavedConfig) => {
-    if (!config.api_key) {
-      setTestResult({ success: false, message: '无法测试：API Key不可用' });
-      return;
-    }
-    
     setIsTesting(true);
     setTestResult(null);
-    
+
     try {
       const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs/${config.id}/test`, {
         method: 'POST',
         body: JSON.stringify({ message: '你好，请介绍一下自己' })
       });
-      
+
       const data = await res.json();
       setTestResult({
         success: data.success,
         message: data.message || (data.success ? '测试成功' : '测试失败'),
         response: data.response
       });
-      
+
       // 更新配置状态
       if (data.success) {
-        setSavedConfigs(prev => prev.map(c => 
-          c.id === config.id 
+        setSavedConfigs(prev => prev.map(c =>
+          c.id === config.id
             ? { ...c, test_status: 'success', test_message: data.message }
             : c
         ));
@@ -670,7 +694,7 @@ export default function LLMConfigPage() {
     } catch (error) {
       setTestResult({ success: false, message: '测试请求失败' });
     }
-    
+
     setIsTesting(false);
   };
 
@@ -683,14 +707,14 @@ export default function LLMConfigPage() {
             <Settings className="w-6 h-6" />
             大模型配置
           </h1>
-          <p className="text-white/60 mt-1">配置和管理AI模型服务，支持火山引擎、阿里千问等</p>
+          <p className="text-white/60 mt-1">配置和管理AI模型服务，支持火山引擎、火山方舟 Agent Plan、阿里千问等</p>
         </div>
 
         {/* 主要内容区域 */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 左侧：模型列表 */}
           <div className="lg:col-span-2 space-y-4">
-            <Card className="bg-white/5 border-white/10">
+            <Card ref={configFormRef} className="scroll-mt-6 bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <Sparkles className="w-5 h-5 text-violet-400" />
@@ -699,41 +723,37 @@ export default function LLMConfigPage() {
               </CardHeader>
               <CardContent>
                 {/* 标签切换 */}
-                <div className="flex gap-2 mb-4">
-                  <Button
-                    variant={activeTab === 'volcano' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('volcano')}
-                    className={activeTab === 'volcano' ? 'bg-violet-600' : 'border-white/10'}
-                  >
-                    🔥 火山引擎
-                  </Button>
-                  <Button
-                    variant={activeTab === 'qianlian' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('qianlian')}
-                    className={activeTab === 'qianlian' ? 'bg-violet-600' : 'border-white/10'}
-                  >
-                    🟠 阿里百炼
-                  </Button>
-                  <Button
-                    variant={activeTab === 'dashscope' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('dashscope')}
-                    className={activeTab === 'dashscope' ? 'bg-violet-600' : 'border-white/10'}
-                  >
-                    🐱 阿里千问
-                  </Button>
-                  <Button
-                    variant={activeTab === 'minimax' ? 'default' : 'outline'}
-                    onClick={() => setActiveTab('minimax')}
-                    className={activeTab === 'minimax' ? 'bg-violet-600' : 'border-white/10'}
-                  >
-                    🌀 MiniMax
-                  </Button>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {providerTabs.map((provider) => (
+                    <Button
+                      key={provider.id}
+                      variant={activeTab === provider.id ? 'default' : 'outline'}
+                      onClick={() => setActiveTab(provider.id)}
+                      className={activeTab === provider.id ? 'bg-violet-600' : 'border-white/10'}
+                    >
+                      {provider.name_cn || provider.name}
+                    </Button>
+                  ))}
                 </div>
 
-                {/* 火山引擎/百炼/千问/MiniMax模型 */}
-                {(activeTab === 'volcano' || activeTab === 'qianlian' || activeTab === 'dashscope' || activeTab === 'minimax') && (
+                {activeProvider?.description && (
+                  <div className="mb-4 rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-white/60">
+                    <div className="font-medium text-white/80">{activeProvider.name_cn || activeProvider.name}</div>
+                    <div className="mt-1">{activeProvider.description}</div>
+                    {activeProvider.id === 'volcano_agent_plan' && (
+                      <div className="mt-2 text-amber-200/80">
+                        Agent Plan 需使用专属 API Key 和包含 /api/plan/v3 的专属 Base URL，请不要和普通火山方舟 Key 混用。
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 服务商模型 */}
+                {activeTab !== 'external' && (
                   <div className="space-y-3">
-                    {filteredModels.length > 0 ? filteredModels.map((model) => (
+                    {filteredModels.length > 0 ? filteredModels.map((model) => {
+                      const capability = getModelCapability(model);
+                      return (
                       <div
                         key={model.id}
                         onClick={() => setSelectedModel(model.id)}
@@ -753,10 +773,29 @@ export default function LLMConfigPage() {
                               {model.model_type === 'video-generation' && <Video className="w-4 h-4 text-red-400" />}
                               {model.model_type === 'image' && <ImageIcon className="w-4 h-4 text-orange-400" />}
                               {model.model_type === 'tts' && <Music className="w-4 h-4 text-green-400" />}
+                              {model.model_type === 'embedding' && <Network className="w-4 h-4 text-cyan-400" />}
                               {model.model_name_cn || model.model_name}
                               {model.is_recommended && (
                                 <span className="px-2 py-0.5 text-xs bg-violet-500/20 text-violet-400 rounded">
                                   推荐
+                                </span>
+                              )}
+                              <span className="px-2 py-0.5 text-xs bg-white/10 text-white/55 rounded">
+                                {MODEL_CAPABILITY_LABELS[capability]}
+                              </span>
+                              {model.user_configured && (
+                                <span className="px-2 py-0.5 text-xs bg-cyan-500/15 text-cyan-100 rounded">
+                                  已配置
+                                </span>
+                              )}
+                              {model.user_is_default && (
+                                <span className="px-2 py-0.5 text-xs bg-violet-500/20 text-violet-100 rounded">
+                                  默认
+                                </span>
+                              )}
+                              {model.user_configured && (
+                                <span className={`px-2 py-0.5 text-xs rounded border ${modelStatusClass(model.user_test_status)}`}>
+                                  {modelStatusLabel(model.user_test_status)}
                                 </span>
                               )}
                             </div>
@@ -765,12 +804,20 @@ export default function LLMConfigPage() {
                               {model.model_type === 'video-generation' && '视频生成'}
                               {model.model_type === 'image' && '图像生成'}
                               {model.model_type === 'tts' && '语音合成'}
+                              {model.model_type === 'embedding' && `向量化 • 上下文${model.context_window}`}
                               {model.model_type === 'chat' && `上下文${model.context_window}`}
-                              {!['image-generation', 'video-generation', 'chat', 'image', 'tts'].includes(model.model_type) && `上下文${model.context_window}`}
+                              {!['image-generation', 'video-generation', 'chat', 'image', 'tts', 'embedding'].includes(model.model_type) && `上下文${model.context_window}`}
                               {model.model_type !== 'image-generation' && model.model_type !== 'video-generation' && model.model_type !== 'tts' && ` • 输入¥${model.input_cost_per_1k}/千token`}
                             </div>
                             {model.description && (
                               <div className="text-white/40 text-xs mt-1">{model.description}</div>
+                            )}
+                            {model.user_configured && (
+                              <div className="mt-2 rounded border border-cyan-400/20 bg-cyan-500/10 px-2 py-1 text-xs text-cyan-100">
+                                当前用户已保存配置：{model.user_config_name || '未命名配置'}
+                                {model.user_config_count && model.user_config_count > 1 ? `，共 ${model.user_config_count} 条` : ''}
+                                。再次保存会更新已有配置，避免重复配置。
+                              </div>
                             )}
                           </div>
                           {selectedModel === model.id && (
@@ -778,7 +825,8 @@ export default function LLMConfigPage() {
                           )}
                         </div>
                       </div>
-                    )) : (
+                      );
+                    }) : (
                       <div className="text-center py-8 text-white/40">
                         <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
                         <p>暂无可用模型，请检查网络连接</p>
@@ -791,9 +839,18 @@ export default function LLMConfigPage() {
                 {activeTab === 'external' && (
                   <div className="space-y-3">
                     <div className="p-4 rounded-lg bg-white/5 border border-white/10">
-                      <div className="text-white/60 text-sm">
-                        <AlertCircle className="w-4 h-4 inline mr-2" />
-                        外部API配置功能开发中...
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="text-white/70 text-sm">
+                          <Network className="w-4 h-4 inline mr-2" />
+                          Sora、Veo、ComfyUI、FFmpeg 云渲染和口型适配已迁移到生产适配管理。
+                        </div>
+                        <a
+                          href="/production-adapters"
+                          className="inline-flex h-9 items-center justify-center rounded-md bg-violet-600 px-3 text-sm font-medium text-white hover:bg-violet-700"
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          打开生产适配
+                        </a>
                       </div>
                     </div>
                   </div>
@@ -804,6 +861,50 @@ export default function LLMConfigPage() {
 
           {/* 右侧：配置面板 */}
           <div className="space-y-4">
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-cyan-300" />
+                  能力默认模型
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {capabilityOrder.map((capability) => {
+                  const configs = getConfigsByCapability(savedConfigs, capability);
+                  const defaultConfig = getDefaultConfigForCapability(savedConfigs, capability);
+                  return (
+                    <div key={capability} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium text-white">{MODEL_CAPABILITY_LABELS[capability]}</div>
+                        <span className="rounded bg-white/10 px-2 py-0.5 text-xs text-white/50">{configs.length} 个配置</span>
+                      </div>
+                      {defaultConfig ? (
+                        <div className="mt-2 space-y-1 text-xs">
+                          <div className="text-white/75">{defaultConfig.name}</div>
+                          <div className="text-white/45">{defaultConfig.provider_name || defaultConfig.provider_id} / {defaultConfig.model_name}</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            <span className="rounded bg-violet-500/15 px-2 py-0.5 text-violet-100">
+                              {defaultConfig.is_default ? '默认' : '优先可用'}
+                            </span>
+                            <span className={`rounded border px-2 py-0.5 ${modelStatusClass(defaultConfig.test_status)}`}>
+                              {modelStatusLabel(defaultConfig.test_status)}
+                            </span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 text-xs text-yellow-100/70">
+                          未配置，使用该能力时会提示先到本页新增并测试。
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <p className="text-xs text-white/40">
+                  默认配置按能力类别独立生效，设置视频默认不会覆盖文本默认。
+                </p>
+              </CardContent>
+            </Card>
+
             {/* API Key配置 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -817,6 +918,7 @@ export default function LLMConfigPage() {
                 <div>
                   <label className="block text-sm text-white/80 mb-2">配置名称</label>
                   <Input
+                    ref={configNameInputRef}
                     placeholder="例如：我的豆包配置"
                     value={configName}
                     onChange={(e) => setConfigName(e.target.value)}
@@ -831,6 +933,7 @@ export default function LLMConfigPage() {
                     value={selectedProvider}
                     onChange={(e) => {
                       setSelectedProvider(e.target.value);
+                      setActiveTab(e.target.value);
                       setSelectedModel('');
                     }}
                     options={
@@ -852,6 +955,12 @@ export default function LLMConfigPage() {
                       {selectedProvider === 'volcano' && (
                         <div className="mt-1 text-xs text-white/40">
                           文本→/chat/completions | 图像→/images/generations | 视频→/contents/generations/tasks
+                        </div>
+                      )}
+                      {selectedProvider === 'volcano_agent_plan' && (
+                        <div className="mt-1 text-xs text-white/40">
+                          Agent Plan 专属端点：文本→/chat/completions | 图像→/images/generations | 视频→/contents/generations/tasks
+                          <br />需使用 Agent Plan 专属 API Key；Small 套餐不支持视频生成。
                         </div>
                       )}
                       {selectedProvider === 'minimax' && (
@@ -886,15 +995,27 @@ export default function LLMConfigPage() {
                     value={selectedModel}
                     onChange={(e) => setSelectedModel(e.target.value)}
                     options={
-                      filteredModels.map(m => ({ 
-                        value: m.id, 
-                        label: m.model_name_cn || m.model_name 
-                      }))
+                      modelSelectOptions
                     }
                     placeholder="选择模型"
                   />
                   {filteredModels.length === 0 && (
                     <p className="text-white/40 text-xs mt-1">请先选择服务商</p>
+                  )}
+                  {selectedModelInfo && (
+                    <div className="mt-1 space-y-1 text-xs">
+                      <p className="text-white/45">API 模型 ID：{selectedModelInfo.model_id}</p>
+                      {selectedCapability && (
+                        <p className="text-white/45">能力类型：{MODEL_CAPABILITY_LABELS[selectedCapability]}</p>
+                      )}
+                      {selectedModelInfo.user_configured && (
+                        <p className="text-cyan-100/80">
+                          当前用户已配置：{selectedModelInfo.user_config_name || '未命名配置'}，
+                          状态：{modelStatusLabel(selectedModelInfo.user_test_status)}。
+                          保存时将更新已有配置。
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -905,11 +1026,16 @@ export default function LLMConfigPage() {
                   </label>
                   <Input
                     type="password"
-                    placeholder="请输入API Key"
+                    placeholder={agentPlanSelected ? '请输入 Agent Plan 专属 API Key' : '请输入API Key'}
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     className="bg-white/5 border-white/10"
                   />
+                  {agentPlanSelected && (
+                    <p className="mt-1 text-xs text-amber-200/80">
+                      PDF 文档说明 Agent Plan API Key 与普通火山方舟 API Key 不能混用，Base URL 必须包含 /api/plan/v3。图像/视频模型测试只验证端点，不提交生成任务。
+                    </p>
+                  )}
                 </div>
 
                 {/* API Secret (可选) */}
@@ -987,8 +1113,8 @@ export default function LLMConfigPage() {
                 {/* 测试结果 */}
                 {testResult && (
                   <div className={`p-3 rounded-lg flex items-start gap-2 ${
-                    testResult.success 
-                      ? 'bg-green-500/10 border border-green-500/20' 
+                    testResult.success
+                      ? 'bg-green-500/10 border border-green-500/20'
                       : 'bg-red-500/10 border border-red-500/20'
                   }`}>
                     {testResult.success ? (
@@ -1037,7 +1163,7 @@ export default function LLMConfigPage() {
                     ) : (
                       <CheckCircle className="w-4 h-4 mr-2" />
                     )}
-                    保存配置
+                    {editingConfig || selectedModelExistingConfig ? '更新配置' : '保存配置'}
                   </Button>
                 </div>
               </CardContent>
@@ -1066,12 +1192,12 @@ export default function LLMConfigPage() {
                               {config.name}
                               {config.is_default && (
                                 <span className="px-1.5 py-0.5 text-xs bg-violet-500/20 text-violet-400 rounded">
-                                  默认
+                                  {MODEL_CAPABILITY_LABELS[getModelCapability(config)]}默认
                                 </span>
                               )}
                             </div>
                             <div className="text-white/60 text-xs mt-0.5">
-                              {config.model_name} • 使用{config.usage_count}次
+                              {config.provider_name} / {config.model_name} • 使用{config.usage_count}次
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
@@ -1120,9 +1246,9 @@ export default function LLMConfigPage() {
                               <XCircle className="w-3 h-3 text-red-400" />
                             )}
                             <span className={`text-xs ${
-                              config.test_status === 'success' ? 'text-green-400' : 'text-red-400'
+                              config.test_status === 'success' ? 'text-green-400' : config.test_status === 'failed' ? 'text-red-400' : 'text-yellow-300'
                             }`}>
-                              {config.test_status === 'success' ? '已验证' : '未验证'}
+                              {modelStatusLabel(config.test_status)}
                             </span>
                           </div>
                         )}
@@ -1148,6 +1274,7 @@ export default function LLMConfigPage() {
                 </h4>
                 <ul className="text-sm text-white/60 space-y-1">
                   <li>• <strong className="text-white/80">火山引擎:</strong> <a href="https://www.volcengine.com" target="_blank" className="text-violet-400 hover:underline">volcengine.com</a></li>
+                  <li>• <strong className="text-white/80">火山方舟 Agent Plan:</strong> <a href="https://console.volcengine.com/ark" target="_blank" className="text-violet-400 hover:underline">Agent Plan 控制台</a></li>
                   <li>• <strong className="text-white/80">阿里百炼:</strong> <a href="https://bailian.console.aliyun.com" target="_blank" className="text-violet-400 hover:underline">阿里云百炼</a></li>
                   <li>• <strong className="text-white/80">阿里千问:</strong> <a href="https://dashscope.console.aliyun.com" target="_blank" className="text-violet-400 hover:underline">阿里云DashScope</a></li>
                 </ul>

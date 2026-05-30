@@ -1,0 +1,209 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "大模型配置" [level=1] [ref=e64]:
+            - img [ref=e65]
+            - text: 大模型配置
+          - paragraph [ref=e68]: 配置和管理AI模型服务，支持火山引擎、阿里千问等
+        - generic [ref=e69]:
+          - generic [ref=e71]:
+            - heading "选择模型" [level=3] [ref=e73]:
+              - img [ref=e74]
+              - text: 选择模型
+            - generic [ref=e76]:
+              - generic [ref=e77]:
+                - button "🔥 火山引擎" [ref=e78] [cursor=pointer]
+                - button "🟠 阿里百炼" [ref=e79] [cursor=pointer]
+                - button "🐱 阿里千问" [ref=e80] [cursor=pointer]
+              - generic [ref=e81]:
+                - generic [ref=e84] [cursor=pointer]:
+                  - generic [ref=e85]:
+                    - img [ref=e86]
+                    - text: 豆包Seed-1.8
+                  - generic [ref=e88]: 上下文4096 • 输入¥0.5/千token
+                  - generic [ref=e89]: 豆包最新轻量级模型，性价比高
+                - generic [ref=e92] [cursor=pointer]:
+                  - generic [ref=e93]:
+                    - img [ref=e94]
+                    - text: 火山视频生成
+                    - generic [ref=e97]: 推荐
+                  - generic [ref=e98]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e99]: 火山引擎高质量视频生成模型
+                - generic [ref=e102] [cursor=pointer]:
+                  - generic [ref=e103]:
+                    - text: 豆包Seedream-4.5
+                    - generic [ref=e104]: 推荐
+                  - generic [ref=e105]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e106]: 豆包高质量图像生成模型
+                - generic [ref=e109] [cursor=pointer]:
+                  - generic [ref=e110]:
+                    - img [ref=e111]
+                    - text: 豆包Seedance-1.5-pro
+                    - generic [ref=e114]: 推荐
+                  - generic [ref=e115]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e116]: 火山引擎高质量视频生成模型，支持4/8/10秒视频
+                - generic [ref=e119] [cursor=pointer]:
+                  - generic [ref=e120]: 豆包Seedream-5.0-lite
+                  - generic [ref=e121]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e122]: 豆包轻量级图像生成模型
+                - generic [ref=e125] [cursor=pointer]:
+                  - generic [ref=e126]:
+                    - text: 豆包TTS
+                    - generic [ref=e127]: 推荐
+                  - generic [ref=e128]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e129]: 豆包语音合成，支持多种音色和语速
+                - generic [ref=e132] [cursor=pointer]:
+                  - generic [ref=e133]: 豆包TTS英文
+                  - generic [ref=e134]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e135]: 豆包英文语音合成
+                - generic [ref=e138] [cursor=pointer]:
+                  - generic [ref=e139]: 豆包TTS粤语
+                  - generic [ref=e140]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e141]: 豆包粤语语音合成
+          - generic [ref=e142]:
+            - generic [ref=e143]:
+              - heading "API Key 配置" [level=3] [ref=e145]:
+                - img [ref=e146]
+                - text: API Key 配置
+              - generic [ref=e150]:
+                - generic [ref=e151]:
+                  - generic [ref=e152]: 配置名称
+                  - textbox "例如：我的豆包配置" [ref=e153]
+                - generic [ref=e154]:
+                  - generic [ref=e155]: 服务商
+                  - combobox [ref=e156] [cursor=pointer]:
+                    - option "选择服务商" [disabled]
+                    - option "火山引擎" [selected]
+                  - generic [ref=e157]:
+                    - generic [ref=e158]:
+                      - img [ref=e159]
+                      - generic [ref=e162]: API地址
+                    - code
+                - generic [ref=e163]:
+                  - generic [ref=e164]: 模型
+                  - combobox [ref=e165] [cursor=pointer]:
+                    - option "选择模型" [disabled] [selected]
+                    - option "豆包Seed-1.8"
+                    - option "火山视频生成"
+                    - option "豆包Seedream-4.5"
+                    - option "豆包Seedance-1.5-pro"
+                    - option "豆包Seedream-5.0-lite"
+                    - option "豆包TTS"
+                    - option "豆包TTS英文"
+                    - option "豆包TTS粤语"
+                - generic [ref=e166]:
+                  - generic [ref=e167]: API Key *
+                  - textbox "请输入API Key" [active] [ref=e168]: test-api-key-12345
+                - generic [ref=e169]:
+                  - generic [ref=e170]: API Secret (可选)
+                  - textbox "部分服务商需要" [ref=e171]
+                - group [ref=e172]:
+                  - generic "高级参数" [ref=e173] [cursor=pointer]:
+                    - img [ref=e174]
+                    - text: 高级参数
+                - generic [ref=e176] [cursor=pointer]:
+                  - checkbox "设为默认配置" [ref=e177]
+                  - text: 设为默认配置
+                - generic [ref=e178]:
+                  - button "测试连接" [disabled]:
+                    - img
+                    - text: 测试连接
+                  - button "保存配置" [disabled]:
+                    - img
+                    - text: 保存配置
+            - generic [ref=e179]:
+              - heading "已保存配置 0个" [level=3] [ref=e181]:
+                - img [ref=e182]
+                - text: 已保存配置
+                - generic [ref=e185]: 0个
+              - generic [ref=e187]:
+                - img [ref=e188]
+                - paragraph [ref=e192]: 暂无已保存的配置
+                - paragraph [ref=e193]: 在上方输入API Key并保存
+            - generic [ref=e195]:
+              - heading "如何获取API Key?" [level=4] [ref=e196]:
+                - img [ref=e197]
+                - text: 如何获取API Key?
+              - list [ref=e201]:
+                - listitem [ref=e202]:
+                  - text: •
+                  - strong [ref=e203]: "火山引擎:"
+                  - link "volcengine.com" [ref=e204] [cursor=pointer]:
+                    - /url: https://www.volcengine.com
+                - listitem [ref=e205]:
+                  - text: •
+                  - strong [ref=e206]: "阿里百炼:"
+                  - link "阿里云百炼" [ref=e207] [cursor=pointer]:
+                    - /url: https://bailian.console.aliyun.com
+                - listitem [ref=e208]:
+                  - text: •
+                  - strong [ref=e209]: "阿里千问:"
+                  - link "阿里云DashScope" [ref=e210] [cursor=pointer]:
+                    - /url: https://dashscope.console.aliyun.com
+            - generic [ref=e212]:
+              - heading "常见错误说明" [level=4] [ref=e213]:
+                - img [ref=e214]
+                - text: 常见错误说明
+              - list [ref=e216]:
+                - listitem [ref=e217]:
+                  - text: 🔑
+                  - strong [ref=e218]: "Key无效:"
+                  - text: API Key格式或值错误
+                - listitem [ref=e219]:
+                  - text: 🌐
+                  - strong [ref=e220]: "网络失败:"
+                  - text: 网络不通或API地址错误
+                - listitem [ref=e221]:
+                  - text: ⏱️
+                  - strong [ref=e222]: "配额用完:"
+                  - text: 当月用量已达上限
+                - listitem [ref=e223]:
+                  - text: 🖥️
+                  - strong [ref=e224]: "服务端错误:"
+                  - text: 服务商服务器异常
+  - alert [ref=e225]
+```

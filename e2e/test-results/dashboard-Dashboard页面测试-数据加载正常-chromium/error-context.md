@@ -1,0 +1,168 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - alert [ref=e2]
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "AI视频平台" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e8]
+          - generic [ref=e10]: AI视频平台
+        - navigation [ref=e11]:
+          - link "控制台" [ref=e12] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e13]
+            - generic [ref=e16]: 控制台
+          - link "作品" [ref=e17] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e18]
+            - generic [ref=e21]: 作品
+          - link "剧本" [ref=e22] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e23]
+            - generic [ref=e26]: 剧本
+          - link "角色" [ref=e27] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e28]
+            - generic [ref=e33]: 角色
+          - link "分镜" [ref=e34] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e35]
+            - generic [ref=e40]: 分镜
+          - link "视频生成" [ref=e41] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e42]
+            - generic [ref=e45]: 视频生成
+          - button "工具" [ref=e47] [cursor=pointer]:
+            - img [ref=e48]
+            - generic [ref=e51]: 工具
+            - img [ref=e52]
+          - button "更多" [ref=e55] [cursor=pointer]:
+            - img [ref=e56]
+            - generic [ref=e59]: 更多
+            - img [ref=e60]
+    - main [ref=e62]:
+      - generic [ref=e63]:
+        - generic [ref=e64]:
+          - heading "欢迎回来，用户" [level=1] [ref=e65]
+          - paragraph [ref=e66]: 开始您的AI视频创作之旅
+        - generic [ref=e68]:
+          - heading "创作流程" [level=2] [ref=e69]:
+            - img [ref=e70]
+            - text: 创作流程
+          - generic [ref=e72]:
+            - generic [ref=e73]:
+              - link "1 创建小说" [ref=e74] [cursor=pointer]:
+                - /url: /novels/new
+                - generic [ref=e75]: "1"
+                - text: 创建小说
+              - generic [ref=e76]: →
+            - generic [ref=e77]:
+              - link "2 添加章节" [ref=e78] [cursor=pointer]:
+                - /url: /novels
+                - generic [ref=e79]: "2"
+                - text: 添加章节
+              - generic [ref=e80]: →
+            - generic [ref=e81]:
+              - link "3 创建角色" [ref=e82] [cursor=pointer]:
+                - /url: /characters
+                - generic [ref=e83]: "3"
+                - text: 创建角色
+              - generic [ref=e84]: →
+            - generic [ref=e85]:
+              - link "4 编写剧本" [ref=e86] [cursor=pointer]:
+                - /url: /scripts
+                - generic [ref=e87]: "4"
+                - text: 编写剧本
+              - generic [ref=e88]: →
+            - generic [ref=e89]:
+              - link "5 设计分镜" [ref=e90] [cursor=pointer]:
+                - /url: /storyboards
+                - generic [ref=e91]: "5"
+                - text: 设计分镜
+              - generic [ref=e92]: →
+            - link "6 生成视频" [ref=e94] [cursor=pointer]:
+              - /url: /video-generation
+              - generic [ref=e95]: "6"
+              - text: 生成视频
+        - generic [ref=e96]:
+          - heading "快捷操作" [level=2] [ref=e97]
+          - generic [ref=e98]:
+            - link "创建小说 开始新的创作" [ref=e99] [cursor=pointer]:
+              - /url: /novels/new
+              - img [ref=e100]
+              - generic [ref=e103]: 创建小说
+              - generic [ref=e104]: 开始新的创作
+            - link "创建剧本 编写视频剧本" [ref=e105] [cursor=pointer]:
+              - /url: /scripts
+              - img [ref=e106]
+              - generic [ref=e109]: 创建剧本
+              - generic [ref=e110]: 编写视频剧本
+            - link "管理角色 管理角色库" [ref=e111] [cursor=pointer]:
+              - /url: /characters
+              - img [ref=e112]
+              - generic [ref=e117]: 管理角色
+              - generic [ref=e118]: 管理角色库
+            - link "生成视频 AI生成视频" [ref=e119] [cursor=pointer]:
+              - /url: /video-generation
+              - img [ref=e120]
+              - generic [ref=e123]: 生成视频
+              - generic [ref=e124]: AI生成视频
+            - link "语音合成 文本转语音" [ref=e125] [cursor=pointer]:
+              - /url: /tts
+              - img [ref=e126]
+              - generic [ref=e129]: 语音合成
+              - generic [ref=e130]: 文本转语音
+            - link "分镜设计 设计视频分镜" [ref=e131] [cursor=pointer]:
+              - /url: /storyboards
+              - img [ref=e132]
+              - generic [ref=e137]: 分镜设计
+              - generic [ref=e138]: 设计视频分镜
+            - link "任务队列 查看生成任务" [ref=e139] [cursor=pointer]:
+              - /url: /jobs
+              - img [ref=e140]
+              - generic [ref=e143]: 任务队列
+              - generic [ref=e144]: 查看生成任务
+            - link "AI模型 配置AI模型" [ref=e145] [cursor=pointer]:
+              - /url: /llm-config
+              - img [ref=e146]
+              - generic [ref=e149]: AI模型
+              - generic [ref=e150]: 配置AI模型
+            - link "数据分析 查看统计数据" [ref=e151] [cursor=pointer]:
+              - /url: /analytics
+              - img [ref=e152]
+              - generic [ref=e154]: 数据分析
+              - generic [ref=e155]: 查看统计数据
+            - link "模板市场 浏览模板" [ref=e156] [cursor=pointer]:
+              - /url: /templates
+              - img [ref=e157]
+              - generic [ref=e161]: 模板市场
+              - generic [ref=e162]: 浏览模板
+        - generic [ref=e163]:
+          - heading "数据统计" [level=2] [ref=e164]
+          - generic [ref=e165]:
+            - generic [ref=e167]:
+              - generic [ref=e168]: "0"
+              - generic [ref=e169]: 作品数量
+            - generic [ref=e171]:
+              - generic [ref=e172]: "0"
+              - generic [ref=e173]: 剧本数量
+            - generic [ref=e175]:
+              - generic [ref=e176]: "25"
+              - generic [ref=e177]: 角色数量
+            - generic [ref=e179]:
+              - generic [ref=e180]: "0"
+              - generic [ref=e181]: 视频数量
+        - generic [ref=e182]:
+          - heading "最近活动" [level=3] [ref=e184]:
+            - img [ref=e185]
+            - text: 最近活动
+          - generic [ref=e190]:
+            - img [ref=e191]
+            - generic [ref=e194]:
+              - generic [ref=e195]: 创建角色
+              - generic [ref=e196]: 成功创建新角色
+            - generic [ref=e197]: 3/26/2026
+```

@@ -77,6 +77,7 @@ def truncate_context(
         截断后的消息列表
     """
     result: List[Dict[str, str]] = []
+    system_message: Optional[Dict[str, str]] = None
     current_tokens = 0
     system_tokens = 0
 
@@ -88,7 +89,7 @@ def truncate_context(
             system_prompt = _truncate_text(system_prompt, int(max_tokens * 0.35))
             system_tokens = estimate_tokens(system_prompt)
         current_tokens += system_tokens
-        result.append({"role": "system", "content": system_prompt})
+        system_message = {"role": "system", "content": system_prompt}
 
     # 反向遍历消息（从最新到最旧）
     for msg in reversed(messages):
@@ -112,6 +113,9 @@ def truncate_context(
         else:
             result.insert(0, {"role": role, "content": content})
             current_tokens += msg_tokens
+
+    if system_message:
+        result.insert(0, system_message)
 
     return result
 
@@ -159,6 +163,12 @@ def parse_api_error(error: Exception, raw_response: str = "") -> str:
     # 认证/密钥错误
     if "401" in error_str or "unauthorized" in error_lower or "invalid api key" in error_lower:
         return "API密钥无效或已过期。请检查LLM配置中的API Key。"
+
+    if "authorized_error" in error_lower or "login fail" in error_lower:
+        return "API密钥无效或已过期。请检查LLM配置中的API Key。"
+
+    if "invalid message role" in error_lower:
+        return "模型不支持当前消息角色格式，请检查文本模型服务适配。"
 
     # 权限/配额错误
     if "403" in error_str or "forbidden" in error_lower:

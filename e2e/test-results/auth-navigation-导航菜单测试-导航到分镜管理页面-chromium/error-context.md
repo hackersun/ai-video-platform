@@ -1,0 +1,80 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - alert [ref=e2]
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "AI视频平台" [ref=e6] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e8]
+          - generic [ref=e10]: AI视频平台
+        - navigation [ref=e11]:
+          - link "控制台" [ref=e12] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e13]
+            - generic [ref=e16]: 控制台
+          - link "作品" [ref=e17] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e18]
+            - generic [ref=e21]: 作品
+          - link "剧本" [ref=e22] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e23]
+            - generic [ref=e26]: 剧本
+          - link "角色" [ref=e27] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e28]
+            - generic [ref=e33]: 角色
+          - link "分镜" [ref=e34] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e35]
+            - generic [ref=e40]: 分镜
+          - link "视频生成" [ref=e41] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e42]
+            - generic [ref=e45]: 视频生成
+          - button "工具" [ref=e47] [cursor=pointer]:
+            - img [ref=e48]
+            - generic [ref=e51]: 工具
+            - img [ref=e52]
+          - button "更多" [ref=e55] [cursor=pointer]:
+            - img [ref=e56]
+            - generic [ref=e59]: 更多
+            - img [ref=e60]
+    - main [ref=e62]:
+      - generic [ref=e63]:
+        - generic [ref=e64]:
+          - generic [ref=e65]:
+            - heading "分镜设计" [level=1] [ref=e66]
+            - paragraph [ref=e67]: 设计视频分镜和镜头序列
+          - button "新建分镜" [ref=e69] [cursor=pointer]:
+            - img [ref=e70]
+            - text: 新建分镜
+        - generic [ref=e71]:
+          - generic [ref=e73]:
+            - generic [ref=e74]: "0"
+            - generic [ref=e75]: 分镜数量
+          - generic [ref=e77]:
+            - generic [ref=e78]: 0:00
+            - generic [ref=e79]: 当前总时长
+          - generic [ref=e81]:
+            - generic [ref=e82]: "0"
+            - generic [ref=e83]: 已生成视频
+          - generic [ref=e85]:
+            - generic [ref=e86]: "0"
+            - generic [ref=e87]: 当前镜头数
+        - generic [ref=e88]:
+          - generic [ref=e89]:
+            - generic [ref=e90]:
+              - img [ref=e91]
+              - textbox "搜索分镜..." [ref=e94]
+            - generic [ref=e96]:
+              - img [ref=e97]
+              - paragraph [ref=e102]: 暂无分镜
+              - button "创建第一个分镜" [ref=e103] [cursor=pointer]
+          - generic [ref=e106]:
+            - img [ref=e107]
+            - paragraph [ref=e112]: 从左侧选择或创建分镜
+```

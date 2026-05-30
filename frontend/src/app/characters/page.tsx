@@ -1,11 +1,15 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
+import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useToast } from '@/components/ui/toast';
 import {
   Users,
   Plus,
@@ -27,8 +31,18 @@ import {
 } from 'lucide-react';
 import { fetchJsonWithAuth, fetchWithAuth } from '@/lib/fetch-with-auth';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import {
+  getDefaultConfigForCapability,
+  SavedModelConfig,
+} from '@/lib/model-configs';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 // 小说类型
 interface Novel {
@@ -47,6 +61,8 @@ interface Chapter {
 
 interface Character {
   id: string;
+  novel_id?: string;
+  chapter_id?: string;
   name: string;
   description: string;
   appearance: string;
@@ -58,7 +74,10 @@ interface Character {
   updated_at?: string;
 }
 
-export default function CharactersPage() {
+function CharactersPageContent() {
+  const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const initialNovelId = searchParams.get('novel_id') || '';
   const [characters, setCharacters] = useState<Character[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -70,6 +89,8 @@ export default function CharactersPage() {
   const [generatingAvatar, setGeneratingAvatar] = useState<string | null>(null);
   const [autoGenerateAvatar, setAutoGenerateAvatar] = useState(true);
   const [generatingAvatarId, setGeneratingAvatarId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Character | null>(null);
+  const [deletingCharacterId, setDeletingCharacterId] = useState<string | null>(null);
 
   // Extracted characters list (shows avatars from backend)
   const [extractedChars, setExtractedChars] = useState<Array<{ id: string; name: string; avatar?: string }>>([]);
@@ -78,12 +99,16 @@ export default function CharactersPage() {
   const [showExtractModal, setShowExtractModal] = useState(false);
   const [extractTab, setExtractTab] = useState<'novel' | 'chapter' | 'text'>('novel');
   const [novels, setNovels] = useState<Novel[]>([]);
+  const [scopeNovelId, setScopeNovelId] = useState(initialNovelId);
   const [selectedNovelId, setSelectedNovelId] = useState('');
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [selectedChapterId, setSelectedChapterId] = useState('');
   const [manualText, setManualText] = useState('');
   const [extractCount, setExtractCount] = useState(5);
   const [extractError, setExtractError] = useState<string | null>(null);
+  const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
+  const [textModelConfigId, setTextModelConfigId] = useState('');
+  const [imageModelConfigId, setImageModelConfigId] = useState('');
 
   // Sync selectedCharacter when characters array changes (e.g., after avatar generation)
   useEffect(() => {
@@ -102,11 +127,13 @@ export default function CharactersPage() {
     }
   }, [showExtractModal]);
 
-  const loadCharacters = async () => {
+  const loadCharacters = async (novelId = scopeNovelId) => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchJsonWithAuth(`${API_BASE}/characters`);
+      const params = new URLSearchParams();
+      if (novelId) params.set('novel_id', novelId);
+      const data = await fetchJsonWithAuth(`${API_BASE}/characters${params.toString() ? `?${params}` : ''}`);
       setCharacters(Array.isArray(data) ? data : []);
     } catch (err: any) {
       setError(err.message || '加载失败');
@@ -115,7 +142,33 @@ export default function CharactersPage() {
     }
   };
 
-  useEffect(() => { loadCharacters(); }, []);
+  useEffect(() => {
+    loadNovels();
+    loadModelConfigs();
+  }, []);
+
+  const loadModelConfigs = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (!res.ok) return;
+      const configs = await res.json();
+      const list = Array.isArray(configs) ? configs : [];
+      setModelConfigs(list);
+      const textDefault = getDefaultConfigForCapability(list, 'text');
+      const imageDefault = getDefaultConfigForCapability(list, 'image');
+      if (textDefault) setTextModelConfigId(textDefault.id);
+      if (imageDefault) setImageModelConfigId(imageDefault.id);
+    } catch (err) {
+      console.error('加载模型配置失败:', err);
+    }
+  };
+
+  useEffect(() => {
+    setSelectedCharacter(null);
+    setIsEditing(false);
+    setIsCreating(false);
+    loadCharacters(scopeNovelId);
+  }, [scopeNovelId]);
 
   // 加载小说列表
   const loadNovels = async () => {
@@ -140,7 +193,7 @@ export default function CharactersPage() {
   // 打开AI提取弹窗
   const handleOpenExtract = async () => {
     setExtractTab('novel');
-    setSelectedNovelId('');
+    setSelectedNovelId(scopeNovelId);
     setSelectedChapterId('');
     setManualText('');
     setExtractCount(5);
@@ -148,6 +201,9 @@ export default function CharactersPage() {
     setChapters([]);
     setExtractedChars([]);
     await loadNovels();
+    if (scopeNovelId) {
+      await loadChapters(scopeNovelId);
+    }
     setShowExtractModal(true);
   };
 
@@ -177,16 +233,29 @@ export default function CharactersPage() {
     } else {
       if (!manualText || manualText.trim().length < 10) { setExtractError('文本至少需要10个字符'); return; }
       payload = { ...payload, text: manualText.trim() };
+      if (scopeNovelId) {
+        payload = { ...payload, novel_id: scopeNovelId };
+      }
     }
 
     setExtractingCharacters(true);
     try {
       const result = await fetchJsonWithAuth(`${API_BASE}/characters/extract`, {
-        method: 'POST', body: JSON.stringify(payload)
+        method: 'POST',
+        body: JSON.stringify({
+          ...payload,
+          model_config_id: textModelConfigId || undefined,
+          image_model_config_id: imageModelConfigId || undefined,
+        })
       }) as any;
       const extracted = Array.isArray(result) ? result : [];
       if (extracted.length > 0) {
-        await loadCharacters();
+        const nextScopeNovelId = selectedNovelId || scopeNovelId;
+        if (nextScopeNovelId && nextScopeNovelId !== scopeNovelId) {
+          setScopeNovelId(nextScopeNovelId);
+        } else {
+          await loadCharacters(nextScopeNovelId);
+        }
         setExtractedChars(extracted.map((c: Character) => ({ id: c.id, name: c.name, avatar: c.avatar })));
         setExtractingCharacters(false);
       } else {
@@ -206,7 +275,7 @@ export default function CharactersPage() {
   );
 
   const [formData, setFormData] = useState<Partial<Character>>({
-    name: '', description: '', appearance: '', personality: '', voice: '', tags: []
+    novel_id: initialNovelId || undefined, name: '', description: '', appearance: '', personality: '', voice: '', tags: []
   });
 
   useEffect(() => {
@@ -225,7 +294,7 @@ export default function CharactersPage() {
     setIsCreating(true);
     setIsEditing(true);
     setSelectedCharacter(null);
-    setFormData({ name: '', description: '', appearance: '', personality: '', voice: '', tags: [] });
+    setFormData({ novel_id: scopeNovelId || undefined, name: '', description: '', appearance: '', personality: '', voice: '', tags: [] });
     setAutoGenerateAvatar(true);
   };
 
@@ -234,6 +303,8 @@ export default function CharactersPage() {
   const handleSave = async () => {
     try {
       const payload = {
+        novel_id: formData.novel_id || null,
+        chapter_id: formData.chapter_id || null,
         name: formData.name || '',
         description: formData.description || '',
         appearance: formData.appearance || '',
@@ -245,26 +316,35 @@ export default function CharactersPage() {
         const newChar = await fetchJsonWithAuth(`${API_BASE}/characters`, {
           method: 'POST', body: JSON.stringify(payload)
         }) as Character;
-        setCharacters([...characters, newChar]);
+        if (!scopeNovelId || newChar.novel_id === scopeNovelId) {
+          setCharacters([...characters, newChar]);
+        }
         setSelectedCharacter(newChar);
         setIsEditing(false);
         setIsCreating(false);
+        toast({ title: '角色已创建', type: 'success' });
 
         if (autoGenerateAvatar) {
           setGeneratingAvatarId(newChar.id);
           try {
-            const data = await fetchJsonWithAuth(`${API_BASE}/images/generate`, {
-              method: 'POST', body: JSON.stringify({ prompt: buildAvatarPrompt(newChar), character_id: newChar.id })
+            const data = await fetchJsonWithAuth(`${API_BASE}/characters/${newChar.id}/generate-avatar`, {
+              method: 'POST',
+              body: JSON.stringify({
+                style: 'anime',
+                model_config_id: imageModelConfigId || undefined,
+              })
             }) as any;
-            const avatarUrl = (data.image_urls && data.image_urls[0]) || data.image_url;
-            if (avatarUrl) {
-              await fetchJsonWithAuth(`${API_BASE}/characters/${newChar.id}`, {
-                method: 'PUT', body: JSON.stringify({ avatar: avatarUrl })
-              });
-              await loadCharacters();
+            const updatedCharacter = data.character as Character | undefined;
+            if (updatedCharacter) {
+              setSelectedCharacter(updatedCharacter);
             }
-          } catch (err) {
-            console.error("Avatar generation failed:", err);
+            await loadCharacters();
+          } catch (err: any) {
+            toast({
+              title: '头像生成失败',
+              description: err?.message || '角色已保存，可在角色详情页重试生成头像。',
+              type: 'error',
+            });
           } finally {
             setGeneratingAvatarId(null);
           }
@@ -276,19 +356,27 @@ export default function CharactersPage() {
         setCharacters(characters.map(c => c.id === (updated as Character).id ? updated as Character : c));
         setSelectedCharacter(updated as Character);
         setIsEditing(false);
+        toast({ title: '角色已保存', type: 'success' });
       }
-    } catch (err) { alert('保存失败，请重试'); }
+    } catch (err: any) {
+      toast({ title: '保存失败', description: err?.message || '请重试。', type: 'error' });
+    }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个角色吗？')) return;
+    setDeletingCharacterId(id);
     try {
       const response = await fetchWithAuth(`${API_BASE}/characters/${id}`, { method: 'DELETE' });
       if (response.ok) {
         setCharacters(characters.filter(c => c.id !== id));
         if (selectedCharacter?.id === id) setSelectedCharacter(null);
+        toast({ title: '角色已删除', type: 'success' });
       }
-    } catch { alert('删除失败'); }
+    } catch (err: any) {
+      toast({ title: '删除失败', description: err?.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setDeletingCharacterId(null);
+    }
   };
 
   // 删除旧的提取函数
@@ -299,33 +387,32 @@ export default function CharactersPage() {
     if (!char) return;
     setGeneratingAvatar(characterId);
     try {
-      const data = await fetchJsonWithAuth(`${API_BASE}/images/generate`, {
-        method: 'POST', body: JSON.stringify({ prompt: `character portrait, ${char.name}, ${char.appearance}`, character_id: characterId })
+      const data = await fetchJsonWithAuth(`${API_BASE}/characters/${characterId}/generate-avatar`, {
+        method: 'POST',
+        body: JSON.stringify({
+          style: 'anime',
+          model_config_id: imageModelConfigId || undefined,
+        })
       }) as any;
-      const avatarUrl = (data.image_urls && data.image_urls[0]) || data.image_url;
-      if (avatarUrl) {
-        await fetchJsonWithAuth(`${API_BASE}/characters/${characterId}`, {
-          method: 'PUT', body: JSON.stringify({ avatar: avatarUrl })
-        });
-        await loadCharacters();
+      const updatedCharacter = data.character as Character | undefined;
+      if (updatedCharacter) {
+        setCharacters(characters.map(c => c.id === updatedCharacter.id ? updatedCharacter : c));
+        setSelectedCharacter(updatedCharacter);
       }
+      await loadCharacters();
+      toast({ title: '头像已生成', description: data.message || '已按角色设定和小说上下文生成。', type: 'success' });
     } catch (err: any) {
-      alert(`生成头像失败: ${err?.message || err?.detail || '请检查火山引擎API配置'}`);
+      toast({
+        title: '生成头像失败',
+        description: err?.message || err?.detail || '请检查火山引擎 API 配置。',
+        type: 'error',
+      });
     } finally {
       setGeneratingAvatar(null);
     }
   };
 
   const handleCancel = () => { setIsEditing(false); setIsCreating(false); };
-
-  function buildAvatarPrompt(char: Character): string {
-    const parts: string[] = [];
-    if (char.name) parts.push(`character: ${char.name}`);
-    if (char.appearance) parts.push(`appearance: ${char.appearance}`);
-    if (char.personality) parts.push(`personality: ${char.personality}`);
-    parts.push("anime style, high quality, portrait");
-    return parts.join(", ");
-  }
 
   return (
     <MainLayout>
@@ -356,7 +443,7 @@ export default function CharactersPage() {
             <CardContent className="p-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-red-400" />
               <span className="text-red-300">{error}</span>
-              <Button variant="outline" size="sm" onClick={loadCharacters}
+              <Button variant="outline" size="sm" onClick={() => loadCharacters()}
                 className="ml-auto border-red-500/50 text-red-400">重试</Button>
             </CardContent>
           </Card>
@@ -365,16 +452,50 @@ export default function CharactersPage() {
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
-            <span className="ml-3 text-white/60">加载中...</span>
+            <span className="ml-3 text-white/60">加载中…</span>
           </div>
         )}
 
         {!loading && !error && (
+          <>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <ModelCapabilitySelector
+              capability="text"
+              configs={modelConfigs}
+              value={textModelConfigId}
+              onChange={setTextModelConfigId}
+              disabled={extractingCharacters}
+              title="角色提取模型"
+              description="AI 提取角色会绑定当前小说/章节，识别人物关系、外貌、性格、声音和标签。"
+            />
+            <ModelCapabilitySelector
+              capability="image"
+              configs={modelConfigs}
+              value={imageModelConfigId}
+              onChange={setImageModelConfigId}
+              disabled={Boolean(generatingAvatar || generatingAvatarId)}
+              title="角色形象模型"
+              description="头像与角色立绘会使用图像生成能力，并把角色外观、性格和小说归属写入提示词。"
+            />
+          </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-1 space-y-4">
+              <div>
+                <label className="block text-sm text-white/60 mb-1">小说范围</label>
+                <select
+                  value={scopeNovelId}
+                  onChange={(e) => setScopeNovelId(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                >
+                  <option value="">全部/全局角色</option>
+                  {novels.map((novel) => (
+                    <option key={novel.id} value={novel.id}>{novel.title}</option>
+                  ))}
+                </select>
+              </div>
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                <Input placeholder="搜索角色..." value={searchQuery}
+                <Input placeholder="搜索角色…" value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 bg-white/5 border-white/10 text-white" />
               </div>
@@ -388,7 +509,7 @@ export default function CharactersPage() {
                         {generatingAvatarId === char.id ? (
                           <Loader2 className="w-5 h-5 text-white animate-spin" />
                         ) : char.avatar ? (
-                          <img src={char.avatar} alt={char.name} className="w-10 h-10 rounded-full object-cover" />
+                          <img src={toMediaUrl(char.avatar)} alt={char.name} width={40} height={40} loading="lazy" className="w-10 h-10 rounded-full object-cover" />
                         ) : (
                           <User className="w-5 h-5 text-white" />
                         )}
@@ -396,6 +517,9 @@ export default function CharactersPage() {
                       <div className="flex-1 min-w-0">
                         <div className="text-white font-medium truncate">{char.name}</div>
                         <div className="text-white/60 text-sm truncate">{char.description}</div>
+                        <div className="text-white/35 text-xs truncate">
+                          {char.novel_id ? novels.find((novel) => novel.id === char.novel_id)?.title || '已绑定小说' : '全局角色'}
+                        </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-white/40" />
                     </div>
@@ -433,7 +557,8 @@ export default function CharactersPage() {
                           <Button variant="outline" size="sm" onClick={handleEdit}>
                             <Edit2 className="w-4 h-4 mr-1" />编辑
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => handleDelete(selectedCharacter.id)}
+                          <Button variant="outline" size="sm" onClick={() => setDeleteTarget(selectedCharacter)}
+                            disabled={deletingCharacterId === selectedCharacter.id}
                             className="text-red-400 hover:text-red-300">
                             <Trash2 className="w-4 h-4 mr-1" />删除
                           </Button>
@@ -469,6 +594,27 @@ export default function CharactersPage() {
                         <User className="w-4 h-4" /><span className="font-medium">基本信息</span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm text-white/60 mb-1">所属小说</label>
+                          {isEditing ? (
+                            <select
+                              value={formData.novel_id || ''}
+                              onChange={(e) => setFormData({ ...formData, novel_id: e.target.value || undefined, chapter_id: undefined })}
+                              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                            >
+                              <option value="">全局角色</option>
+                              {novels.map((novel) => (
+                                <option key={novel.id} value={novel.id}>{novel.title}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div className="text-white p-2 bg-white/5 rounded">
+                              {selectedCharacter?.novel_id
+                                ? novels.find((novel) => novel.id === selectedCharacter.novel_id)?.title || '已绑定小说'
+                                : '全局角色'}
+                            </div>
+                          )}
+                        </div>
                         <div>
                           <label className="block text-sm text-white/60 mb-1">角色名称 *</label>
                           {isEditing ? (
@@ -555,7 +701,7 @@ export default function CharactersPage() {
                       </div>
                       <div className="flex items-center gap-4">
                         {selectedCharacter?.avatar ? (
-                          <img src={selectedCharacter.avatar} alt={selectedCharacter.name}
+                          <img src={toMediaUrl(selectedCharacter.avatar)} alt={selectedCharacter.name} width={80} height={80} loading="lazy"
                             className="w-20 h-20 rounded-full object-cover" />
                         ) : (
                           <div className="w-20 h-20 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
@@ -589,6 +735,7 @@ export default function CharactersPage() {
               )}
             </div>
           </div>
+          </>
         )}
       </div>
 
@@ -619,6 +766,28 @@ export default function CharactersPage() {
             </TabsList>
 
             <div className="mt-4 space-y-4">
+              <ModelCapabilitySelector
+                capability="text"
+                configs={modelConfigs}
+                value={textModelConfigId}
+                onChange={setTextModelConfigId}
+                disabled={extractingCharacters}
+                title="角色提取文本模型"
+                description="提取时会优先使用该文本模型配置。"
+                compact
+              />
+              {autoGenerateAvatar && (
+                <ModelCapabilitySelector
+                  capability="image"
+                  configs={modelConfigs}
+                  value={imageModelConfigId}
+                  onChange={setImageModelConfigId}
+                  disabled={extractingCharacters}
+                  title="自动头像图像模型"
+                  description="勾选自动生成头像时使用该图像模型。"
+                  compact
+                />
+              )}
               <div className="flex items-center gap-2">
                 <span className="text-sm text-white/60 whitespace-nowrap">提取数量：</span>
                 <select
@@ -679,7 +848,7 @@ export default function CharactersPage() {
                 <textarea
                   value={manualText}
                   onChange={(e) => setManualText(e.target.value)}
-                  placeholder="在此粘贴小说或章节文本，AI将从中提取角色信息..."
+                  placeholder="在此粘贴小说或章节文本，AI将从中提取角色信息…"
                   rows={8}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 resize-none"
                 />
@@ -699,7 +868,7 @@ export default function CharactersPage() {
                     <div key={char.id} className="flex items-center gap-3 p-2 bg-white/5 rounded-lg">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center overflow-hidden flex-shrink-0">
                         {char.avatar ? (
-                          <img src={char.avatar} alt={char.name} className="w-8 h-8 rounded-full object-cover" />
+                          <img src={toMediaUrl(char.avatar)} alt={char.name} width={32} height={32} loading="lazy" className="w-8 h-8 rounded-full object-cover" />
                         ) : (
                           <User className="w-4 h-4 text-white" />
                         )}
@@ -734,6 +903,30 @@ export default function CharactersPage() {
           </Tabs>
         </DialogContent>
       </Dialog>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="删除角色"
+        description={`确定要删除${deleteTarget ? `「${deleteTarget.name}」` : '这个角色'}？删除后相关角色库列表会立即更新。`}
+        confirmText="删除角色"
+        destructive
+        loading={Boolean(deleteTarget && deletingCharacterId === deleteTarget.id)}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          await handleDelete(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+      />
     </MainLayout>
+  );
+}
+
+export default function CharactersPage() {
+  return (
+    <Suspense fallback={<MainLayout><div className="p-6 text-white/60">加载中…</div></MainLayout>}>
+      <CharactersPageContent />
+    </Suspense>
   );
 }

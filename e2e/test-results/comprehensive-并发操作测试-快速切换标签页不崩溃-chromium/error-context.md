@@ -1,0 +1,82 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "任务队列" [level=1] [ref=e64]
+          - paragraph [ref=e65]: 查看和管理生成任务
+        - generic [ref=e66]:
+          - generic [ref=e68]:
+            - generic [ref=e69]: "0"
+            - generic [ref=e70]: 全部任务
+          - generic [ref=e72]:
+            - generic [ref=e73]: "0"
+            - generic [ref=e74]: 等待中
+          - generic [ref=e76]:
+            - generic [ref=e77]: "0"
+            - generic [ref=e78]: 运行中
+          - generic [ref=e80]:
+            - generic [ref=e81]: "0"
+            - generic [ref=e82]: 已完成
+          - generic [ref=e84]:
+            - generic [ref=e85]: "0"
+            - generic [ref=e86]: 失败
+        - generic [ref=e89]:
+          - textbox "搜索任务..." [ref=e91]
+          - button "刷新" [ref=e92] [cursor=pointer]:
+            - img [ref=e93]
+            - text: 刷新
+        - generic [ref=e98]:
+          - generic [ref=e99]:
+            - button "全部" [ref=e100] [cursor=pointer]
+            - button "等待中" [ref=e101] [cursor=pointer]
+            - button "运行中" [ref=e102] [cursor=pointer]
+            - button "已完成" [ref=e103] [cursor=pointer]
+            - button "失败" [ref=e104] [cursor=pointer]
+          - generic [ref=e106]:
+            - img [ref=e107]
+            - paragraph [ref=e110]: 暂无任务
+  - alert [ref=e111]
+```

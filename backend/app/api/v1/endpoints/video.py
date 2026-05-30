@@ -11,21 +11,33 @@
 3. GET /video/jobs -> 获取历史任务
 """
 
-from typing import List, Optional
+from app.core.time_utils import utc_now
+from typing import Any, List, Optional
 from datetime import datetime
 from uuid import uuid4
-import asyncio
-import time
+import hashlib
+import ipaddress
+from pathlib import Path
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, desc
+from sqlalchemy import and_, or_, select, desc
 from pydantic import BaseModel, Field
 
 from app.core.api_key_utils import get_user_api_key
 from app.core.database import get_db
+from app.core.dev_generation import dev_video_url, is_dev_mode
+from app.core.model_registry import get_task_default
 from app.core.security import get_current_user_id
+from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_PROVIDER_ID
 from app.models.video_job import VideoJob
+from app.services.media_persistence import persist_remote_media_url
+from app.services.media_delivery import resolve_provider_media_url
+from app.services.consistency_context import get_project_for_context, get_story_bible_for_context
+from app.services.novel_continuity import build_novel_continuity_package
+from app.services.prompt_composer import compose_generation_prompt
+from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 from app.api.v1.endpoints.dashboard import log_activity
 
 router = APIRouter(tags=["视频生成"])
@@ -41,6 +53,9 @@ VIDEO_MODEL_OPTIONS = [
     {"id": "Doubao-Seedance-1.5-pro",        "label": "豆包Seedance-1.5-pro",        "desc": "Pro版，高质量（注：需账户有对应额度）"},
 ]
 
+STATIC_ROOT = Path(__file__).resolve().parents[4] / "static"
+MAX_PROVIDER_SEED = 2_147_483_647
+
 
 # ============== 请求/响应模型 ==============
 
@@ -51,12 +66,19 @@ class VideoGenerateRequest(BaseModel):
     duration: int = Field(5, ge=4, le=10, description="视频时长（秒），支持4/5/8/10秒")
     resolution: str = Field("720p", description="分辨率: 480p, 720p, 1080p")
     api_key: Optional[str] = Field(None, description="火山引擎API Key（可选，默认使用用户在LLM配置中的密钥）")
+    model_config_id: Optional[str] = Field(None, description="已保存的视频模型配置ID")
     image_url: Optional[str] = Field(None, description="参考图片URL，用于图生视频")
     seed: Optional[int] = Field(None, description="随机种子")
+    project_id: Optional[str] = Field(None, description="来源项目ID")
+    workflow_id: Optional[str] = Field(None, description="来源工作流ID")
     shot_id: Optional[str] = Field(None, description="来源镜头ID")
     storyboard_id: Optional[str] = Field(None, description="来源分镜ID")
     script_id: Optional[str] = Field(None, description="来源剧本ID")
+    chapter_id: Optional[str] = Field(None, description="来源章节ID")
     novel_id: Optional[str] = Field(None, description="来源小说ID")
+    story_bible_id: Optional[str] = Field(None, description="用于一致性约束的 Story Bible ID")
+    character_ids: List[str] = Field(default_factory=list, description="需要注入一致性设定的角色ID列表")
+    use_consistency_context: bool = Field(True, description="是否自动注入 Story Bible/项目/镜头/角色一致性上下文")
 
 
 class VideoGenerateResponse(BaseModel):
@@ -86,14 +108,27 @@ class VideoJobResponse(BaseModel):
     task_id: Optional[str] = None
     title: Optional[str] = None
     prompt: Optional[str] = None
+    project_id: Optional[str] = None
+    workflow_id: Optional[str] = None
     shot_id: Optional[str] = None
     shot_number: Optional[int] = None
     storyboard_id: Optional[str] = None
     storyboard_title: Optional[str] = None
     script_id: Optional[str] = None
     script_title: Optional[str] = None
+    chapter_id: Optional[str] = None
+    chapter_title: Optional[str] = None
+    chapter_number: Optional[int] = None
     novel_id: Optional[str] = None
     novel_title: Optional[str] = None
+    provider_id: Optional[str] = None
+    model_config_id: Optional[str] = None
+    config_model_id: Optional[str] = None
+    api_model_id: Optional[str] = None
+    model_endpoint_id: Optional[str] = None
+    model_test_status: Optional[str] = None
+    image_url: Optional[str] = None
+    prompt_parameters: dict = Field(default_factory=dict)
     model_name: Optional[str] = None
     status: str
     progress: int
@@ -102,8 +137,24 @@ class VideoJobResponse(BaseModel):
     error_message: Optional[str] = None
     duration: Optional[int] = None
     resolution: Optional[str] = None
+    subtitle_text: Optional[str] = None
+    character_refs: List[dict] = Field(default_factory=list)
+    scene_refs: List[dict] = Field(default_factory=list)
+    prop_refs: List[dict] = Field(default_factory=list)
+    event_refs: List[dict] = Field(default_factory=list)
+    environment_context: Optional[str] = None
+    consistency: dict = Field(default_factory=dict)
+    seed: Optional[int] = None
+    source_prompt: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+
+
+class VideoJobUpdateRequest(BaseModel):
+    status: Optional[str] = Field(None, description="任务状态")
+    progress: Optional[int] = Field(None, ge=0, le=100, description="任务进度")
+    title: Optional[str] = Field(None, max_length=200, description="任务标题")
+    error_message: Optional[str] = Field(None, description="错误信息")
 
 
 def _create_ark_client(api_key: str, base_url: Optional[str] = None):
@@ -125,6 +176,1089 @@ def _get_volcano_model_name(model_id: str) -> str:
     return model_id
 
 
+async def _resolve_video_model_config(
+    db: AsyncSession,
+    user_id: str,
+    requested_model: Optional[str],
+    config_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Resolve the selected video model to provider/API model/config."""
+    from app.core.volcano_config import get_endpoint_id
+    from app.models import LLMConfig, LLMModel, LLMProvider
+
+    if config_id:
+        config_result = await db.execute(
+            select(LLMConfig, LLMModel, LLMProvider)
+            .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+            .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+            .where(
+                and_(
+                    LLMConfig.id == config_id,
+                    LLMConfig.user_id == user_id,
+                    LLMConfig.is_active == True,
+                    LLMModel.is_active == True,
+                    LLMProvider.is_active == True,
+                )
+            )
+            .limit(1)
+        )
+        config_row = config_result.first()
+        if not config_row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="所选视频模型配置不存在或已停用")
+        config, model, provider = config_row
+        model_type = (model.model_type or "").lower()
+        capabilities = [str(item).lower() for item in (model.capabilities or [])]
+        if model_type not in {"video", "video-generation", "video_generation"} and not any("video" in item for item in capabilities):
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"所选模型不是视频生成模型：{model.model_name}")
+        provider_id = provider.name or provider.id
+        config_extra = config.extra_params or {}
+        endpoint_id = get_endpoint_id(model.model_id) if provider_id == "volcano" else model.model_id
+        return {
+            "provider_id": provider_id,
+            "provider_name": provider.name_cn or provider.name,
+            "api_model_id": model.model_id,
+            "config_model_id": model.id,
+            "model_config_id": config.id,
+            "model_name": model.model_name_cn or model.model_name,
+            "model_type": model_type,
+            "base_url": config_extra.get("base_url") or model.base_url or provider.base_url,
+            "api_key": config.get_api_key_decrypted(),
+            "test_status": config.test_status,
+            "model_endpoint_id": endpoint_id,
+            "capabilities": model.capabilities or [],
+        }
+
+    model_key = requested_model or VIDEO_MODEL_ID
+    row = None
+    if model_key:
+        result = await db.execute(
+            select(LLMModel, LLMProvider)
+            .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+            .where(
+                and_(
+                    LLMModel.is_active == True,
+                    LLMProvider.is_active == True,
+                    or_(LLMModel.id == model_key, LLMModel.model_id == model_key),
+                )
+            )
+            .limit(1)
+        )
+        row = result.first()
+
+    if row:
+        model, provider = row
+        model_type = model.model_type or ""
+        if model_type not in {"video", "video-generation"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"所选模型不是视频生成模型：{model.model_name}",
+            )
+        config_result = await db.execute(
+            select(LLMConfig)
+            .where(
+                and_(
+                    LLMConfig.user_id == user_id,
+                    LLMConfig.model_id == model.id,
+                    LLMConfig.is_active == True,
+                )
+            )
+            .order_by(desc(LLMConfig.is_default), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
+            .limit(1)
+        )
+        config = config_result.scalar_one_or_none()
+        provider_id = provider.name or provider.id
+        config_extra = config.extra_params or {} if config else {}
+        endpoint_id = get_endpoint_id(model.model_id) if provider_id == "volcano" else model.model_id
+        return {
+            "provider_id": provider_id,
+            "provider_name": provider.name_cn or provider.name,
+            "api_model_id": model.model_id,
+            "config_model_id": model.id,
+            "model_config_id": config.id if config else None,
+            "model_name": model.model_name_cn or model.model_name,
+            "model_type": model_type,
+            "base_url": config_extra.get("base_url") or model.base_url or provider.base_url,
+            "api_key": config.get_api_key_decrypted() if config else None,
+            "test_status": config.test_status if config else None,
+            "model_endpoint_id": endpoint_id,
+            "capabilities": model.capabilities or [],
+        }
+
+    return {
+        "provider_id": "volcano",
+        "provider_name": "火山引擎",
+        "api_model_id": model_key,
+        "config_model_id": None,
+        "model_name": _get_volcano_model_name(model_key),
+        "model_type": "video-generation",
+        "base_url": None,
+        "api_key": None,
+        "test_status": None,
+        "model_endpoint_id": get_endpoint_id(model_key),
+        "capabilities": ["text-to-video", "image-to-video"],
+    }
+
+
+def _provider_safe_image_url(image_url: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Return a cloud-provider-safe image URL and the omission reason if unusable."""
+    if not image_url:
+        return None, None
+
+    candidate = image_url.strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None, "参考图不是公网 http(s) URL，云端视频模型无法直接访问"
+
+    hostname = parsed.hostname
+    if not hostname:
+        return None, "参考图 URL 缺少有效域名，云端视频模型无法访问"
+
+    host = hostname.lower()
+    if host in {"localhost", "local"} or host.endswith(".local"):
+        return None, "参考图地址指向本机或局域网域名，云端视频模型无法访问"
+
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return candidate, None
+
+    if not ip.is_global:
+        return None, "参考图地址指向内网、本机或保留 IP，云端视频模型无法访问"
+    return candidate, None
+
+
+async def _resolve_provider_image_delivery(db: AsyncSession, user_id: str, image_url: Optional[str]) -> dict[str, Any]:
+    delivery = await resolve_provider_media_url(db, user_id, image_url, media_type="图")
+    return {
+        "provider_image_url": delivery.get("provider_url"),
+        "image_url_omitted_reason": delivery.get("omitted_reason"),
+        "image_delivery": delivery,
+    }
+
+
+def _provider_image_url_error_message(exc: Exception, provider_image_url: Optional[str]) -> Optional[str]:
+    error_text = str(exc)
+    if "image_url" not in error_text:
+        return None
+    if "InvalidParameter" not in error_text and "not valid" not in error_text and "BadRequest" not in error_text:
+        return None
+    if provider_image_url:
+        return (
+            "参考图地址已提交给云端视频模型，但模型拒绝了该图片 URL。请确认图片是可公网访问、未过期的 http(s) 地址，"
+            f"或改用无参考图模式后重试。原始错误：{error_text}"
+        )
+    return (
+        "参考图不是可公网访问的 URL，已不应传给云端视频模型；请重新生成/上传公网可访问参考图，"
+        f"或使用无参考图模式后重试。原始错误：{error_text}"
+    )
+
+
+def _append_provider_image_note(prompt: str, omission_reason: Optional[str]) -> str:
+    if not omission_reason:
+        return prompt
+    return (
+        f"{prompt}\n\n参考图接入说明：{omission_reason}，本次云端调用不传 image_url；"
+        "请依据上文角色视觉DNA、场景、道具、风格锁和剧情连续性生成，保持人物形象与分镜逻辑一致。"
+    )
+
+
+def _video_prompt_parameters(
+    request: VideoGenerateRequest,
+    seed: Optional[int],
+    provider_image_url: Optional[str] = None,
+    image_url_omitted_reason: Optional[str] = None,
+    image_delivery: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    parameters = {
+        "duration": request.duration,
+        "resolution": request.resolution,
+        "camera_fixed": False,
+        "watermark": True,
+        "seed": seed,
+        "image_url": request.image_url,
+        "provider_image_url": provider_image_url,
+        "image_url_sent": bool(provider_image_url),
+        "model_config_id": request.model_config_id,
+    }
+    if request.image_url and image_url_omitted_reason:
+        parameters["image_url_omitted_reason"] = image_url_omitted_reason
+    if image_delivery:
+        parameters["image_delivery_method"] = image_delivery.get("delivery_method")
+        parameters["image_delivery_config_id"] = image_delivery.get("storage_config_id")
+        parameters["image_delivery_provider"] = image_delivery.get("storage_provider_name")
+    return parameters
+
+
+def _video_model_metadata(video_model_config: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider_id": video_model_config.get("provider_id"),
+        "provider_name": video_model_config.get("provider_name"),
+        "model_config_id": video_model_config.get("model_config_id"),
+        "config_model_id": video_model_config.get("config_model_id"),
+        "api_model_id": video_model_config.get("api_model_id"),
+        "model_endpoint_id": video_model_config.get("model_endpoint_id"),
+        "model_type": video_model_config.get("model_type"),
+        "model_test_status": video_model_config.get("test_status"),
+        "model_capabilities": video_model_config.get("capabilities") or [],
+    }
+
+
+def _extract_video_result(get_result):
+    """Extract output fields from the different ARK response shapes in use."""
+    video_url = None
+    cover_url = None
+    for attr in ("content", "output"):
+        payload = getattr(get_result, attr, None)
+        if payload:
+            video_url = video_url or getattr(payload, "video_url", None)
+            cover_url = cover_url or getattr(payload, "last_frame_url", None)
+    return video_url, cover_url
+
+
+async def _sync_video_job_and_shot(
+    db: AsyncSession,
+    job: VideoJob,
+    status_value: str,
+    progress: Optional[int],
+    video_url: Optional[str],
+    cover_url: Optional[str],
+    error_message: Optional[str] = None,
+):
+    """Persist provider status and mirror shot output when a job is shot-linked."""
+    original_video_url = video_url
+    original_cover_url = cover_url
+    extra_data = job.extra_data if isinstance(job.extra_data, dict) else {}
+    if status_value == "succeeded" and video_url:
+        try:
+            video_url = await persist_remote_media_url(
+                video_url,
+                media_type="video",
+                subdir="videos",
+                prefix=f"video-{job.id[:8]}",
+                max_bytes=300 * 1024 * 1024,
+            ) or video_url
+            if video_url != original_video_url:
+                extra_data["original_video_url"] = original_video_url
+                extra_data["video_persisted"] = True
+        except Exception as exc:
+            extra_data["video_persisted"] = False
+            extra_data["video_persist_error"] = str(exc)
+    if status_value == "succeeded" and cover_url:
+        try:
+            cover_url = await persist_remote_media_url(
+                cover_url,
+                media_type="image",
+                subdir="images",
+                prefix=f"video-cover-{job.id[:8]}",
+                max_bytes=20 * 1024 * 1024,
+            ) or cover_url
+            if cover_url != original_cover_url:
+                extra_data["original_cover_url"] = original_cover_url
+        except Exception as exc:
+            extra_data["cover_persist_error"] = str(exc)
+
+    job.status = status_value
+    if progress is not None:
+        job.progress = progress
+    if video_url:
+        job.video_url = video_url
+    if cover_url:
+        job.cover_url = cover_url
+    if error_message:
+        job.error_message = error_message
+    job.extra_data = extra_data
+
+    shot_id = extra_data.get("shot_id")
+    if shot_id:
+        from app.models import Shot
+
+        shot_result = await db.execute(
+            select(Shot).where(Shot.id == shot_id, Shot.user_id == job.user_id)
+        )
+        shot = shot_result.scalar_one_or_none()
+        if shot:
+            shot.video_status = status_value
+            if video_url:
+                shot.video_url = video_url
+
+
+def _json_dict(value) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _ensure_match(current: Optional[str], incoming: Optional[str], detail: str) -> Optional[str]:
+    if current and incoming and current != incoming:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+    return current or incoming
+
+
+async def _resolve_video_lineage(db: AsyncSession, user_id: str, request: VideoGenerateRequest) -> dict:
+    """Infer and validate the full novel/chapter/script/storyboard/shot lineage."""
+    from app.models import Chapter, Novel, Script, Shot, Storyboard, Workflow
+
+    lineage = {
+        "project_id": request.project_id,
+        "workflow_id": request.workflow_id,
+        "novel_id": request.novel_id,
+        "chapter_id": request.chapter_id,
+        "script_id": request.script_id,
+        "storyboard_id": request.storyboard_id,
+        "shot_id": request.shot_id,
+    }
+
+    workflow = None
+    if request.workflow_id:
+        workflow_result = await db.execute(
+            select(Workflow).where(Workflow.id == request.workflow_id, Workflow.user_id == user_id)
+        )
+        workflow = workflow_result.scalar_one_or_none()
+        if workflow is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工作流不存在")
+        lineage["novel_id"] = _ensure_match(lineage["novel_id"], workflow.novel_id, "workflow_id 与 novel_id 不匹配")
+        lineage["chapter_id"] = _ensure_match(lineage["chapter_id"], workflow.chapter_id, "workflow_id 与 chapter_id 不匹配")
+        lineage["script_id"] = _ensure_match(lineage["script_id"], workflow.script_id, "workflow_id 与 script_id 不匹配")
+        lineage["storyboard_id"] = _ensure_match(lineage["storyboard_id"], workflow.storyboard_id, "workflow_id 与 storyboard_id 不匹配")
+
+    shot = None
+    storyboard = None
+    script = None
+    chapter = None
+    novel = None
+
+    if lineage["shot_id"]:
+        shot_result = await db.execute(
+            select(Shot).where(Shot.id == lineage["shot_id"], Shot.user_id == user_id)
+        )
+        shot = shot_result.scalar_one_or_none()
+        if shot is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
+        lineage["storyboard_id"] = _ensure_match(lineage["storyboard_id"], shot.storyboard_id, "shot_id 与 storyboard_id 不匹配")
+
+    if lineage["storyboard_id"]:
+        storyboard_result = await db.execute(
+            select(Storyboard).where(Storyboard.id == lineage["storyboard_id"], Storyboard.user_id == user_id)
+        )
+        storyboard = storyboard_result.scalar_one_or_none()
+        if storyboard is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分镜不存在")
+        lineage["script_id"] = _ensure_match(lineage["script_id"], storyboard.script_id, "storyboard_id 与 script_id 不匹配")
+        lineage["novel_id"] = _ensure_match(lineage["novel_id"], storyboard.novel_id, "storyboard_id 与 novel_id 不匹配")
+        storyboard_content = _json_dict(storyboard.content)
+        lineage["chapter_id"] = _ensure_match(
+            lineage["chapter_id"],
+            storyboard_content.get("chapter_id"),
+            "storyboard_id 与 chapter_id 不匹配",
+        )
+
+    if lineage["script_id"]:
+        script_result = await db.execute(
+            select(Script).where(Script.id == lineage["script_id"], Script.user_id == user_id)
+        )
+        script = script_result.scalar_one_or_none()
+        if script is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="剧本不存在")
+        lineage["novel_id"] = _ensure_match(lineage["novel_id"], script.novel_id, "script_id 与 novel_id 不匹配")
+        script_extra = _json_dict(script.extra_data)
+        lineage["chapter_id"] = _ensure_match(
+            lineage["chapter_id"],
+            script_extra.get("chapter_id"),
+            "script_id 与 chapter_id 不匹配",
+        )
+
+    if lineage["chapter_id"]:
+        chapter_result = await db.execute(
+            select(Chapter).where(Chapter.id == lineage["chapter_id"], Chapter.user_id == user_id)
+        )
+        chapter = chapter_result.scalar_one_or_none()
+        if chapter is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="章节不存在")
+        lineage["novel_id"] = _ensure_match(lineage["novel_id"], chapter.novel_id, "chapter_id 与 novel_id 不匹配")
+
+    if lineage["novel_id"]:
+        novel_result = await db.execute(
+            select(Novel).where(Novel.id == lineage["novel_id"], Novel.user_id == user_id)
+        )
+        novel = novel_result.scalar_one_or_none()
+        if novel is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="小说不存在")
+
+    if workflow:
+        workflow.novel_id = lineage["novel_id"] or workflow.novel_id
+        workflow.chapter_id = lineage["chapter_id"] or workflow.chapter_id
+        workflow.script_id = lineage["script_id"] or workflow.script_id
+        workflow.storyboard_id = lineage["storyboard_id"] or workflow.storyboard_id
+
+    return {
+        **lineage,
+        "novel_title": novel.title if novel else None,
+        "chapter_title": chapter.title if chapter else None,
+        "chapter_number": chapter.chapter_number if chapter else None,
+        "script_title": script.title if script else None,
+        "storyboard_title": storyboard.title if storyboard else None,
+        "shot_number": shot.shot_number if shot else None,
+        "shot": shot,
+        "storyboard": storyboard,
+        "script": script,
+    }
+
+
+def _extract_shot_generation_context(shot) -> dict:
+    if not shot:
+        return {
+            "character_refs": [],
+            "scene_refs": [],
+            "prop_refs": [],
+            "event_refs": [],
+            "environment_context": None,
+            "subtitle_text": None,
+        }
+    extra = _json_dict(getattr(shot, "extra_data", None))
+    entity_refs = _json_dict(extra.get("entity_refs"))
+    character_refs = getattr(shot, "character_refs", None) or entity_refs.get("characters") or []
+    return {
+        "character_refs": character_refs,
+        "scene_refs": extra.get("scene_refs") or entity_refs.get("scenes") or [],
+        "prop_refs": extra.get("prop_refs") or entity_refs.get("props") or [],
+        "event_refs": extra.get("event_refs") or entity_refs.get("events") or [],
+        "environment_context": extra.get("environment_context"),
+        "subtitle_text": extra.get("subtitle_text") or getattr(shot, "dialogue", None),
+    }
+
+
+def _json_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _ref_name(ref: Any) -> str:
+    if isinstance(ref, dict):
+        return str(ref.get("name") or ref.get("entity_name") or "").strip()
+    return str(ref or "").strip()
+
+
+def _compact_ref_key(ref: dict) -> str:
+    return str(ref.get("character_id") or ref.get("entity_id") or ref.get("name") or "").strip()
+
+
+def _dedupe_refs(refs: List[dict]) -> List[dict]:
+    result: List[dict] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        key = _compact_ref_key(ref)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        result.append(ref)
+    return result
+
+
+def _merge_character_ref(character, *, source: str, ref: Optional[dict] = None) -> dict:
+    merged = dict(ref or {})
+    merged.update(
+        {
+            "character_id": character.id,
+            "name": character.name,
+            "description": character.description,
+            "appearance": character.appearance,
+            "personality": character.personality,
+            "voice": character.voice,
+            "avatar": character.avatar,
+            "source": source,
+        }
+    )
+    return merged
+
+
+def _character_scope_rank(character, novel_id: Optional[str], chapter_id: Optional[str]) -> int:
+    if chapter_id and getattr(character, "chapter_id", None) == chapter_id:
+        return 4
+    if novel_id and getattr(character, "novel_id", None) == novel_id:
+        return 3
+    if getattr(character, "novel_id", None) is None:
+        return 1
+    return 0
+
+
+def _character_matches_name(character, name: str) -> bool:
+    if not name:
+        return False
+    names = [getattr(character, "name", None)]
+    tags = getattr(character, "tags", None)
+    if isinstance(tags, list):
+        names.extend(str(item) for item in tags)
+    return any(item and str(item).strip() == name for item in names)
+
+
+def _lookup_character_by_name(characters: List[Any], name: str, novel_id: Optional[str], chapter_id: Optional[str]):
+    matches = [character for character in characters if _character_matches_name(character, name)]
+    if not matches:
+        return None
+    return sorted(
+        matches,
+        key=lambda item: (_character_scope_rank(item, novel_id, chapter_id), str(getattr(item, "updated_at", "") or "")),
+        reverse=True,
+    )[0]
+
+
+def _name_contains_character(name: str, character_names: set[str]) -> bool:
+    return any(character_name and character_name in name for character_name in character_names)
+
+
+def _is_valid_story_entity_character_ref(ref: dict) -> bool:
+    name = _ref_name(ref)
+    if not name:
+        return False
+    if name in {"疼痛", "狂喜", "活着", "阳光", "年轻", "瘦弱", "身躯", "眼睛", "双手", "起身", "个人"}:
+        return False
+    evidence = str(ref.get("evidence") or "")
+    description = str(ref.get("description") or "")
+    if "规则识别人物" in description or "规则识别人物" in evidence:
+        return False
+    return bool(ref.get("entity_id") or "文本标注角色" in description or "角色" in evidence)
+
+
+def _format_visual_locks(character_refs: List[dict]) -> str:
+    lines = []
+    for ref in character_refs[:6]:
+        name = ref.get("name")
+        details = []
+        for key, label in (("appearance", "外貌"), ("description", "身份"), ("personality", "性格")):
+            value = ref.get(key)
+            if value:
+                details.append(f"{label}:{value}")
+        if name:
+            lines.append(f"{name}（{'；'.join(details) if details else '使用角色设定'}）")
+    return "；".join(lines)
+
+
+def _format_asset_locks(locks: List[dict], *, limit: int = 8) -> str:
+    parts = []
+    for lock in locks[:limit]:
+        name = lock.get("entity_name") or lock.get("name")
+        category = lock.get("category")
+        url = lock.get("url") or lock.get("thumbnail_url")
+        if name and url:
+            parts.append(f"{name}({category or 'reference'}): {url}")
+        elif name:
+            parts.append(str(name))
+    return "；".join(parts)
+
+
+async def _load_video_scope_characters(db: AsyncSession, user_id: str, *, novel_id: Optional[str], chapter_id: Optional[str]) -> List[Any]:
+    from app.models import Character
+
+    filters = [Character.user_id == user_id]
+    if novel_id:
+        filters.append(or_(Character.novel_id == novel_id, Character.novel_id.is_(None)))
+    elif chapter_id:
+        filters.append(or_(Character.chapter_id == chapter_id, Character.novel_id.is_(None)))
+    result = await db.execute(select(Character).where(and_(*filters)).order_by(desc(Character.updated_at)))
+    return list(result.scalars().all())
+
+
+async def _build_video_consistency_package(
+    db: AsyncSession,
+    user_id: str,
+    request: VideoGenerateRequest,
+    lineage: dict,
+) -> dict:
+    """Build the effective video prompt package used by single and batch generation."""
+    shot = lineage.get("shot")
+    shot_context = _extract_shot_generation_context(shot)
+    novel_id = request.novel_id or lineage.get("novel_id")
+    chapter_id = request.chapter_id or lineage.get("chapter_id")
+    characters = await _load_video_scope_characters(db, user_id, novel_id=novel_id, chapter_id=chapter_id)
+    character_by_id = {character.id: character for character in characters}
+    if request.character_ids:
+        missing_requested = [item for item in request.character_ids if item not in character_by_id]
+        if missing_requested:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="所选角色不存在或不属于当前小说，请重新选择当前小说下的角色参考",
+            )
+    valid_character_refs: List[dict] = []
+    filtered_out_refs: List[dict] = []
+
+    for ref in _json_list(shot_context.get("character_refs")):
+        if not isinstance(ref, dict):
+            continue
+        character = None
+        character_id = ref.get("character_id") or ref.get("id")
+        if character_id:
+            character = character_by_id.get(character_id)
+        if character is None:
+            character = _lookup_character_by_name(
+                characters,
+                _ref_name(ref),
+                novel_id,
+                chapter_id,
+            )
+        if character is None:
+            if _is_valid_story_entity_character_ref(ref):
+                valid_character_refs.append(dict(ref))
+            else:
+                filtered_out_refs.append(ref)
+            continue
+        else:
+            valid_character_refs.append(_merge_character_ref(character, source=ref.get("source") or "shot_ref", ref=ref))
+
+    explicit_characters = [character_by_id[item] for item in request.character_ids if item in character_by_id]
+    for character in explicit_characters:
+        valid_character_refs.append(_merge_character_ref(character, source="request_character"))
+
+    shot_text = " ".join(
+        str(value or "")
+        for value in [
+            getattr(shot, "prompt", None),
+            getattr(shot, "visual_description", None),
+            getattr(shot, "dialogue", None),
+            shot_context.get("subtitle_text"),
+        ]
+    )
+    matched_from_text = [
+        character
+        for character in characters
+        if character.novel_id == novel_id and character.name and character.name in shot_text
+    ]
+    if not valid_character_refs:
+        matched_from_text = matched_from_text or [character for character in characters if character.novel_id == novel_id]
+        for character in matched_from_text[:3]:
+            valid_character_refs.append(_merge_character_ref(character, source="novel_character_fallback"))
+    else:
+        for character in matched_from_text[:3]:
+            valid_character_refs.append(_merge_character_ref(character, source="shot_text_match"))
+
+    valid_character_refs = _dedupe_refs(valid_character_refs)
+    valid_character_names = {str(ref.get("name")) for ref in valid_character_refs if ref.get("name")}
+
+    scene_refs = _dedupe_refs([ref for ref in _json_list(shot_context.get("scene_refs")) if isinstance(ref, dict)])
+    event_refs = _dedupe_refs([ref for ref in _json_list(shot_context.get("event_refs")) if isinstance(ref, dict)])
+    prop_refs = []
+    filtered_out_prop_refs = []
+    for ref in _json_list(shot_context.get("prop_refs")):
+        if not isinstance(ref, dict):
+            continue
+        name = _ref_name(ref)
+        if _name_contains_character(name, valid_character_names):
+            filtered_out_prop_refs.append(ref)
+            continue
+        prop_refs.append(ref)
+    prop_refs = _dedupe_refs(prop_refs)
+
+    production_context = _json_dict(_json_dict(getattr(shot, "extra_data", None)).get("production_context")) if shot else {}
+    asset_locks = [item for item in _json_list(production_context.get("asset_version_locks")) if isinstance(item, dict)]
+
+    reference_image = request.image_url
+    reference_image_source = "request" if request.image_url else None
+    if not reference_image and getattr(shot, "image_url", None):
+        reference_image = shot.image_url
+        reference_image_source = "shot_image"
+    if not reference_image:
+        for lock in asset_locks:
+            if lock.get("category") == "character" and (lock.get("url") or lock.get("thumbnail_url")):
+                reference_image = lock.get("url") or lock.get("thumbnail_url")
+                reference_image_source = "asset_lock_character"
+                break
+    if not reference_image:
+        for ref in valid_character_refs:
+            if ref.get("avatar"):
+                reference_image = ref["avatar"]
+                reference_image_source = "character_avatar"
+                break
+    if not reference_image:
+        for lock in asset_locks:
+            if lock.get("url") or lock.get("thumbnail_url"):
+                reference_image = lock.get("url") or lock.get("thumbnail_url")
+                reference_image_source = "asset_lock"
+                break
+    if not reference_image and (valid_character_refs or scene_refs or prop_refs):
+        from app.models import Asset
+
+        asset_names = {
+            _ref_name(ref)
+            for ref in [*valid_character_refs, *scene_refs, *prop_refs]
+            if _ref_name(ref)
+        }
+        character_ids = {ref.get("character_id") for ref in valid_character_refs if ref.get("character_id")}
+        asset_filters = [
+            Asset.is_active == True,
+            or_(Asset.user_id == user_id, Asset.is_public == True),
+            Asset.category.in_(["character", "scene", "prop", "costume"]),
+        ]
+        if novel_id:
+            asset_filters.append(or_(Asset.novel_id == novel_id, Asset.novel_id.is_(None)))
+        asset_result = await db.execute(
+            select(Asset)
+            .where(and_(*asset_filters))
+            .order_by(desc(Asset.usage_count), desc(Asset.updated_at))
+            .limit(120)
+        )
+        for asset in asset_result.scalars().all():
+            asset_text = f"{asset.name or ''} {asset.description or ''} {' '.join(asset.tags or [])}"
+            if (
+                (asset.character_id and asset.character_id in character_ids)
+                or any(name and name in asset_text for name in asset_names)
+            ) and (asset.url or asset.thumbnail_url):
+                reference_image = asset.url or asset.thumbnail_url
+                reference_image_source = f"asset_{asset.category}"
+                break
+
+    story_prompt_context = await load_story_prompt_context(
+        db,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
+    project = await get_project_for_context(db, user_id, request.project_id or lineage.get("project_id"), strict=False)
+    story_bible = await get_story_bible_for_context(
+        db,
+        user_id,
+        story_bible_id=request.story_bible_id,
+        project_id=request.project_id or lineage.get("project_id"),
+        novel_id=novel_id,
+    )
+    novel_continuity = await build_novel_continuity_package(
+        db,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        story_bible_id=story_bible.id if story_bible else request.story_bible_id,
+        project_id=project.id if project else (request.project_id or lineage.get("project_id")),
+        model_id=request.model,
+        task="shot_video",
+    )
+
+    storyboard = lineage.get("storyboard")
+    script = lineage.get("script")
+    task_default = get_task_default("shot_video")
+    novel_series_seed = novel_continuity.get("novel_series_seed") or _derive_stable_seed([
+        "novel_series",
+        project.id if project else (request.project_id or lineage.get("project_id")),
+        story_bible.id if story_bible else request.story_bible_id,
+        novel_id,
+    ])
+    chapter_seed = novel_continuity.get("chapter_seed") or _derive_stable_seed([
+        "chapter",
+        novel_series_seed,
+        chapter_id,
+    ])
+    storyboard_seed = _derive_stable_seed([
+        "storyboard",
+        chapter_seed,
+        request.script_id or lineage.get("script_id"),
+        request.storyboard_id or lineage.get("storyboard_id"),
+        request.model,
+    ])
+    shot_seed = request.seed if request.seed is not None else _derive_stable_seed([
+        "shot",
+        storyboard_seed,
+        getattr(shot, "shot_number", None),
+        request.shot_id or lineage.get("shot_id"),
+        request.model,
+    ])
+    style_lock = {
+        "scope": "novel_series",
+        "series_seed": novel_series_seed,
+        "novel_series_seed": novel_series_seed,
+        "chapter_seed": chapter_seed,
+        "storyboard_seed": storyboard_seed,
+        "style": (
+            getattr(story_bible, "style", None)
+            or story_prompt_context.get("style")
+            or getattr(storyboard, "style", None)
+            or getattr(script, "style", None)
+            or "统一动漫赛璐璐风格"
+        ),
+        "genre": story_prompt_context.get("genre") or getattr(storyboard, "genre", None) or getattr(script, "genre", None),
+        "story_bible_id": story_bible.id if story_bible else request.story_bible_id,
+        "storyboard_id": request.storyboard_id or lineage.get("storyboard_id"),
+        "chapter_id": chapter_id,
+        "novel_id": novel_id,
+        "constraint": "整部小说共享同一画风、角色视觉DNA、世界观、场景/道具状态机和事件因果；章节和分镜只派生局部节奏，不重置角色形象。",
+    }
+
+    extra_context = {
+        "视频时长": request.duration,
+        "分辨率": request.resolution,
+        "整部小说连续性锁": novel_continuity.get("prompt_block"),
+        "小说级系列种子": novel_series_seed,
+        "章节连续性种子": chapter_seed,
+        "分镜派生种子": storyboard_seed,
+        "参考图": reference_image,
+        "参考图来源": reference_image_source,
+        "人物角色": _ref_names(valid_character_refs),
+        "角色视觉DNA锁": _format_visual_locks(valid_character_refs),
+        "场景": _ref_names(scene_refs),
+        "道具": _ref_names(prop_refs),
+        "事件": _ref_names(event_refs),
+        "环境连续性": shot_context["environment_context"],
+        "字幕/对白": shot_context["subtitle_text"],
+        "小说级风格锁": style_lock["constraint"],
+        "资产版本锁": _format_asset_locks(asset_locks),
+        "动漫连续性硬约束": build_video_continuity_constraints(story_prompt_context),
+    }
+    if storyboard:
+        extra_context.setdefault("分镜标题", storyboard.title)
+        if getattr(storyboard, "style", None):
+            extra_context.setdefault("分镜风格", storyboard.style)
+        if getattr(storyboard, "genre", None):
+            extra_context.setdefault("分镜题材", storyboard.genre)
+        if getattr(storyboard, "description", None):
+            extra_context.setdefault("分镜说明", storyboard.description)
+    if script:
+        extra_context.setdefault("剧本标题", script.title)
+        if getattr(script, "style", None):
+            extra_context.setdefault("剧本风格", script.style)
+        if getattr(script, "genre", None):
+            extra_context.setdefault("剧本题材", script.genre)
+        if getattr(script, "description", None):
+            extra_context.setdefault("剧本说明", script.description)
+
+    final_prompt = compose_generation_prompt(
+        task="shot_video",
+        shot=shot,
+        story_bible=story_bible,
+        characters=[
+            character_by_id[ref["character_id"]]
+            for ref in valid_character_refs
+            if ref.get("character_id") in character_by_id
+        ],
+        project=project,
+        extra_context={"用户提示词": request.prompt, **extra_context},
+    )
+    metadata = {
+        "task": "shot_video",
+        "story_bible_id": story_bible.id if story_bible else request.story_bible_id,
+        "project_id": project.id if project else (request.project_id or lineage.get("project_id")),
+        "novel_id": novel_id,
+        "chapter_id": chapter_id,
+        "shot_id": request.shot_id or lineage.get("shot_id"),
+        "storyboard_id": request.storyboard_id or lineage.get("storyboard_id"),
+        "character_ids": [ref["character_id"] for ref in valid_character_refs if ref.get("character_id")],
+        "entity_refs": {
+            "characters": valid_character_refs,
+            "scenes": scene_refs,
+            "props": prop_refs,
+            "events": event_refs,
+        },
+        "subtitle_text": shot_context["subtitle_text"],
+        "default_model_id": task_default.get("default_model_id") if task_default else None,
+        "series_seed": novel_series_seed,
+        "novel_series_seed": novel_series_seed,
+        "chapter_seed": chapter_seed,
+        "storyboard_seed": storyboard_seed,
+        "style_lock": style_lock,
+        "continuity_lock": novel_continuity.get("continuity_lock"),
+        "previous_chapter_context": novel_continuity.get("previous_chapter_context"),
+        "current_chapter_context": novel_continuity.get("current_chapter_context"),
+        "next_chapter_constraint": novel_continuity.get("next_chapter_constraint"),
+        "previous_chapter_state": novel_continuity.get("previous_chapter_state"),
+        "chapter_state_snapshot": novel_continuity.get("chapter_state_snapshot"),
+        "state_machine_version": novel_continuity.get("state_machine_version"),
+        "state_machine_summary": novel_continuity.get("state_machine_summary"),
+        "event_timeline_tail": novel_continuity.get("event_timeline_tail") or [],
+        "entity_locks": novel_continuity.get("entity_locks") or {},
+        "character_visual_locks": valid_character_refs,
+        "reference_image_source": reference_image_source,
+        "invalid_entity_ref_count": len(filtered_out_refs) + len(filtered_out_prop_refs),
+        "seed": shot_seed,
+    }
+    return {
+        "final_prompt": final_prompt,
+        "metadata": metadata,
+        "context": {
+            "character_refs": valid_character_refs,
+            "scene_refs": scene_refs,
+            "prop_refs": prop_refs,
+            "event_refs": event_refs,
+            "environment_context": shot_context["environment_context"],
+            "subtitle_text": shot_context["subtitle_text"],
+            "asset_version_locks": asset_locks,
+            "style_lock": style_lock,
+            "series_seed": novel_series_seed,
+            "novel_series_seed": novel_series_seed,
+            "chapter_seed": chapter_seed,
+            "storyboard_seed": storyboard_seed,
+            "novel_continuity": novel_continuity,
+            "reference_image": reference_image,
+            "reference_image_source": reference_image_source,
+            "filtered_out_entity_refs": filtered_out_refs + filtered_out_prop_refs,
+        },
+        "seed": shot_seed,
+        "series_seed": novel_series_seed,
+        "novel_series_seed": novel_series_seed,
+        "chapter_seed": chapter_seed,
+        "reference_image": reference_image,
+        "reference_image_source": reference_image_source,
+    }
+
+
+def _ref_names(refs: List[dict]) -> str:
+    return "、".join(str(ref.get("name")) for ref in refs if isinstance(ref, dict) and ref.get("name"))
+
+
+def _derive_stable_seed(parts: List[Optional[str]]) -> Optional[int]:
+    seed_source = "|".join(str(part) for part in parts if part)
+    if not seed_source:
+        return None
+    digest = hashlib.sha256(seed_source.encode("utf-8")).hexdigest()
+    return (int(digest[:12], 16) % MAX_PROVIDER_SEED) or 1
+
+
+def _resolve_video_seed(request: VideoGenerateRequest, lineage: dict, consistency_metadata: dict) -> Optional[int]:
+    if request.seed is not None:
+        return request.seed
+    if consistency_metadata.get("seed") is not None:
+        return consistency_metadata["seed"]
+    if not request.use_consistency_context:
+        return None
+    return _derive_stable_seed([
+        consistency_metadata.get("project_id") or lineage.get("project_id"),
+        consistency_metadata.get("story_bible_id"),
+        lineage.get("novel_id"),
+        lineage.get("chapter_id"),
+        lineage.get("script_id"),
+        lineage.get("storyboard_id"),
+        request.model,
+    ])
+
+
+def _build_video_context_metadata(
+    lineage: dict,
+    consistency_metadata: dict,
+    seed: Optional[int],
+    shot_context_override: Optional[dict] = None,
+) -> dict:
+    shot_context = shot_context_override or _extract_shot_generation_context(lineage.get("shot"))
+    consistency = dict(consistency_metadata or {})
+    if seed is not None:
+        consistency["seed"] = seed
+    if consistency.get("series_seed") is not None:
+        consistency.setdefault("style_seed", consistency["series_seed"])
+    return {
+        **shot_context,
+        "seed": seed,
+        "series_seed": consistency.get("series_seed"),
+        "novel_series_seed": consistency.get("novel_series_seed") or consistency.get("series_seed"),
+        "chapter_seed": consistency.get("chapter_seed"),
+        "storyboard_seed": consistency.get("storyboard_seed"),
+        "style_lock": consistency.get("style_lock"),
+        "continuity_lock": consistency.get("continuity_lock"),
+        "previous_chapter_context": consistency.get("previous_chapter_context"),
+        "current_chapter_context": consistency.get("current_chapter_context"),
+        "next_chapter_constraint": consistency.get("next_chapter_constraint"),
+        "previous_chapter_state": consistency.get("previous_chapter_state"),
+        "chapter_state_snapshot": consistency.get("chapter_state_snapshot"),
+        "state_machine_version": consistency.get("state_machine_version"),
+        "state_machine_summary": consistency.get("state_machine_summary"),
+        "event_timeline_tail": consistency.get("event_timeline_tail") or [],
+        "entity_locks": consistency.get("entity_locks") or {},
+        "character_visual_locks": consistency.get("character_visual_locks") or shot_context.get("character_refs") or [],
+        "reference_image_source": consistency.get("reference_image_source"),
+        "invalid_entity_ref_count": consistency.get("invalid_entity_ref_count", 0),
+        "consistency": consistency,
+    }
+
+
+def _build_video_extra_data(request: VideoGenerateRequest, lineage: dict) -> dict:
+    """Build lineage metadata shared by real and DEV_MODE video jobs."""
+    extra_data = {}
+    if request.project_id:
+        extra_data["project_id"] = request.project_id
+    if request.workflow_id:
+        extra_data["workflow_id"] = request.workflow_id
+    for key in (
+        "novel_id",
+        "novel_title",
+        "chapter_id",
+        "chapter_title",
+        "chapter_number",
+        "script_id",
+        "script_title",
+        "storyboard_id",
+        "storyboard_title",
+        "shot_id",
+        "shot_number",
+    ):
+        if lineage.get(key) is not None:
+            extra_data[key] = lineage[key]
+    return extra_data
+
+
+def _build_video_job_response(job: VideoJob) -> VideoJobResponse:
+    extra = _json_dict(job.extra_data)
+    consistency = _json_dict(extra.get("consistency"))
+    seed = extra.get("seed") if extra.get("seed") is not None else consistency.get("seed")
+    return VideoJobResponse(
+        id=job.id,
+        task_id=job.task_id,
+        title=job.title,
+        prompt=job.prompt,
+        project_id=job.project_id or extra.get("project_id"),
+        workflow_id=job.workflow_id or extra.get("workflow_id"),
+        shot_id=extra.get("shot_id"),
+        shot_number=extra.get("shot_number"),
+        storyboard_id=extra.get("storyboard_id"),
+        storyboard_title=extra.get("storyboard_title"),
+        script_id=extra.get("script_id"),
+        script_title=extra.get("script_title"),
+        chapter_id=extra.get("chapter_id"),
+        chapter_title=extra.get("chapter_title"),
+        chapter_number=extra.get("chapter_number"),
+        novel_id=extra.get("novel_id"),
+        novel_title=extra.get("novel_title"),
+        provider_id=extra.get("provider_id"),
+        model_config_id=extra.get("model_config_id"),
+        config_model_id=extra.get("config_model_id"),
+        api_model_id=extra.get("api_model_id"),
+        model_endpoint_id=extra.get("model_endpoint_id"),
+        model_test_status=extra.get("model_test_status"),
+        image_url=job.image_url,
+        prompt_parameters=extra.get("prompt_parameters") or {},
+        model_name=job.model_name,
+        status=job.status,
+        progress=job.progress,
+        video_url=job.video_url,
+        cover_url=job.cover_url,
+        error_message=job.error_message,
+        duration=job.duration,
+        resolution=job.resolution,
+        subtitle_text=extra.get("subtitle_text"),
+        character_refs=extra.get("character_refs") or [],
+        scene_refs=extra.get("scene_refs") or [],
+        prop_refs=extra.get("prop_refs") or [],
+        event_refs=extra.get("event_refs") or [],
+        environment_context=extra.get("environment_context"),
+        consistency=consistency,
+        seed=seed,
+        source_prompt=extra.get("source_prompt"),
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+def _video_job_matches_lineage(job: VideoJob, filters: dict[str, Optional[str]]) -> bool:
+    extra = _json_dict(job.extra_data)
+    for key, value in filters.items():
+        if value and extra.get(key) != value:
+            return False
+    return True
+
+
+async def _attach_video_job_to_workflow(db: AsyncSession, job: VideoJob, user_id: str) -> None:
+    if not job.workflow_id:
+        return
+    from app.models import Workflow
+
+    workflow_result = await db.execute(
+        select(Workflow).where(Workflow.id == job.workflow_id, Workflow.user_id == user_id)
+    )
+    workflow = workflow_result.scalar_one_or_none()
+    if workflow:
+        workflow.video_job_ids = list(dict.fromkeys((workflow.video_job_ids or []) + [job.id]))
+
+
 @router.post("/generate", response_model=VideoGenerateResponse)
 async def generate_video(
     request: VideoGenerateRequest,
@@ -136,75 +1270,145 @@ async def generate_video(
 
     使用火山引擎官方SDK调用视频生成API
     """
-    lineage_shot_id = request.shot_id
-    lineage_storyboard_id = request.storyboard_id
-    lineage_script_id = request.script_id
-
-    if request.shot_id:
-        from app.models import Shot, Storyboard
-
-        shot_result = await db.execute(
-            select(Shot).where(Shot.id == request.shot_id, Shot.user_id == user_id)
-        )
-        shot = shot_result.scalar_one_or_none()
-        if shot is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
-
-        storyboard_result = await db.execute(
-            select(Storyboard).where(Storyboard.id == shot.storyboard_id, Storyboard.user_id == user_id)
-        )
-        storyboard = storyboard_result.scalar_one_or_none()
-        if storyboard is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分镜不存在")
-
-        lineage_storyboard_id = str(storyboard.id)
-        lineage_script_id = storyboard.script_id
-
-        if request.storyboard_id and request.storyboard_id != lineage_storyboard_id:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="shot_id 与 storyboard_id 不匹配")
-        if request.script_id and request.script_id != lineage_script_id:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="shot_id 与 script_id 不匹配")
-    elif request.storyboard_id:
-        from app.models import Storyboard
-
-        storyboard_result = await db.execute(
-            select(Storyboard).where(Storyboard.id == request.storyboard_id, Storyboard.user_id == user_id)
-        )
-        storyboard = storyboard_result.scalar_one_or_none()
-        if storyboard is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="分镜不存在")
-
-        lineage_script_id = storyboard.script_id
-
-        if request.script_id and request.script_id != lineage_script_id:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="storyboard_id 与 script_id 不匹配")
-    elif request.script_id:
-        from app.models import Script
-
-        script_result = await db.execute(
-            select(Script).where(Script.id == request.script_id, Script.user_id == user_id)
-        )
-        script = script_result.scalar_one_or_none()
-        if script is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="剧本不存在")
-
     try:
-        # 使用请求提供的 API key 或从用户的 LLMConfig 中获取
+        lineage = await _resolve_video_lineage(db, user_id, request)
+        request = request.model_copy(update={
+            "project_id": lineage.get("project_id"),
+            "workflow_id": lineage.get("workflow_id"),
+            "novel_id": lineage.get("novel_id"),
+            "chapter_id": lineage.get("chapter_id"),
+            "script_id": lineage.get("script_id"),
+            "storyboard_id": lineage.get("storyboard_id"),
+            "shot_id": lineage.get("shot_id"),
+        })
+        video_model_config = await _resolve_video_model_config(db, user_id, request.model, request.model_config_id)
+        if video_model_config.get("provider_id") not in {"volcano", VOLCANO_AGENT_PLAN_PROVIDER_ID}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="静音视频生成当前只支持火山普通视频模型或火山方舟 Agent Plan 视频模型。Sora/Veo/ComfyUI 等生产适配请在本页切换到「直生音视频」，或在 workflow 中使用批量直生/云渲染。",
+            )
+
+        final_prompt = request.prompt
+        consistency_metadata = {}
+        shot_context = _extract_shot_generation_context(lineage.get("shot"))
+        effective_image_url = request.image_url
+        reference_image_source = "request" if request.image_url else None
+        if request.use_consistency_context:
+            package = await _build_video_consistency_package(
+                db,
+                user_id,
+                request,
+                lineage,
+            )
+            final_prompt = package["final_prompt"]
+            consistency_metadata = package["metadata"]
+            shot_context = package["context"]
+            effective_image_url = package["reference_image"]
+            reference_image_source = package["reference_image_source"]
+        video_seed = _resolve_video_seed(request, lineage, consistency_metadata)
+        image_delivery = await _resolve_provider_image_delivery(db, user_id, effective_image_url)
+        provider_image_url = image_delivery["provider_image_url"]
+        image_url_omitted_reason = image_delivery["image_url_omitted_reason"]
+        if image_url_omitted_reason:
+            final_prompt = _append_provider_image_note(final_prompt, image_url_omitted_reason)
+        context_metadata = _build_video_context_metadata(lineage, consistency_metadata, video_seed, shot_context)
+        prompt_parameters = _video_prompt_parameters(
+            request.model_copy(update={"image_url": effective_image_url}),
+            video_seed,
+            provider_image_url,
+            image_url_omitted_reason,
+            image_delivery["image_delivery"],
+        )
+        prompt_parameters["reference_image_source"] = reference_image_source
+
+        # 使用请求提供的 API key、所选视频模型配置或同 provider 的可用 Key。
         if request.api_key:
             resolved_api_key = request.api_key
-            resolved_base_url = None
+            resolved_base_url = video_model_config.get("base_url")
         else:
-            resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, "volcano")
+            resolved_api_key = video_model_config.get("api_key")
+            resolved_base_url = video_model_config.get("base_url")
+            if not resolved_api_key:
+                resolved_api_key, fallback_base_url = await get_user_api_key(
+                    db,
+                    user_id,
+                    video_model_config.get("provider_id") or "volcano",
+                    raise_if_missing=False,
+                )
+                resolved_base_url = resolved_base_url or fallback_base_url
+
+        if not resolved_api_key and is_dev_mode():
+            job_id = str(uuid4())
+            task_id = f"dev-video-{job_id}"
+            video_url = dev_video_url(job_id)
+            extra_data = _build_video_extra_data(request, lineage)
+            extra_data.update(context_metadata)
+            extra_data.update(_video_model_metadata(video_model_config))
+            extra_data["prompt_parameters"] = prompt_parameters
+            extra_data["source_prompt"] = request.prompt
+            job = VideoJob(
+                id=job_id,
+                user_id=user_id,
+                project_id=request.project_id,
+                workflow_id=request.workflow_id,
+                task_id=task_id,
+                title=request.prompt[:50] if len(request.prompt) > 50 else request.prompt,
+                prompt=final_prompt,
+                model_id=video_model_config.get("api_model_id") or request.model,
+                model_name=f"{video_model_config.get('model_name') or _get_volcano_model_name(request.model)} (DEV_MODE)",
+                duration=request.duration,
+                resolution=request.resolution,
+                image_url=effective_image_url,
+                status="succeeded",
+                progress=100,
+                video_url=video_url,
+                cover_url=effective_image_url,
+                extra_data=extra_data,
+            )
+            db.add(job)
+            await _attach_video_job_to_workflow(db, job, user_id)
+            await _sync_video_job_and_shot(
+                db=db,
+                job=job,
+                status_value="succeeded",
+                progress=100,
+                video_url=video_url,
+                cover_url=effective_image_url,
+            )
+            await db.commit()
+
+            await log_activity(
+                db=db,
+                user_id=user_id,
+                activity_type="created",
+                entity_type="video",
+                entity_id=job.id,
+                title=f"DEV_MODE 视频任务完成: {job.title}",
+            )
+            await db.commit()
+
+            return VideoGenerateResponse(
+                task_id=task_id,
+                job_id=job.id,
+                status="succeeded",
+                message="DEV_MODE 本地视频任务已完成，未调用云端视频模型"
+            )
+
+        if not resolved_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"未配置 {video_model_config.get('provider_name') or video_model_config.get('provider_id') or '视频模型'} API Key，请在 LLM 配置页面配置并测试视频模型"
+            )
         client = _create_ark_client(resolved_api_key, resolved_base_url)
 
         # 构建content
         content = []
 
-        # 如果有参考图片，添加图片
-        if request.image_url:
+        # 云端视频模型只能读取公网可访问图片；本地静态图继续保留在历史和提示词上下文中。
+        if provider_image_url:
             content.append({
                 "type": "image_url",
-                "image_url": {"url": request.image_url}
+                "image_url": {"url": provider_image_url}
             })
 
         # 构建提示词，包含参数
@@ -213,60 +1417,62 @@ async def generate_video(
         watermark = "true"
         resolution_arg = f"--resolution {request.resolution}"
 
-        prompt_text = f"{request.prompt} {duration_arg} --camerafixed {camerafixed} --watermark {watermark}"
+        prompt_text = f"{final_prompt} {duration_arg} {resolution_arg} --camerafixed {camerafixed} --watermark {watermark}"
 
         content.append({
             "type": "text",
             "text": prompt_text
         })
 
-        # 视频模型需要 endpoint_id，不是模型名
-        from app.core.volcano_config import get_endpoint_id
-        video_model = get_endpoint_id(request.model)
+        # 视频模型需要 endpoint_id，不是模型名。
+        video_model = video_model_config.get("model_endpoint_id") or request.model
 
         # 调用SDK创建任务
-        create_result = client.content_generation.tasks.create(
-            model=video_model,
-            content=content
-        )
+        create_kwargs = {
+            "model": video_model,
+            "content": content,
+            "duration": request.duration,
+            "resolution": request.resolution,
+            "camera_fixed": False,
+            "watermark": True,
+        }
+        if video_seed is not None:
+            create_kwargs["seed"] = video_seed
+        try:
+            create_result = client.content_generation.tasks.create(**create_kwargs)
+        except Exception as exc:
+            image_error = _provider_image_url_error_message(exc, provider_image_url)
+            if image_error:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=image_error) from exc
+            raise
 
         # 构建关联数据（ID + 标题）
-        from app.models import Novel, Script, Storyboard, Shot
-        extra_data = {}
-        if request.novel_id:
-            novel = await db.get(Novel, request.novel_id)
-            extra_data["novel_id"] = request.novel_id
-            extra_data["novel_title"] = novel.title if novel else None
-        if request.script_id:
-            script = await db.get(Script, request.script_id)
-            extra_data["script_id"] = request.script_id
-            extra_data["script_title"] = script.title if script else None
-        if request.storyboard_id:
-            storyboard = await db.get(Storyboard, request.storyboard_id)
-            extra_data["storyboard_id"] = request.storyboard_id
-            extra_data["storyboard_title"] = storyboard.title if storyboard else None
-        if request.shot_id:
-            shot = await db.get(Shot, request.shot_id)
-            extra_data["shot_id"] = request.shot_id
-            extra_data["shot_number"] = shot.shot_number if shot else None
+        extra_data = _build_video_extra_data(request, lineage)
+        extra_data.update(context_metadata)
+        extra_data.update(_video_model_metadata(video_model_config))
+        extra_data["prompt_parameters"] = prompt_parameters
+        extra_data["source_prompt"] = request.prompt
 
         # 创建数据库记录
         job = VideoJob(
             id=str(uuid4()),
             user_id=user_id,
+            project_id=request.project_id,
+            workflow_id=request.workflow_id,
             task_id=create_result.id,
             title=request.prompt[:50] if len(request.prompt) > 50 else request.prompt,
-            prompt=request.prompt,
-            model_id=request.model,
-            model_name=_get_volcano_model_name(request.model),
+            prompt=final_prompt,
+            model_id=video_model_config.get("api_model_id") or request.model,
+            model_name=video_model_config.get("model_name") or _get_volcano_model_name(request.model),
             duration=request.duration,
             resolution=request.resolution,
-            image_url=request.image_url,
+            image_url=effective_image_url,
             status="pending",
             progress=10,
             extra_data=extra_data,
         )
         db.add(job)
+        await _attach_video_job_to_workflow(db, job, user_id)
         await db.commit()
 
         await log_activity(
@@ -286,6 +1492,8 @@ async def generate_video(
             message="视频生成任务已提交，请使用task_id查询状态"
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -306,11 +1514,39 @@ async def get_video_status(
     使用 task_id 轮询任务状态。API Key 优先使用请求参数，
     否则从用户的 LLMConfig 中获取。
     """
+    job_result = await db.execute(
+        select(VideoJob).where(VideoJob.task_id == task_id, VideoJob.user_id == user_id)
+    )
+    existing_job = job_result.scalar_one_or_none()
+    if existing_job and (task_id.startswith("dev-video-") or existing_job.status in {"succeeded", "failed"}):
+        return VideoStatusResponse(
+            task_id=task_id,
+            job_id=existing_job.id,
+            status=existing_job.status,
+            video_url=existing_job.video_url,
+            cover_url=existing_job.cover_url,
+            message="视频生成完成" if existing_job.status == "succeeded" else (existing_job.error_message or "视频生成失败"),
+            progress=existing_job.progress,
+            duration=existing_job.duration,
+            resolution=existing_job.resolution
+        )
+
+    provider_for_status = "volcano"
+    if existing_job:
+        provider_for_status = (_json_dict(existing_job.extra_data).get("provider_id") or "volcano")
+
     if api_key:
         resolved_api_key = api_key
         resolved_base_url = None
     else:
-        resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, "volcano")
+        resolved_api_key, resolved_base_url = await get_user_api_key(
+            db, user_id, provider_for_status, raise_if_missing=False
+        )
+    if not resolved_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"未配置 {provider_for_status} API Key，请在设置页面配置"
+        )
 
     try:
         client = _create_ark_client(resolved_api_key, resolved_base_url)
@@ -335,13 +1571,8 @@ async def get_video_status(
         resolution = None
         progress = None
         
-        # 视频URL在 content 字段中
-        if task_status == "succeeded" and hasattr(get_result, 'content'):
-            content = get_result.content
-            if content:
-                video_url = getattr(content, 'video_url', None)
-                # 封面图取最后一帧
-                cover_url = getattr(content, 'last_frame_url', None)
+        if task_status == "succeeded":
+            video_url, cover_url = _extract_video_result(get_result)
         
         if hasattr(get_result, 'duration'):
             duration = get_result.duration
@@ -363,11 +1594,19 @@ async def get_video_status(
             "failed": f"生成失败: {getattr(get_result, 'error', 'Unknown error')}"
         }.get(task_status, f"未知状态: {task_status}")
         
-        job = await db.execute(
-            select(VideoJob).where(VideoJob.task_id == task_id)
-        )
-        job_record = job.scalar_one_or_none()
+        job_record = existing_job
         job_id = job_record.id if job_record else None
+        if job_record:
+            await _sync_video_job_and_shot(
+                db=db,
+                job=job_record,
+                status_value=mapped_status,
+                progress=progress,
+                video_url=video_url,
+                cover_url=cover_url,
+                error_message=str(getattr(get_result, "error", "")) if mapped_status == "failed" else None,
+            )
+            await db.commit()
 
         return VideoStatusResponse(
             task_id=task_id,
@@ -390,50 +1629,42 @@ async def get_video_status(
 
 @router.get("/jobs", response_model=List[VideoJobResponse])
 async def list_video_jobs(
+    project_id: Optional[str] = None,
+    workflow_id: Optional[str] = None,
+    novel_id: Optional[str] = None,
+    chapter_id: Optional[str] = None,
+    script_id: Optional[str] = None,
+    storyboard_id: Optional[str] = None,
+    shot_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
     """
     获取用户的视频任务历史列表
     """
-    result = await db.execute(
-        select(VideoJob)
-        .where(
-            VideoJob.user_id == user_id,
-            VideoJob.is_active == True
-        )
-        .order_by(desc(VideoJob.created_at))
-        .limit(50)
+    query = select(VideoJob).where(
+        VideoJob.user_id == user_id,
+        VideoJob.is_active == True
     )
+    if project_id:
+        query = query.where(VideoJob.project_id == project_id)
+    if workflow_id:
+        query = query.where(VideoJob.workflow_id == workflow_id)
+    needs_lineage_filter = any([novel_id, chapter_id, script_id, storyboard_id, shot_id])
+    query = query.order_by(desc(VideoJob.created_at)).limit(200 if needs_lineage_filter else 50)
+    result = await db.execute(query)
     jobs = result.scalars().all()
-    
-    return [
-        VideoJobResponse(
-            id=job.id,
-            task_id=job.task_id,
-            title=job.title,
-            prompt=job.prompt,
-            shot_id=(job.extra_data or {}).get("shot_id") if isinstance(job.extra_data, dict) else None,
-            shot_number=(job.extra_data or {}).get("shot_number") if isinstance(job.extra_data, dict) else None,
-            storyboard_id=(job.extra_data or {}).get("storyboard_id") if isinstance(job.extra_data, dict) else None,
-            storyboard_title=(job.extra_data or {}).get("storyboard_title") if isinstance(job.extra_data, dict) else None,
-            script_id=(job.extra_data or {}).get("script_id") if isinstance(job.extra_data, dict) else None,
-            script_title=(job.extra_data or {}).get("script_title") if isinstance(job.extra_data, dict) else None,
-            novel_id=(job.extra_data or {}).get("novel_id") if isinstance(job.extra_data, dict) else None,
-            novel_title=(job.extra_data or {}).get("novel_title") if isinstance(job.extra_data, dict) else None,
-            model_name=job.model_name,
-            status=job.status,
-            progress=job.progress,
-            video_url=job.video_url,
-            cover_url=job.cover_url,
-            error_message=job.error_message,
-            duration=job.duration,
-            resolution=job.resolution,
-            created_at=job.created_at,
-            updated_at=job.updated_at
-        )
-        for job in jobs
-    ]
+    if needs_lineage_filter:
+        filters = {
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+            "shot_id": shot_id,
+        }
+        jobs = [job for job in jobs if _video_job_matches_lineage(job, filters)][:50]
+
+    return [_build_video_job_response(job) for job in jobs]
 
 
 @router.get("/jobs/{job_id}", response_model=VideoJobResponse)
@@ -459,30 +1690,7 @@ async def get_video_job(
             detail="任务不存在"
         )
     
-    return VideoJobResponse(
-        id=job.id,
-        task_id=job.task_id,
-        title=job.title,
-        prompt=job.prompt,
-        shot_id=(job.extra_data or {}).get("shot_id") if isinstance(job.extra_data, dict) else None,
-        shot_number=(job.extra_data or {}).get("shot_number") if isinstance(job.extra_data, dict) else None,
-        storyboard_id=(job.extra_data or {}).get("storyboard_id") if isinstance(job.extra_data, dict) else None,
-        storyboard_title=(job.extra_data or {}).get("storyboard_title") if isinstance(job.extra_data, dict) else None,
-        script_id=(job.extra_data or {}).get("script_id") if isinstance(job.extra_data, dict) else None,
-        script_title=(job.extra_data or {}).get("script_title") if isinstance(job.extra_data, dict) else None,
-        novel_id=(job.extra_data or {}).get("novel_id") if isinstance(job.extra_data, dict) else None,
-        novel_title=(job.extra_data or {}).get("novel_title") if isinstance(job.extra_data, dict) else None,
-        model_name=job.model_name,
-        status=job.status,
-        progress=job.progress,
-        video_url=job.video_url,
-        cover_url=job.cover_url,
-        error_message=job.error_message,
-        duration=job.duration,
-        resolution=job.resolution,
-        created_at=job.created_at,
-        updated_at=job.updated_at
-    )
+    return _build_video_job_response(job)
 
 
 @router.post("/jobs/{job_id}/refresh")
@@ -516,7 +1724,8 @@ async def refresh_job_status(
     
     try:
         # 从用户的 LLMConfig 获取 API 密钥
-        resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, "volcano")
+        provider_for_refresh = _json_dict(job.extra_data).get("provider_id") or "volcano"
+        resolved_api_key, resolved_base_url = await get_user_api_key(db, user_id, provider_for_refresh)
         client = _create_ark_client(resolved_api_key, resolved_base_url)
         
         get_result = client.content_generation.tasks.get(task_id=job.task_id)
@@ -527,9 +1736,15 @@ async def refresh_job_status(
         
         if task_status == "succeeded":
             job.progress = 100
-            if hasattr(get_result, 'output') and get_result.output:
-                job.video_url = getattr(get_result.output, 'video_url', None)
-                job.cover_url = getattr(get_result.output, 'last_frame_url', None)
+            video_url, cover_url = _extract_video_result(get_result)
+            await _sync_video_job_and_shot(
+                db=db,
+                job=job,
+                status_value=task_status,
+                progress=100,
+                video_url=video_url,
+                cover_url=cover_url,
+            )
             # Log completion activity (commit happens below with job update)
             await log_activity(
                 db=db,
@@ -541,9 +1756,17 @@ async def refresh_job_status(
                 description="视频生成任务已成功完成",
             )
         elif task_status == "running":
-            job.progress = 50
+            await _sync_video_job_and_shot(db, job, task_status, 50, None, None)
         elif task_status == "failed":
-            job.error_message = str(getattr(get_result, 'error', 'Unknown error'))
+            await _sync_video_job_and_shot(
+                db,
+                job,
+                task_status,
+                100,
+                None,
+                None,
+                str(getattr(get_result, 'error', 'Unknown error')),
+            )
         
         await db.commit()
         
@@ -560,6 +1783,104 @@ async def refresh_job_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"刷新状态失败: {str(e)}"
         )
+
+
+@router.put("/jobs/{job_id}", response_model=VideoJobResponse)
+async def update_video_job(
+    job_id: str,
+    request: VideoJobUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """更新视频任务元数据，用于取消、归档前的状态调整和任务中心管理。"""
+    result = await db.execute(
+        select(VideoJob).where(VideoJob.id == job_id, VideoJob.user_id == user_id, VideoJob.is_active == True)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+
+    if request.status is not None:
+        if request.status not in {"pending", "running", "succeeded", "completed", "failed", "cancelled", "archived"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的视频任务状态")
+        job.status = request.status
+    if request.progress is not None:
+        job.progress = request.progress
+    if request.title is not None:
+        job.title = request.title
+    if request.error_message is not None:
+        job.error_message = request.error_message
+    job.updated_at = utc_now()
+
+    if job.status in {"cancelled", "failed"}:
+        await _sync_video_job_and_shot(
+            db=db,
+            job=job,
+            status_value=job.status,
+            progress=job.progress or 0,
+            video_url=None,
+            cover_url=None,
+            error_message=job.error_message,
+        )
+
+    await db.commit()
+    await db.refresh(job)
+    return _build_video_job_response(job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=VideoJobResponse)
+async def cancel_video_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """取消本地跟踪的视频任务。第三方任务取消能力由后续供应商适配器实现。"""
+    result = await db.execute(
+        select(VideoJob).where(VideoJob.id == job_id, VideoJob.user_id == user_id, VideoJob.is_active == True)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+    if job.status in {"succeeded", "completed"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="已完成任务不能取消")
+
+    job.status = "cancelled"
+    job.progress = job.progress or 0
+    job.error_message = job.error_message or "任务已由用户取消"
+    job.updated_at = utc_now()
+    await _sync_video_job_and_shot(
+        db=db,
+        job=job,
+        status_value="cancelled",
+        progress=job.progress,
+        video_url=None,
+        cover_url=None,
+        error_message=job.error_message,
+    )
+    await db.commit()
+    await db.refresh(job)
+    return _build_video_job_response(job)
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_video_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """软删除视频任务，保留数据库记录用于审计和恢复。"""
+    result = await db.execute(
+        select(VideoJob).where(VideoJob.id == job_id, VideoJob.user_id == user_id, VideoJob.is_active == True)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务不存在")
+
+    job.is_active = False
+    job.status = "archived"
+    job.updated_at = utc_now()
+    await db.commit()
+    return {"message": "视频任务已归档", "job_id": job_id}
 
 
 # ============== 废弃的旧API（保持向后兼容）==============
@@ -606,9 +1927,34 @@ class VideoDownloadRequest(BaseModel):
     filename: Optional[str] = Field(None, description="下载文件名")
 
 
+def _safe_download_filename(filename: Optional[str]) -> str:
+    value = (filename or "video.mp4").strip() or "video.mp4"
+    value = value.replace("/", "_").replace("\\", "_").replace('"', "")
+    return value if value.lower().endswith(".mp4") else f"{value}.mp4"
+
+
+def _local_static_file_for_media_url(media_url: str, request_netloc: str) -> Optional[Path]:
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(media_url)
+    if parsed.netloc and parsed.netloc != request_netloc:
+        return None
+    media_path = urllib.parse.unquote(parsed.path or media_url)
+    if not media_path.startswith("/static/"):
+        return None
+    relative = media_path.removeprefix("/static/").lstrip("/")
+    candidate = (STATIC_ROOT / relative).resolve()
+    try:
+        candidate.relative_to(STATIC_ROOT.resolve())
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的本地静态资源路径")
+    return candidate
+
+
 @router.post("/download")
 async def download_video(
-    request: VideoDownloadRequest
+    request: VideoDownloadRequest,
+    http_request: Request,
 ):
     """
     代理下载视频 - 解决URL特殊字符截断问题
@@ -619,12 +1965,21 @@ async def download_video(
     try:
         import httpx
         import urllib.parse
+        from fastapi.responses import FileResponse, Response
         
         video_url = request.video_url
-        
-        # 解析URL确保特殊字符正确处理
+
+        filename = _safe_download_filename(request.filename)
+        local_file = _local_static_file_for_media_url(video_url, http_request.url.netloc)
+        if local_file is not None:
+            if not local_file.exists():
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="本地视频文件不存在")
+            return FileResponse(local_file, media_type="video/mp4", filename=filename)
+
         parsed = urllib.parse.urlparse(video_url)
-        
+        if not parsed.scheme:
+            video_url = urllib.parse.urljoin(str(http_request.base_url), video_url)
+
         # 使用httpx下载视频
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.get(video_url)
@@ -634,25 +1989,15 @@ async def download_video(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"下载失败: HTTP {response.status_code}"
                 )
-            
-            # 获取文件名
-            filename = request.filename or "video.mp4"
-            
-            # 返回流式响应
-            from fastapi.responses import StreamingResponse
-            from starlette.datastructures import Headers
-            
-            headers = Headers({
+
+            headers = {
                 "Content-Disposition": f'attachment; filename="{filename}"',
                 "Content-Type": "video/mp4",
-            })
+            }
+            return Response(content=response.content, media_type="video/mp4", headers=headers)
             
-            return StreamingResponse(
-                response.aiter_bytes(),
-                media_type="video/mp4",
-                headers=headers
-            )
-            
+    except HTTPException:
+        raise
     except httpx.TimeoutException:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,

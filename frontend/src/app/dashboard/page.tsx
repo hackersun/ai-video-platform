@@ -27,11 +27,22 @@ import {
   Volume2,
   ArrowRight,
   Loader,
-  FolderOpen
+  FolderOpen,
+  PlugZap,
+  ShieldCheck,
+  Workflow,
+  Captions,
+  Images
 } from 'lucide-react';
 
 // API基础URL
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 // 统计数据
 const STATS_CONFIG = [
@@ -106,7 +117,7 @@ export default function DashboardPage() {
   const loadDashboardData = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('auth_token');
       const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
 
       // 并行加载所有数据
@@ -209,12 +220,12 @@ export default function DashboardPage() {
             </h1>
             <p className="text-white/60">开始您的AI视频创作之旅</p>
           </div>
-          <Link href="/novels/new">
-            <Button className="bg-violet-600 hover:bg-violet-700">
+          <Button asChild className="bg-violet-600 hover:bg-violet-700">
+            <Link href="/novels/new">
               <Plus className="w-4 h-4 mr-2" />
               创建小说
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </div>
 
         {/* 创作流程引导 - 时间线样式 */}
@@ -235,12 +246,12 @@ export default function DashboardPage() {
                   { step: 3, label: '创建角色', href: '/characters', icon: Users, color: 'from-blue-500 to-blue-600' },
                   { step: 4, label: '编写剧本', href: '/scripts', icon: FileText, color: 'from-cyan-500 to-cyan-600' },
                   { step: 5, label: '设计分镜', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
-                  { step: 6, label: '生成视频', href: '/video-generation', icon: Video, color: 'from-pink-500 to-pink-600' },
+                  { step: 6, label: '完整工作流', href: '/workflow', icon: Workflow, color: 'from-pink-500 to-pink-600' },
                 ].map((item, index) => (
                   <div key={item.step} className="flex flex-col items-center relative z-10">
                     <Link
                       href={item.href}
-                      className={`w-12 h-12 rounded-full bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-lg hover:scale-110 transition-all duration-200`}
+                      className={`w-12 h-12 rounded-full bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-lg transition-transform duration-200 hover:scale-110`}
                     >
                       <item.icon className="w-5 h-5" />
                     </Link>
@@ -252,6 +263,72 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <Link href="/assets">
+            <Card className="bg-white/5 border-white/10 hover:border-amber-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <Images className="w-6 h-6 text-amber-300 mb-3" />
+                <div className="text-white font-medium">资产库</div>
+                <div className="text-white/50 text-sm mt-1">管理角色、场景、道具、关键帧、音效和参考资产</div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/entities">
+            <Card className="bg-white/5 border-white/10 hover:border-violet-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <Users className="w-6 h-6 text-violet-300 mb-3" />
+                <div className="text-white font-medium">实体审阅台</div>
+                <div className="text-white/50 text-sm mt-1">角色、场景、道具、事件实体的统一管理和审阅</div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/production-adapters">
+            <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <PlugZap className="w-6 h-6 text-cyan-300 mb-3" />
+                <div className="text-white font-medium">生产适配</div>
+                <div className="text-white/50 text-sm mt-1">配置 Sora/Veo、ComfyUI、FFmpeg 云渲染和口型服务</div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/subtitles">
+            <Card className="bg-white/5 border-white/10 hover:border-blue-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <Captions className="w-6 h-6 text-blue-300 mb-3" />
+                <div className="text-white font-medium">字幕工作台</div>
+                <div className="text-white/50 text-sm mt-1">编辑字幕段、审阅对白时间码并导出 SRT/VTT/ASS</div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/shots">
+            <Card className="bg-white/5 border-white/10 hover:border-emerald-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <ShieldCheck className="w-6 h-6 text-emerald-300 mb-3" />
+                <div className="text-white font-medium">镜头生产上下文</div>
+                <div className="text-white/50 text-sm mt-1">维护资产锁、关键帧、多视图参考、口型和审核状态</div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/workflow">
+            <Card className="bg-white/5 border-white/10 hover:border-violet-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <Workflow className="w-6 h-6 text-violet-300 mb-3" />
+                <div className="text-white font-medium">批量直生与云渲染</div>
+                <div className="text-white/50 text-sm mt-1">在工作流中批量生成音视频、字幕轨和渲染包</div>
+              </CardContent>
+            </Card>
+          </Link>
+          <Link href="/producer">
+            <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
+              <CardContent className="p-5">
+                <Sparkles className="w-6 h-6 text-cyan-300 mb-3" />
+                <div className="text-white font-medium">AI制片中心</div>
+                <div className="text-white/50 text-sm mt-1">查看状态机、定稿包、媒体巡检、质量检查和安全补齐</div>
+              </CardContent>
+            </Card>
+          </Link>
+        </div>
+
         {/* 我的作品 */}
         <div>
           <div className="flex items-center justify-between mb-4">
@@ -259,12 +336,12 @@ export default function DashboardPage() {
               <BookOpen className="w-5 h-5 text-violet-400" />
               我的作品
             </h2>
-            <Link href="/novels">
-              <Button variant="ghost" size="sm" className="text-white/60 hover:text-white">
+            <Button asChild variant="ghost" size="sm" className="text-white/60 hover:text-white">
+              <Link href="/novels">
                 查看全部
                 <ArrowRight className="w-4 h-4 ml-1" />
-              </Button>
-            </Link>
+              </Link>
+            </Button>
           </div>
           
           {novels.length > 0 ? (
@@ -275,14 +352,17 @@ export default function DashboardPage() {
                 const progressPercent = Math.min(100, (totalProgress / 9) * 100); // 假设总共9个步骤
                 return (
                   <Link key={novel.id} href={`/novels/${novel.id}`}>
-                    <Card className="bg-white/5 border-white/10 hover:border-violet-500/50 transition-all duration-300 cursor-pointer h-full overflow-hidden group">
+                    <Card className="bg-white/5 border-white/10 transition-colors duration-300 hover:border-violet-500/50 cursor-pointer h-full overflow-hidden group">
                       <CardContent className="p-0">
                         {/* 封面图区域 */}
                         <div className="relative h-32 bg-gradient-to-br from-violet-600/30 to-purple-600/30 overflow-hidden">
                           {novel.cover_url ? (
                             <img 
-                              src={novel.cover_url} 
+                              src={toMediaUrl(novel.cover_url)}
                               alt="" 
+                              width={384}
+                              height={128}
+                              loading="lazy"
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
                             />
                           ) : (
@@ -326,7 +406,7 @@ export default function DashboardPage() {
                           {/* 进度条 */}
                           <div className="relative h-1.5 bg-white/10 rounded-full overflow-hidden">
                             <div 
-                              className="absolute top-0 left-0 h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full transition-all duration-500"
+                              className="absolute top-0 left-0 h-full bg-gradient-to-r from-violet-500 to-purple-500 rounded-full transition-[width] duration-500"
                               style={{ width: `${progressPercent}%` }}
                             />
                           </div>
@@ -348,17 +428,17 @@ export default function DashboardPage() {
                   创建一个小说项目，AI将帮助您完成从剧本到视频的完整创作流程
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Link href="/novels/new">
-                    <Button className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
+                  <Button asChild className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
+                    <Link href="/novels/new">
                       <Plus className="w-4 h-4 mr-2" />
                       创建小说
-                    </Button>
-                  </Link>
-                  <Link href="/novels">
-                    <Button variant="outline" className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20 px-8">
-                      浏览示例
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
+                  <Button asChild variant="outline" className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20 px-8">
+                    <Link href="/novels">
+                      查看作品
+                    </Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -396,12 +476,12 @@ export default function DashboardPage() {
                 <Video className="w-5 h-5 text-pink-400" />
                 最近视频
               </CardTitle>
-              <Link href="/video-generation">
-                <Button variant="ghost" size="sm" className="text-white/60 hover:text-white">
+              <Button asChild variant="ghost" size="sm" className="text-white/60 hover:text-white">
+                <Link href="/video-generation">
                   <Plus className="w-4 h-4 mr-1" />
                   生成
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </CardHeader>
             <CardContent>
               {recentVideos.length > 0 ? (
@@ -426,11 +506,11 @@ export default function DashboardPage() {
                           {formatTime(video.created_at)} · {video.duration || 0}秒
                         </div>
                       </div>
-                      <Link href="/video-generation">
-                        <Button variant="ghost" size="sm">
+                      <Button asChild variant="ghost" size="sm">
+                        <Link href="/video-generation" aria-label="查看视频生成">
                           <Play className="w-4 h-4" />
-                        </Button>
-                      </Link>
+                        </Link>
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -440,12 +520,12 @@ export default function DashboardPage() {
                     <Video className="w-7 h-7 text-pink-400/50" />
                   </div>
                   <p className="text-white/60 text-sm mb-3">还没有生成的视频</p>
-                  <Link href="/video-generation">
-                    <Button size="sm" className="bg-pink-600 hover:bg-pink-700 text-white">
+                  <Button asChild size="sm" className="bg-pink-600 hover:bg-pink-700 text-white">
+                    <Link href="/video-generation">
                       <Sparkles className="w-4 h-4 mr-1" />
                       生成视频
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -458,12 +538,12 @@ export default function DashboardPage() {
                 <Volume2 className="w-5 h-5 text-blue-400" />
                 最近音频
               </CardTitle>
-              <Link href="/tts">
-                <Button variant="ghost" size="sm" className="text-white/60 hover:text-white">
+              <Button asChild variant="ghost" size="sm" className="text-white/60 hover:text-white">
+                <Link href="/tts">
                   <Plus className="w-4 h-4 mr-1" />
                   生成
-                </Button>
-              </Link>
+                </Link>
+              </Button>
             </CardHeader>
             <CardContent>
               {recentAudios.length > 0 ? (
@@ -496,12 +576,12 @@ export default function DashboardPage() {
                     <Volume2 className="w-7 h-7 text-blue-400/50" />
                   </div>
                   <p className="text-white/60 text-sm mb-3">还没有生成的音频</p>
-                  <Link href="/tts">
-                    <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+                  <Button asChild size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
+                    <Link href="/tts">
                       <Sparkles className="w-4 h-4 mr-1" />
                       生成语音
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -526,7 +606,7 @@ export default function DashboardPage() {
                   key={action.href}
                   href={action.href}
                   className={`group p-4 rounded-xl bg-gradient-to-br ${action.color} 
-                    hover:scale-105 transition-all duration-200
+                    transition-transform duration-200 hover:scale-105
                     flex flex-col items-center gap-2 text-white`}
                 >
                   <Icon className="w-6 h-6" />

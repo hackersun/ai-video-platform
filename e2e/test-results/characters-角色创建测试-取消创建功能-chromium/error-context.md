@@ -1,0 +1,217 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - heading "角色管理" [level=1] [ref=e65]:
+              - img [ref=e66]
+              - text: 角色管理
+            - paragraph [ref=e71]: 创建和管理您的角色库
+          - generic [ref=e72]:
+            - button "AI 提取角色" [ref=e73] [cursor=pointer]:
+              - img [ref=e74]
+              - text: AI 提取角色
+            - button "新建角色" [ref=e76] [cursor=pointer]:
+              - img [ref=e77]
+              - text: 新建角色
+        - generic [ref=e78]:
+          - generic [ref=e79]:
+            - generic [ref=e80]:
+              - img [ref=e81]
+              - textbox "搜索角色..." [ref=e84]
+            - generic [ref=e85]:
+              - generic [ref=e86] [cursor=pointer]:
+                - generic [ref=e87]:
+                  - img [ref=e89]
+                  - generic [ref=e92]:
+                    - generic [ref=e93]: 孙钦越
+                    - generic [ref=e94]: 小说核心主角，简介中明确指认为“无敌天尊”，处于故事力量体系的顶端，具体背景故事需结合后续章节展开。
+                  - img [ref=e95]
+                - generic [ref=e98]: 主角
+              - generic [ref=e99] [cursor=pointer]:
+                - generic [ref=e100]:
+                  - img [ref=e102]
+                  - generic [ref=e105]:
+                    - generic [ref=e106]: 测试角色2
+                    - generic [ref=e107]: 测试2
+                  - img [ref=e108]
+                - generic [ref=e111]: 配角
+              - generic [ref=e112] [cursor=pointer]:
+                - generic [ref=e113]:
+                  - img [ref=e115]
+                  - generic [ref=e118]:
+                    - generic [ref=e119]: 测试角色
+                    - generic [ref=e120]: 测试
+                  - img [ref=e121]
+                - generic [ref=e124]: 主角
+              - generic [ref=e126] [cursor=pointer]:
+                - img [ref=e128]
+                - generic [ref=e131]:
+                  - generic [ref=e132]: 前端测试角色
+                  - generic [ref=e133]: 测试
+                - img [ref=e134]
+              - generic [ref=e136] [cursor=pointer]:
+                - generic [ref=e137]:
+                  - img [ref=e139]
+                  - generic [ref=e142]:
+                    - generic [ref=e143]: 测试角色1
+                    - generic [ref=e144]: 测试描述1
+                  - img [ref=e145]
+                - generic [ref=e148]: 主角
+              - generic [ref=e149] [cursor=pointer]:
+                - generic [ref=e150]:
+                  - img [ref=e152]
+                  - generic [ref=e156]: 孙钦越
+                  - img [ref=e157]
+                - generic [ref=e160]: 主角
+              - generic [ref=e162] [cursor=pointer]:
+                - img [ref=e164]
+                - generic [ref=e168]: CHAR_测试角色_1774108154605
+                - img [ref=e169]
+              - generic [ref=e172] [cursor=pointer]:
+                - img [ref=e174]
+                - generic [ref=e178]: CHAR_测试角色_1774108060953
+                - img [ref=e179]
+              - generic [ref=e182] [cursor=pointer]:
+                - img [ref=e184]
+                - generic [ref=e188]: CHAR_测试角色_1774105514693
+                - img [ref=e189]
+              - generic [ref=e192] [cursor=pointer]:
+                - img [ref=e194]
+                - generic [ref=e198]: CHAR_测试角色_1774104547902
+                - img [ref=e199]
+              - generic [ref=e202] [cursor=pointer]:
+                - img [ref=e204]
+                - generic [ref=e208]: 这是CHAR角色的描述
+                - img [ref=e209]
+              - generic [ref=e212] [cursor=pointer]:
+                - img [ref=e214]
+                - generic [ref=e218]: 这是CHAR角色的描述
+                - img [ref=e219]
+              - generic [ref=e222] [cursor=pointer]:
+                - img [ref=e224]
+                - generic [ref=e227]:
+                  - generic [ref=e228]: "11122"
+                  - generic [ref=e229]: 这是CHAR角色的描述
+                - img [ref=e230]
+              - generic [ref=e233] [cursor=pointer]:
+                - img [ref=e235]
+                - generic [ref=e238]:
+                  - generic [ref=e239]: CHAR_测试角色_1774071326500
+                  - generic [ref=e240]: 这是CHAR角色的描述
+                - img [ref=e241]
+              - generic [ref=e244] [cursor=pointer]:
+                - img [ref=e246]
+                - generic [ref=e249]:
+                  - generic [ref=e250]: CHAR_测试角色_1774070556948
+                  - generic [ref=e251]: 这是CHAR角色的描述
+                - img [ref=e252]
+              - generic [ref=e255] [cursor=pointer]:
+                - img [ref=e257]
+                - generic [ref=e260]:
+                  - generic [ref=e261]: CHAR_测试角色_1774070279241
+                  - generic [ref=e262]: 这是CHAR角色的描述
+                - img [ref=e263]
+              - generic [ref=e266] [cursor=pointer]:
+                - img [ref=e268]
+                - generic [ref=e271]:
+                  - generic [ref=e272]: CHAR_测试角色_1774070165449
+                  - generic [ref=e273]: 这是CHAR角色的描述
+                - img [ref=e274]
+              - generic [ref=e277] [cursor=pointer]:
+                - img [ref=e279]
+                - generic [ref=e282]:
+                  - generic [ref=e283]: CHAR_测试角色_1774070061848
+                  - generic [ref=e284]: 这是CHAR角色的描述
+                - img [ref=e285]
+              - generic [ref=e288] [cursor=pointer]:
+                - img [ref=e290]
+                - generic [ref=e293]:
+                  - generic [ref=e294]: CHAR_测试角色_1774069604552
+                  - generic [ref=e295]: 这是CHAR角色的描述
+                - img [ref=e296]
+              - generic [ref=e299] [cursor=pointer]:
+                - img [ref=e301]
+                - generic [ref=e304]:
+                  - generic [ref=e305]: CHAR_测试角色_1774069157269
+                  - generic [ref=e306]: 这是CHAR角色的描述
+                - img [ref=e307]
+              - generic [ref=e310] [cursor=pointer]:
+                - img [ref=e312]
+                - generic [ref=e315]:
+                  - generic [ref=e316]: CHAR_测试角色_1774068786469
+                  - generic [ref=e317]: 这是CHAR角色的描述
+                - img [ref=e318]
+              - generic [ref=e321] [cursor=pointer]:
+                - img [ref=e323]
+                - generic [ref=e326]:
+                  - generic [ref=e327]: CHAR_测试角色_1774068199102
+                  - generic [ref=e328]: 这是CHAR角色的描述
+                - img [ref=e329]
+              - generic [ref=e332] [cursor=pointer]:
+                - img [ref=e334]
+                - generic [ref=e337]:
+                  - generic [ref=e338]: CHAR_测试角色_1774067967018
+                  - generic [ref=e339]: 这是CHAR角色的描述
+                - img [ref=e340]
+              - generic [ref=e343] [cursor=pointer]:
+                - img [ref=e345]
+                - generic [ref=e348]:
+                  - generic [ref=e349]: CHAR_测试角色_1774067034451
+                  - generic [ref=e350]: 这是CHAR角色的描述
+                - img [ref=e351]
+              - generic [ref=e354] [cursor=pointer]:
+                - img [ref=e356]
+                - generic [ref=e359]:
+                  - generic [ref=e360]: E2E测试角色
+                  - generic [ref=e361]: 这是一个自动化测试创建的角色
+                - img [ref=e362]
+          - generic [ref=e365]:
+            - img [ref=e366]
+            - paragraph [ref=e371]: 选择一个角色查看详情
+            - paragraph [ref=e372]: 或点击"新建角色"创建新角色
+  - alert [ref=e373]
+```

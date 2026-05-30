@@ -1,11 +1,30 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MainLayout } from '@/components/layout/main-layout';
+import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { useToast } from '@/components/ui/toast';
+import {
+  getDefaultConfigForCapability,
+  SavedModelConfig,
+} from '@/lib/model-configs';
+import {
+  CAMERA_ANGLE_LABELS,
+  CAMERA_ANGLE_OPTIONS,
+  CAMERA_MOVEMENT_OPTIONS,
+  COLOR_GRADING_OPTIONS,
+  EMOTION_OPTIONS,
+  LIGHTING_OPTIONS,
+  STORYBOARD_STYLE_OPTIONS,
+  getShotAttributeLabel,
+} from '@/lib/shot-labels';
 import {
   LayoutGrid,
   Plus,
@@ -23,7 +42,6 @@ import {
   Eye,
   Sparkles,
   Loader2,
-  X,
   Save,
   RefreshCw,
   Video
@@ -54,6 +72,8 @@ interface Shot {
   music_cue?: string;
   sfx_cue?: string;
   keyframes?: any[];
+  character_refs?: any[];
+  extra_data?: any;
   version?: number;
   created_at: string;
   updated_at: string;
@@ -63,6 +83,8 @@ interface Shot {
 interface Storyboard {
   id: string;
   script_id: string;
+  novel_id?: string;
+  chapter_id?: string;
   title: string;
   description?: string;
   content?: any;
@@ -78,29 +100,52 @@ interface Storyboard {
 interface Script {
   id: string;
   title: string;
+  novel_id?: string;
+  chapter_id?: string;
+  novel_title?: string;
 }
 
-// 分镜生成请求
-interface GenerateRequest {
-  script_id: string;
-  shot_count?: number;
-  style?: string;
+interface Novel {
+  id: string;
+  title: string;
+  genre?: string;
 }
 
-const CAMERA_ANGLES = ['wide', 'medium', 'close-up', 'extreme-close-up', 'over-shoulder', 'dutch', 'two-shot', 'pov', 'birds-eye', 'worms-eye'];
-const CAMERA_MOVEMENTS = ['static', 'pan_left', 'pan_right', 'tilt_up', 'tilt_down', 'zoom_in', 'zoom_out', 'dolly', 'crane', 'handheld'];
-const EMOTIONS = ['happy', 'sad', 'angry', 'surprised', 'neutral', 'tense', 'relaxed', 'excited'];
-const LIGHTING_OPTIONS = ['natural', 'dramatic', 'soft', 'rim', 'back', 'neon', 'moonlight', 'golden_hour'];
-const COLOR_GRADING_OPTIONS = ['warm', 'cool', 'desaturated', 'vibrant', 'vintage', 'cinematic', 'noir'];
-const STORYBOARD_STYLES = ['anime', 'realistic', 'cartoon', 'noir', 'fantasy', 'sci-fi'];
+interface Chapter {
+  id: string;
+  novel_id?: string;
+  title: string;
+  chapter_number: number;
+}
+
+interface StoryboardTemplateMatch {
+  template: {
+    id: string;
+    name: string;
+    description: string;
+    shot_count: number;
+  };
+  score: number;
+  reason: string;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 export default function StoryboardsPage() {
+  const { toast } = useToast();
   const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
   const [selectedStoryboard, setSelectedStoryboard] = useState<Storyboard | null>(null);
   const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
   const [shots, setShots] = useState<Shot[]>([]);
   const [scripts, setScripts] = useState<Script[]>([]);
+  const [novels, setNovels] = useState<Novel[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -108,9 +153,71 @@ export default function StoryboardsPage() {
   const [showNewModal, setShowNewModal] = useState(false);
   const [newStoryboardTitle, setNewStoryboardTitle] = useState('');
   const [newStoryboardScriptId, setNewStoryboardScriptId] = useState('');
+  const [smartNovelId, setSmartNovelId] = useState('');
+  const [smartChapterId, setSmartChapterId] = useState('');
+  const [smartShotCount, setSmartShotCount] = useState(5);
+  const [matchedTemplate, setMatchedTemplate] = useState<StoryboardTemplateMatch | null>(null);
   const [newStoryboardStyle, setNewStoryboardStyle] = useState('anime');
   const [generatingStoryboard, setGeneratingStoryboard] = useState(false);
+  const [generatingSmartStoryboard, setGeneratingSmartStoryboard] = useState(false);
   const [generatingImage, setGeneratingImage] = useState(false);
+  const [lineageNovelId, setLineageNovelId] = useState('');
+  const [lineageChapterId, setLineageChapterId] = useState('');
+  const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
+  const [textModelConfigId, setTextModelConfigId] = useState('');
+  const [deleteShotTarget, setDeleteShotTarget] = useState<Shot | null>(null);
+  const [deletingShot, setDeletingShot] = useState(false);
+  const [deleteStoryboardTarget, setDeleteStoryboardTarget] = useState<Storyboard | null>(null);
+  const [deletingStoryboard, setDeletingStoryboard] = useState(false);
+  const [confirmGenerateFromScript, setConfirmGenerateFromScript] = useState(false);
+
+  const getScriptForStoryboard = (storyboard?: Storyboard | null) =>
+    storyboard ? scripts.find((script) => script.id === storyboard.script_id) : undefined;
+
+  const getStoryboardChapterId = (storyboard?: Storyboard | null) =>
+    storyboard?.chapter_id || storyboard?.content?.chapter_id || getScriptForStoryboard(storyboard)?.chapter_id || '';
+
+  const getStoryboardNovelId = (storyboard?: Storyboard | null) =>
+    storyboard?.novel_id || storyboard?.content?.novel_id || getScriptForStoryboard(storyboard)?.novel_id || '';
+
+  const getNovelLabel = (novelId?: string) =>
+    novels.find((novel) => novel.id === novelId)?.title || (novelId ? `小说 ${novelId.slice(0, 8)}...` : '未绑定小说');
+
+  const getChapterLabel = (chapterId?: string) => {
+    const chapter = chapters.find((item) => item.id === chapterId);
+    return chapter ? `第${chapter.chapter_number}章 ${chapter.title}` : chapterId ? `章节 ${chapterId.slice(0, 8)}...` : '未绑定章节';
+  };
+
+  const refNames = (refs?: any[]) =>
+    (refs || [])
+      .map((ref) => ref?.name || ref?.character_name || ref?.title)
+      .filter(Boolean)
+      .join('、');
+
+  const getShotEntityRefs = (shot?: Shot | null) => {
+    const extra = shot?.extra_data || {};
+    const entityRefs = extra.entity_refs || {};
+    return {
+      characters: shot?.character_refs?.length ? shot.character_refs : (entityRefs.characters || []),
+      scenes: extra.scene_refs || entityRefs.scenes || [],
+      props: extra.prop_refs || entityRefs.props || [],
+      events: extra.event_refs || entityRefs.events || [],
+      subtitle: extra.subtitle_text || shot?.dialogue,
+    };
+  };
+
+  const videoGenerationHref = (shot?: Shot) => {
+    if (!selectedStoryboard) return '/video-generation';
+    const params = new URLSearchParams();
+    const novelId = getStoryboardNovelId(selectedStoryboard);
+    const chapterId = getStoryboardChapterId(selectedStoryboard);
+    if (novelId) params.set('novel_id', novelId);
+    if (chapterId) params.set('chapter_id', chapterId);
+    if (selectedStoryboard.script_id) params.set('script_id', selectedStoryboard.script_id);
+    params.set('storyboard_id', selectedStoryboard.id);
+    if (shot?.id) params.set('shot_id', shot.id);
+    return `/video-generation?${params.toString()}`;
+  };
 
   const handleGenerateShotImage = async (shotId: string) => {
     setGeneratingImage(true);
@@ -157,11 +264,87 @@ export default function StoryboardsPage() {
       const res = await fetchWithAuth(`${API_BASE}/scripts`);
       if (res.ok) {
         const data = await res.json();
-        setScripts(Array.isArray(data) ? data : []);
+        const scriptsList = Array.isArray(data) ? data : [];
+        setScripts(scriptsList);
+        return scriptsList;
       }
+      setScripts([]);
+      return [];
     } catch (error) {
       console.error('加载剧本失败:', error);
       setScripts([]);
+      return [];
+    }
+  };
+
+  const loadNovels = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/novels`);
+      if (!res.ok) {
+        setNovels([]);
+        return [];
+      }
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : [];
+      setNovels(list);
+      return list;
+    } catch (error) {
+      console.error('加载小说失败:', error);
+      setNovels([]);
+      return [];
+    }
+  };
+
+  const loadChapters = async (novelId: string) => {
+    if (!novelId) {
+      setChapters([]);
+      setSmartChapterId('');
+      setMatchedTemplate(null);
+      return [];
+    }
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/chapters/novel/${novelId}`);
+      if (!res.ok) {
+        setChapters([]);
+        return [];
+      }
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : [];
+      setChapters(list);
+      setSmartChapterId(list[0]?.id || '');
+      return list;
+    } catch (error) {
+      console.error('加载章节失败:', error);
+      setChapters([]);
+      return [];
+    }
+  };
+
+  const matchSmartTemplate = async (novelId: string, chapterId?: string) => {
+    if (!novelId) {
+      setMatchedTemplate(null);
+      return;
+    }
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/storyboards/templates/match`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          novel_id: novelId,
+          chapter_id: chapterId || undefined,
+          shot_count: smartShotCount,
+          style: newStoryboardStyle || 'anime',
+          use_ai_refine: false,
+        }),
+      });
+      if (res.ok) {
+        setMatchedTemplate(await res.json());
+      } else {
+        setMatchedTemplate(null);
+      }
+    } catch (error) {
+      console.error('匹配模板失败:', error);
+      setMatchedTemplate(null);
     }
   };
 
@@ -170,22 +353,46 @@ export default function StoryboardsPage() {
     setLoading(true);
     try {
       // 先获取所有剧本
-      await loadScripts();
+      const scriptsList = await loadScripts();
+      const novelList = await loadNovels();
 
       // 再获取每个剧本的分镜
       const allStoryboards: Storyboard[] = [];
-      for (const script of scripts) {
+      for (const script of scriptsList) {
         const sbRes = await fetchWithAuth(`${API_BASE}/storyboards/script/${script.id}`);
         if (sbRes.ok) {
           const sbs = await sbRes.json();
           const sbsWithScript = (Array.isArray(sbs) ? sbs : []).map((sb: any) => ({
             ...sb,
             script_title: script.title,
+            novel_id: sb.novel_id || script.novel_id,
+            chapter_id: sb.chapter_id || sb.content?.chapter_id || script.chapter_id,
+            novel_title: script.novel_title,
           }));
           allStoryboards.push(...sbsWithScript);
         }
       }
       setStoryboards(allStoryboards);
+      const urlParams = new URLSearchParams(window.location.search);
+      const targetNovelId = urlParams.get('novel_id') || '';
+      const targetChapterId = urlParams.get('chapter_id') || '';
+      const targetStoryboardId = urlParams.get('storyboard_id');
+      const target = allStoryboards.find((storyboard) => storyboard.id === targetStoryboardId);
+      if (target) {
+        setSelectedStoryboard(target);
+        const novelId = target.novel_id || target.content?.novel_id || scriptsList.find((script) => script.id === target.script_id)?.novel_id || '';
+        if (novelId) {
+          setLineageNovelId(novelId);
+          await loadChapters(novelId);
+        }
+        setLineageChapterId(target.chapter_id || target.content?.chapter_id || scriptsList.find((script) => script.id === target.script_id)?.chapter_id || '');
+      } else if (targetNovelId) {
+        setLineageNovelId(targetNovelId);
+        await loadChapters(targetNovelId);
+        setLineageChapterId(targetChapterId);
+      } else if (!lineageNovelId && novelList.length > 0) {
+        // Keep list unfiltered by default.
+      }
     } catch (error) {
       console.error('加载分镜失败:', error);
       setStoryboards([]);
@@ -215,7 +422,42 @@ export default function StoryboardsPage() {
 
   useEffect(() => {
     loadStoryboards();
+    loadModelConfigs();
   }, []);
+
+  const loadModelConfigs = async () => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (!res.ok) return;
+      const configs = await res.json();
+      const list = Array.isArray(configs) ? configs : [];
+      setModelConfigs(list);
+      const textDefault = getDefaultConfigForCapability(list, 'text');
+      if (textDefault) setTextModelConfigId(textDefault.id);
+    } catch (error) {
+      console.error('加载模型配置失败:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (smartNovelId) {
+      loadChapters(smartNovelId);
+    }
+  }, [smartNovelId]);
+
+  useEffect(() => {
+    if (lineageNovelId) {
+      loadChapters(lineageNovelId);
+    } else {
+      setLineageChapterId('');
+    }
+  }, [lineageNovelId]);
+
+  useEffect(() => {
+    if (smartNovelId) {
+      matchSmartTemplate(smartNovelId, smartChapterId);
+    }
+  }, [smartNovelId, smartChapterId, newStoryboardStyle, smartShotCount]);
 
   // 选中分镜时加载镜头
   useEffect(() => {
@@ -228,20 +470,28 @@ export default function StoryboardsPage() {
   }, [selectedStoryboard?.id]);
 
   // 筛选分镜
-  const filteredStoryboards = storyboards.filter(sb =>
-    sb.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    sb.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    sb.script_title?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredStoryboards = storyboards.filter((sb) => {
+    const novelId = getStoryboardNovelId(sb);
+    const chapterId = getStoryboardChapterId(sb);
+    if (lineageNovelId && novelId !== lineageNovelId) return false;
+    if (lineageChapterId && chapterId !== lineageChapterId) return false;
+    return (
+      sb.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      sb.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      sb.script_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getNovelLabel(novelId).toLowerCase().includes(searchQuery.toLowerCase()) ||
+      getChapterLabel(chapterId).toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  });
 
   // 创建分镜
   const handleCreateStoryboard = async () => {
     if (!newStoryboardTitle.trim()) {
-      alert('请输入分镜标题');
+      toast({ title: '请输入分镜标题', description: '标题是创建分镜的必填项。', type: 'error' });
       return;
     }
     if (!newStoryboardScriptId) {
-      alert('请选择关联的剧本');
+      toast({ title: '请选择关联剧本', description: '需要先选择一个剧本。', type: 'error' });
       return;
     }
 
@@ -261,23 +511,23 @@ export default function StoryboardsPage() {
         setShowNewModal(false);
         setNewStoryboardTitle('');
         setNewStoryboardScriptId('');
+        toast({ title: '分镜已创建', description: newStoryboardTitle, type: 'success' });
       } else {
         const err = await response.json();
-        alert(err.detail || '创建失败');
+        toast({ title: '创建失败', description: err.detail || '请重试。', type: 'error' });
       }
     } catch (error) {
       console.error('创建分镜失败:', error);
-      alert('创建失败');
+      toast({ title: '创建失败', description: '请重试。', type: 'error' });
     }
   };
 
   // AI 生成故事板（从剧本生成）
   const handleAIGenerateStoryboard = async () => {
     if (!newStoryboardScriptId) {
-      alert('请先选择一个剧本');
+      toast({ title: '请选择剧本', description: '需要先选择一个剧本。', type: 'error' });
       return;
     }
-    if (!confirm('确定要使用AI自动生成分镜吗？这将从剧本内容生成镜头。')) return;
     setGeneratingStoryboard(true);
     try {
       const response = await fetchWithAuth(`${API_BASE}/storyboards/generate`, {
@@ -286,7 +536,8 @@ export default function StoryboardsPage() {
         body: JSON.stringify({
           script_id: newStoryboardScriptId,
           shot_count: 5,
-          style: newStoryboardStyle || 'anime'
+          style: newStoryboardStyle || 'anime',
+          model_config_id: textModelConfigId || undefined,
         })
       });
       if (response.ok) {
@@ -295,17 +546,78 @@ export default function StoryboardsPage() {
         // 选中新创建的分镜
         const newSb = storyboards.find(sb => sb.id === data.id) || data;
         setSelectedStoryboard(newSb);
-        alert(`分镜生成成功！共 ${data.shot_count} 个镜头。`);
+        toast({ title: '分镜生成成功', description: `已生成 ${data.shot_count} 个镜头。`, type: 'success' });
       } else {
         const errData = await response.json();
         throw new Error(errData.detail || '生成失败');
       }
     } catch (err: any) {
       console.error('生成故事板失败:', err);
-      alert(err.message || '生成失败');
+      toast({ title: '生成失败', description: err.message || '请重试。', type: 'error' });
     } finally {
       setGeneratingStoryboard(false);
     }
+  };
+
+  const handleSmartGenerateStoryboard = async () => {
+    if (!smartNovelId) {
+      toast({ title: '请选择小说', description: '需要先选择用于生成分镜的小说。', type: 'error' });
+      return;
+    }
+    setGeneratingSmartStoryboard(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/generate-smart`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          novel_id: smartNovelId,
+          chapter_id: smartChapterId || undefined,
+          shot_count: smartShotCount,
+          style: newStoryboardStyle || 'anime',
+          title: newStoryboardTitle.trim() || undefined,
+          template_id: matchedTemplate?.template.id,
+          use_ai_refine: true,
+          model_config_id: textModelConfigId || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.detail || '智能生成失败');
+      }
+      const data = await response.json();
+      const selectedNovelForResult = smartNovelId;
+      const selectedChapterForResult = smartChapterId || data.chapter_id || '';
+      await loadStoryboards();
+      setSelectedStoryboard(data);
+      if (selectedNovelForResult) {
+        setLineageNovelId(selectedNovelForResult);
+        await loadChapters(selectedNovelForResult);
+      }
+      setLineageChapterId(selectedChapterForResult);
+      setShowNewModal(false);
+      setNewStoryboardTitle('');
+      setNewStoryboardScriptId('');
+      setSmartNovelId('');
+      setSmartChapterId('');
+      setChapters([]);
+      setMatchedTemplate(null);
+      toast({ title: '智能分镜已生成', description: `${data.shot_count} 个镜头已生成，可在右侧审核微调。`, type: 'success' });
+    } catch (err: any) {
+      console.error('智能生成分镜失败:', err);
+      toast({ title: '智能生成失败', description: err.message || '请重试。', type: 'error' });
+    } finally {
+      setGeneratingSmartStoryboard(false);
+    }
+  };
+
+  const prepareGenerateFromScript = (storyboard?: Storyboard | null) => {
+    const target = storyboard || selectedStoryboard;
+    if (target?.script_id) {
+      setNewStoryboardScriptId(target.script_id);
+      setNewStoryboardTitle(`${target.title || '分镜'} AI 重生成`);
+      setNewStoryboardStyle((target.content?.style || newStoryboardStyle || 'anime'));
+    }
+    setConfirmGenerateFromScript(true);
   };
 
   // 创建镜头
@@ -333,10 +645,11 @@ export default function StoryboardsPage() {
         const createdShot = await response.json();
         setShots([...shots, createdShot]);
         setSelectedShot(createdShot);
+        toast({ title: '镜头已创建', description: `镜头 ${createdShot.shot_number || shots.length + 1}`, type: 'success' });
       }
     } catch (error) {
       console.error('创建镜头失败:', error);
-      alert('创建镜头失败');
+      toast({ title: '创建镜头失败', description: '请重试。', type: 'error' });
     }
   };
 
@@ -356,19 +669,19 @@ export default function StoryboardsPage() {
         );
         setShots(newShots);
         setSelectedShot(null);
+        toast({ title: '镜头已保存', description: `镜头 ${updatedData.shot_number || updated.shot_number}`, type: 'success' });
       } else {
-        alert('更新失败');
+        toast({ title: '更新失败', description: '请重试。', type: 'error' });
       }
     } catch (error) {
       console.error('更新镜头失败:', error);
-      alert('更新失败');
+      toast({ title: '更新失败', description: '请重试。', type: 'error' });
     }
   };
 
   // 删除镜头
   const handleDeleteShot = async (shotId: string) => {
     if (!selectedStoryboard) return;
-    if (!confirm('确定要删除这个镜头吗？')) return;
 
     try {
       const response = await fetchWithAuth(`${API_BASE}/shots/${shotId}`, {
@@ -381,10 +694,40 @@ export default function StoryboardsPage() {
         if (selectedShot?.id === shotId) {
           setSelectedShot(null);
         }
+        toast({ title: '镜头已删除', description: '镜头列表已更新。', type: 'success' });
       }
     } catch (error) {
       console.error('删除镜头失败:', error);
-      alert('删除失败');
+      toast({ title: '删除失败', description: '请重试。', type: 'error' });
+    }
+  };
+
+  const handleDeleteStoryboard = async (storyboard: Storyboard) => {
+    setDeletingStoryboard(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/${storyboard.id}`, {
+        method: 'DELETE',
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || '删除失败');
+      }
+      setStoryboards(prev => prev.filter(item => item.id !== storyboard.id));
+      if (selectedStoryboard?.id === storyboard.id) {
+        setSelectedStoryboard(null);
+        setSelectedShot(null);
+        setShots([]);
+      }
+      toast({
+        title: '分镜已删除',
+        description: data.deleted_shot_count ? `已同步删除 ${data.deleted_shot_count} 个镜头。` : '列表已更新。',
+        type: 'success',
+      });
+    } catch (err: any) {
+      console.error('删除分镜失败:', err);
+      toast({ title: '删除分镜失败', description: err?.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setDeletingStoryboard(false);
     }
   };
 
@@ -408,9 +751,7 @@ export default function StoryboardsPage() {
       await fetchWithAuth(`${API_BASE}/shots/reorder?storyboard_id=${selectedStoryboard?.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shot_ids: newShots.map(s => s.id)
-        })
+        body: JSON.stringify({ shot_ids: newShots.map(s => s.id) })
       });
     } catch (error) {
       console.error('更新顺序失败:', error);
@@ -435,6 +776,22 @@ export default function StoryboardsPage() {
             <p className="text-white/60 mt-1">设计视频分镜和镜头序列</p>
           </div>
           <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="border-violet-500/40 text-violet-300 hover:bg-violet-600/20"
+              onClick={() => {
+                setSmartNovelId(lineageNovelId);
+                if (lineageNovelId) {
+                  loadChapters(lineageNovelId).then(() => {
+                    if (lineageChapterId) setSmartChapterId(lineageChapterId);
+                  });
+                }
+                setShowNewModal(true);
+              }}
+            >
+              <Sparkles className="w-4 h-4 mr-2" />
+              智能生成分镜
+            </Button>
             <Button
               variant="outline"
               className="border-white/20 text-white"
@@ -477,7 +834,7 @@ export default function StoryboardsPage() {
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-purple-400" />
-            <span className="ml-3 text-white/60">加载中...</span>
+            <span className="ml-3 text-white/60">加载中…</span>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -487,12 +844,54 @@ export default function StoryboardsPage() {
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                 <Input
-                  placeholder="搜索分镜..."
+                  placeholder="搜索分镜…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
               </div>
+
+              <Card className="bg-white/5 border-white/10">
+                <CardContent className="p-3 space-y-3">
+                  <div>
+                    <label className="text-xs text-white/50 mb-1 block">按小说筛选</label>
+                    <select
+                      value={lineageNovelId}
+                      onChange={(event) => {
+                        setLineageNovelId(event.target.value);
+                        setLineageChapterId('');
+                        setSelectedStoryboard(null);
+                      }}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                    >
+                      <option value="">全部小说</option>
+                      {novels.map((novel) => (
+                        <option key={novel.id} value={novel.id}>{novel.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {lineageNovelId && (
+                    <div>
+                      <label className="text-xs text-white/50 mb-1 block">按章节筛选</label>
+                      <select
+                        value={lineageChapterId}
+                        onChange={(event) => {
+                          setLineageChapterId(event.target.value);
+                          setSelectedStoryboard(null);
+                        }}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                      >
+                        <option value="">全部章节</option>
+                        {chapters.map((chapter) => (
+                          <option key={chapter.id} value={chapter.id}>
+                            第{chapter.chapter_number}章 {chapter.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* 分镜列表 */}
               <div className="space-y-2 max-h-[600px] overflow-y-auto">
@@ -507,19 +906,37 @@ export default function StoryboardsPage() {
                     } border`}
                   >
                     <div className="flex items-start justify-between">
-                      <div>
+                      <div className="min-w-0 pr-2">
                         <div className="text-white font-medium">{sb.title}</div>
                         <div className="text-xs text-white/40">
                           {sb.shot_count || 0} 个镜头 · {sb.script_title || sb.script_id}
                         </div>
+                        <div className="text-xs text-white/35 mt-1">
+                          {getNovelLabel(getStoryboardNovelId(sb))} · {getChapterLabel(getStoryboardChapterId(sb))}
+                        </div>
                       </div>
-                      <span className={`text-xs px-2 py-0.5 rounded ${
-                        sb.status === 'approved' ? 'bg-green-600/30 text-green-400' :
-                        sb.status === 'rejected' ? 'bg-red-600/30 text-red-400' :
-                        'bg-white/10 text-white/60'
-                      }`}>
-                        {sb.status || 'draft'}
-                      </span>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          sb.status === 'approved' ? 'bg-green-600/30 text-green-400' :
+                          sb.status === 'rejected' ? 'bg-red-600/30 text-red-400' :
+                          'bg-white/10 text-white/60'
+                        }`}>
+                          {sb.status || 'draft'}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`删除分镜 ${sb.title}`}
+                          title="删除分镜"
+                          className="h-7 w-7 text-white/40 hover:text-red-400"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDeleteStoryboardTarget(sb);
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -528,14 +945,25 @@ export default function StoryboardsPage() {
                   <div className="text-center py-8">
                     <LayoutGrid className="w-12 h-12 mx-auto text-white/20" />
                     <p className="text-white/40 mt-2">暂无分镜</p>
-                    <Button 
-                      variant="outline" 
-                      size="sm"
-                      className="mt-2 border-white/20 text-white/60"
-                      onClick={() => setShowNewModal(true)}
-                    >
-                      创建第一个分镜
-                    </Button>
+                    <div className="mt-3 flex justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-violet-500/40 text-violet-300"
+                        onClick={() => setShowNewModal(true)}
+                      >
+                        <Sparkles className="w-4 h-4 mr-1" />
+                        AI 生成
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-white/20 text-white/60"
+                        onClick={() => setShowNewModal(true)}
+                      >
+                        手动创建
+                      </Button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -553,6 +981,36 @@ export default function StoryboardsPage() {
                         <span className="text-sm text-white/50">· {shots.length} 个镜头</span>
                       </div>
                       <div className="flex gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => prepareGenerateFromScript(selectedStoryboard)}
+                          disabled={generatingStoryboard}
+                          className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20"
+                        >
+                          {generatingStoryboard ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
+                          从剧本生成
+                        </Button>
+                        <Button
+                          asChild
+                          variant="outline"
+                          size="sm"
+                          className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20"
+                        >
+                          <Link href={videoGenerationHref()}>
+                            <Video className="w-4 h-4 mr-1" />
+                            生成视频
+                          </Link>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setDeleteStoryboardTarget(selectedStoryboard)}
+                          className="border-red-500/40 text-red-300 hover:bg-red-600/20"
+                        >
+                          <Trash2 className="w-4 h-4 mr-1" />
+                          删除
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"
@@ -575,6 +1033,12 @@ export default function StoryboardsPage() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
+                    <div data-testid="storyboard-lineage" className="mb-4 rounded-lg border border-white/10 bg-white/5 p-3 text-sm">
+                      <div className="text-white/70">上游链路</div>
+                      <div className="mt-1 text-white/50">
+                        {getNovelLabel(getStoryboardNovelId(selectedStoryboard))} / {getChapterLabel(getStoryboardChapterId(selectedStoryboard))} / {selectedStoryboard.script_title || selectedStoryboard.script_id}
+                      </div>
+                    </div>
                     {/* 镜头列表 */}
                     <div className="space-y-3">
                       {loadingShots ? (
@@ -601,7 +1065,7 @@ export default function StoryboardsPage() {
                               <div>
                                 <div className="text-white font-medium line-clamp-1">{shot.prompt || '未设置描述'}</div>
                                 <div className="text-xs text-white/40">
-                                  {shot.duration}秒 · {shot.camera_angle || 'medium'}
+                                  {shot.duration}秒 · {getShotAttributeLabel(CAMERA_ANGLE_LABELS, shot.camera_angle, '中景')}
                                   {shot.video_status !== 'pending' && (
                                     <span className={`ml-2 ${
                                       shot.video_status === 'completed' ? 'text-green-400' :
@@ -616,8 +1080,23 @@ export default function StoryboardsPage() {
                             </div>
                             <div className="flex gap-1">
                               <Button
+                                asChild
                                 variant="ghost"
                                 size="icon"
+                                aria-label={`生成镜头 ${shot.shot_number} 视频`}
+                                title={`生成镜头${shot.shot_number}视频`}
+                                className="w-6 h-6 text-violet-300"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Link href={videoGenerationHref(shot)}>
+                                  <Video className="w-3 h-3" />
+                                </Link>
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`镜头 ${shot.shot_number} 上移`}
+                                title="上移"
                                 className="w-6 h-6 text-white/40"
                                 onClick={(e) => { e.stopPropagation(); moveShot(index, 'up'); }}
                                 disabled={index === 0}
@@ -627,6 +1106,8 @@ export default function StoryboardsPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label={`镜头 ${shot.shot_number} 下移`}
+                                title="下移"
                                 className="w-6 h-6 text-white/40"
                                 onClick={(e) => { e.stopPropagation(); moveShot(index, 'down'); }}
                                 disabled={index === shots.length - 1}
@@ -636,8 +1117,10 @@ export default function StoryboardsPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label={`删除镜头 ${shot.shot_number}`}
+                                title="删除镜头"
                                 className="w-6 h-6 text-white/40 hover:text-red-400"
-                                onClick={(e) => { e.stopPropagation(); handleDeleteShot(shot.id); }}
+                                onClick={(e) => { e.stopPropagation(); setDeleteShotTarget(shot); }}
                               >
                                 <Trash2 className="w-3 h-3" />
                               </Button>
@@ -656,9 +1139,27 @@ export default function StoryboardsPage() {
                     {selectedShot && (
                       <div className="mt-6 pt-6 border-t border-white/10">
                         <h4 className="text-white font-medium mb-4">镜头 {selectedShot.shot_number} 详情</h4>
+                        {(() => {
+                          const refs = getShotEntityRefs(selectedShot);
+                          return (refNames(refs.characters) || refNames(refs.scenes) || refNames(refs.props) || refNames(refs.events) || refs.subtitle) ? (
+                            <div className="mb-4 rounded-lg border border-violet-500/20 bg-violet-500/10 p-3 text-xs space-y-1">
+                              {refNames(refs.characters) && <div className="text-white/70">人物：{refNames(refs.characters)}</div>}
+                              {refNames(refs.scenes) && <div className="text-white/70">场景：{refNames(refs.scenes)}</div>}
+                              {refNames(refs.props) && <div className="text-white/70">道具：{refNames(refs.props)}</div>}
+                              {refNames(refs.events) && <div className="text-white/70">事件：{refNames(refs.events)}</div>}
+                              {refs.subtitle && <div className="text-green-200">字幕：{refs.subtitle}</div>}
+                            </div>
+                          ) : null;
+                        })()}
 
                         {/* 快速操作按钮 */}
                         <div className="flex gap-2 mb-4">
+                          <Button asChild variant="outline" className="border-violet-500/50 text-violet-300">
+                            <Link href={videoGenerationHref(selectedShot)}>
+                              <Video className="w-4 h-4 mr-2" />
+                              生成此镜头视频
+                            </Link>
+                          </Button>
                           <Button
                             onClick={() => handleUpdateShot(selectedShot)}
                             className="bg-purple-600 hover:bg-purple-700"
@@ -692,8 +1193,8 @@ export default function StoryboardsPage() {
                               onChange={(e) => setSelectedShot({ ...selectedShot, camera_angle: e.target.value })}
                               className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                             >
-                              {CAMERA_ANGLES.map(angle => (
-                                <option key={angle} value={angle}>{angle}</option>
+                              {CAMERA_ANGLE_OPTIONS.map(angle => (
+                                <option key={angle.value} value={angle.value}>{angle.label}</option>
                               ))}
                             </select>
                           </div>
@@ -727,20 +1228,24 @@ export default function StoryboardsPage() {
                           <div className="flex items-center justify-between mb-2">
                             <label className="text-sm font-medium text-white/60">参考图</label>
                             <button
+                              type="button"
                               onClick={() => handleGenerateShotImage(selectedShot.id)}
                               disabled={generatingImage || !selectedShot.visual_description}
-                              className="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              {generatingImage ? "生成中..." : "生成参考图"}
+                              {generatingImage ? "生成中…" : "生成参考图"}
                             </button>
                           </div>
                           {(selectedShot.image_status === "generating" || selectedShot.image_status === "pending") && (
-                            <div className="text-sm text-yellow-400">生成中...</div>
+                            <div className="text-sm text-yellow-400">生成中…</div>
                           )}
                           {selectedShot.image_url && (
                             <img
-                              src={selectedShot.image_url}
+                              src={toMediaUrl(selectedShot.image_url)}
                               alt="Shot reference"
+                              width={640}
+                              height={192}
+                              loading="lazy"
                               className="w-full max-h-48 object-cover rounded-lg border border-white/10"
                             />
                           )}
@@ -767,8 +1272,8 @@ export default function StoryboardsPage() {
                                 onChange={(e) => setSelectedShot({ ...selectedShot, camera_movement: e.target.value })}
                                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                               >
-                                {CAMERA_MOVEMENTS.map(m => (
-                                  <option key={m} value={m}>{m}</option>
+                                {CAMERA_MOVEMENT_OPTIONS.map(m => (
+                                  <option key={m.value} value={m.value}>{m.label}</option>
                                 ))}
                               </select>
                             </div>
@@ -779,8 +1284,8 @@ export default function StoryboardsPage() {
                                 onChange={(e) => setSelectedShot({ ...selectedShot, emotion: e.target.value })}
                                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                               >
-                                {EMOTIONS.map(e => (
-                                  <option key={e} value={e}>{e}</option>
+                                {EMOTION_OPTIONS.map(e => (
+                                  <option key={e.value} value={e.value}>{e.label}</option>
                                 ))}
                               </select>
                             </div>
@@ -792,7 +1297,7 @@ export default function StoryboardsPage() {
                                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                               >
                                 {LIGHTING_OPTIONS.map(l => (
-                                  <option key={l} value={l}>{l}</option>
+                                  <option key={l.value} value={l.value}>{l.label}</option>
                                 ))}
                               </select>
                             </div>
@@ -804,7 +1309,7 @@ export default function StoryboardsPage() {
                                 className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                               >
                                 {COLOR_GRADING_OPTIONS.map(c => (
-                                  <option key={c} value={c}>{c}</option>
+                                  <option key={c.value} value={c.value}>{c.label}</option>
                                 ))}
                               </select>
                             </div>
@@ -889,6 +1394,24 @@ export default function StoryboardsPage() {
                   <div className="text-center">
                     <LayoutGrid className="w-16 h-16 mx-auto text-white/20" />
                     <p className="text-white/40 mt-4">从左侧选择或创建分镜</p>
+                    <div className="mt-4 flex justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        className="border-violet-500/40 text-violet-300"
+                        onClick={() => setShowNewModal(true)}
+                      >
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        AI 智能生成
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="border-white/20 text-white"
+                        onClick={() => setShowNewModal(true)}
+                      >
+                        <Plus className="w-4 h-4 mr-2" />
+                        新建分镜
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -897,22 +1420,166 @@ export default function StoryboardsPage() {
         )}
       </div>
 
+      <ConfirmDialog
+        open={confirmGenerateFromScript}
+        title="AI 从剧本生成分镜"
+        description="将从所选剧本内容自动生成分镜镜头，生成完成后会在当前页面展示。"
+        confirmText="开始生成"
+        loading={generatingStoryboard}
+        onOpenChange={setConfirmGenerateFromScript}
+        onConfirm={async () => {
+          await handleAIGenerateStoryboard();
+          setConfirmGenerateFromScript(false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteStoryboardTarget)}
+        title="删除分镜"
+        description={`确定要删除${deleteStoryboardTarget ? `「${deleteStoryboardTarget.title}」` : '这个分镜'}吗？删除后会同步清理该分镜下的镜头。`}
+        confirmText="删除分镜"
+        destructive
+        loading={deletingStoryboard}
+        onOpenChange={(open) => {
+          if (!open) setDeleteStoryboardTarget(null);
+        }}
+        onConfirm={async () => {
+          if (!deleteStoryboardTarget) return;
+          await handleDeleteStoryboard(deleteStoryboardTarget);
+          setDeleteStoryboardTarget(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteShotTarget)}
+        title="删除镜头"
+        description={`确定要删除镜头 ${deleteShotTarget?.shot_number || ''} 吗？此操作无法撤销。`}
+        confirmText="删除"
+        destructive
+        loading={deletingShot}
+        onOpenChange={(open) => {
+          if (!open) setDeleteShotTarget(null);
+        }}
+        onConfirm={async () => {
+          if (!deleteShotTarget) return;
+          setDeletingShot(true);
+          try {
+            await handleDeleteShot(deleteShotTarget.id);
+            setDeleteShotTarget(null);
+          } finally {
+            setDeletingShot(false);
+          }
+        }}
+      />
+
       {/* 新建分镜弹窗 */}
-      {showNewModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="bg-white/10 backdrop-blur-lg border-white/20 w-full max-w-md">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-white">新建分镜</CardTitle>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowNewModal(false)}
-                className="text-white/60 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
+      <Dialog open={showNewModal} onOpenChange={setShowNewModal}>
+        <DialogContent className="max-w-2xl border-white/20 bg-slate-950/95">
+            <DialogHeader className="pr-10">
+              <DialogTitle>新建分镜</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-lg border border-purple-500/30 bg-purple-500/10 p-3 space-y-3">
+                <div>
+                  <div className="text-sm font-medium text-purple-200">智能生成</div>
+                  <div className="text-xs text-white/50 mt-1">从小说或章节自动匹配模板，生成可审核的分镜与镜头细节</div>
+                </div>
+
+                <div>
+                  <label className="text-sm text-white/60 mb-2 block">选择小说</label>
+                  <select
+                    value={smartNovelId}
+                    onChange={(e) => setSmartNovelId(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="">请选择小说…</option>
+                    {novels.map(novel => (
+                      <option key={novel.id} value={novel.id}>{novel.title}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {smartNovelId && (
+                  <div>
+                    <label className="text-sm text-white/60 mb-2 block">选择章节</label>
+                    <select
+                      value={smartChapterId}
+                      onChange={(e) => setSmartChapterId(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="">整部小说/简介</option>
+                      {chapters.map(chapter => (
+                        <option key={chapter.id} value={chapter.id}>
+                          第{chapter.chapter_number}章 {chapter.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-sm text-white/60 mb-2 block">镜头数</label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={smartShotCount}
+                      onChange={(e) => setSmartShotCount(Math.max(1, Math.min(50, parseInt(e.target.value) || 5)))}
+                      className="bg-white/5 border-white/10 text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm text-white/60 mb-2 block">分镜风格</label>
+                    <select
+                      value={newStoryboardStyle}
+                      onChange={(e) => setNewStoryboardStyle(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                    >
+                      {STORYBOARD_STYLE_OPTIONS.map(style => (
+                        <option key={style.value} value={style.value}>{style.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {matchedTemplate && (
+                  <div className="rounded-md bg-white/5 border border-white/10 p-3">
+                    <div className="text-sm text-white">匹配模板：{matchedTemplate.template.name}</div>
+                    <div className="text-xs text-white/50 mt-1">{matchedTemplate.reason}</div>
+                  </div>
+                )}
+
+                <ModelCapabilitySelector
+                  capability="text"
+                  configs={modelConfigs}
+                  value={textModelConfigId}
+                  onChange={setTextModelConfigId}
+                  disabled={generatingSmartStoryboard}
+                  title="智能分镜文本模型"
+                  description="模型会根据小说、章节、模板、角色、场景、事件和对白上下文细化分镜镜头。"
+                  compact
+                />
+
+                <Button
+                  onClick={handleSmartGenerateStoryboard}
+                  disabled={!smartNovelId || generatingSmartStoryboard}
+                  className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
+                >
+                  {generatingSmartStoryboard ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      智能生成中…
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      智能生成分镜与镜头
+                    </>
+                  )}
+                </Button>
+              </div>
+
               <div>
                 <label className="text-sm text-white/60 mb-2 block">分镜标题 *</label>
                 <Input
@@ -930,7 +1597,7 @@ export default function StoryboardsPage() {
                   onChange={(e) => setNewStoryboardScriptId(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                 >
-                  <option value="">请选择剧本...</option>
+                  <option value="">请选择剧本…</option>
                   {scripts.map(script => (
                     <option key={script.id} value={script.id}>{script.title}</option>
                   ))}
@@ -944,8 +1611,8 @@ export default function StoryboardsPage() {
                   onChange={(e) => setNewStoryboardStyle(e.target.value)}
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                 >
-                  {STORYBOARD_STYLES.map(style => (
-                    <option key={style} value={style}>{style}</option>
+                  {STORYBOARD_STYLE_OPTIONS.map(style => (
+                    <option key={style.value} value={style.value}>{style.label}</option>
                   ))}
                 </select>
               </div>
@@ -960,24 +1627,31 @@ export default function StoryboardsPage() {
                 </Button>
                 <Button
                   onClick={handleCreateStoryboard}
+                  disabled={!newStoryboardTitle.trim() || !newStoryboardScriptId}
                   className="flex-1 bg-purple-600 hover:bg-purple-700"
                 >
                   <Plus className="w-4 h-4 mr-2" />
-                  创建
+                  创建空分镜
                 </Button>
+              </div>
+
+              <div className="pt-2 border-t border-white/10">
+                <p className="text-xs text-white/40">
+                  手动创建适合空分镜搭建；智能生成会自动创建脚本、分镜和镜头，生成后在详情区审核修改。
+                </p>
               </div>
 
               {newStoryboardScriptId && (
                 <div className="pt-4 border-t border-white/10">
                   <Button
-                    onClick={handleAIGenerateStoryboard}
-                    disabled={generatingStoryboard}
+                    onClick={() => prepareGenerateFromScript(null)}
+                    disabled={!newStoryboardScriptId || generatingStoryboard}
                     className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700"
                   >
                     {generatingStoryboard ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        AI 生成分镜中...
+                        AI 生成分镜中…
                       </>
                     ) : (
                       <>
@@ -986,15 +1660,25 @@ export default function StoryboardsPage() {
                       </>
                     )}
                   </Button>
+                  <ModelCapabilitySelector
+                    capability="text"
+                    configs={modelConfigs}
+                    value={textModelConfigId}
+                    onChange={setTextModelConfigId}
+                    disabled={generatingStoryboard}
+                    title="剧本转分镜文本模型"
+                    description="从剧本生成分镜时使用该文本模型配置。"
+                    className="mt-3"
+                    compact
+                  />
                   <p className="text-xs text-white/40 mt-2 text-center">
                     将从所选剧本内容自动生成 {newStoryboardStyle} 风格的分镜镜头
                   </p>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </div>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }

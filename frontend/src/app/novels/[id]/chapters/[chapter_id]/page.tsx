@@ -4,35 +4,41 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { MainLayout } from '@/components/layout/main-layout';
-import { apiClient } from '@/lib/api-client';
-import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { useToast } from '@/components/ui/toast';
 import {
+  BookOpen,
   ArrowLeft,
+  Save,
   Loader2,
-  Clock,
+  AlertCircle,
   FileText,
-  Edit2,
-  Trash2,
-  Sparkles
+  Users,
+  Sparkles,
+  Film,
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 import Link from 'next/link';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import {
+  getDefaultConfigForCapability,
+  SavedModelConfig,
+} from '@/lib/model-configs';
 
-interface Novel {
-  id: string;
-  title: string;
-  description?: string;
-  genre?: string;
-  status: string;
-}
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 interface Chapter {
   id: string;
   novel_id: string;
   title: string;
-  content?: string;
+  content: string;
   chapter_number: number;
   word_count: number;
   status: string;
@@ -40,112 +46,221 @@ interface Chapter {
   updated_at: string;
 }
 
-export default function ChapterViewPage() {
+interface Novel {
+  id: string;
+  title: string;
+  description?: string;
+}
+
+export default function ChapterDetailPage() {
+  const { toast } = useToast();
   const params = useParams();
+  const router = useRouter();
   const novelId = params.id as string;
   const chapterId = params.chapter_id as string;
-  const router = useRouter();
 
-  const [novel, setNovel] = useState<Novel | null>(null);
   const [chapter, setChapter] = useState<Chapter | null>(null);
+  const [novel, setNovel] = useState<Novel | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showRewriteConfirm, setShowRewriteConfirm] = useState(false);
 
-  // 加载小说和章节数据
-  const loadData = async () => {
+  // 编辑状态
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [hasChanges, setHasChanges] = useState(false);
+  const [aiInstruction, setAiInstruction] = useState('');
+  const [targetWordCount, setTargetWordCount] = useState(1800);
+  const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
+  const [textModelConfigId, setTextModelConfigId] = useState('');
+
+  useEffect(() => {
+    if (novelId && chapterId) {
+      loadChapter();
+      loadModelConfigs();
+    }
+  }, [novelId, chapterId]);
+
+  const loadModelConfigs = async () => {
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (!response.ok) return;
+      const configs = await response.json();
+      const list = Array.isArray(configs) ? configs : [];
+      setModelConfigs(list);
+      const textDefault = getDefaultConfigForCapability(list, 'text');
+      if (textDefault) setTextModelConfigId(textDefault.id);
+    } catch (err) {
+      console.error('加载模型配置失败:', err);
+    }
+  };
+
+  const loadChapter = async () => {
     setLoading(true);
     try {
-      // 加载小说
-      const novelData = await apiClient.getNovel(novelId);
-      setNovel(novelData);
+      const [chapterRes, novelRes] = await Promise.all([
+        fetchWithAuth(`${API_BASE}/chapters/${chapterId}`),
+        fetchWithAuth(`${API_BASE}/novels/${novelId}`)
+      ]);
 
-      // 加载章节
-      const chapterData = await apiClient.getChapter(chapterId);
-      setChapter(chapterData);
-    } catch (err) {
-      console.error('加载失败:', err);
-      alert('加载失败');
-      router.push(`/novels/${novelId}`);
+      if (chapterRes.ok) {
+        const data = await chapterRes.json();
+        setChapter(data);
+        setTitle(data.title);
+        setContent(data.content || '');
+        setHasChanges(false);
+      } else {
+        throw new Error('章节不存在');
+      }
+
+      if (novelRes.ok) {
+        setNovel(await novelRes.json());
+      }
+    } catch (err: any) {
+      setError(err.message || '加载失败');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadData();
-  }, [novelId, chapterId]);
-
-  // 删除章节
-  const handleDelete = async () => {
-    if (!confirm('确定要删除这个章节吗？')) return;
-
-    try {
-      await apiClient.deleteChapter(chapterId);
-      router.push(`/novels/${novelId}`);
-    } catch (err) {
-      console.error('删除失败:', err);
-      alert('删除失败');
+  const saveChapter = async (options: { silent?: boolean } = {}) => {
+    if (!title.trim()) {
+      if (!options.silent) {
+        toast({ title: '请输入章节标题', type: 'info' });
+      }
+      return null;
     }
-  };
 
-  // AI重生成章节内容
-  const handleAIGenerate = async () => {
-    if (!confirm('确定要使用AI重新生成章节内容吗？这将覆盖当前内容。')) return;
-
-    setIsGenerating(true);
+    setSaving(true);
     try {
-      const response = await fetchWithAuth(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'}/chapters/regenerate`, {
-        method: 'POST',
+      const response = await fetchWithAuth(`${API_BASE}/chapters/${chapterId}`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          chapter_id: chapterId,
-          prompt: `请基于小说《${novel?.title}》的剧情，生成第${chapter?.chapter_number}章"${chapter?.title}"的完整内容。`
+          title,
+          content
         })
       });
 
       if (response.ok) {
-        await loadData();
-        alert('AI生成完成！');
+        const updated = await response.json();
+        setChapter(updated);
+        setTitle(updated.title || title);
+        setContent(updated.content || '');
+        setHasChanges(false);
+        if (!options.silent) {
+          toast({ title: '保存成功', type: 'success' });
+        }
+        return updated;
       } else {
-        const errData = await response.json();
-        const msg = typeof errData.detail === 'string'
-          ? errData.detail
-          : Array.isArray(errData.detail)
-            ? errData.detail.map((e: any) => e.msg || JSON.stringify(e)).join('; ')
-            : 'AI生成失败，请检查LLM配置';
-        alert(msg);
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail || '保存失败');
       }
     } catch (err: any) {
-      console.error('AI生成失败:', err);
-      alert(err.message || 'AI生成失败');
+      if (!options.silent) {
+        toast({ title: '保存失败', description: err.message || '请稍后重试。', type: 'error' });
+      }
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSave = async () => {
+    await saveChapter();
+  };
+
+  const applyGeneratedChapter = (updated: Chapter, message: string) => {
+    setChapter(updated);
+    setTitle(updated.title || title);
+    setContent(updated.content || '');
+    setHasChanges(false);
+    toast({ title: message, type: 'success' });
+  };
+
+  const runChapterAI = async (mode: 'rewrite' | 'extend' | 'polish') => {
+    if (!chapter?.id) {
+      toast({ title: '请先加载章节信息', type: 'info' });
+      return;
+    }
+    if (mode !== 'rewrite' && !content.trim()) {
+      toast({ title: '请先编写一些内容', description: '续写或润色需要已有正文。', type: 'info' });
+      return;
+    }
+
+    if (hasChanges) {
+      const saved = await saveChapter({ silent: true });
+      if (!saved) return;
+    }
+
+    setIsGenerating(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/chapters/${chapterId}/ai-assist`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          instruction: aiInstruction.trim() || undefined,
+          target_word_count: targetWordCount,
+          sync_story_bible: true,
+          model_config_id: textModelConfigId || undefined,
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail || 'AI处理失败');
+      }
+
+      const updated = await response.json();
+      const message = mode === 'rewrite'
+        ? '章节已智能编写并保存'
+        : mode === 'extend'
+          ? '章节已续写并保存'
+          : '章节已润色并保存';
+      applyGeneratedChapter(updated, message);
+    } catch (err: any) {
+      toast({ title: 'AI 处理失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // 监听内容变化
+  useEffect(() => {
+    if (chapter) {
+      setHasChanges(title !== chapter.title || content !== (chapter.content || ''));
+    }
+  }, [title, content, chapter]);
+
   if (loading) {
     return (
       <MainLayout>
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
-          <span className="ml-3 text-white/60">加载中...</span>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-violet-500" />
         </div>
       </MainLayout>
     );
   }
 
-  if (!novel || !chapter) {
+  if (error || !chapter) {
     return (
       <MainLayout>
-        <div className="text-center py-20">
-          <p className="text-white/60">章节不存在</p>
-          <Link href={`/novels/${novelId}`}>
-            <Button className="mt-4 bg-violet-600">返回小说</Button>
-          </Link>
+        <div className="text-center py-12">
+          <AlertCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
+          <h2 className="text-xl font-bold text-white mb-2">{error || '章节不存在'}</h2>
+          <Button onClick={() => router.push(`/novels/${novelId}`)}>
+            <ArrowLeft className="w-4 h-4 mr-2" />
+            返回小说
+          </Button>
         </div>
       </MainLayout>
     );
   }
+
+  const wordCount = content.replace(/\s/g, '').length;
 
   return (
     <MainLayout>
@@ -153,97 +268,203 @@ export default function ChapterViewPage() {
         {/* 顶部导航 */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href={`/novels/${novelId}`}>
-              <Button variant="ghost" className="text-white/60 hover:text-white">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回
-              </Button>
-            </Link>
+            <Button variant="ghost" onClick={() => router.push(`/novels/${novelId}`)}>
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              返回
+            </Button>
             <div>
-              <p className="text-white/40 text-sm">{novel.title}</p>
-              <h1 className="text-xl font-bold text-white">第{chapter.chapter_number}章 {chapter.title}</h1>
+              <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                <FileText className="w-6 h-6" />
+                {chapter.novel_id ? `第${chapter.chapter_number}章` : '章节编辑'}
+              </h1>
+              {novel && (
+                <p className="text-white/60 text-sm mt-1">
+                  《{novel.title}》
+                </p>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Link href={`/novels/${novelId}/chapters/${chapterId}/edit`}>
-              <Button variant="outline" className="border-blue-500/50 text-blue-400">
-                <Edit2 className="w-4 h-4 mr-2" />
-                编辑
-              </Button>
-            </Link>
+
+          <div className="flex items-center gap-3">
+            <Badge variant="outline" className="text-white/60 border-white/20">
+              <Clock className="w-3 h-3 mr-1" />
+              {wordCount} 字
+            </Badge>
+            {hasChanges && (
+              <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
+                未保存
+              </Badge>
+            )}
             <Button
-              variant="outline"
-              className="border-violet-500/50 text-violet-400"
-              onClick={handleAIGenerate}
-              disabled={isGenerating}
+              onClick={handleSave}
+              disabled={saving || !hasChanges}
+              className="bg-violet-600 hover:bg-violet-700"
             >
-              {isGenerating ? (
+              {saving ? (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               ) : (
-                <Sparkles className="w-4 h-4 mr-2" />
+                <Save className="w-4 h-4 mr-2" />
               )}
-              AI生成
-            </Button>
-            <Button
-              variant="outline"
-              className="border-red-500/50 text-red-400 hover:bg-red-500/10"
-              onClick={handleDelete}
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              删除
+              保存
             </Button>
           </div>
         </div>
 
-        {/* 章节信息 */}
+        {/* AI辅助写作 */}
+        <Card className="bg-violet-500/5 border-violet-500/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-violet-300 text-base flex items-center gap-2">
+              <Sparkles className="w-4 h-4" />
+              AI智能编写
+              {isGenerating && <Loader2 className="w-4 h-4 animate-spin ml-2" />}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-3">
+              <Input
+                value={aiInstruction}
+                onChange={(e) => setAiInstruction(e.target.value)}
+                placeholder="补充要求，例如：强化主角动机、保持雨夜场景、结尾承接下一章"
+                className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
+              />
+              <Input
+                type="number"
+                min={300}
+                max={8000}
+                value={targetWordCount}
+                onChange={(e) => setTargetWordCount(Math.max(300, Math.min(8000, parseInt(e.target.value) || 1800)))}
+                className="bg-white/10 border-white/20 text-white"
+                title="目标字数"
+              />
+            </div>
+            <ModelCapabilitySelector
+              capability="text"
+              configs={modelConfigs}
+              value={textModelConfigId}
+              onChange={setTextModelConfigId}
+              disabled={isGenerating || saving}
+              title="章节写作模型"
+              description="智能编写、续写和润色会使用文本生成能力，并自动承接全书设定、前后章节和实体上下文。"
+              compact
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-violet-500/50 text-violet-300 hover:bg-violet-500/10"
+                onClick={() => setShowRewriteConfirm(true)}
+                disabled={isGenerating || saving}
+              >
+                {isGenerating ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4 mr-1" />
+                )}
+                智能编写
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-blue-500/50 text-blue-300 hover:bg-blue-500/10"
+                onClick={() => runChapterAI('extend')}
+                disabled={isGenerating || saving}
+              >
+                {isGenerating ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 mr-1" />
+                )}
+                续写内容
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-green-500/50 text-green-300 hover:bg-green-500/10"
+                onClick={() => runChapterAI('polish')}
+                disabled={isGenerating || saving}
+              >
+                {isGenerating ? (
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                ) : (
+                  <Sparkles className="w-4 h-4 mr-1" />
+                )}
+                润色内容
+              </Button>
+            </div>
+            <p className="text-xs text-white/40">
+              AI 会读取小说简介、前后章节、Story Bible 以及已抽取的人物、场景、道具、事件；生成后立即保存并同步一致性上下文。
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* 章节内容编辑 */}
         <Card className="bg-white/5 border-white/10">
-          <CardContent className="p-4">
-            <div className="flex items-center gap-6 text-sm text-white/40">
-              <span className="flex items-center gap-1">
-                <FileText className="w-4 h-4" />
-                第{chapter.chapter_number}章
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="w-4 h-4" />
-                {chapter.word_count} 字
-              </span>
-              <span className={`px-2 py-0.5 rounded text-xs ${
-                chapter.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                'bg-yellow-500/20 text-yellow-400'
-              }`}>
-                {chapter.status === 'completed' ? '已完成' : '草稿'}
-              </span>
+          <CardContent className="p-6 space-y-4">
+            <div>
+              <label className="text-white/80 mb-2 block">章节标题</label>
+              <Input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="输入章节标题"
+                className="bg-white/10 border-white/20 text-white text-lg"
+              />
+            </div>
+
+            <div>
+              <label className="text-white/80 mb-2 block">章节内容</label>
+              <Textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="开始创作您的章节内容…"
+                className="bg-white/10 border-white/20 text-white min-h-[500px] resize-none"
+              />
             </div>
           </CardContent>
         </Card>
 
-        {/* 章节内容 */}
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader>
-            <CardTitle className="text-white">章节内容</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {chapter.content ? (
-              <div className="prose prose-invert max-w-none">
-                <div className="text-white/80 whitespace-pre-wrap leading-relaxed">
-                  {chapter.content}
-                </div>
-              </div>
-            ) : (
-              <div className="text-center py-12">
-                <FileText className="w-12 h-12 mx-auto text-white/20" />
-                <p className="text-white/40 mt-4">暂无内容</p>
-                <Link href={`/novels/${novelId}/chapters/${chapterId}/edit`}>
-                  <Button className="mt-4 bg-violet-600 hover:bg-violet-700">
-                    <Edit2 className="w-4 h-4 mr-2" />
-                    编写章节
-                  </Button>
-                </Link>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* 底部快捷操作 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="bg-gradient-to-br from-violet-600/20 to-purple-600/20 border-violet-500/30 cursor-pointer hover:border-violet-500/50 transition-colors">
+            <Link href={`/novels/${novelId}`}>
+              <CardContent className="p-4 text-center">
+                <BookOpen className="w-8 h-8 mx-auto mb-2 text-violet-400" />
+                <div className="text-white font-medium">返回小说</div>
+                <div className="text-white/60 text-sm">查看小说详情</div>
+              </CardContent>
+            </Link>
+          </Card>
+          <Card className="bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border-blue-500/30 cursor-pointer hover:border-blue-500/50 transition-colors">
+            <Link href={`/characters?novel_id=${novelId}`}>
+              <CardContent className="p-4 text-center">
+                <Users className="w-8 h-8 mx-auto mb-2 text-blue-400" />
+                <div className="text-white font-medium">角色管理</div>
+                <div className="text-white/60 text-sm">管理小说角色</div>
+              </CardContent>
+            </Link>
+          </Card>
+          <Card className="bg-gradient-to-br from-green-600/20 to-emerald-600/20 border-green-500/30 cursor-pointer hover:border-green-500/50 transition-colors">
+            <Link href={`/scripts/new?novel_id=${novelId}&chapter_id=${chapterId}`}>
+              <CardContent className="p-4 text-center">
+                <Film className="w-8 h-8 mx-auto mb-2 text-green-400" />
+                <div className="text-white font-medium">基于本章创作</div>
+                <div className="text-white/60 text-sm">生成分镜剧本</div>
+              </CardContent>
+            </Link>
+          </Card>
+        </div>
       </div>
+      <ConfirmDialog
+        open={showRewriteConfirm}
+        title="智能编写本章"
+        description="确定要根据小说整体设定、前后章节和 Story Bible 智能编写本章吗？当前正文会被替换。"
+        confirmText="智能编写"
+        loading={isGenerating}
+        onOpenChange={setShowRewriteConfirm}
+        onConfirm={async () => {
+          await runChapterAI('rewrite');
+          setShowRewriteConfirm(false);
+        }}
+      />
     </MainLayout>
   );
 }

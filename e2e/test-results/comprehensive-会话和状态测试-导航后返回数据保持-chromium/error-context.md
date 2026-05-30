@@ -1,0 +1,1891 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - heading "小说管理" [level=1] [ref=e65]
+            - paragraph [ref=e66]: 管理您的作品和章节
+          - link "创建小说" [ref=e67] [cursor=pointer]:
+            - /url: /novels/new
+            - button "创建小说" [ref=e68]:
+              - img [ref=e69]
+              - text: 创建小说
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - img [ref=e74]
+            - textbox "搜索小说标题或描述..." [ref=e77]
+          - generic [ref=e78]:
+            - button "全部" [ref=e79] [cursor=pointer]
+            - button "仙侠" [ref=e80] [cursor=pointer]
+            - button "都市" [ref=e81] [cursor=pointer]
+            - button "科幻" [ref=e82] [cursor=pointer]
+            - button "历史" [ref=e83] [cursor=pointer]
+            - button "言情" [ref=e84] [cursor=pointer]
+            - button "悬疑" [ref=e85] [cursor=pointer]
+        - generic [ref=e86]:
+          - generic [ref=e87]:
+            - button "全部" [ref=e88] [cursor=pointer]
+            - button "草稿" [ref=e89] [cursor=pointer]
+            - button "连载中" [ref=e90] [cursor=pointer]
+            - button "已完成" [ref=e91] [cursor=pointer]
+          - generic [ref=e93]:
+            - generic [ref=e96]:
+              - generic [ref=e97]:
+                - generic [ref=e98]:
+                  - img [ref=e99]
+                  - heading "PERSIST_测试小说_1774451872333" [level=3] [ref=e102]
+                  - generic [ref=e103]: 草稿
+                - paragraph
+                - generic [ref=e104]:
+                  - generic [ref=e105]:
+                    - img [ref=e106]
+                    - text: 0 章
+                  - generic [ref=e109]:
+                    - img [ref=e110]
+                    - text: 0 角色
+                  - generic [ref=e115]:
+                    - img [ref=e116]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e119]:
+                - link "剧本" [ref=e120] [cursor=pointer]:
+                  - /url: /scripts?novel_id=e16edfaf-f49b-4c0d-992f-acfb695a1b55
+                  - button "剧本" [ref=e121]:
+                    - img [ref=e122]
+                    - text: 剧本
+                - button [ref=e125] [cursor=pointer]:
+                  - img [ref=e126]
+                - link [ref=e129] [cursor=pointer]:
+                  - /url: /novels/e16edfaf-f49b-4c0d-992f-acfb695a1b55
+                  - button [ref=e130]:
+                    - img [ref=e131]
+                - button [ref=e133] [cursor=pointer]:
+                  - img [ref=e134]
+                - button [ref=e137] [cursor=pointer]:
+                  - img [ref=e138]
+            - generic [ref=e143]:
+              - generic [ref=e144]:
+                - generic [ref=e145]:
+                  - img [ref=e146]
+                  - heading "CHAPTER_测试小说_1774451820503" [level=3] [ref=e149]
+                  - generic [ref=e150]: 草稿
+                - paragraph
+                - generic [ref=e151]:
+                  - generic [ref=e152]:
+                    - img [ref=e153]
+                    - text: 0 章
+                  - generic [ref=e156]:
+                    - img [ref=e157]
+                    - text: 0 角色
+                  - generic [ref=e162]:
+                    - img [ref=e163]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e166]:
+                - link "剧本" [ref=e167] [cursor=pointer]:
+                  - /url: /scripts?novel_id=c2d39be4-9b47-4564-9183-793a3b9e2674
+                  - button "剧本" [ref=e168]:
+                    - img [ref=e169]
+                    - text: 剧本
+                - button [ref=e172] [cursor=pointer]:
+                  - img [ref=e173]
+                - link [ref=e176] [cursor=pointer]:
+                  - /url: /novels/c2d39be4-9b47-4564-9183-793a3b9e2674
+                  - button [ref=e177]:
+                    - img [ref=e178]
+                - button [ref=e180] [cursor=pointer]:
+                  - img [ref=e181]
+                - button [ref=e184] [cursor=pointer]:
+                  - img [ref=e185]
+            - generic [ref=e190]:
+              - generic [ref=e191]:
+                - generic [ref=e192]:
+                  - img [ref=e193]
+                  - heading "NOVEL_测试小说_1774451785883" [level=3] [ref=e196]
+                  - generic [ref=e197]: 草稿
+                - paragraph
+                - generic [ref=e198]:
+                  - generic [ref=e199]:
+                    - img [ref=e200]
+                    - text: 0 章
+                  - generic [ref=e203]:
+                    - img [ref=e204]
+                    - text: 0 角色
+                  - generic [ref=e209]:
+                    - img [ref=e210]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e213]:
+                - link "剧本" [ref=e214] [cursor=pointer]:
+                  - /url: /scripts?novel_id=3532443c-3ac9-477a-a13a-919137fcaa25
+                  - button "剧本" [ref=e215]:
+                    - img [ref=e216]
+                    - text: 剧本
+                - button [ref=e219] [cursor=pointer]:
+                  - img [ref=e220]
+                - link [ref=e223] [cursor=pointer]:
+                  - /url: /novels/3532443c-3ac9-477a-a13a-919137fcaa25
+                  - button [ref=e224]:
+                    - img [ref=e225]
+                - button [ref=e227] [cursor=pointer]:
+                  - img [ref=e228]
+                - button [ref=e231] [cursor=pointer]:
+                  - img [ref=e232]
+            - generic [ref=e237]:
+              - generic [ref=e238]:
+                - generic [ref=e239]:
+                  - img [ref=e240]
+                  - heading "PERSIST_测试小说_1774449688077" [level=3] [ref=e243]
+                  - generic [ref=e244]: 草稿
+                - paragraph
+                - generic [ref=e245]:
+                  - generic [ref=e246]:
+                    - img [ref=e247]
+                    - text: 0 章
+                  - generic [ref=e250]:
+                    - img [ref=e251]
+                    - text: 0 角色
+                  - generic [ref=e256]:
+                    - img [ref=e257]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e260]:
+                - link "剧本" [ref=e261] [cursor=pointer]:
+                  - /url: /scripts?novel_id=60bf6299-716b-444c-b408-4d4b1f2982d0
+                  - button "剧本" [ref=e262]:
+                    - img [ref=e263]
+                    - text: 剧本
+                - button [ref=e266] [cursor=pointer]:
+                  - img [ref=e267]
+                - link [ref=e270] [cursor=pointer]:
+                  - /url: /novels/60bf6299-716b-444c-b408-4d4b1f2982d0
+                  - button [ref=e271]:
+                    - img [ref=e272]
+                - button [ref=e274] [cursor=pointer]:
+                  - img [ref=e275]
+                - button [ref=e278] [cursor=pointer]:
+                  - img [ref=e279]
+            - generic [ref=e284]:
+              - generic [ref=e285]:
+                - generic [ref=e286]:
+                  - img [ref=e287]
+                  - heading "CHAPTER_测试小说_1774449605861" [level=3] [ref=e290]
+                  - generic [ref=e291]: 草稿
+                - paragraph
+                - generic [ref=e292]:
+                  - generic [ref=e293]:
+                    - img [ref=e294]
+                    - text: 0 章
+                  - generic [ref=e297]:
+                    - img [ref=e298]
+                    - text: 0 角色
+                  - generic [ref=e303]:
+                    - img [ref=e304]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e307]:
+                - link "剧本" [ref=e308] [cursor=pointer]:
+                  - /url: /scripts?novel_id=87749c01-b297-47ad-803d-8a4653e3bedd
+                  - button "剧本" [ref=e309]:
+                    - img [ref=e310]
+                    - text: 剧本
+                - button [ref=e313] [cursor=pointer]:
+                  - img [ref=e314]
+                - link [ref=e317] [cursor=pointer]:
+                  - /url: /novels/87749c01-b297-47ad-803d-8a4653e3bedd
+                  - button [ref=e318]:
+                    - img [ref=e319]
+                - button [ref=e321] [cursor=pointer]:
+                  - img [ref=e322]
+                - button [ref=e325] [cursor=pointer]:
+                  - img [ref=e326]
+            - generic [ref=e331]:
+              - generic [ref=e332]:
+                - generic [ref=e333]:
+                  - img [ref=e334]
+                  - heading "NOVEL_测试小说_1774449601219" [level=3] [ref=e337]
+                  - generic [ref=e338]: 草稿
+                - paragraph
+                - generic [ref=e339]:
+                  - generic [ref=e340]:
+                    - img [ref=e341]
+                    - text: 0 章
+                  - generic [ref=e344]:
+                    - img [ref=e345]
+                    - text: 0 角色
+                  - generic [ref=e350]:
+                    - img [ref=e351]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e354]:
+                - link "剧本" [ref=e355] [cursor=pointer]:
+                  - /url: /scripts?novel_id=d62bf666-a187-4b9d-8f5b-6cc0b47cdd0c
+                  - button "剧本" [ref=e356]:
+                    - img [ref=e357]
+                    - text: 剧本
+                - button [ref=e360] [cursor=pointer]:
+                  - img [ref=e361]
+                - link [ref=e364] [cursor=pointer]:
+                  - /url: /novels/d62bf666-a187-4b9d-8f5b-6cc0b47cdd0c
+                  - button [ref=e365]:
+                    - img [ref=e366]
+                - button [ref=e368] [cursor=pointer]:
+                  - img [ref=e369]
+                - button [ref=e372] [cursor=pointer]:
+                  - img [ref=e373]
+            - generic [ref=e378]:
+              - generic [ref=e379]:
+                - generic [ref=e380]:
+                  - img [ref=e381]
+                  - heading "PERSIST_测试小说_1774448726757" [level=3] [ref=e384]
+                  - generic [ref=e385]: 草稿
+                - paragraph
+                - generic [ref=e386]:
+                  - generic [ref=e387]:
+                    - img [ref=e388]
+                    - text: 0 章
+                  - generic [ref=e391]:
+                    - img [ref=e392]
+                    - text: 0 角色
+                  - generic [ref=e397]:
+                    - img [ref=e398]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e401]:
+                - link "剧本" [ref=e402] [cursor=pointer]:
+                  - /url: /scripts?novel_id=9c2047af-653b-42fd-ac12-d01617055cac
+                  - button "剧本" [ref=e403]:
+                    - img [ref=e404]
+                    - text: 剧本
+                - button [ref=e407] [cursor=pointer]:
+                  - img [ref=e408]
+                - link [ref=e411] [cursor=pointer]:
+                  - /url: /novels/9c2047af-653b-42fd-ac12-d01617055cac
+                  - button [ref=e412]:
+                    - img [ref=e413]
+                - button [ref=e415] [cursor=pointer]:
+                  - img [ref=e416]
+                - button [ref=e419] [cursor=pointer]:
+                  - img [ref=e420]
+            - generic [ref=e425]:
+              - generic [ref=e426]:
+                - generic [ref=e427]:
+                  - img [ref=e428]
+                  - heading "CHAPTER_测试小说_1774448713091" [level=3] [ref=e431]
+                  - generic [ref=e432]: 草稿
+                - paragraph
+                - generic [ref=e433]:
+                  - generic [ref=e434]:
+                    - img [ref=e435]
+                    - text: 0 章
+                  - generic [ref=e438]:
+                    - img [ref=e439]
+                    - text: 0 角色
+                  - generic [ref=e444]:
+                    - img [ref=e445]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e448]:
+                - link "剧本" [ref=e449] [cursor=pointer]:
+                  - /url: /scripts?novel_id=0f3124bb-f372-41fc-a3c4-754c9fd14d95
+                  - button "剧本" [ref=e450]:
+                    - img [ref=e451]
+                    - text: 剧本
+                - button [ref=e454] [cursor=pointer]:
+                  - img [ref=e455]
+                - link [ref=e458] [cursor=pointer]:
+                  - /url: /novels/0f3124bb-f372-41fc-a3c4-754c9fd14d95
+                  - button [ref=e459]:
+                    - img [ref=e460]
+                - button [ref=e462] [cursor=pointer]:
+                  - img [ref=e463]
+                - button [ref=e466] [cursor=pointer]:
+                  - img [ref=e467]
+            - generic [ref=e472]:
+              - generic [ref=e473]:
+                - generic [ref=e474]:
+                  - img [ref=e475]
+                  - heading "NOVEL_测试小说_1774448712625" [level=3] [ref=e478]
+                  - generic [ref=e479]: 草稿
+                - paragraph
+                - generic [ref=e480]:
+                  - generic [ref=e481]:
+                    - img [ref=e482]
+                    - text: 0 章
+                  - generic [ref=e485]:
+                    - img [ref=e486]
+                    - text: 0 角色
+                  - generic [ref=e491]:
+                    - img [ref=e492]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e495]:
+                - link "剧本" [ref=e496] [cursor=pointer]:
+                  - /url: /scripts?novel_id=3c2cfeb2-f8f9-4cc2-963d-db5fa32d54e6
+                  - button "剧本" [ref=e497]:
+                    - img [ref=e498]
+                    - text: 剧本
+                - button [ref=e501] [cursor=pointer]:
+                  - img [ref=e502]
+                - link [ref=e505] [cursor=pointer]:
+                  - /url: /novels/3c2cfeb2-f8f9-4cc2-963d-db5fa32d54e6
+                  - button [ref=e506]:
+                    - img [ref=e507]
+                - button [ref=e509] [cursor=pointer]:
+                  - img [ref=e510]
+                - button [ref=e513] [cursor=pointer]:
+                  - img [ref=e514]
+            - generic [ref=e519]:
+              - generic [ref=e520]:
+                - generic [ref=e521]:
+                  - img [ref=e522]
+                  - heading "PERSIST_测试小说_1774447538462" [level=3] [ref=e525]
+                  - generic [ref=e526]: 草稿
+                - paragraph
+                - generic [ref=e527]:
+                  - generic [ref=e528]:
+                    - img [ref=e529]
+                    - text: 0 章
+                  - generic [ref=e532]:
+                    - img [ref=e533]
+                    - text: 0 角色
+                  - generic [ref=e538]:
+                    - img [ref=e539]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e542]:
+                - link "剧本" [ref=e543] [cursor=pointer]:
+                  - /url: /scripts?novel_id=8bc9dda7-fb6a-4708-b711-2df3666d309e
+                  - button "剧本" [ref=e544]:
+                    - img [ref=e545]
+                    - text: 剧本
+                - button [ref=e548] [cursor=pointer]:
+                  - img [ref=e549]
+                - link [ref=e552] [cursor=pointer]:
+                  - /url: /novels/8bc9dda7-fb6a-4708-b711-2df3666d309e
+                  - button [ref=e553]:
+                    - img [ref=e554]
+                - button [ref=e556] [cursor=pointer]:
+                  - img [ref=e557]
+                - button [ref=e560] [cursor=pointer]:
+                  - img [ref=e561]
+            - generic [ref=e566]:
+              - generic [ref=e567]:
+                - generic [ref=e568]:
+                  - img [ref=e569]
+                  - heading "CHAPTER_测试小说_1774447525250" [level=3] [ref=e572]
+                  - generic [ref=e573]: 草稿
+                - paragraph
+                - generic [ref=e574]:
+                  - generic [ref=e575]:
+                    - img [ref=e576]
+                    - text: 0 章
+                  - generic [ref=e579]:
+                    - img [ref=e580]
+                    - text: 0 角色
+                  - generic [ref=e585]:
+                    - img [ref=e586]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e589]:
+                - link "剧本" [ref=e590] [cursor=pointer]:
+                  - /url: /scripts?novel_id=480a254b-9369-4740-a42e-4026eb6e6ab1
+                  - button "剧本" [ref=e591]:
+                    - img [ref=e592]
+                    - text: 剧本
+                - button [ref=e595] [cursor=pointer]:
+                  - img [ref=e596]
+                - link [ref=e599] [cursor=pointer]:
+                  - /url: /novels/480a254b-9369-4740-a42e-4026eb6e6ab1
+                  - button [ref=e600]:
+                    - img [ref=e601]
+                - button [ref=e603] [cursor=pointer]:
+                  - img [ref=e604]
+                - button [ref=e607] [cursor=pointer]:
+                  - img [ref=e608]
+            - generic [ref=e613]:
+              - generic [ref=e614]:
+                - generic [ref=e615]:
+                  - img [ref=e616]
+                  - heading "NOVEL_测试小说_1774447522538" [level=3] [ref=e619]
+                  - generic [ref=e620]: 草稿
+                - paragraph
+                - generic [ref=e621]:
+                  - generic [ref=e622]:
+                    - img [ref=e623]
+                    - text: 0 章
+                  - generic [ref=e626]:
+                    - img [ref=e627]
+                    - text: 0 角色
+                  - generic [ref=e632]:
+                    - img [ref=e633]
+                    - text: 更新于 2026-03-25
+              - generic [ref=e636]:
+                - link "剧本" [ref=e637] [cursor=pointer]:
+                  - /url: /scripts?novel_id=eb1bf8a2-8127-4cd5-8ede-d6d105bb182e
+                  - button "剧本" [ref=e638]:
+                    - img [ref=e639]
+                    - text: 剧本
+                - button [ref=e642] [cursor=pointer]:
+                  - img [ref=e643]
+                - link [ref=e646] [cursor=pointer]:
+                  - /url: /novels/eb1bf8a2-8127-4cd5-8ede-d6d105bb182e
+                  - button [ref=e647]:
+                    - img [ref=e648]
+                - button [ref=e650] [cursor=pointer]:
+                  - img [ref=e651]
+                - button [ref=e654] [cursor=pointer]:
+                  - img [ref=e655]
+            - generic [ref=e660]:
+              - generic [ref=e661]:
+                - generic [ref=e662]:
+                  - img [ref=e663]
+                  - heading "无敌天尊" [level=3] [ref=e666]
+                  - generic [ref=e667]: 草稿
+                - paragraph [ref=e668]: 小说主角：孙钦越，是无敌天尊
+                - generic [ref=e669]:
+                  - generic [ref=e670]:
+                    - img [ref=e671]
+                    - text: 0 章
+                  - generic [ref=e674]:
+                    - img [ref=e675]
+                    - text: 0 角色
+                  - generic [ref=e680]:
+                    - img [ref=e681]
+                    - text: 更新于 2026-03-22
+              - generic [ref=e684]:
+                - link "剧本" [ref=e685] [cursor=pointer]:
+                  - /url: /scripts?novel_id=6e11ad91-7f5d-49c0-a2e5-9e80b594552b
+                  - button "剧本" [ref=e686]:
+                    - img [ref=e687]
+                    - text: 剧本
+                - button [ref=e690] [cursor=pointer]:
+                  - img [ref=e691]
+                - link [ref=e694] [cursor=pointer]:
+                  - /url: /novels/6e11ad91-7f5d-49c0-a2e5-9e80b594552b
+                  - button [ref=e695]:
+                    - img [ref=e696]
+                - button [ref=e698] [cursor=pointer]:
+                  - img [ref=e699]
+                - button [ref=e702] [cursor=pointer]:
+                  - img [ref=e703]
+            - generic [ref=e708]:
+              - generic [ref=e709]:
+                - generic [ref=e710]:
+                  - img [ref=e711]
+                  - heading "PERSIST_测试小说_1774108162547" [level=3] [ref=e714]
+                  - generic [ref=e715]: 草稿
+                - paragraph
+                - generic [ref=e716]:
+                  - generic [ref=e717]:
+                    - img [ref=e718]
+                    - text: 0 章
+                  - generic [ref=e721]:
+                    - img [ref=e722]
+                    - text: 0 角色
+                  - generic [ref=e727]:
+                    - img [ref=e728]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e731]:
+                - link "剧本" [ref=e732] [cursor=pointer]:
+                  - /url: /scripts?novel_id=0d013237-178a-4785-b0a0-081f8870f17a
+                  - button "剧本" [ref=e733]:
+                    - img [ref=e734]
+                    - text: 剧本
+                - button [ref=e737] [cursor=pointer]:
+                  - img [ref=e738]
+                - link [ref=e741] [cursor=pointer]:
+                  - /url: /novels/0d013237-178a-4785-b0a0-081f8870f17a
+                  - button [ref=e742]:
+                    - img [ref=e743]
+                - button [ref=e745] [cursor=pointer]:
+                  - img [ref=e746]
+                - button [ref=e749] [cursor=pointer]:
+                  - img [ref=e750]
+            - generic [ref=e755]:
+              - generic [ref=e756]:
+                - generic [ref=e757]:
+                  - img [ref=e758]
+                  - heading "NOVEL_测试小说_1774108152306" [level=3] [ref=e761]
+                  - generic [ref=e762]: 草稿
+                - paragraph
+                - generic [ref=e763]:
+                  - generic [ref=e764]:
+                    - img [ref=e765]
+                    - text: 0 章
+                  - generic [ref=e768]:
+                    - img [ref=e769]
+                    - text: 0 角色
+                  - generic [ref=e774]:
+                    - img [ref=e775]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e778]:
+                - link "剧本" [ref=e779] [cursor=pointer]:
+                  - /url: /scripts?novel_id=73ee50fa-e99b-4d49-baf0-a8cbc02c2e2e
+                  - button "剧本" [ref=e780]:
+                    - img [ref=e781]
+                    - text: 剧本
+                - button [ref=e784] [cursor=pointer]:
+                  - img [ref=e785]
+                - link [ref=e788] [cursor=pointer]:
+                  - /url: /novels/73ee50fa-e99b-4d49-baf0-a8cbc02c2e2e
+                  - button [ref=e789]:
+                    - img [ref=e790]
+                - button [ref=e792] [cursor=pointer]:
+                  - img [ref=e793]
+                - button [ref=e796] [cursor=pointer]:
+                  - img [ref=e797]
+            - generic [ref=e802]:
+              - generic [ref=e803]:
+                - generic [ref=e804]:
+                  - img [ref=e805]
+                  - heading "CHAPTER_测试小说_1774108152427" [level=3] [ref=e808]
+                  - generic [ref=e809]: 草稿
+                - paragraph
+                - generic [ref=e810]:
+                  - generic [ref=e811]:
+                    - img [ref=e812]
+                    - text: 0 章
+                  - generic [ref=e815]:
+                    - img [ref=e816]
+                    - text: 0 角色
+                  - generic [ref=e821]:
+                    - img [ref=e822]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e825]:
+                - link "剧本" [ref=e826] [cursor=pointer]:
+                  - /url: /scripts?novel_id=1ea7412d-9175-4e52-934c-235c03367cb4
+                  - button "剧本" [ref=e827]:
+                    - img [ref=e828]
+                    - text: 剧本
+                - button [ref=e831] [cursor=pointer]:
+                  - img [ref=e832]
+                - link [ref=e835] [cursor=pointer]:
+                  - /url: /novels/1ea7412d-9175-4e52-934c-235c03367cb4
+                  - button [ref=e836]:
+                    - img [ref=e837]
+                - button [ref=e839] [cursor=pointer]:
+                  - img [ref=e840]
+                - button [ref=e843] [cursor=pointer]:
+                  - img [ref=e844]
+            - generic [ref=e849]:
+              - generic [ref=e850]:
+                - generic [ref=e851]:
+                  - img [ref=e852]
+                  - heading "PERSIST_测试小说_1774108069785" [level=3] [ref=e855]
+                  - generic [ref=e856]: 草稿
+                - paragraph
+                - generic [ref=e857]:
+                  - generic [ref=e858]:
+                    - img [ref=e859]
+                    - text: 0 章
+                  - generic [ref=e862]:
+                    - img [ref=e863]
+                    - text: 0 角色
+                  - generic [ref=e868]:
+                    - img [ref=e869]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e872]:
+                - link "剧本" [ref=e873] [cursor=pointer]:
+                  - /url: /scripts?novel_id=c6a552db-03be-4eb9-bb23-1322169453c4
+                  - button "剧本" [ref=e874]:
+                    - img [ref=e875]
+                    - text: 剧本
+                - button [ref=e878] [cursor=pointer]:
+                  - img [ref=e879]
+                - link [ref=e882] [cursor=pointer]:
+                  - /url: /novels/c6a552db-03be-4eb9-bb23-1322169453c4
+                  - button [ref=e883]:
+                    - img [ref=e884]
+                - button [ref=e886] [cursor=pointer]:
+                  - img [ref=e887]
+                - button [ref=e890] [cursor=pointer]:
+                  - img [ref=e891]
+            - generic [ref=e896]:
+              - generic [ref=e897]:
+                - generic [ref=e898]:
+                  - img [ref=e899]
+                  - heading "NOVEL_测试小说_1774108058561" [level=3] [ref=e902]
+                  - generic [ref=e903]: 草稿
+                - paragraph
+                - generic [ref=e904]:
+                  - generic [ref=e905]:
+                    - img [ref=e906]
+                    - text: 0 章
+                  - generic [ref=e909]:
+                    - img [ref=e910]
+                    - text: 0 角色
+                  - generic [ref=e915]:
+                    - img [ref=e916]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e919]:
+                - link "剧本" [ref=e920] [cursor=pointer]:
+                  - /url: /scripts?novel_id=a60ffd66-4f75-48e8-ad55-b1006536dae9
+                  - button "剧本" [ref=e921]:
+                    - img [ref=e922]
+                    - text: 剧本
+                - button [ref=e925] [cursor=pointer]:
+                  - img [ref=e926]
+                - link [ref=e929] [cursor=pointer]:
+                  - /url: /novels/a60ffd66-4f75-48e8-ad55-b1006536dae9
+                  - button [ref=e930]:
+                    - img [ref=e931]
+                - button [ref=e933] [cursor=pointer]:
+                  - img [ref=e934]
+                - button [ref=e937] [cursor=pointer]:
+                  - img [ref=e938]
+            - generic [ref=e943]:
+              - generic [ref=e944]:
+                - generic [ref=e945]:
+                  - img [ref=e946]
+                  - heading "CHAPTER_测试小说_1774108058206" [level=3] [ref=e949]
+                  - generic [ref=e950]: 草稿
+                - paragraph
+                - generic [ref=e951]:
+                  - generic [ref=e952]:
+                    - img [ref=e953]
+                    - text: 0 章
+                  - generic [ref=e956]:
+                    - img [ref=e957]
+                    - text: 0 角色
+                  - generic [ref=e962]:
+                    - img [ref=e963]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e966]:
+                - link "剧本" [ref=e967] [cursor=pointer]:
+                  - /url: /scripts?novel_id=e7ee6942-e90e-4175-9aa1-4657cc2c14de
+                  - button "剧本" [ref=e968]:
+                    - img [ref=e969]
+                    - text: 剧本
+                - button [ref=e972] [cursor=pointer]:
+                  - img [ref=e973]
+                - link [ref=e976] [cursor=pointer]:
+                  - /url: /novels/e7ee6942-e90e-4175-9aa1-4657cc2c14de
+                  - button [ref=e977]:
+                    - img [ref=e978]
+                - button [ref=e980] [cursor=pointer]:
+                  - img [ref=e981]
+                - button [ref=e984] [cursor=pointer]:
+                  - img [ref=e985]
+            - generic [ref=e990]:
+              - generic [ref=e991]:
+                - generic [ref=e992]:
+                  - img [ref=e993]
+                  - heading "PERSIST_测试小说_1774105522403" [level=3] [ref=e996]
+                  - generic [ref=e997]: 草稿
+                - paragraph
+                - generic [ref=e998]:
+                  - generic [ref=e999]:
+                    - img [ref=e1000]
+                    - text: 0 章
+                  - generic [ref=e1003]:
+                    - img [ref=e1004]
+                    - text: 0 角色
+                  - generic [ref=e1009]:
+                    - img [ref=e1010]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1013]:
+                - link "剧本" [ref=e1014] [cursor=pointer]:
+                  - /url: /scripts?novel_id=a6cccd3c-a2ec-418a-94e3-dd24c5614eba
+                  - button "剧本" [ref=e1015]:
+                    - img [ref=e1016]
+                    - text: 剧本
+                - button [ref=e1019] [cursor=pointer]:
+                  - img [ref=e1020]
+                - link [ref=e1023] [cursor=pointer]:
+                  - /url: /novels/a6cccd3c-a2ec-418a-94e3-dd24c5614eba
+                  - button [ref=e1024]:
+                    - img [ref=e1025]
+                - button [ref=e1027] [cursor=pointer]:
+                  - img [ref=e1028]
+                - button [ref=e1031] [cursor=pointer]:
+                  - img [ref=e1032]
+            - generic [ref=e1037]:
+              - generic [ref=e1038]:
+                - generic [ref=e1039]:
+                  - img [ref=e1040]
+                  - heading "NOVEL_测试小说_1774105512346" [level=3] [ref=e1043]
+                  - generic [ref=e1044]: 草稿
+                - paragraph
+                - generic [ref=e1045]:
+                  - generic [ref=e1046]:
+                    - img [ref=e1047]
+                    - text: 0 章
+                  - generic [ref=e1050]:
+                    - img [ref=e1051]
+                    - text: 0 角色
+                  - generic [ref=e1056]:
+                    - img [ref=e1057]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1060]:
+                - link "剧本" [ref=e1061] [cursor=pointer]:
+                  - /url: /scripts?novel_id=5a1577d4-e34c-4694-b664-316102646ddc
+                  - button "剧本" [ref=e1062]:
+                    - img [ref=e1063]
+                    - text: 剧本
+                - button [ref=e1066] [cursor=pointer]:
+                  - img [ref=e1067]
+                - link [ref=e1070] [cursor=pointer]:
+                  - /url: /novels/5a1577d4-e34c-4694-b664-316102646ddc
+                  - button [ref=e1071]:
+                    - img [ref=e1072]
+                - button [ref=e1074] [cursor=pointer]:
+                  - img [ref=e1075]
+                - button [ref=e1078] [cursor=pointer]:
+                  - img [ref=e1079]
+            - generic [ref=e1084]:
+              - generic [ref=e1085]:
+                - generic [ref=e1086]:
+                  - img [ref=e1087]
+                  - heading "CHAPTER_测试小说_1774105512384" [level=3] [ref=e1090]
+                  - generic [ref=e1091]: 草稿
+                - paragraph
+                - generic [ref=e1092]:
+                  - generic [ref=e1093]:
+                    - img [ref=e1094]
+                    - text: 0 章
+                  - generic [ref=e1097]:
+                    - img [ref=e1098]
+                    - text: 0 角色
+                  - generic [ref=e1103]:
+                    - img [ref=e1104]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1107]:
+                - link "剧本" [ref=e1108] [cursor=pointer]:
+                  - /url: /scripts?novel_id=1b11bb8d-fbc7-403d-a8f3-3d62117e49b8
+                  - button "剧本" [ref=e1109]:
+                    - img [ref=e1110]
+                    - text: 剧本
+                - button [ref=e1113] [cursor=pointer]:
+                  - img [ref=e1114]
+                - link [ref=e1117] [cursor=pointer]:
+                  - /url: /novels/1b11bb8d-fbc7-403d-a8f3-3d62117e49b8
+                  - button [ref=e1118]:
+                    - img [ref=e1119]
+                - button [ref=e1121] [cursor=pointer]:
+                  - img [ref=e1122]
+                - button [ref=e1125] [cursor=pointer]:
+                  - img [ref=e1126]
+            - generic [ref=e1131]:
+              - generic [ref=e1132]:
+                - generic [ref=e1133]:
+                  - img [ref=e1134]
+                  - heading "PERSIST_测试小说_1774104555414" [level=3] [ref=e1137]
+                  - generic [ref=e1138]: 草稿
+                - paragraph
+                - generic [ref=e1139]:
+                  - generic [ref=e1140]:
+                    - img [ref=e1141]
+                    - text: 0 章
+                  - generic [ref=e1144]:
+                    - img [ref=e1145]
+                    - text: 0 角色
+                  - generic [ref=e1150]:
+                    - img [ref=e1151]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1154]:
+                - link "剧本" [ref=e1155] [cursor=pointer]:
+                  - /url: /scripts?novel_id=49f61460-29c6-4978-a01f-62f0673d5db2
+                  - button "剧本" [ref=e1156]:
+                    - img [ref=e1157]
+                    - text: 剧本
+                - button [ref=e1160] [cursor=pointer]:
+                  - img [ref=e1161]
+                - link [ref=e1164] [cursor=pointer]:
+                  - /url: /novels/49f61460-29c6-4978-a01f-62f0673d5db2
+                  - button [ref=e1165]:
+                    - img [ref=e1166]
+                - button [ref=e1168] [cursor=pointer]:
+                  - img [ref=e1169]
+                - button [ref=e1172] [cursor=pointer]:
+                  - img [ref=e1173]
+            - generic [ref=e1178]:
+              - generic [ref=e1179]:
+                - generic [ref=e1180]:
+                  - img [ref=e1181]
+                  - heading "NOVEL_测试小说_1774104545946" [level=3] [ref=e1184]
+                  - generic [ref=e1185]: 草稿
+                - paragraph
+                - generic [ref=e1186]:
+                  - generic [ref=e1187]:
+                    - img [ref=e1188]
+                    - text: 0 章
+                  - generic [ref=e1191]:
+                    - img [ref=e1192]
+                    - text: 0 角色
+                  - generic [ref=e1197]:
+                    - img [ref=e1198]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1201]:
+                - link "剧本" [ref=e1202] [cursor=pointer]:
+                  - /url: /scripts?novel_id=9484712f-0024-4c39-840e-5c9d962eecab
+                  - button "剧本" [ref=e1203]:
+                    - img [ref=e1204]
+                    - text: 剧本
+                - button [ref=e1207] [cursor=pointer]:
+                  - img [ref=e1208]
+                - link [ref=e1211] [cursor=pointer]:
+                  - /url: /novels/9484712f-0024-4c39-840e-5c9d962eecab
+                  - button [ref=e1212]:
+                    - img [ref=e1213]
+                - button [ref=e1215] [cursor=pointer]:
+                  - img [ref=e1216]
+                - button [ref=e1219] [cursor=pointer]:
+                  - img [ref=e1220]
+            - generic [ref=e1225]:
+              - generic [ref=e1226]:
+                - generic [ref=e1227]:
+                  - img [ref=e1228]
+                  - heading "CHAPTER_测试小说_1774104546232" [level=3] [ref=e1231]
+                  - generic [ref=e1232]: 草稿
+                - paragraph
+                - generic [ref=e1233]:
+                  - generic [ref=e1234]:
+                    - img [ref=e1235]
+                    - text: 0 章
+                  - generic [ref=e1238]:
+                    - img [ref=e1239]
+                    - text: 0 角色
+                  - generic [ref=e1244]:
+                    - img [ref=e1245]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1248]:
+                - link "剧本" [ref=e1249] [cursor=pointer]:
+                  - /url: /scripts?novel_id=6c54c84b-16cf-4be7-ab23-aff4b99da29a
+                  - button "剧本" [ref=e1250]:
+                    - img [ref=e1251]
+                    - text: 剧本
+                - button [ref=e1254] [cursor=pointer]:
+                  - img [ref=e1255]
+                - link [ref=e1258] [cursor=pointer]:
+                  - /url: /novels/6c54c84b-16cf-4be7-ab23-aff4b99da29a
+                  - button [ref=e1259]:
+                    - img [ref=e1260]
+                - button [ref=e1262] [cursor=pointer]:
+                  - img [ref=e1263]
+                - button [ref=e1266] [cursor=pointer]:
+                  - img [ref=e1267]
+            - generic [ref=e1272]:
+              - generic [ref=e1273]:
+                - generic [ref=e1274]:
+                  - img [ref=e1275]
+                  - heading "PERSIST_测试小说_1774104465310" [level=3] [ref=e1278]
+                  - generic [ref=e1279]: 草稿
+                - paragraph
+                - generic [ref=e1280]:
+                  - generic [ref=e1281]:
+                    - img [ref=e1282]
+                    - text: 0 章
+                  - generic [ref=e1285]:
+                    - img [ref=e1286]
+                    - text: 0 角色
+                  - generic [ref=e1291]:
+                    - img [ref=e1292]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1295]:
+                - link "剧本" [ref=e1296] [cursor=pointer]:
+                  - /url: /scripts?novel_id=522fdd68-1482-4198-89e1-29e6090a9031
+                  - button "剧本" [ref=e1297]:
+                    - img [ref=e1298]
+                    - text: 剧本
+                - button [ref=e1301] [cursor=pointer]:
+                  - img [ref=e1302]
+                - link [ref=e1305] [cursor=pointer]:
+                  - /url: /novels/522fdd68-1482-4198-89e1-29e6090a9031
+                  - button [ref=e1306]:
+                    - img [ref=e1307]
+                - button [ref=e1309] [cursor=pointer]:
+                  - img [ref=e1310]
+                - button [ref=e1313] [cursor=pointer]:
+                  - img [ref=e1314]
+            - generic [ref=e1319]:
+              - generic [ref=e1320]:
+                - generic [ref=e1321]:
+                  - img [ref=e1322]
+                  - heading "NOVEL_测试小说_1774104454930" [level=3] [ref=e1325]
+                  - generic [ref=e1326]: 草稿
+                - paragraph
+                - generic [ref=e1327]:
+                  - generic [ref=e1328]:
+                    - img [ref=e1329]
+                    - text: 0 章
+                  - generic [ref=e1332]:
+                    - img [ref=e1333]
+                    - text: 0 角色
+                  - generic [ref=e1338]:
+                    - img [ref=e1339]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1342]:
+                - link "剧本" [ref=e1343] [cursor=pointer]:
+                  - /url: /scripts?novel_id=c73f0f67-2131-4925-beea-f169e454faa4
+                  - button "剧本" [ref=e1344]:
+                    - img [ref=e1345]
+                    - text: 剧本
+                - button [ref=e1348] [cursor=pointer]:
+                  - img [ref=e1349]
+                - link [ref=e1352] [cursor=pointer]:
+                  - /url: /novels/c73f0f67-2131-4925-beea-f169e454faa4
+                  - button [ref=e1353]:
+                    - img [ref=e1354]
+                - button [ref=e1356] [cursor=pointer]:
+                  - img [ref=e1357]
+                - button [ref=e1360] [cursor=pointer]:
+                  - img [ref=e1361]
+            - generic [ref=e1366]:
+              - generic [ref=e1367]:
+                - generic [ref=e1368]:
+                  - img [ref=e1369]
+                  - heading "CHAPTER_测试小说_1774104455012" [level=3] [ref=e1372]
+                  - generic [ref=e1373]: 草稿
+                - paragraph
+                - generic [ref=e1374]:
+                  - generic [ref=e1375]:
+                    - img [ref=e1376]
+                    - text: 0 章
+                  - generic [ref=e1379]:
+                    - img [ref=e1380]
+                    - text: 0 角色
+                  - generic [ref=e1385]:
+                    - img [ref=e1386]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1389]:
+                - link "剧本" [ref=e1390] [cursor=pointer]:
+                  - /url: /scripts?novel_id=d4552d05-41ff-4dc0-959e-8c56c6b95fdd
+                  - button "剧本" [ref=e1391]:
+                    - img [ref=e1392]
+                    - text: 剧本
+                - button [ref=e1395] [cursor=pointer]:
+                  - img [ref=e1396]
+                - link [ref=e1399] [cursor=pointer]:
+                  - /url: /novels/d4552d05-41ff-4dc0-959e-8c56c6b95fdd
+                  - button [ref=e1400]:
+                    - img [ref=e1401]
+                - button [ref=e1403] [cursor=pointer]:
+                  - img [ref=e1404]
+                - button [ref=e1407] [cursor=pointer]:
+                  - img [ref=e1408]
+            - generic [ref=e1413]:
+              - generic [ref=e1414]:
+                - generic [ref=e1415]:
+                  - img [ref=e1416]
+                  - heading "PERSIST_测试小说_1774104406446" [level=3] [ref=e1419]
+                  - generic [ref=e1420]: 草稿
+                - paragraph
+                - generic [ref=e1421]:
+                  - generic [ref=e1422]:
+                    - img [ref=e1423]
+                    - text: 0 章
+                  - generic [ref=e1426]:
+                    - img [ref=e1427]
+                    - text: 0 角色
+                  - generic [ref=e1432]:
+                    - img [ref=e1433]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1436]:
+                - link "剧本" [ref=e1437] [cursor=pointer]:
+                  - /url: /scripts?novel_id=25fae7f9-603d-44d7-9cda-506eacc294d1
+                  - button "剧本" [ref=e1438]:
+                    - img [ref=e1439]
+                    - text: 剧本
+                - button [ref=e1442] [cursor=pointer]:
+                  - img [ref=e1443]
+                - link [ref=e1446] [cursor=pointer]:
+                  - /url: /novels/25fae7f9-603d-44d7-9cda-506eacc294d1
+                  - button [ref=e1447]:
+                    - img [ref=e1448]
+                - button [ref=e1450] [cursor=pointer]:
+                  - img [ref=e1451]
+                - button [ref=e1454] [cursor=pointer]:
+                  - img [ref=e1455]
+            - generic [ref=e1460]:
+              - generic [ref=e1461]:
+                - generic [ref=e1462]:
+                  - img [ref=e1463]
+                  - heading "NOVEL_测试小说_1774104394610" [level=3] [ref=e1466]
+                  - generic [ref=e1467]: 草稿
+                - paragraph
+                - generic [ref=e1468]:
+                  - generic [ref=e1469]:
+                    - img [ref=e1470]
+                    - text: 0 章
+                  - generic [ref=e1473]:
+                    - img [ref=e1474]
+                    - text: 0 角色
+                  - generic [ref=e1479]:
+                    - img [ref=e1480]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1483]:
+                - link "剧本" [ref=e1484] [cursor=pointer]:
+                  - /url: /scripts?novel_id=896be996-9bcc-4cfc-9adb-462b5dad3216
+                  - button "剧本" [ref=e1485]:
+                    - img [ref=e1486]
+                    - text: 剧本
+                - button [ref=e1489] [cursor=pointer]:
+                  - img [ref=e1490]
+                - link [ref=e1493] [cursor=pointer]:
+                  - /url: /novels/896be996-9bcc-4cfc-9adb-462b5dad3216
+                  - button [ref=e1494]:
+                    - img [ref=e1495]
+                - button [ref=e1497] [cursor=pointer]:
+                  - img [ref=e1498]
+                - button [ref=e1501] [cursor=pointer]:
+                  - img [ref=e1502]
+            - generic [ref=e1507]:
+              - generic [ref=e1508]:
+                - generic [ref=e1509]:
+                  - img [ref=e1510]
+                  - heading "CHAPTER_测试小说_1774104394674" [level=3] [ref=e1513]
+                  - generic [ref=e1514]: 草稿
+                - paragraph
+                - generic [ref=e1515]:
+                  - generic [ref=e1516]:
+                    - img [ref=e1517]
+                    - text: 0 章
+                  - generic [ref=e1520]:
+                    - img [ref=e1521]
+                    - text: 0 角色
+                  - generic [ref=e1526]:
+                    - img [ref=e1527]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1530]:
+                - link "剧本" [ref=e1531] [cursor=pointer]:
+                  - /url: /scripts?novel_id=f8045137-9acb-4f54-b24f-a5ffe587db15
+                  - button "剧本" [ref=e1532]:
+                    - img [ref=e1533]
+                    - text: 剧本
+                - button [ref=e1536] [cursor=pointer]:
+                  - img [ref=e1537]
+                - link [ref=e1540] [cursor=pointer]:
+                  - /url: /novels/f8045137-9acb-4f54-b24f-a5ffe587db15
+                  - button [ref=e1541]:
+                    - img [ref=e1542]
+                - button [ref=e1544] [cursor=pointer]:
+                  - img [ref=e1545]
+                - button [ref=e1548] [cursor=pointer]:
+                  - img [ref=e1549]
+            - generic [ref=e1554]:
+              - generic [ref=e1555]:
+                - generic [ref=e1556]:
+                  - img [ref=e1557]
+                  - heading "NOVEL_测试小说_1774104350110" [level=3] [ref=e1560]
+                  - generic [ref=e1561]: 草稿
+                - paragraph
+                - generic [ref=e1562]:
+                  - generic [ref=e1563]:
+                    - img [ref=e1564]
+                    - text: 0 章
+                  - generic [ref=e1567]:
+                    - img [ref=e1568]
+                    - text: 0 角色
+                  - generic [ref=e1573]:
+                    - img [ref=e1574]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1577]:
+                - link "剧本" [ref=e1578] [cursor=pointer]:
+                  - /url: /scripts?novel_id=a8815238-3bd0-4b26-92c2-c7e33ce3b516
+                  - button "剧本" [ref=e1579]:
+                    - img [ref=e1580]
+                    - text: 剧本
+                - button [ref=e1583] [cursor=pointer]:
+                  - img [ref=e1584]
+                - link [ref=e1587] [cursor=pointer]:
+                  - /url: /novels/a8815238-3bd0-4b26-92c2-c7e33ce3b516
+                  - button [ref=e1588]:
+                    - img [ref=e1589]
+                - button [ref=e1591] [cursor=pointer]:
+                  - img [ref=e1592]
+                - button [ref=e1595] [cursor=pointer]:
+                  - img [ref=e1596]
+            - generic [ref=e1601]:
+              - generic [ref=e1602]:
+                - generic [ref=e1603]:
+                  - img [ref=e1604]
+                  - heading "CHAPTER_测试小说_1774104350101" [level=3] [ref=e1607]
+                  - generic [ref=e1608]: 草稿
+                - paragraph
+                - generic [ref=e1609]:
+                  - generic [ref=e1610]:
+                    - img [ref=e1611]
+                    - text: 0 章
+                  - generic [ref=e1614]:
+                    - img [ref=e1615]
+                    - text: 0 角色
+                  - generic [ref=e1620]:
+                    - img [ref=e1621]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1624]:
+                - link "剧本" [ref=e1625] [cursor=pointer]:
+                  - /url: /scripts?novel_id=a5b239b4-711d-4132-90fe-a6e9f62b7861
+                  - button "剧本" [ref=e1626]:
+                    - img [ref=e1627]
+                    - text: 剧本
+                - button [ref=e1630] [cursor=pointer]:
+                  - img [ref=e1631]
+                - link [ref=e1634] [cursor=pointer]:
+                  - /url: /novels/a5b239b4-711d-4132-90fe-a6e9f62b7861
+                  - button [ref=e1635]:
+                    - img [ref=e1636]
+                - button [ref=e1638] [cursor=pointer]:
+                  - img [ref=e1639]
+                - button [ref=e1642] [cursor=pointer]:
+                  - img [ref=e1643]
+            - generic [ref=e1648]:
+              - generic [ref=e1649]:
+                - generic [ref=e1650]:
+                  - img [ref=e1651]
+                  - heading "AI_CHAPTER" [level=3] [ref=e1654]
+                  - generic [ref=e1655]: 草稿
+                - paragraph
+                - generic [ref=e1656]:
+                  - generic [ref=e1657]:
+                    - img [ref=e1658]
+                    - text: 0 章
+                  - generic [ref=e1661]:
+                    - img [ref=e1662]
+                    - text: 0 角色
+                  - generic [ref=e1667]:
+                    - img [ref=e1668]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1671]:
+                - link "剧本" [ref=e1672] [cursor=pointer]:
+                  - /url: /scripts?novel_id=19688445-a8ab-4b7d-84dc-2763962be80a
+                  - button "剧本" [ref=e1673]:
+                    - img [ref=e1674]
+                    - text: 剧本
+                - button [ref=e1677] [cursor=pointer]:
+                  - img [ref=e1678]
+                - link [ref=e1681] [cursor=pointer]:
+                  - /url: /novels/19688445-a8ab-4b7d-84dc-2763962be80a
+                  - button [ref=e1682]:
+                    - img [ref=e1683]
+                - button [ref=e1685] [cursor=pointer]:
+                  - img [ref=e1686]
+                - button [ref=e1689] [cursor=pointer]:
+                  - img [ref=e1690]
+            - generic [ref=e1695]:
+              - generic [ref=e1696]:
+                - generic [ref=e1697]:
+                  - img [ref=e1698]
+                  - heading "EDIT_CHAPTER_测试小说_1774071866445" [level=3] [ref=e1701]
+                  - generic [ref=e1702]: 草稿
+                - paragraph
+                - generic [ref=e1703]:
+                  - generic [ref=e1704]:
+                    - img [ref=e1705]
+                    - text: 0 章
+                  - generic [ref=e1708]:
+                    - img [ref=e1709]
+                    - text: 0 角色
+                  - generic [ref=e1714]:
+                    - img [ref=e1715]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1718]:
+                - link "剧本" [ref=e1719] [cursor=pointer]:
+                  - /url: /scripts?novel_id=eb15d9cf-244a-4cef-8205-720a7ee0903d
+                  - button "剧本" [ref=e1720]:
+                    - img [ref=e1721]
+                    - text: 剧本
+                - button [ref=e1724] [cursor=pointer]:
+                  - img [ref=e1725]
+                - link [ref=e1728] [cursor=pointer]:
+                  - /url: /novels/eb15d9cf-244a-4cef-8205-720a7ee0903d
+                  - button [ref=e1729]:
+                    - img [ref=e1730]
+                - button [ref=e1732] [cursor=pointer]:
+                  - img [ref=e1733]
+                - button [ref=e1736] [cursor=pointer]:
+                  - img [ref=e1737]
+            - generic [ref=e1742]:
+              - generic [ref=e1743]:
+                - generic [ref=e1744]:
+                  - img [ref=e1745]
+                  - heading "CREATE_测试小说_1774071861000" [level=3] [ref=e1748]
+                  - generic [ref=e1749]: 草稿
+                - paragraph
+                - generic [ref=e1750]:
+                  - generic [ref=e1751]:
+                    - img [ref=e1752]
+                    - text: 0 章
+                  - generic [ref=e1755]:
+                    - img [ref=e1756]
+                    - text: 0 角色
+                  - generic [ref=e1761]:
+                    - img [ref=e1762]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1765]:
+                - link "剧本" [ref=e1766] [cursor=pointer]:
+                  - /url: /scripts?novel_id=017404b6-19b9-42a1-9580-d14c601cdf08
+                  - button "剧本" [ref=e1767]:
+                    - img [ref=e1768]
+                    - text: 剧本
+                - button [ref=e1771] [cursor=pointer]:
+                  - img [ref=e1772]
+                - link [ref=e1775] [cursor=pointer]:
+                  - /url: /novels/017404b6-19b9-42a1-9580-d14c601cdf08
+                  - button [ref=e1776]:
+                    - img [ref=e1777]
+                - button [ref=e1779] [cursor=pointer]:
+                  - img [ref=e1780]
+                - button [ref=e1783] [cursor=pointer]:
+                  - img [ref=e1784]
+            - generic [ref=e1789]:
+              - generic [ref=e1790]:
+                - generic [ref=e1791]:
+                  - img [ref=e1792]
+                  - heading "AI_CHAPTER_测试小说_1774071329495" [level=3] [ref=e1795]
+                  - generic [ref=e1796]: 草稿
+                - paragraph
+                - generic [ref=e1797]:
+                  - generic [ref=e1798]:
+                    - img [ref=e1799]
+                    - text: 0 章
+                  - generic [ref=e1802]:
+                    - img [ref=e1803]
+                    - text: 0 角色
+                  - generic [ref=e1808]:
+                    - img [ref=e1809]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1812]:
+                - link "剧本" [ref=e1813] [cursor=pointer]:
+                  - /url: /scripts?novel_id=ae0cf443-c815-4a78-92df-5cc4c17f69db
+                  - button "剧本" [ref=e1814]:
+                    - img [ref=e1815]
+                    - text: 剧本
+                - button [ref=e1818] [cursor=pointer]:
+                  - img [ref=e1819]
+                - link [ref=e1822] [cursor=pointer]:
+                  - /url: /novels/ae0cf443-c815-4a78-92df-5cc4c17f69db
+                  - button [ref=e1823]:
+                    - img [ref=e1824]
+                - button [ref=e1826] [cursor=pointer]:
+                  - img [ref=e1827]
+                - button [ref=e1830] [cursor=pointer]:
+                  - img [ref=e1831]
+            - generic [ref=e1836]:
+              - generic [ref=e1837]:
+                - generic [ref=e1838]:
+                  - img [ref=e1839]
+                  - heading "EDIT_CHAPTER_测试小说_1774071329159" [level=3] [ref=e1842]
+                  - generic [ref=e1843]: 草稿
+                - paragraph
+                - generic [ref=e1844]:
+                  - generic [ref=e1845]:
+                    - img [ref=e1846]
+                    - text: 0 章
+                  - generic [ref=e1849]:
+                    - img [ref=e1850]
+                    - text: 0 角色
+                  - generic [ref=e1855]:
+                    - img [ref=e1856]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1859]:
+                - link "剧本" [ref=e1860] [cursor=pointer]:
+                  - /url: /scripts?novel_id=1696350e-53e4-407d-b216-a7a0839968db
+                  - button "剧本" [ref=e1861]:
+                    - img [ref=e1862]
+                    - text: 剧本
+                - button [ref=e1865] [cursor=pointer]:
+                  - img [ref=e1866]
+                - link [ref=e1869] [cursor=pointer]:
+                  - /url: /novels/1696350e-53e4-407d-b216-a7a0839968db
+                  - button [ref=e1870]:
+                    - img [ref=e1871]
+                - button [ref=e1873] [cursor=pointer]:
+                  - img [ref=e1874]
+                - button [ref=e1877] [cursor=pointer]:
+                  - img [ref=e1878]
+            - generic [ref=e1883]:
+              - generic [ref=e1884]:
+                - generic [ref=e1885]:
+                  - img [ref=e1886]
+                  - heading "CREATE_测试小说_1774071323259" [level=3] [ref=e1889]
+                  - generic [ref=e1890]: 草稿
+                - paragraph
+                - generic [ref=e1891]:
+                  - generic [ref=e1892]:
+                    - img [ref=e1893]
+                    - text: 0 章
+                  - generic [ref=e1896]:
+                    - img [ref=e1897]
+                    - text: 0 角色
+                  - generic [ref=e1902]:
+                    - img [ref=e1903]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1906]:
+                - link "剧本" [ref=e1907] [cursor=pointer]:
+                  - /url: /scripts?novel_id=de5358cb-b629-442d-bdef-07f4c558a713
+                  - button "剧本" [ref=e1908]:
+                    - img [ref=e1909]
+                    - text: 剧本
+                - button [ref=e1912] [cursor=pointer]:
+                  - img [ref=e1913]
+                - link [ref=e1916] [cursor=pointer]:
+                  - /url: /novels/de5358cb-b629-442d-bdef-07f4c558a713
+                  - button [ref=e1917]:
+                    - img [ref=e1918]
+                - button [ref=e1920] [cursor=pointer]:
+                  - img [ref=e1921]
+                - button [ref=e1924] [cursor=pointer]:
+                  - img [ref=e1925]
+            - generic [ref=e1930]:
+              - generic [ref=e1931]:
+                - generic [ref=e1932]:
+                  - img [ref=e1933]
+                  - heading "AI_CHAPTER_测试小说_1774070560214" [level=3] [ref=e1936]
+                  - generic [ref=e1937]: 草稿
+                - paragraph
+                - generic [ref=e1938]:
+                  - generic [ref=e1939]:
+                    - img [ref=e1940]
+                    - text: 0 章
+                  - generic [ref=e1943]:
+                    - img [ref=e1944]
+                    - text: 0 角色
+                  - generic [ref=e1949]:
+                    - img [ref=e1950]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e1953]:
+                - link "剧本" [ref=e1954] [cursor=pointer]:
+                  - /url: /scripts?novel_id=7400279b-0e53-4625-8af8-d6c2f07a1860
+                  - button "剧本" [ref=e1955]:
+                    - img [ref=e1956]
+                    - text: 剧本
+                - button [ref=e1959] [cursor=pointer]:
+                  - img [ref=e1960]
+                - link [ref=e1963] [cursor=pointer]:
+                  - /url: /novels/7400279b-0e53-4625-8af8-d6c2f07a1860
+                  - button [ref=e1964]:
+                    - img [ref=e1965]
+                - button [ref=e1967] [cursor=pointer]:
+                  - img [ref=e1968]
+                - button [ref=e1971] [cursor=pointer]:
+                  - img [ref=e1972]
+            - generic [ref=e1977]:
+              - generic [ref=e1978]:
+                - generic [ref=e1979]:
+                  - img [ref=e1980]
+                  - heading "EDIT_CHAPTER_测试小说_1774070559467" [level=3] [ref=e1983]
+                  - generic [ref=e1984]: 草稿
+                - paragraph
+                - generic [ref=e1985]:
+                  - generic [ref=e1986]:
+                    - img [ref=e1987]
+                    - text: 0 章
+                  - generic [ref=e1990]:
+                    - img [ref=e1991]
+                    - text: 0 角色
+                  - generic [ref=e1996]:
+                    - img [ref=e1997]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2000]:
+                - link "剧本" [ref=e2001] [cursor=pointer]:
+                  - /url: /scripts?novel_id=85c1924f-746e-4678-82ab-97dc55cc5507
+                  - button "剧本" [ref=e2002]:
+                    - img [ref=e2003]
+                    - text: 剧本
+                - button [ref=e2006] [cursor=pointer]:
+                  - img [ref=e2007]
+                - link [ref=e2010] [cursor=pointer]:
+                  - /url: /novels/85c1924f-746e-4678-82ab-97dc55cc5507
+                  - button [ref=e2011]:
+                    - img [ref=e2012]
+                - button [ref=e2014] [cursor=pointer]:
+                  - img [ref=e2015]
+                - button [ref=e2018] [cursor=pointer]:
+                  - img [ref=e2019]
+            - generic [ref=e2024]:
+              - generic [ref=e2025]:
+                - generic [ref=e2026]:
+                  - img [ref=e2027]
+                  - heading "CREATE_测试小说_1774070554027" [level=3] [ref=e2030]
+                  - generic [ref=e2031]: 草稿
+                - paragraph
+                - generic [ref=e2032]:
+                  - generic [ref=e2033]:
+                    - img [ref=e2034]
+                    - text: 0 章
+                  - generic [ref=e2037]:
+                    - img [ref=e2038]
+                    - text: 0 角色
+                  - generic [ref=e2043]:
+                    - img [ref=e2044]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2047]:
+                - link "剧本" [ref=e2048] [cursor=pointer]:
+                  - /url: /scripts?novel_id=12b66196-5d31-4021-b8c6-05af9c0c5dbf
+                  - button "剧本" [ref=e2049]:
+                    - img [ref=e2050]
+                    - text: 剧本
+                - button [ref=e2053] [cursor=pointer]:
+                  - img [ref=e2054]
+                - link [ref=e2057] [cursor=pointer]:
+                  - /url: /novels/12b66196-5d31-4021-b8c6-05af9c0c5dbf
+                  - button [ref=e2058]:
+                    - img [ref=e2059]
+                - button [ref=e2061] [cursor=pointer]:
+                  - img [ref=e2062]
+                - button [ref=e2065] [cursor=pointer]:
+                  - img [ref=e2066]
+            - generic [ref=e2071]:
+              - generic [ref=e2072]:
+                - generic [ref=e2073]:
+                  - img [ref=e2074]
+                  - heading "AI_CHAPTER_测试小说_1774070282107" [level=3] [ref=e2077]
+                  - generic [ref=e2078]: 草稿
+                - paragraph
+                - generic [ref=e2079]:
+                  - generic [ref=e2080]:
+                    - img [ref=e2081]
+                    - text: 0 章
+                  - generic [ref=e2084]:
+                    - img [ref=e2085]
+                    - text: 0 角色
+                  - generic [ref=e2090]:
+                    - img [ref=e2091]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2094]:
+                - link "剧本" [ref=e2095] [cursor=pointer]:
+                  - /url: /scripts?novel_id=f4f251e2-591e-4ca2-b2e2-79a63f6a3657
+                  - button "剧本" [ref=e2096]:
+                    - img [ref=e2097]
+                    - text: 剧本
+                - button [ref=e2100] [cursor=pointer]:
+                  - img [ref=e2101]
+                - link [ref=e2104] [cursor=pointer]:
+                  - /url: /novels/f4f251e2-591e-4ca2-b2e2-79a63f6a3657
+                  - button [ref=e2105]:
+                    - img [ref=e2106]
+                - button [ref=e2108] [cursor=pointer]:
+                  - img [ref=e2109]
+                - button [ref=e2112] [cursor=pointer]:
+                  - img [ref=e2113]
+            - generic [ref=e2118]:
+              - generic [ref=e2119]:
+                - generic [ref=e2120]:
+                  - img [ref=e2121]
+                  - heading "EDIT_CHAPTER_测试小说_1774070281515" [level=3] [ref=e2124]
+                  - generic [ref=e2125]: 草稿
+                - paragraph
+                - generic [ref=e2126]:
+                  - generic [ref=e2127]:
+                    - img [ref=e2128]
+                    - text: 0 章
+                  - generic [ref=e2131]:
+                    - img [ref=e2132]
+                    - text: 0 角色
+                  - generic [ref=e2137]:
+                    - img [ref=e2138]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2141]:
+                - link "剧本" [ref=e2142] [cursor=pointer]:
+                  - /url: /scripts?novel_id=1948eed9-7a96-4e57-8db7-2081130e525b
+                  - button "剧本" [ref=e2143]:
+                    - img [ref=e2144]
+                    - text: 剧本
+                - button [ref=e2147] [cursor=pointer]:
+                  - img [ref=e2148]
+                - link [ref=e2151] [cursor=pointer]:
+                  - /url: /novels/1948eed9-7a96-4e57-8db7-2081130e525b
+                  - button [ref=e2152]:
+                    - img [ref=e2153]
+                - button [ref=e2155] [cursor=pointer]:
+                  - img [ref=e2156]
+                - button [ref=e2159] [cursor=pointer]:
+                  - img [ref=e2160]
+            - generic [ref=e2165]:
+              - generic [ref=e2166]:
+                - generic [ref=e2167]:
+                  - img [ref=e2168]
+                  - heading "CREATE_测试小说_1774070276405" [level=3] [ref=e2171]
+                  - generic [ref=e2172]: 草稿
+                - paragraph
+                - generic [ref=e2173]:
+                  - generic [ref=e2174]:
+                    - img [ref=e2175]
+                    - text: 0 章
+                  - generic [ref=e2178]:
+                    - img [ref=e2179]
+                    - text: 0 角色
+                  - generic [ref=e2184]:
+                    - img [ref=e2185]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2188]:
+                - link "剧本" [ref=e2189] [cursor=pointer]:
+                  - /url: /scripts?novel_id=d90670d7-4af9-4763-81b7-f8ae63384213
+                  - button "剧本" [ref=e2190]:
+                    - img [ref=e2191]
+                    - text: 剧本
+                - button [ref=e2194] [cursor=pointer]:
+                  - img [ref=e2195]
+                - link [ref=e2198] [cursor=pointer]:
+                  - /url: /novels/d90670d7-4af9-4763-81b7-f8ae63384213
+                  - button [ref=e2199]:
+                    - img [ref=e2200]
+                - button [ref=e2202] [cursor=pointer]:
+                  - img [ref=e2203]
+                - button [ref=e2206] [cursor=pointer]:
+                  - img [ref=e2207]
+            - generic [ref=e2212]:
+              - generic [ref=e2213]:
+                - generic [ref=e2214]:
+                  - img [ref=e2215]
+                  - heading "AI_CHAPTER_测试小说_1774070168357" [level=3] [ref=e2218]
+                  - generic [ref=e2219]: 草稿
+                - paragraph
+                - generic [ref=e2220]:
+                  - generic [ref=e2221]:
+                    - img [ref=e2222]
+                    - text: 0 章
+                  - generic [ref=e2225]:
+                    - img [ref=e2226]
+                    - text: 0 角色
+                  - generic [ref=e2231]:
+                    - img [ref=e2232]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2235]:
+                - link "剧本" [ref=e2236] [cursor=pointer]:
+                  - /url: /scripts?novel_id=10e3033a-8ae0-4ee2-971c-373f42550255
+                  - button "剧本" [ref=e2237]:
+                    - img [ref=e2238]
+                    - text: 剧本
+                - button [ref=e2241] [cursor=pointer]:
+                  - img [ref=e2242]
+                - link [ref=e2245] [cursor=pointer]:
+                  - /url: /novels/10e3033a-8ae0-4ee2-971c-373f42550255
+                  - button [ref=e2246]:
+                    - img [ref=e2247]
+                - button [ref=e2249] [cursor=pointer]:
+                  - img [ref=e2250]
+                - button [ref=e2253] [cursor=pointer]:
+                  - img [ref=e2254]
+            - generic [ref=e2259]:
+              - generic [ref=e2260]:
+                - generic [ref=e2261]:
+                  - img [ref=e2262]
+                  - heading "EDIT_CHAPTER_测试小说_1774070167898" [level=3] [ref=e2265]
+                  - generic [ref=e2266]: 草稿
+                - paragraph
+                - generic [ref=e2267]:
+                  - generic [ref=e2268]:
+                    - img [ref=e2269]
+                    - text: 0 章
+                  - generic [ref=e2272]:
+                    - img [ref=e2273]
+                    - text: 0 角色
+                  - generic [ref=e2278]:
+                    - img [ref=e2279]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2282]:
+                - link "剧本" [ref=e2283] [cursor=pointer]:
+                  - /url: /scripts?novel_id=00b5192e-d319-4e90-9a9d-974c42065fd8
+                  - button "剧本" [ref=e2284]:
+                    - img [ref=e2285]
+                    - text: 剧本
+                - button [ref=e2288] [cursor=pointer]:
+                  - img [ref=e2289]
+                - link [ref=e2292] [cursor=pointer]:
+                  - /url: /novels/00b5192e-d319-4e90-9a9d-974c42065fd8
+                  - button [ref=e2293]:
+                    - img [ref=e2294]
+                - button [ref=e2296] [cursor=pointer]:
+                  - img [ref=e2297]
+                - button [ref=e2300] [cursor=pointer]:
+                  - img [ref=e2301]
+            - generic [ref=e2306]:
+              - generic [ref=e2307]:
+                - generic [ref=e2308]:
+                  - img [ref=e2309]
+                  - heading "CREATE_测试小说_1774070162660" [level=3] [ref=e2312]
+                  - generic [ref=e2313]: 草稿
+                - paragraph
+                - generic [ref=e2314]:
+                  - generic [ref=e2315]:
+                    - img [ref=e2316]
+                    - text: 0 章
+                  - generic [ref=e2319]:
+                    - img [ref=e2320]
+                    - text: 0 角色
+                  - generic [ref=e2325]:
+                    - img [ref=e2326]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2329]:
+                - link "剧本" [ref=e2330] [cursor=pointer]:
+                  - /url: /scripts?novel_id=40c17b38-c4b2-442e-ae05-951003bbe987
+                  - button "剧本" [ref=e2331]:
+                    - img [ref=e2332]
+                    - text: 剧本
+                - button [ref=e2335] [cursor=pointer]:
+                  - img [ref=e2336]
+                - link [ref=e2339] [cursor=pointer]:
+                  - /url: /novels/40c17b38-c4b2-442e-ae05-951003bbe987
+                  - button [ref=e2340]:
+                    - img [ref=e2341]
+                - button [ref=e2343] [cursor=pointer]:
+                  - img [ref=e2344]
+                - button [ref=e2347] [cursor=pointer]:
+                  - img [ref=e2348]
+            - generic [ref=e2353]:
+              - generic [ref=e2354]:
+                - generic [ref=e2355]:
+                  - img [ref=e2356]
+                  - heading "AI_CHAPTER_测试小说_1774070064760" [level=3] [ref=e2359]
+                  - generic [ref=e2360]: 草稿
+                - paragraph
+                - generic [ref=e2361]:
+                  - generic [ref=e2362]:
+                    - img [ref=e2363]
+                    - text: 0 章
+                  - generic [ref=e2366]:
+                    - img [ref=e2367]
+                    - text: 0 角色
+                  - generic [ref=e2372]:
+                    - img [ref=e2373]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2376]:
+                - link "剧本" [ref=e2377] [cursor=pointer]:
+                  - /url: /scripts?novel_id=402e6e89-6093-4870-bacf-61020e5b8870
+                  - button "剧本" [ref=e2378]:
+                    - img [ref=e2379]
+                    - text: 剧本
+                - button [ref=e2382] [cursor=pointer]:
+                  - img [ref=e2383]
+                - link [ref=e2386] [cursor=pointer]:
+                  - /url: /novels/402e6e89-6093-4870-bacf-61020e5b8870
+                  - button [ref=e2387]:
+                    - img [ref=e2388]
+                - button [ref=e2390] [cursor=pointer]:
+                  - img [ref=e2391]
+                - button [ref=e2394] [cursor=pointer]:
+                  - img [ref=e2395]
+            - generic [ref=e2400]:
+              - generic [ref=e2401]:
+                - generic [ref=e2402]:
+                  - img [ref=e2403]
+                  - heading "EDIT_CHAPTER_测试小说_1774070064306" [level=3] [ref=e2406]
+                  - generic [ref=e2407]: 草稿
+                - paragraph
+                - generic [ref=e2408]:
+                  - generic [ref=e2409]:
+                    - img [ref=e2410]
+                    - text: 0 章
+                  - generic [ref=e2413]:
+                    - img [ref=e2414]
+                    - text: 0 角色
+                  - generic [ref=e2419]:
+                    - img [ref=e2420]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2423]:
+                - link "剧本" [ref=e2424] [cursor=pointer]:
+                  - /url: /scripts?novel_id=f8f0dbce-5c10-4377-a3f3-d1a3dd93316f
+                  - button "剧本" [ref=e2425]:
+                    - img [ref=e2426]
+                    - text: 剧本
+                - button [ref=e2429] [cursor=pointer]:
+                  - img [ref=e2430]
+                - link [ref=e2433] [cursor=pointer]:
+                  - /url: /novels/f8f0dbce-5c10-4377-a3f3-d1a3dd93316f
+                  - button [ref=e2434]:
+                    - img [ref=e2435]
+                - button [ref=e2437] [cursor=pointer]:
+                  - img [ref=e2438]
+                - button [ref=e2441] [cursor=pointer]:
+                  - img [ref=e2442]
+            - generic [ref=e2447]:
+              - generic [ref=e2448]:
+                - generic [ref=e2449]:
+                  - img [ref=e2450]
+                  - heading "CREATE_测试小说_1774070059036" [level=3] [ref=e2453]
+                  - generic [ref=e2454]: 草稿
+                - paragraph
+                - generic [ref=e2455]:
+                  - generic [ref=e2456]:
+                    - img [ref=e2457]
+                    - text: 0 章
+                  - generic [ref=e2460]:
+                    - img [ref=e2461]
+                    - text: 0 角色
+                  - generic [ref=e2466]:
+                    - img [ref=e2467]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2470]:
+                - link "剧本" [ref=e2471] [cursor=pointer]:
+                  - /url: /scripts?novel_id=d8892684-084d-453b-8a1d-1a23477dd3b1
+                  - button "剧本" [ref=e2472]:
+                    - img [ref=e2473]
+                    - text: 剧本
+                - button [ref=e2476] [cursor=pointer]:
+                  - img [ref=e2477]
+                - link [ref=e2480] [cursor=pointer]:
+                  - /url: /novels/d8892684-084d-453b-8a1d-1a23477dd3b1
+                  - button [ref=e2481]:
+                    - img [ref=e2482]
+                - button [ref=e2484] [cursor=pointer]:
+                  - img [ref=e2485]
+                - button [ref=e2488] [cursor=pointer]:
+                  - img [ref=e2489]
+            - generic [ref=e2494]:
+              - generic [ref=e2495]:
+                - generic [ref=e2496]:
+                  - img [ref=e2497]
+                  - heading "CREATE_测试小说_1774069601219" [level=3] [ref=e2500]
+                  - generic [ref=e2501]: 草稿
+                - paragraph
+                - generic [ref=e2502]:
+                  - generic [ref=e2503]:
+                    - img [ref=e2504]
+                    - text: 0 章
+                  - generic [ref=e2507]:
+                    - img [ref=e2508]
+                    - text: 0 角色
+                  - generic [ref=e2513]:
+                    - img [ref=e2514]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2517]:
+                - link "剧本" [ref=e2518] [cursor=pointer]:
+                  - /url: /scripts?novel_id=586d4314-ddb4-46a5-9c31-ffb86470eb16
+                  - button "剧本" [ref=e2519]:
+                    - img [ref=e2520]
+                    - text: 剧本
+                - button [ref=e2523] [cursor=pointer]:
+                  - img [ref=e2524]
+                - link [ref=e2527] [cursor=pointer]:
+                  - /url: /novels/586d4314-ddb4-46a5-9c31-ffb86470eb16
+                  - button [ref=e2528]:
+                    - img [ref=e2529]
+                - button [ref=e2531] [cursor=pointer]:
+                  - img [ref=e2532]
+                - button [ref=e2535] [cursor=pointer]:
+                  - img [ref=e2536]
+            - generic [ref=e2541]:
+              - generic [ref=e2542]:
+                - generic [ref=e2543]:
+                  - img [ref=e2544]
+                  - heading "测试小说123" [level=3] [ref=e2547]
+                  - generic [ref=e2548]: 草稿
+                - paragraph [ref=e2549]: 测试描述
+                - generic [ref=e2550]:
+                  - generic [ref=e2551]:
+                    - img [ref=e2552]
+                    - text: 0 章
+                  - generic [ref=e2555]:
+                    - img [ref=e2556]
+                    - text: 0 角色
+                  - generic [ref=e2561]:
+                    - img [ref=e2562]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2565]:
+                - link "剧本" [ref=e2566] [cursor=pointer]:
+                  - /url: /scripts?novel_id=9a51e50b-5223-4915-aec6-4e7a0244c439
+                  - button "剧本" [ref=e2567]:
+                    - img [ref=e2568]
+                    - text: 剧本
+                - button [ref=e2571] [cursor=pointer]:
+                  - img [ref=e2572]
+                - link [ref=e2575] [cursor=pointer]:
+                  - /url: /novels/9a51e50b-5223-4915-aec6-4e7a0244c439
+                  - button [ref=e2576]:
+                    - img [ref=e2577]
+                - button [ref=e2579] [cursor=pointer]:
+                  - img [ref=e2580]
+                - button [ref=e2583] [cursor=pointer]:
+                  - img [ref=e2584]
+            - generic [ref=e2589]:
+              - generic [ref=e2590]:
+                - generic [ref=e2591]:
+                  - img [ref=e2592]
+                  - heading "E2E测试小说-已更新" [level=3] [ref=e2595]
+                  - generic [ref=e2596]: 连载中
+                - paragraph [ref=e2597]: 这是自动化测试创建的小说
+                - generic [ref=e2598]:
+                  - generic [ref=e2599]:
+                    - img [ref=e2600]
+                    - text: 0 章
+                  - generic [ref=e2603]:
+                    - img [ref=e2604]
+                    - text: 0 角色
+                  - generic [ref=e2609]:
+                    - img [ref=e2610]
+                    - text: 更新于 2026-03-21
+              - generic [ref=e2613]:
+                - link "剧本" [ref=e2614] [cursor=pointer]:
+                  - /url: /scripts?novel_id=a48c4ef9-8c0f-4ea1-9a7b-acf090b7c397
+                  - button "剧本" [ref=e2615]:
+                    - img [ref=e2616]
+                    - text: 剧本
+                - button [ref=e2619] [cursor=pointer]:
+                  - img [ref=e2620]
+                - link [ref=e2623] [cursor=pointer]:
+                  - /url: /novels/a48c4ef9-8c0f-4ea1-9a7b-acf090b7c397
+                  - button [ref=e2624]:
+                    - img [ref=e2625]
+                - button [ref=e2627] [cursor=pointer]:
+                  - img [ref=e2628]
+                - button [ref=e2631] [cursor=pointer]:
+                  - img [ref=e2632]
+            - generic [ref=e2637]:
+              - generic [ref=e2638]:
+                - generic [ref=e2639]:
+                  - img [ref=e2640]
+                  - heading "test" [level=3] [ref=e2643]
+                  - generic [ref=e2644]: 草稿
+                - paragraph [ref=e2645]: 简单说说
+                - generic [ref=e2646]:
+                  - generic [ref=e2647]:
+                    - img [ref=e2648]
+                    - text: 0 章
+                  - generic [ref=e2651]:
+                    - img [ref=e2652]
+                    - text: 0 角色
+                  - generic [ref=e2657]:
+                    - img [ref=e2658]
+                    - text: 更新于 2026-03-20
+              - generic [ref=e2661]:
+                - link "剧本" [ref=e2662] [cursor=pointer]:
+                  - /url: /scripts?novel_id=8b385d36-2d1e-4da6-a4fe-1e7a46346324
+                  - button "剧本" [ref=e2663]:
+                    - img [ref=e2664]
+                    - text: 剧本
+                - button [ref=e2667] [cursor=pointer]:
+                  - img [ref=e2668]
+                - link [ref=e2671] [cursor=pointer]:
+                  - /url: /novels/8b385d36-2d1e-4da6-a4fe-1e7a46346324
+                  - button [ref=e2672]:
+                    - img [ref=e2673]
+                - button [ref=e2675] [cursor=pointer]:
+                  - img [ref=e2676]
+                - button [ref=e2679] [cursor=pointer]:
+                  - img [ref=e2680]
+  - alert [ref=e2683]
+```

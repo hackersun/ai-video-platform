@@ -1,0 +1,5114 @@
+Agent Plan / Coding Plan
+火山方舟
+
+
+
+
+版权所有©北京火山引擎科技有限公司
+Agent Plan / Coding Plan                       法律声明
+
+
+
+
+ 法律声明
+ 本《火山方舟》的所有内容，包括但不限于文字、商标、架构、图示、图片、页面布局
+ 等, 其知识产权（著作权、商标权、专利权、商业秘密等）归属于北京火山引擎科技有限
+ 公司及其关联公司（火山引擎），非经火山引擎书面同意，任何个人和组织不得复制、使
+ 用、修改、转发或以任何违反本《火山方舟》所承载的目的进行传播。
+
+ 本《火山方舟》陈述内容仅作为产品的通用性介绍和参考性指引，火山引擎保留按“现
+ 状”和“当前可用”的形式提供产品和服务的权利。火山引擎不对本《火山方舟》中所载的
+ 产品功能、性质、质量、标准等内容进行明示或默示的保证和承诺，最终以您与火山引擎
+ 实际签署的协议为准。
+
+ 如您发现本《火山方舟》有任何错误或歧义，或发现有对本《火山方舟》、产品本身的侵
+ 权行为，请与火山引擎取得联系。
+
+ 联系方式：service@volcengine.com，400-850-0030
+      （周一至周五 10:00-18:00）
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司      1
+Agent Plan / Coding Plan                       目录
+
+
+
+
+ 目录
+ 法律声明                                            1
+ 目录                                              1
+ 1. 套餐概览                                         1
+ 2. 快速开始                                        13
+ 3. 接入 AI 工具                                    19
+    3.1 Claude Code                             19
+    3.2 OpenCode                               29
+    3.3 OpenClaw                               38
+    3.4 Hermes Agent                           54
+    3.5 TRAE                                    61
+    3.6 OpenViking                             63
+    3.7 其他工具                                    71
+ 4. 接入多模态生成模型                                  74
+    4.1 接入向量化模型                                74
+    4.2 接入视觉模型                                 78
+ 5. 配置 Harness                                 93
+    5.1 联网搜索（Beta版）                            93
+ 6. 实践指南                                       102
+    6.1 使用 Agent Plan 开发短视频网站                  102
+    6.2 使用 Agent Plan 开发学习教育网站                 107
+ 7. 常见问题                                       112
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司         1
+Agent Plan / Coding Plan                                            1. 套餐概览
+
+
+
+
+1. 套餐概览
+方舟 Agent Plan 是面向个人用户推出的订阅式大模型服务套餐包，新增支持全模态模型及专属 Harness，
+采用精细化积分计费模式，助力开启 Agent 场景的全新体验。
+
+核心优势
+• 全模态模型及 Harness 升级：提供文本生成、图像生成、视频生成、向量化等能力模型，新增联网搜
+  索等专属 Harness。
+• 量大管饱性价比高：灵活提供 Small、Medium、Large、Max 四档套餐，兼顾大容量与高性价比，相较
+  于后付费模式，享受更高折扣。
+• 兼容主流编程与Agent工具：多生态兼容，无缝接入 OpenClaw、Hermes Agent、Claude Code、
+  OpenCode 等主流编程及 Agent 工具。
+• 包月省心管理：包月形式订阅，减少预算管理负担。
+• 用量清晰可查：采用 Agent 燃料值（Agent Fuel Point，后简称 AFP）作为统一用量单位，额度用量清
+  晰可查。
+
+
+     说明
+     已购买套餐用户？参考快速开始 开启 AI 工具使用之旅。
+
+
+
+套餐权益
+
+     注意
+     Small 套餐仅供轻量化体验，不支持视频生成，建议选购 Medium 及以上套餐。
+
+
+
+支持模型及 Harness
+不同套餐支持的模型及 Harness 不同，详细信息如下：
+
+
+  分类                领域     模型名称        Small   Medium   Large   Max
+
+                           doubao-
+                    文本生成
+  模型                       seed-2.0-   √       √        √       √
+                    （极速）
+                           mini
+
+
+                           doubao-
+                           seed-2.0-
+                           lite
+                    文本生成
+                           deepseek-   √       √        √       √
+                    （标准）
+                           v4-flash-
+                           beta
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司                        1/113
+Agent Plan / Coding Plan                                     1. 套餐概览
+
+
+  分类                领域     模型名称   Small   Medium   Large   Max
+
+
+                            说
+                            明
+                            de
+                            ep
+                            se
+                            ek
+                            -
+                            v4
+                            -
+                            fla
+                            sh
+                            -
+                            be
+                            ta
+                            长
+                            度
+                            限
+                            制
+                            如
+                            下
+                            ：
+
+                            •上
+                             下
+                             文
+                             窗
+                             口
+                             ：
+                             1
+                             0
+                             0
+                             0
+                             k
+                            •最
+                             大
+                             输
+                             出
+                             长
+                             度
+                             ：
+                             3
+                             8
+                             4
+                             k
+
+
+
+                            注
+                            意
+
+
+                            版权所有©北京火山引擎科技有限公司                    2/113
+Agent Plan / Coding Plan                                            1. 套餐概览
+
+
+  分类                领域     模型名称        Small   Medium   Large   Max
+
+                               de
+                               ep
+                               se
+                               ek
+                               -
+                               v4
+                               -
+                               fla
+                               sh
+                               -
+                               be
+                               ta
+                               为
+                               尝
+                               鲜
+                               版
+                               体
+                               验
+                               ，
+                               如
+                               遇
+                               访
+                               问
+                               拥
+                               堵
+                               或
+                               频
+                               繁
+                               出
+                               现
+                               限
+                               流
+                               错
+                               误
+                               ，
+                               建
+                               议
+                               切
+                               换
+                               至
+                               其
+                               他
+                               模
+                               型
+                               。
+
+
+
+
+                           doubao-     √       √        √       √
+                           seed-2.0-
+
+
+                              版权所有©北京火山引擎科技有限公司                        3/113
+Agent Plan / Coding Plan                                          1. 套餐概览
+
+
+  分类                领域     模型名称        Small   Medium   Large   Max
+                           code
+                           doubao-
+                           seed-2.0-
+                           pro
+                           deepseek-
+                           v3.2
+                           minimax-
+                           m2.7
+                           glm-5.1
+                           kimi-k2.6
+                           deepseek-
+                           v4-pro-
+                           beta
+
+
+                              说
+                              明
+                              de
+                              ep
+                              se
+                              ek
+                              -
+                              v4
+                              -
+                              pr
+                    文本生成
+                              o-
+                    （进阶）
+                              be
+                              ta
+                              长
+                              度
+                              限
+                              制
+                              如
+                              下
+                              ：
+
+                              •上
+                               下
+                               文
+                               窗
+                               口
+                               ：
+                               1
+                               0
+                               0
+                               0
+                               k
+                              •最
+                               大
+                               输
+                               出
+
+
+                              版权所有©北京火山引擎科技有限公司                       4/113
+Agent Plan / Coding Plan                                        1. 套餐概览
+
+
+  分类                领域     模型名称      Small   Medium   Large   Max
+                                 长
+                                 度
+                                 ：
+                                 3
+                                 8
+                                 4
+                                 k
+
+
+
+                            注
+                            意
+                            de
+                            ep
+                            se
+                            ek
+                            -
+                            v4
+                            -
+                            pr
+                            o-
+                            be
+                            ta
+                            为
+                            尝
+                            鲜
+                            版
+                            体
+                            验
+                            ，
+                            如
+                            遇
+                            访
+                            问
+                            拥
+                            堵
+                            或
+                            频
+                            繁
+                            出
+                            现
+                            限
+                            流
+                            错
+                            误
+                            ，
+                            建
+                            议
+                            切
+                            换
+                            至
+
+
+                            版权所有©北京火山引擎科技有限公司                       5/113
+Agent Plan / Coding Plan                                                                  1. 套餐概览
+
+
+  分类                领域              模型名称          Small   Medium        Large         Max
+                                        其
+                                        他
+                                        模
+                                        型
+                                        。
+
+
+
+                                    doubao-
+                    向量化             embeddin      √       √             √             √
+                                    g-vision
+
+                                    doubao-
+                    图片生成            seedream      √       √             √             √
+                                    -5.0-lite
+
+                                    doubao-
+                    视频生成            seedance-     ×       √             √             √
+                                    1.5-pro
+
+                                    doubao-
+                    视频生成            seedance-     ×       √             √             √
+                                    2.0
+
+                                    doubao-
+                    视频生成            seedance-     ×       √             √             √
+                                    2.0-fast
+
+
+                                                  √       √             √             √
+  Harness           联网搜索            -             每月50次   每月150次        每月400次        每月800次
+                                                  免费额度    免费额度          免费额度          免费额度
+
+
+
+
+用量说明
+采用积分（AFP）抵扣模式，详细抵扣规则请参见 积分计费机制（AFP）。
+
+
+     注意
+     图片生成模型、视频生成模型没有五小时、周额度限制，仅受模型日额度、套餐月额度限制。
+
+
+
+  套餐                       Small                Medium        Large             Max
+
+  价格                       40 元/月               200 元/月       500 元/月           1000 元/月
+
+  月额度（AFP）                 20,000               100,000       250,000           500,000
+
+  周额度（AFP）                 7,000                35,000        87,500            175,000
+
+                           2,000                10,000        25,000            50,000
+
+
+                                        版权所有©北京火山引擎科技有限公司                                    6/113
+Agent Plan / Coding Plan                                                    1. 套餐概览
+
+
+  套餐                       Small           Medium       Large     Max
+  五小时额度
+  （AFP）
+
+  视觉模型日额度
+                           10,000          50,000       125,000   250,000
+  （AFP）
+
+您可以在 Agent Plan 控制台                 查看 AFP用量及模型调用明细信息。其中模型调用明细数据存在 0.5 - 1天
+的延迟。
+
+有效期
+套餐有效期以自然月为单位，自购买成功当日开始计算。1 个月套餐有效期示例：01.31日订购成功，
+02.28日 23:59 到期（非闰年）。
+
+额度刷新规则
+套餐额度在时间周期内耗尽后，需要等待下一个周期自动恢复额度，不会消耗其他资源包或账户余额。
+
+• 五小时限额：根据首次请求发生时间，以 5 小时为周期定时刷新限额。
+• 周限额：每周一 00:00:00 重置周限额。
+• 日限额：每日 00:00:00 重置日限额（仅限视觉模型）。
+• 月限额：每订阅月第 1 日 00:00:00 重置月限额。
+
+
+额度使用限制
+• 同一订阅套餐可在所有支持的工具中使用，额度共享。
+• 文本生成模型及向量化模型不可用于 API 调用，在非 AI 工具中使用 Agent Plan 权益对应的 Base URL 和
+  API Key 有可能被识别为滥用/违规，会导致订阅停用或账号封禁。
+
+
+积分计费机制（AFP）
+
+AFP 定义
+Agent 燃料值（Agent Fuel Point，简称 AFP）是 Agent Plan 套餐的统一用量计费单位，用于量化智能体
+（Agent）资源的消耗。
+
+抵扣公式
+单次请求 AFP 消耗：
+
+• 文本生成模型、向量化模型： (输入 token * 输入抵扣系数 + 输出 token * 输出抵扣系数) / 10,000
+• 视频生成模型： 消耗的原始 token / 10,000 * 抵扣系数
+• 图片生成模型： 成功生成的图片张数 * 抵扣系数
+
+
+     注意
+     生成视频预估消耗的 token 可参见价格示例                    中 token 用量估算公式。
+
+
+
+
+                                      版权所有©北京火山引擎科技有限公司                        7/113
+Agent Plan / Coding Plan                                                         1. 套餐概览
+
+
+抵扣系数
+根据模型及 Harness 的层级不同，AFP 的抵扣系数也不同。
+
+模型
+• 文本生成模型、向量化模型：模型决定模型抵扣系数，输入长度决定输入分段系数
+
+
+
+                                                  输入抵扣系数
+  模型类别                     模型                     (模型抵扣系数 × 输           输出抵扣系数
+                                                  入分段系数)
+
+
+
+                                                  0.25 × 输入分段系数
+
+                                                  • [0, 32k]：0.25 ×
+  文本生成                     doubao-seed-2.0-         0.67
+                                                  • [32k, 128k]：0.25    0.25
+  （极速）                     mini
+                                                    ×1
+                                                  • [128k, 256k]：0.25
+                                                    ×2
+
+
+
+                                                  0.5 × 输入分段系数
+
+                                                  • [0, 32k]：0.5 ×
+                           doubao-seed-2.0-lite     0.67
+  文本生成
+                           deepseek-v4-flash-     • [32k, 128k]：0.5 ×   0.5
+  （标准）
+                           beta                     1
+                                                  • [128k, 256k]：0.5
+                                                    ×2
+
+
+
+                                                  2.5 × 输入分段系数
+
+                           doubao-seed-2.0-       • [0, 32k]：2.5 ×
+                           code                     0.67
+  文本生成
+                           doubao-seed-2.0-pro    • [32k, 128k]：2.5 ×   2.5
+  （进阶）
+                           deepseek-v3.2            1
+                           minimax-m2.7
+                                                  • [128k, 256k]：2.5
+                                                    ×2
+
+
+
+                                                  4.5 × 输入分段系数
+
+  文本生成                     glm-5.1                • [0, 32k]：4.5 ×
+                                                    0.67                4.5
+  （进阶）                     kimi-k2.6
+                                                  • [32k, 128k]：4.5 ×
+                                                    1
+
+
+                                  版权所有©北京火山引擎科技有限公司                                 8/113
+Agent Plan / Coding Plan                                                      1. 套餐概览
+
+
+
+
+                                               输入抵扣系数
+  模型类别                     模型                  (模型抵扣系数 × 输           输出抵扣系数
+                                               入分段系数)
+
+                                               • [128k, 256k]：4.5
+                                                 ×2
+
+
+
+                                               5.5 × 输入分段系数
+
+                                               • [0, 32k]：4.5 ×
+  文本生成                     deepseek-v4-pro-      0.67
+                                               • [32k, 128k]：4.5 ×   5.5
+  （进阶）                     beta
+                                                 1
+                                               • [128k, 256k]：4.5
+                                                 ×2
+
+
+
+                                               0.5 × 输入分段系数
+
+                                               • [0, 32k]：0.5 ×
+                           doubao-embedding-     0.67
+  向量化                                          • [32k, 128k]：0.5 ×   0.5
+                           vision
+                                                 1
+                                               • [128k, 256k]：0.5
+                                                 ×2
+
+
+• 视频生成模型、图片生成模型：模型决定抵扣系数
+
+
+  模型类别                     模型                  抵扣系数                  单位
+
+                                                 输出是否包含声
+                                                 音
+                           doubao-
+  视频生成                                                               token
+                           seedance-1.5-pro    • 无声视频：36
+                                               • 有声视频：72
+
+
+                                                 输入是否包含视
+                                                 频
+                           doubao-
+  视频生成                                                               token
+                           seedance-2.0        • 含视频：140
+                                               • 不含视频：230
+
+
+                                                 输入是否包含视
+                           doubao-               频
+  视频生成                                                               token
+                           seedance-2.0-fast
+                                               • 含视频：110
+
+
+                                 版权所有©北京火山引擎科技有限公司                               9/113
+Agent Plan / Coding Plan                                           1. 套餐概览
+
+
+  模型类别                     模型                  抵扣系数           单位
+                                               • 不含视频：185
+
+
+                                                    成功生成的图片
+                           doubao-                  张数
+  图片生成                                                        张
+                           seedream-5.0-lite
+                                               99
+
+
+
+Harness
+联网搜索（Beta版）：本期不消耗套餐内AFP，根据订阅套餐会赠送一定的免费额度，支持开启超额后付
+费。
+
+抵扣示例
+• 文本生成模型示例：当模型设置为 doubao-seed-2.0-code ，某次请求输入为 50k token，输出为 0.5k
+  token。
+
+
+ Plain
+
+    本次 AFP 消耗
+    = (输入 token * 输入抵扣系数 + 输出 token * 输出抵扣系数) / 10,000
+    = (50000 * 2.5 + 500 * 2.5) / 10000
+    = 12.625 AFP
+
+
+• 视频生成模型示例：当模型设置为 doubao-seedance-2.0-fast，某次视频任务输入包含视频，成功生
+  成视频，消耗 150k token。
+
+
+ Plain
+
+    本次 AFP 消耗
+    = 消耗的原始 token / 10000 * 抵扣系数
+    = 150000 / 10000 * 110
+    = 1650 AFP
+
+
+• 图片生成模型示例：当模型设置为 doubao-seedream-5.0-lite，成功生成一张图片，消耗 99 AFP。
+
+
+订阅规则
+
+购买限制
+单次下单套餐时长不能超过12个月，存量套餐时长 + 新购套餐时长不能超过24个月。
+
+续费规则
+• 自动续费：若您在下单时勾选自动续费，即连续包月，每次默认续费 1 个月，到期会自动扣除下一个
+  月的套餐费用。
+
+
+                                 版权所有©北京火山引擎科技有限公司                   10/113
+Agent Plan / Coding Plan                                     1. 套餐概览
+
+
+• 手动续费：若您在下单时没有勾选自动续费，可在开通管理                  进行续费操作。
+
+
+升配规则
+套餐有效期不变，补齐升配套餐的差价，即可升配，可在开通管理                     进行升配操作。套餐仅支持升配，
+不支持降配。
+
+• 差价计算公式
+    升配需补差价金额 = (升配套餐月价 - 原套餐月价) / 30 天 * 套餐剩余时长
+• 额度折算规则
+   ◦ 月限额： 升配后当月可用额度 = 升配套餐月额度 * 当月剩余时长占比 + 原套餐月额度 * 当月已用时长占比
+   ◦ 5小时限额与周限额：升配完成后，5小时限额、周限额均直接为升配套餐对应的限额。
+
+
+退订规则
+支持非七天无理由自助退订，退订说明及退款计算公式可详见非七天无理由退订说明                    。具体操作如
+下：
+
+1. 进入火山引擎费用中心-退订管理          。
+2. 在非七天无理由退订页签，在产品列过滤火山方舟订阅套餐，找到要退订的套餐，在操作列单击退
+   订，根据界面提示完成套餐退订。
+
+
+
+
+接入 AI 工具
+
+Claude Code
+AI 终端编程助手，自然语言编程
+
+
+TRAE
+智能 IDE，构建新一代编程工作流
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                   11/113
+Agent Plan / Coding Plan                       1. 套餐概览
+
+
+Roo Code
+轻量级编程助手
+
+
+OpenCode
+开源 AI 编程代理工具
+
+
+Cline
+VSCode 扩展，代码补全和调试
+
+
+Kilo Code
+轻量高性能编程工具
+
+
+OpenClaw
+开源、自托管个人 AI 助手
+
+
+Cursor
+AI 原生代码编辑器
+
+
+Hermes Agent
+开源自主 AI 智能体
+
+
+常见问题
+常见问题
+
+数据授权使用协议
+火山引擎数据授权使用协议
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司     12/113
+Agent Plan / Coding Plan                           2. 快速开始
+
+
+
+
+2. 快速开始
+本文介绍如何在 AI 工具中快速配置和使用 Agent Plan。
+
+一、购买 Agent Plan
+进入 Agent Plan 控制台          ，按需购买套餐。套餐介绍参见套餐概览。
+
+二、选择 AI 工具
+Agent Plan 支持主流的 AI 工具，可按需选择。
+
+
+Claude Code
+AI 终端编程助手，自然语言编程
+
+
+TRAE
+智能 IDE，构建新一代编程工作流
+
+
+Roo Code
+轻量级编程助手
+
+
+OpenCode
+开源 AI 编程代理工具
+
+
+Cline
+VSCode 扩展，代码补全和调试
+
+
+Kilo Code
+轻量高性能编程工具
+
+
+OpenClaw
+开源、自托管个人 AI 助手
+
+
+Cursor
+AI 原生代码编辑器
+
+
+Hermes Agent
+开源自主 AI 智能体
+
+
+三、配置 AI 工具
+下面以 Claude Code 为例介绍如何使用 Agent Plan。
+
+1.安装 Claude Code
+
+
+                               版权所有©北京火山引擎科技有限公司     13/113
+Agent Plan / Coding Plan                                                                          2. 快速开始
+
+
+请参考 官方文档的安装章节                   完成 Claude Code 安装 。
+
+2. 配置 Claude Code
+
+需配置的信息
+如您对 Claude Code 熟悉 / 使用 cc-switch 等配置工具 / 本地已有配置 / 已有本地 Agent等，可获取下列信
+息直接配置/让本地 Agent 帮您配置。
+
+• ANTHROPIC_BASE_URL： {{pPzrRa}} ，为专属 Base URL，其他 Base URL 无法在 Agent Plan 中使用。
+• ANTHROPIC_AUTH_TOKEN：获取 Agent Plan API Key                ，为专属 API Key，其他方舟 API Key 如Coding
+  Plan API Key 无法在 Agent Plan 中使用。
+
+
+
+
+• ANTHROPIC_MODEL：见 支持模型及 Harness，不同 Agent Plan 套餐支持的模型不同。请先配置文本生
+  成模型，后续图片生成模型、视频生成模型等可在 Claude Code 中使用自然语言/Skill 等方式完成配
+  置。
+
+
+     注意
+     若您本地已有Claude Code配置（如终端启动命令 .bashrc / .zshrc 等），可能因为配置冲突导致
+     Claude Code 不生效，可以尝试备份并清理本地配置后再次运行。
+
+
+
+方式 1：自动化助手（推荐）
+Ark Helper 是一个编码工具助手，支持快速配置选择的工具接入 Agent Plan。安装并运行该助手，根据界
+面提示操作可自动完成工具配置，降低手动配置的时间成本和出错风险。
+
+
+     注意
+    • Ark Helper 仅支持 MacOS、Linux 系统，暂不支持 Windows 系统。
+    • 以下配置步骤及截图为 Ark Helper 首次使用指引；非首次使用请按界面提示完成套餐配置和工
+      具配置。
+
+
+1. 执行以下命令安装 Ark Helper。
+
+
+    Bash
+
+       curl -fsSL https://lf3-static.bytednsdoc.com/obj/eden-cn/ylwslo-yrh/ljhwZthlaukjlkulzlp/install.sh
+       | sh
+
+
+安装完成后，执行以下命令查看安装的版本号。
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                14/113
+Agent Plan / Coding Plan                                                             2. 快速开始
+
+
+ Plain
+
+    ```Bash
+    ark-helper --version
+
+
+
+
+    2. 在命令行界面输入`ark-helper`命令，启动 Ark Helper。默认选择**中文**。
+      <span>![图片](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    c5bbcdc78c994e5e826b80b47980fe22~tplv-goo7wpa0wc-image.image =548x) </span>
+    3. 根据界面提示完成套餐配置。
+      1. 选择要配置的套餐：`[Volcano] Volcano Engine (国内)` \- `Agent Plan`。
+        <span>![图片](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    bafbcdfd088e4a04890eed2c22e0ee76~tplv-goo7wpa0wc-image.image =322x) </span>
+      2. 配置 API Key：推荐选择 `SSO 登录自动获取 API Key 和联网密钥`。根据界面提示完成登录并选
+    择要使用的联网密钥。
+        <span>![图片](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    e3774e133009444983b0c7da9e60b483~tplv-goo7wpa0wc-image.image =464x) </span>
+      3. 选择默认模型。
+        <span>![图片](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    03b3f3f6886c489482ca284c758b7a71~tplv-goo7wpa0wc-image.image =325x) </span>
+    4. 根据界面提示点击返回，完成 Claude Code 工具配置。
+      1. 选择编码工具：`Claude Code`。
+        <span>![图片](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    7c7448bb8cdb4c39b363a797db468080~tplv-goo7wpa0wc-image.image =243x) </span>
+      2. 选择操作：`设置 Volcano Agent Plan (API Key + Skills + MCP) 到 Claude Code`，配置完成后，选
+    择`退出`。如果需要重新配置工具，可先选择`卸载 Claude Code 配置`，再重新进行配置流程。
+        <span>![图片](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    4ffccd0ae3034853b983a3ef560ad176~tplv-goo7wpa0wc-image.image =512x) </span>
+
+    完成上述操作后，将自动完成视觉模型 Skill、联网搜索 Skill / MCP 的安装，无需手动安装。
+    <span id="07a70ca7"></span>
+    ### 方式 2：手动配置
+    下面详细介绍如何手动完成上述信息配置。
+
+    1. 创建并打开 `settings.json` 配置文件。文件路径因系统而异，具体操作如下：
+
+
+
+    ```mixin-react
+    return (<Tabs>
+    <Tabs.TabPane title="macOS/Linux" key="xQTvsKbAzF"><RenderMd content={`macOS/Linux 系统
+    Claude Code 配置文件路径：\`~/.claude/settings.json\`。
+
+    1. 如果在主目录下没有\`.claude\`目录，执行以下命令创建目录。
+      \`\`\`Bash
+      mkdir -p ~/.claude
+
+
+                                版权所有©北京火山引擎科技有限公司                                       15/113
+Agent Plan / Coding Plan                                                          2. 快速开始
+
+
+      \`\`\`
+
+    2. 创建并打开配置文件。
+      \`\`\`Bash
+      nano ~/.claude/settings.json
+      \`\`\`
+
+    `}></RenderMd></Tabs.TabPane>
+    <Tabs.TabPane title="Windows" key="dbKYLRFJF2"><RenderMd content={`Windows 系统 Claude
+    Code 配置文件路径：\`C:\\Users\\<用户名>\\.claude\\settings.json\`。以 CMD 命令行方式为例，操
+    作如下。
+
+    1. 如果当前用户目录下没有\`.claude\`目录，执行以下命令创建目录。
+      \`\`\`Bash
+      if not exist "%USERPROFILE%\\.claude" mkdir "%USERPROFILE%\\.claude"
+      \`\`\`
+
+    2. 创建并打开配置文件。
+      \`\`\`Bash
+      notepad "%USERPROFILE%\\.claude\\settings.json"
+      \`\`\`
+
+    `}></RenderMd></Tabs.TabPane></Tabs>);
+
+
+2. 编辑 settings.json ，需修改的配置信息如下：
+   ◦ <ARK_API_KEY> ：替换为您的 ARK Agent Plan API Key
+   ◦ <MODEL_NAME> ：结合套餐及您的需求，更新文本生成模型的名称，如 ark-code-latest ，详细模型
+    名称参见 支持模型及 Harness。
+
+
+    JSON
+
+       {
+           "env": {
+             "ANTHROPIC_AUTH_TOKEN": "<ARK_API_KEY>",
+             "ANTHROPIC_BASE_URL": "{{pPzrRa}}",
+             "ANTHROPIC_MODEL": "<MODEL_NAME>"
+           }
+       }
+
+
+3. 编辑或新增 .claude.json 文件，修改或新增 hasCompletedOnboarding 字段值为 true ，设置状态为完
+   成入门引导。
+
+macOS/Linux
+1. 创建并打开配置文件。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                16/113
+Agent Plan / Coding Plan                                                  2. 快速开始
+
+
+    Bash
+
+         nano ~/.claude.json
+
+
+2. 修改或新增的字段信息如下：
+
+
+    JSON
+
+         {
+             "hasCompletedOnboarding": true
+         }
+
+
+Windows
+1. 创建并打开配置文件。
+
+
+    Bash
+
+         notepad "%USERPROFILE%\.claude.json"
+
+
+2. 修改或新增的字段信息如下：
+
+
+    JSON
+
+         {
+             "hasCompletedOnboarding": true
+         }
+
+
+
+3.启动并使用 Claude Code
+1. 启动Claude Code：进入项目目录，执行 claude 命令，即可开始使用 Claude Code。
+
+
+    Bash
+
+         cd my-project
+         claude
+
+
+启动后，选择信任此文件夹，允许 Claude Code 访问该文件夹中的文件。
+
+
+ Plain
+
+    ![Image](https://p9-arcosite.byteimg.com/tos-cn-i-goo7wpa0wc/
+    f621624ffa07485ea37f49ea96c8e8f4~tplv-goo7wpa0wc-image.image =584x)
+
+
+2. 模型状态验证：输入 /model 确认使用的模型指定正确。
+
+
+                                       版权所有©北京火山引擎科技有限公司                    17/113
+Agent Plan / Coding Plan                                                  2. 快速开始
+
+
+3. 在 Claude Code 中对话。
+
+   更多使用教程请参见 Claude Code 官网            。
+
+
+其他操作
+
+添加图片生成/视频生成能力
+方舟 Agent Plan Medium 及以上套餐提供图片生成、视频生成模型配额。方舟提供 Skill 帮助 AI 工具快速
+接入并使用。具体配置方法请参见：
+
+• 方式 2：手动配置
+• 配置图片生成模型
+
+
+     注意
+    • 不同的套餐支持的视觉模型有所不同，具体参见支持模型及 Harness。
+    • 视觉模型不支持通过 Auto 及控制台切换使用。
+
+
+
+切换模型
+你可以随时根据需求切换文本生成模型。方舟支持多种方式切换模型。
+
+
+  配置方式                     通过控制台              通过命令参数             修改配置文件
+
+                           1. 参考2. 配置
+                              Claude Code配置   • 启动时：执行
+                              模型名称为 ark-        claude --model
+                              code-latest 。    <MODEL_NAME> ，
+                           2. 在开通管理页面          可指定本次对话使
+                              选择要使用的模          用的文本生成模           参考2. 配置 Claude
+  切换模型操作                      型，切换后3-5分        型。                Code配置模型名称为
+                              钟即可生效。          • 对话期间：执行 /        您需要的模型。
+                           3. 在命令行窗口，启         model
+                              动 Claude Code    <MODEL_NAME> 切
+                              后，输入 /model      换模型。
+                              确认模型状态。
+
+
+
+
+                                版权所有©北京火山引擎科技有限公司                            18/113
+Agent Plan / Coding Plan                                                          3. 接入 AI 工具
+
+
+
+
+3. 接入 AI 工具
+3.1 Claude Code
+本文介绍如何配置方舟 Agent Plan 到 Claude Code 中使用。
+
+一、前提条件
+• 您已按需订阅 Agent Plan 套餐。如未，请访问 开通管理-Agent Plan                    页面订阅套餐。
+• 您已正确安装 Claude Code，如未，请参考 官方文档的安装章节                        完成软件安装 。
+
+
+二、配置 Claude Code
+
+需配置的信息
+如您对 Claude Code 熟悉 / 使用 cc-switch 等配置工具 / 本地已有配置 / 已有本地 Agent等，可获取下列信
+息直接配置/让本地 Agent 帮您配置。
+
+• ANTHROPIC_BASE_URL： https://ark.cn-beijing.volces.com/api/plan ，为专属 Base URL，其他 Base URL 无法
+  在 Agent Plan 中使用。
+• ANTHROPIC_AUTH_TOKEN：获取 Agent Plan API Key       ，为专属 API Key，其他方舟 API Key 如Coding
+  Plan API Key 无法在 Agent Plan 中使用。
+
+
+
+
+• ANTHROPIC_MODEL：见 支持模型及 Harness，不同 Agent Plan 套餐支持的模型不同。请先配置文本生
+  成模型，后续图片生成模型、视频生成模型等可在 Claude Code 中使用自然语言/Skill 等方式完成配
+  置。
+
+
+     注意
+     若您本地已有Claude Code配置（如终端启动命令 .bashrc / .zshrc 等），可能因为配置冲突导致
+     Claude Code 不生效，可以尝试备份并清理本地配置后再次运行。
+
+
+
+方式 1：自动化助手（推荐）
+Ark Helper 是一个编码工具助手，支持快速配置选择的工具接入 Agent Plan。安装并运行该助手，根据界
+面提示操作可自动完成工具配置，降低手动配置的时间成本和出错风险。
+
+
+     注意
+    • Ark Helper 仅支持 MacOS、Linux 系统，暂不支持 Windows 系统。
+
+
+                               版权所有©北京火山引擎科技有限公司                                        19/113
+Agent Plan / Coding Plan                                                                        3. 接入 AI 工具
+
+
+    • 以下配置步骤及截图为 Ark Helper 首次使用指引；非首次使用请按界面提示完成套餐配置和工
+      具配置。
+
+
+1. 执行以下命令安装 Ark Helper。
+
+
+    Bash
+
+       curl -fsSL https://lf3-static.bytednsdoc.com/obj/eden-cn/ylwslo-yrh/ljhwZthlaukjlkulzlp/install.sh
+       | sh
+
+
+   安装完成后，执行以下命令查看安装的版本号。
+
+
+    Bash
+
+       ark-helper --version
+
+
+2. 在命令行界面输入 ark-helper 命令，启动 Ark Helper。默认选择中文。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                20/113
+Agent Plan / Coding Plan                                       3. 接入 AI 工具
+
+
+3. 根据界面提示完成套餐配置。
+   a. 选择要配置的套餐： [Volcano] Volcano Engine (国内) - Agent Plan 。
+
+
+
+
+   b. 配置 API Key：推荐选择 SSO 登录自动获取 API Key 和联网密钥 。根据界面提示完成登录并选择要使用
+      的联网密钥。
+
+
+
+
+   c. 选择默认模型。
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司                     21/113
+Agent Plan / Coding Plan                                                      3. 接入 AI 工具
+
+
+4. 根据界面提示点击返回，完成 Claude Code 工具配置。
+   a. 选择编码工具： Claude Code 。
+
+
+
+
+   b. 选择操作： 设置 Volcano Agent Plan (API Key + Skills + MCP) 到 Claude Code ，配置完成后，选择 退出 。如
+      果需要重新配置工具，可先选择 卸载 Claude Code 配置 ，再重新进行配置流程。
+
+
+
+
+完成上述操作后，将自动完成视觉模型 Skill、联网搜索 Skill / MCP 的安装，无需手动安装。
+
+方式 2：手动配置
+下面详细介绍如何手动完成上述信息配置。
+
+1. 创建并打开 settings.json 配置文件。文件路径因系统而异，具体操作如下：
+
+   macOS/Linux
+   macOS/Linux 系统 Claude Code 配置文件路径： ~/.claude/settings.json 。
+
+
+
+
+       1. 如果在主目录下没有`.claude`目录，执行以下命令创建目录。
+
+
+
+
+                               版权所有©北京火山引擎科技有限公司                                    22/113
+Agent Plan / Coding Plan                                                    3. 接入 AI 工具
+
+
+    Bash
+
+       mkdir -p ~/.claude
+
+
+
+
+       2. 创建并打开配置文件。
+
+
+
+    Bash
+
+       nano ~/.claude/settings.json
+
+
+   Windows
+   Windows 系统 Claude Code 配置文件路径： C:\Users\<用户名>\.claude\settings.json 。以 CMD 命令行方式
+   为例，操作如下。
+
+
+
+
+       1. 如果当前用户目录下没有`.claude`目录，执行以下命令创建目录。
+
+
+
+    Bash
+
+       if not exist "%USERPROFILE%\.claude" mkdir "%USERPROFILE%\.claude"
+
+
+
+
+       2. 创建并打开配置文件。
+
+
+
+    Bash
+
+       notepad "%USERPROFILE%\.claude\settings.json"
+
+
+2. 编辑 settings.json ，需修改的配置信息如下：
+   ◦ <ARK_API_KEY> ：替换为您的 ARK Agent Plan API Key
+   ◦ <MODEL_NAME> ：结合套餐及您的需求，更新文本生成模型的名称，如 ark-code-latest ，详细模型
+    名称参见 支持模型及 Harness。
+
+
+
+
+       {
+           "env": {
+             "ANTHROPIC_AUTH_TOKEN": "<ARK_API_KEY>",
+
+
+                                      版权所有©北京火山引擎科技有限公司                          23/113
+Agent Plan / Coding Plan                                                       3. 接入 AI 工具
+
+
+    JSON "ANTHROPIC_BASE_URL": "https://ark.cn-beijing.volces.com/api/plan",
+          "ANTHROPIC_MODEL": "<MODEL_NAME>"
+        }
+      }
+
+
+3. 编辑或新增 .claude.json 文件，修改或新增 hasCompletedOnboarding 字段值为 true ，设置状态为完
+   成入门引导。
+
+   macOS/Linux
+   a. 创建并打开配置文件。
+
+
+       Bash
+
+          nano ~/.claude.json
+
+
+      ii. 修改或新增的字段信息如下：
+
+
+       JSON
+
+          {
+              "hasCompletedOnboarding": true
+          }
+
+
+   Windows
+   a. 创建并打开配置文件。
+
+
+       Bash
+
+          notepad "%USERPROFILE%\.claude.json"
+
+
+      ii. 修改或新增的字段信息如下：
+
+
+       JSON
+
+          {
+              "hasCompletedOnboarding": true
+          }
+
+
+
+
+三、启动并使用 Claude Code
+1. 启动Claude Code：进入项目目录，执行 claude 命令，即可开始使用 Claude Code。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                              24/113
+Agent Plan / Coding Plan                                                3. 接入 AI 工具
+
+
+    Bash
+
+       cd my-project
+       claude
+
+
+   启动后，选择信任此文件夹，允许 Claude Code 访问该文件夹中的文件。
+
+
+
+
+2. 模型状态验证：输入 /model 确认使用的模型指定正确。
+3. 在 Claude Code 中对话。
+
+   更多使用教程请参见 Claude Code 官网            。
+
+
+其他操作
+
+添加图片生成/视频生成能力
+方舟 Agent Plan Medium 及以上套餐提供图片生成、视频生成模型配额。方舟提供 Skill 帮助 AI 工具快速
+接入并使用。具体配置方法请参见：配置视觉模型。
+
+
+     注意
+    • 不同的套餐支持的视觉模型有所不同，具体参见支持模型及 Harness。
+    • 视觉模型不支持通过 Auto 及控制台切换使用。
+
+
+
+切换模型
+你可以随时根据需求切换文本生成模型。方舟支持多种方式切换模型。
+
+
+  配置方式                     通过控制台              通过命令参数             修改配置文件
+
+                           1. 参考二、配置          • 启动时：执行
+                              Claude Code配置     claude --model
+                              模型名称为 ark-       <MODEL_NAME> ，    参考二、配置 Claude
+  切换模型操作                      code-latest 。    可指定本次对话使          Code配置模型名称为
+                           2. 在开通管理页面          用的文本生成模           您需要的模型。
+                              选择要使用的模          型。
+
+
+
+                                版权所有©北京火山引擎科技有限公司                            25/113
+Agent Plan / Coding Plan                                             3. 接入 AI 工具
+
+
+  配置方式                     通过控制台              通过命令参数            修改配置文件
+                            型，切换后3-5分
+                            钟即可生效。            • 对话期间：执行 /
+                           3. 在命令行窗口，启         model
+                              动 Claude Code    <MODEL_NAME> 切
+                              后，输入 /model      换模型。
+                              确认模型状态。
+
+
+
+
+安装使用 Claude Code IDE 插件
+1. 安装 Claude Code 并配置好环境变量，具体参考Claude Code。
+   Claude Code IDE 插件依赖 Claude Code CLI 工具，需先完成 Claude Code的安装及配置。
+2. 安装并使用 IDE 插件。
+
+   因 IDE 插件会迭代演进，以下内容仅供参考，具体的安装及使用可参考 Visual Studio Code                 、
+   JetBrains IDEs 。
+
+Claude Code VSCode 插件
+
+     说明
+     Claude Code VSCode 插件支持在 VSCode 及基于 VSCode 的 IDE（如 Cursor、Trae 等）中使用。
+
+
+
+安装插件
+
+打开 VSCode，在扩展市场搜索 claude code 进行安装。
+
+
+
+
+配置环境变量
+1. 安装完成后，点击 VSCode 右上角的 Claude Code 图标，进入 Claude Code 页面。
+
+
+
+
+                                版权所有©北京火山引擎科技有限公司                            26/113
+Agent Plan / Coding Plan                                                3. 接入 AI 工具
+
+
+
+
+2. 在对话框中输入 /config 回车进入 settings 配置页面。
+3. 在 Claude Code: Environment Variables 区域单击 Edit in settings.json，修改
+    claudeCode.environmentVariables 、 claudeCode.selectedModel 。
+
+
+     说明
+     需要修改的配置信息如下：
+
+    • <ARK_API_KEY> ：替换为您自己的 Agent Plan API Key
+    • <Model_Name> ：更新为需要使用的模型信息，如 ark-code-latest 。支持的模型信息参见支持
+     模型及Harness中文本生成模型。
+
+
+
+
+    ...
+    "claudeCode.environmentVariables": [
+        {
+           "name": "ANTHROPIC_BASE_URL",
+           "value": "https://ark.cn-beijing.volces.com/api/plan"
+        },
+        {
+           "name": "ANTHROPIC_AUTH_TOKEN",
+           "value": "<ARK_API_KEY>"
+        },
+        {
+           "name": "ANTHROPIC_MODEL",
+
+
+
+                                       版权所有©北京火山引擎科技有限公司                     27/113
+Agent Plan / Coding Plan                                                       3. 接入 AI 工具
+
+
+ JSON "value": "<MODEL_NAME>"
+       }
+   ],
+   "claudeCode.selectedModel": "<MODEL_NAME>",
+   ...
+
+
+保存配置后，新开一个窗口开始使用 Claude Code。
+
+Claude Code JetBrains 插件
+
+     说明
+     Claude Code JetBrains 插件支持 Jetbrains 的系列 IDE 如 IntelliJ IDEA、PyCharm、WebStorm 等。
+
+
+
+安装插件
+
+打开 JetBrains IDE，在插件市场搜索 claude code 进行安装。
+
+
+
+
+开始使用
+
+安装完成后，重启IDE后，单击Claude Code 图标，进入 Claude Code 页面开始使用。
+
+
+
+
+                                版权所有©北京火山引擎科技有限公司                                   28/113
+Agent Plan / Coding Plan                                                                        3. 接入 AI 工具
+
+
+
+
+3.2 OpenCode
+本文介绍如何配置方舟 Agent Plan 到 OpenCode 中使用。
+
+一、前提条件
+• 您已按需订阅 Agent Plan 套餐。如未，请访问 开通管理-Agent Plan                               页面订阅套餐。
+• 您已正确安装 OpenCode，如未，请参见以下操作完成软件安装。
+  前提条件：安装 Node.js 18 或更新版本 。
+  在命令行界面，执行以下命令安装 OpenCode。
+
+
+    Bash
+
+       npm install -g opencode-ai
+
+
+   安装结束后，执行以下命令查看安装结果，若显示版本号则安装成功。
+
+
+    Bash
+
+       opencode --version
+
+
+
+
+二、配置 OpenCode
+
+方式 1：自动化助手（推荐）
+Ark Helper 是一个编码工具助手，支持快速配置选择的工具接入 Agent Plan。安装并运行该助手，根据界
+面提示操作可自动完成工具配置，降低手动配置的时间成本和出错风险。
+
+
+     注意
+    • Ark Helper 仅支持 MacOS、Linux 系统，暂不支持 Windows 系统。
+    • 以下配置步骤及截图为 Ark Helper 首次使用指引；非首次使用请按界面提示完成套餐配置和工
+      具配置。
+
+
+1. 执行以下命令安装 Ark Helper。
+
+
+    Bash
+
+       curl -fsSL https://lf3-static.bytednsdoc.com/obj/eden-cn/ylwslo-yrh/ljhwZthlaukjlkulzlp/install.sh
+       | sh
+
+
+   安装完成后，执行以下命令查看安装的版本号。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                29/113
+Agent Plan / Coding Plan                                       3. 接入 AI 工具
+
+
+    Bash
+
+       ark-helper --version
+
+
+2. 在命令行界面输入 ark-helper 命令，启动 Ark Helper。默认选择中文。
+
+
+
+
+3. 根据界面提示完成套餐配置。
+   a. 选择要配置的套餐： [Volcano] Volcano Engine (国内) - Agent Plan 。
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司                     30/113
+Agent Plan / Coding Plan                                 3. 接入 AI 工具
+
+
+   b. 配置 API Key：推荐选择 SSO 登录自动获取 API Key 和联网密钥 。根据界面提示完成登录并选择要使用
+      的联网密钥。
+
+
+
+
+   c. 选择默认模型。
+
+
+
+
+4. 根据界面提示点击返回，完成 OpenCode 工具配置。
+   a. 选择编码工具： OpenCode 。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                  31/113
+Agent Plan / Coding Plan                                                    3. 接入 AI 工具
+
+
+   b. 选择操作： 设置 Volcano Agent Plan (API Key + Skills + MCP) 到 OpenCode ，配置完成后，选择 退出 。如果
+      需要重新配置工具，可先选择 卸载 OpenCode 配置 ，再重新进行配置流程。
+
+
+
+
+完成上述操作后，将自动完成视觉模型 Skill、联网搜索 Skill / MCP 的安装，无需手动安装。
+
+方式 2：手动配置
+编辑或新增 OpenCode 的配置文件，路径如下：
+
+• macOS / Linux： ~/.config/opencode/opencode.json
+• Windows： C:\Users\您的用户名\.config\opencode\opencode.json
+
+需要修改的配置信息如下：
+
+• <ARK_API_KEY> ：替换为您自己的专属 API Key                  。
+
+
+
+
+• model ：见支持模型及 Harness，需配置文本生成模型。
+
+以配置 ark-code-latest 为例，具体信息如下。
+
+
+
+
+                                   版权所有©北京火山引擎科技有限公司                             32/113
+Agent Plan / Coding Plan                                                  3. 接入 AI 工具
+
+
+
+        注意
+    • provider.volcengine-plan.models 节点下有两处（对象键、 name 字段）需替换为同一 Model
+     Name，切勿遗漏。
+    • 若需开启模型图片理解能力，需在模型配置节点下新增如下配置项： "modalities": {"input": ["text",
+          "image"], "output": ["text"]}
+
+
+
+
+    {
+        "$schema": "https://opencode.ai/config.json",
+        "model": "volcengine-agent-plan/ark-code-latest",
+        "provider": {
+         "volcengine-agent-plan": {
+          "npm": "@ai-sdk/openai-compatible",
+          "name": "Volcano Engine",
+          "options": {
+            "baseURL": "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "apiKey": "<ARK_API_KEY>"
+          },
+          "models": {
+            "ark-code-latest": {
+              "name": "ark-code-latest",
+              "limit": {
+                "context": 256000,
+                "output": 4096
+              },
+              "modalities": {
+                "input": [
+                  "text",
+                  "image"
+                ],
+                "output": [
+                  "text"
+                ]
+              }
+            },
+            "glm-5.1": {
+              "name": "glm-5.1",
+              "limit": {
+                "context": 200000,
+                "output": 4096
+              },
+              "modalities": {
+                "input": [
+                  "text"
+
+
+
+                                          版权所有©北京火山引擎科技有限公司                    33/113
+Agent Plan / Coding Plan                                3. 接入 AI 工具
+
+
+           ],
+           "output": [
+             "text"
+           ]
+           }
+         },
+         "deepseek-v3.2": {
+           "name": "deepseek-v3.2",
+           "limit": {
+             "context": 128000,
+             "output": 4096
+           }
+         },
+         "deepseek-v4-flash-beta": {
+           "name": "deepseek-v4-flash-beta",
+           "limit": {
+             "context": 1000000,
+             "output": 384000
+           },
+           "modalities": {
+             "input": [
+               "text"
+             ],
+             "output": [
+               "text"
+             ]
+           }
+         },
+         "deepseek-v4-pro-beta": {
+           "name": "deepseek-v4-pro-beta",
+           "limit": {
+             "context": 1000000,
+             "output": 384000
+           },
+           "modalities": {
+             "input": [
+               "text"
+             ],
+             "output": [
+               "text"
+             ]
+           }
+         },
+         "doubao-seed-2.0-code": {
+           "name": "doubao-seed-2.0-code",
+           "limit": {
+             "context": 256000,
+
+
+                                    版权所有©北京火山引擎科技有限公司        34/113
+Agent Plan / Coding Plan                                3. 接入 AI 工具
+
+
+             "output": 4096
+           },
+           "modalities": {
+             "input": [
+               "text",
+               "image"
+             ],
+             "output": [
+               "text"
+             ]
+           }
+         },
+         "doubao-seed-2.0-pro": {
+           "name": "doubao-seed-2.0-pro",
+           "limit": {
+             "context": 256000,
+             "output": 4096
+           },
+           "modalities": {
+             "input": [
+               "text",
+               "image"
+             ],
+             "output": [
+               "text"
+             ]
+           }
+         },
+         "doubao-seed-2.0-lite": {
+           "name": "doubao-seed-2.0-lite",
+           "limit": {
+             "context": 256000,
+             "output": 4096
+           },
+           "modalities": {
+             "input": [
+               "text",
+               "image"
+             ],
+             "output": [
+               "text"
+             ]
+           }
+         },
+         "doubao-seed-2.0-mini": {
+           "name": "doubao-seed-2.0-mini",
+           "limit": {
+
+
+                                    版权所有©北京火山引擎科技有限公司        35/113
+Agent Plan / Coding Plan                                      3. 接入 AI 工具
+
+
+                  "context": 256000,
+                  "output": 4096
+                },
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                }
+              },
+              "minimax-m2.7": {
+                "name": "minimax-m2.7",
+                "limit": {
+                  "context": 200000,
+                  "output": 4096
+                },
+                "modalities": {
+                  "input": [
+                    "text"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                }
+              },
+              "kimi-k2.6": {
+                "name": "kimi-k2.6",
+                "limit": {
+                  "context": 256000,
+                  "output": 4096
+                },
+                "modalities": {
+                  "input": [
+                    "text",
+                    "image"
+                  ],
+                  "output": [
+                    "text"
+                  ]
+                }
+              }
+          }
+      }
+
+
+
+                                          版权所有©北京火山引擎科技有限公司        36/113
+Agent Plan / Coding Plan                                               3. 接入 AI 工具
+
+
+ JSON}
+   }
+
+
+
+
+三、启动并使用 OpenCode
+1. 启动OpenCode：
+
+
+    Shell
+
+       opencode
+
+
+2. 输入 /models ，选择配置的模型并在 OpenCode 中使用。
+
+
+其他操作
+
+添加图片生成/视频生成能力
+方舟 Agent Plan Medium 及以上套餐提供图片生成、视频生成模型配额。方舟提供 Skill 帮助 AI 工具快速
+接入并使用。具体配置方法请参见：接入视觉模型。
+
+
+     注意
+    • 不同的套餐支持的视觉模型有所不同，具体参见支持模型及 Harness。
+    • 视觉模型不支持通过 Auto 及控制台切换使用。
+
+
+
+切换模型
+你可以随时根据需求切换文本生成模型。方舟支持多种方式切换模型。
+
+
+  配置方式                     通过控制台               通过命令参数           修改配置文件
+
+                           1. 参考二、配置
+                              OpenCode配置模
+                              型名称为 ark-code-
+                                                                参考二、配置
+                              latest 。         启动 OpenCode后，
+                                                                OpenCode配置模型
+  切换模型操作                   2. 在开通管理页面          执行 /models 切换模
+                                                                名称为您需要的模
+                              选择要使用的模          型。
+                                                                型。
+                              型，切换后3-5分
+                              钟即可生效。
+
+
+
+
+                                版权所有©北京火山引擎科技有限公司                           37/113
+Agent Plan / Coding Plan                                                        3. 接入 AI 工具
+
+
+
+
+3.3 OpenClaw
+本文介绍如何配置方舟 Agent Plan 到 OpenClaw 中使用。
+
+一、前提条件
+• 您已按需订阅 Agent Plan 套餐。如未，请访问 开通管理-Agent Plan                         页面订阅套餐。
+
+
+二、安装 OpenClaw
+前提条件：安装 Node.js 22 或更新版本                     。
+
+1. 执行以下命令安装 OpenClaw。
+
+MacOS / Linux
+
+ Bash
+
+    curl -fsSL https://openclaw.ai/install.sh | bash
+
+
+Windows
+Windows PowerShell 环境下安装命令如下：
+
+
+ Bash
+
+    iwr -useb https://openclaw.ai/install.ps1 | iex
+
+
+2. 根据提示信息完成 OpenClaw 配置，配置信息如下。
+
+
+        注意
+        OpenClaw 在不断迭代，如果实际使用与以下配置存在差异，可以选择 "Skip" 或默认选项完成
+        配置流程，后续可以参考文档配置并使用 Agent Plan。
+
+
+
+     提示信息                                              配置
+
+     I understand this is personal-by-default and
+     shared/multi-user use requires lock-down.         选择 "Yes"
+     Continue?
+
+     Setup mode                                        选择 “QuickStart”
+
+     Model/auth provider                               选择 "Skip for now"，后续可以配置。
+
+     Default model                                     选择 "Keep current"
+
+     Select channel (QuickStart)                       选择 “Skip for now”，后续可以配置。
+
+
+
+                                       版权所有©北京火山引擎科技有限公司                             38/113
+Agent Plan / Coding Plan                                                                        3. 接入 AI 工具
+
+
+     提示信息                                                 配置
+
+     Search provider                                      选择 “Skip for now”
+
+     Configure skills now? (recommended)                  选择 “No”，后续可以配置。
+
+                                                          选择 "Skip for now"。选择方式：按空格键选中
+     Enable hooks?
+                                                          选项，按回车键进入下一步。
+
+     How do you want to hatch your bot?                   选择 "Hatch in Terminal"。
+
+
+
+三、配置 OpenClaw
+
+方式 1：自动化助手（推荐）
+Ark Helper 是一个编码工具助手，支持快速配置选择的工具接入 Agent Plan。安装并运行该助手，根据界
+面提示操作可自动完成工具配置，降低手动配置的时间成本和出错风险。
+
+
+     注意
+    • Ark Helper 仅支持 MacOS、Linux 系统，暂不支持 Windows 系统。
+    • 以下配置步骤及截图为 Ark Helper 首次使用指引；非首次使用请按界面提示完成套餐配置和工
+      具配置。
+
+
+1. 执行以下命令安装 Ark Helper。
+
+
+    Bash
+
+       curl -fsSL https://lf3-static.bytednsdoc.com/obj/eden-cn/ylwslo-yrh/ljhwZthlaukjlkulzlp/install.sh
+       | sh
+
+
+   安装完成后，执行以下命令查看安装的版本号。
+
+
+    Bash
+
+       ark-helper --version
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                39/113
+Agent Plan / Coding Plan                                       3. 接入 AI 工具
+
+
+2. 在命令行界面输入 ark-helper 命令，启动 Ark Helper。默认选择中文。
+
+
+
+
+3. 根据界面提示完成套餐配置。
+   a. 选择要配置的套餐： [Volcano] Volcano Engine (国内) - Agent Plan 。
+
+
+
+
+   b. 配置 API Key：推荐选择 SSO 登录自动获取 API Key 和联网密钥 。根据界面提示完成登录并选择要使用
+      的联网密钥。
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司                     40/113
+Agent Plan / Coding Plan                                                    3. 接入 AI 工具
+
+
+   c. 选择默认模型。
+
+
+
+
+4. 根据界面提示点击返回，完成 OpenClaw 工具配置。
+   a. 选择编码工具： OpenClaw 。
+
+
+
+
+   b. 选择操作： 设置 Volcano Agent Plan (API Key + Skills + MCP) 到 OpenClaw ，配置完成后，选择 退出 。如果
+      需要重新配置工具，可先选择 卸载 OpenClaw 配置 ，再重新进行配置流程。
+
+
+
+
+完成上述操作后，将自动完成视觉模型 Skill、联网搜索 Skill / MCP 的安装，无需手动安装。
+
+方式 2：手动配置
+
+Web UI 方式
+1. 执行以下命令打开 Web UI。
+
+
+
+
+                             版权所有©北京火山引擎科技有限公司                                   41/113
+Agent Plan / Coding Plan                                                 3. 接入 AI 工具
+
+
+ Bash
+
+    openclaw dashboard
+
+
+2. 在左侧菜单栏选择配置 - Settings - Advanced，单击 Open 查看并修改配置信息。具体配置信息如下，
+   其中需要将 <ARK_API_KEY> 替换为您自己的 专属 API Key 。
+
+
+        注意
+        如果已经配置过 OpenClaw，请勿直接覆盖原有配置，建议根据提供的配置更新 models 、
+         agents 和 gateway 节点信息。其中 models 节点包含支持的模型列表。
+
+
+
+
+    {
+        "models": {
+         "providers": {
+          "volcengine-agent-plan": {
+           "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+           "apiKey": "<ARK_API_KEY>",
+           "api": "openai-completions",
+           "models": [
+            {
+              "id": "ark-code-latest",
+              "name": "ark-code-latest",
+              "contextWindow": 256000,
+              "maxTokens": 32000,
+              "input": [
+                "text",
+                "image"
+              ]
+            },
+            {
+              "id": "glm-5.1",
+              "name": "glm-5.1",
+              "contextWindow": 200000,
+              "maxTokens": 128000,
+              "input": [
+                "text"
+              ]
+            },
+            {
+              "id": "deepseek-v3.2",
+              "name": "deepseek-v3.2",
+              "contextWindow": 128000,
+              "maxTokens": 32000,
+
+
+
+                                        版权所有©北京火山引擎科技有限公司                     42/113
+Agent Plan / Coding Plan                                3. 接入 AI 工具
+
+
+            "input": [
+              "text"
+            ]
+          },
+          {
+            "id": "deepseek-v4-flash-beta",
+            "name": "deepseek-v4-flash-beta",
+            "contextWindow": 1000000,
+            "maxTokens": 384000,
+            "input": [
+              "text"
+            ]
+          },
+          {
+            "id": "deepseek-v4-pro-beta",
+            "name": "deepseek-v4-pro-beta",
+            "contextWindow": 1000000,
+            "maxTokens": 384000,
+            "input": [
+              "text"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-code",
+            "name": "doubao-seed-2.0-code",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-pro",
+            "name": "doubao-seed-2.0-pro",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-lite",
+            "name": "doubao-seed-2.0-lite",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+
+
+                                    版权所有©北京火山引擎科技有限公司        43/113
+Agent Plan / Coding Plan                                        3. 接入 AI 工具
+
+
+                 "input": [
+                   "text",
+                   "image"
+                 ]
+               },
+               {
+                 "id": "doubao-seed-2.0-mini",
+                 "name": "doubao-seed-2.0-mini",
+                 "contextWindow": 256000,
+                 "maxTokens": 128000,
+                 "input": [
+                   "text",
+                   "image"
+                 ]
+               },
+               {
+                 "id": "minimax-2.7",
+                 "name": "minimax-2.7",
+                 "contextWindow": 200000,
+                 "maxTokens": 128000,
+                 "input": [
+                   "text"
+                 ]
+               },
+               {
+                 "id": "kimi-k2.6",
+                 "name": "kimi-k2.6",
+                 "contextWindow": 256000,
+                 "maxTokens": 32000,
+                 "input": [
+                   "text",
+                   "image"
+                 ]
+               }
+           ]
+       }
+       }
+     },
+     "agents": {
+       "defaults": {
+         "model": {
+           "primary": "volcengine-agent-plan/ark-code-latest"
+         },
+         "models": {
+           "volcengine-agent-plan/ark-code-latest": {},
+           "volcengine-agent-plan/doubao-seed-2.0-code": {},
+           "volcengine-agent-plan/doubao-seed-2.0-pro": {},
+
+
+                                         版权所有©北京火山引擎科技有限公司           44/113
+Agent Plan / Coding Plan                                         3. 接入 AI 工具
+
+
+ JSON "volcengine-agent-plan/doubao-seed-2.0-lite": {},
+           "volcengine-agent-plan/doubao-seed-2.0-mini": {},
+           "volcengine-agent-plan/glm-5.1": {},
+           "volcengine-agent-plan/minimax-2.7": {},
+           "volcengine-agent-plan/kimi-k2.6": {},
+           "volcengine-agent-plan/deepseek-v3.2": {},
+           "volcengine-agent-plan/deepseek-v4-flash-beta": {},
+           "volcengine-agent-plan/deepseek-v4-pro-beta": {}
+         }
+       }
+     },
+     "gateway": {
+       "mode": "local"
+     }
+   }
+
+
+3. 配置完成后，先保存配置文件，然后单击 Update 更新配置，配置更新完成后需要重新连接服务进入
+   Web UI。
+
+
+
+
+终端方式
+1. 在终端执行以下命令打开 OpenClaw 配置文件。
+
+
+ Bash
+
+    nano ~/.openclaw/openclaw.json
+
+
+2. 修改配置信息，完成 Agent Plan 对接。将 <ARK_API_KEY> 替换为您自己的 专属 API Key    。
+
+
+        注意
+        如果已经配置过 OpenClaw，请勿直接覆盖原有配置，建议根据提供的配置更新 models 、
+         agents 和 gateway 节点信息。其中 models 节点包含支持的模型列表。
+
+
+
+
+    {
+        "models": {
+         "providers": {
+
+                                     版权所有©北京火山引擎科技有限公司                45/113
+Agent Plan / Coding Plan                                              3. 接入 AI 工具
+
+
+       "volcengine-agent-plan": {
+        "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+        "apiKey": "<ARK_API_KEY>",
+        "api": "openai-completions",
+        "models": [
+         {
+           "id": "ark-code-latest",
+           "name": "ark-code-latest",
+           "contextWindow": 256000,
+           "maxTokens": 32000,
+           "input": [
+             "text",
+             "image"
+           ]
+         },
+         {
+           "id": "glm-5.1",
+           "name": "glm-5.1",
+           "contextWindow": 200000,
+           "maxTokens": 128000,
+           "input": [
+             "text"
+           ]
+         },
+         {
+           "id": "deepseek-v3.2",
+           "name": "deepseek-v3.2",
+           "contextWindow": 128000,
+           "maxTokens": 32000,
+           "input": [
+             "text"
+           ]
+         },
+         {
+           "id": "deepseek-v4-flash-beta",
+           "name": "deepseek-v4-flash-beta",
+           "contextWindow": 1000000,
+           "maxTokens": 384000,
+           "input": [
+             "text"
+           ]
+         },
+         {
+           "id": "deepseek-v4-pro-beta",
+           "name": "deepseek-v4-pro-beta",
+           "contextWindow": 1000000,
+           "maxTokens": 384000,
+
+
+                                     版权所有©北京火山引擎科技有限公司                     46/113
+Agent Plan / Coding Plan                                3. 接入 AI 工具
+
+
+            "input": [
+              "text"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-code",
+            "name": "doubao-seed-2.0-code",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-pro",
+            "name": "doubao-seed-2.0-pro",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-lite",
+            "name": "doubao-seed-2.0-lite",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "doubao-seed-2.0-mini",
+            "name": "doubao-seed-2.0-mini",
+            "contextWindow": 256000,
+            "maxTokens": 128000,
+            "input": [
+              "text",
+              "image"
+            ]
+          },
+          {
+            "id": "minimax-2.7",
+            "name": "minimax-2.7",
+
+
+                                    版权所有©北京火山引擎科技有限公司        47/113
+Agent Plan / Coding Plan                                            3. 接入 AI 工具
+
+
+ JSON               "contextWindow": 200000,
+                    "maxTokens": 128000,
+                    "input": [
+                      "text"
+                    ]
+                  },
+                  {
+                    "id": "kimi-k2.6",
+                    "name": "kimi-k2.6",
+                    "contextWindow": 256000,
+                    "maxTokens": 32000,
+                    "input": [
+                      "text",
+                      "image"
+                    ]
+                  }
+              ]
+          }
+          }
+        },
+        "agents": {
+          "defaults": {
+            "model": {
+              "primary": "volcengine-agent-plan/ark-code-latest"
+            },
+            "models": {
+              "volcengine-agent-plan/ark-code-latest": {},
+              "volcengine-agent-plan/doubao-seed-2.0-code": {},
+              "volcengine-agent-plan/doubao-seed-2.0-pro": {},
+              "volcengine-agent-plan/doubao-seed-2.0-lite": {},
+              "volcengine-agent-plan/doubao-seed-2.0-mini": {},
+              "volcengine-agent-plan/glm-5.1": {},
+              "volcengine-agent-plan/minimax-2.7": {},
+              "volcengine-agent-plan/kimi-k2.6": {},
+              "volcengine-agent-plan/deepseek-v3.2": {},
+              "volcengine-agent-plan/deepseek-v4-flash-beta": {},
+              "volcengine-agent-plan/deepseek-v4-pro-beta": {}
+            }
+          }
+        },
+        "gateway": {
+          "mode": "local"
+        }
+    }
+
+
+3. 配置完成后保存文件，并在终端执行以下命令重启服务使更改生效。
+
+
+                                               版权所有©北京火山引擎科技有限公司         48/113
+Agent Plan / Coding Plan                                        3. 接入 AI 工具
+
+
+ Bash
+
+    openclaw gateway restart
+
+
+
+
+四、使用 OpenClaw
+• 打开 Web UI，在 Chat 页面进行交互。
+
+
+ Bash
+
+    openclaw dashboard
+
+
+• 打开 TUI，并查看 Gateway 状态。
+
+
+ Bash
+
+    openclaw tui
+    /status
+
+
+
+
+其他操作
+
+配置向量模型
+方舟 Agent Plan 提供的 doubao-embedding-vision 模型（向量模型）可以为 OpenClaw 提供语义向量能
+力，将对话、文档与任务信息转换为高维向量表示，实现基于语义相似度的高效检索。
+相比传统关键词匹配，Embedding 检索在信息量大、对话长、资料分散的场景下，能够更准确地召回相
+关内容，显著降低遗漏与误判。同时，Embedding 为记忆检索、知识库问答与工具调用提供统一的语义
+索引层，帮助 OpenClaw 在不增加主模型推理成本的前提下，提升跨轮次上下文追踪能力与整体效果。
+选择以下任一方式配置向量模型。
+
+Web UI 方式
+1. 执行以下命令打开 Web UI。
+
+
+ Bash
+
+    openclaw dashboard
+
+
+2. 在左侧菜单栏选择配置 - Settings - Advanced，单击 Open 查看并修改配置信息，在 agents.defaults 节
+   点下增加 memorySearch 相关配置信息，增加的配置信息如下。其中需要将 <ARK_API_KEY> 替换为您自
+   己的专属 API Key 。
+
+
+
+
+    {
+        ...
+
+
+                               版权所有©北京火山引擎科技有限公司                     49/113
+Agent Plan / Coding Plan                                                      3. 接入 AI 工具
+
+
+ JSON"agents": {
+       "defaults": {
+         ...
+         "memorySearch": {
+           "provider": "openai",
+           "model": "doubao-embedding-vision",
+           "remote": {
+             "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+             "apiKey": "<ARK_API_KEY>"
+           }
+         }
+         ...
+       }
+     }
+     ...
+    }
+
+
+3. 配置完成后，先保存配置文件，然后单击 Update 更新配置，配置更新完成后需要重新连接服务进入
+   Web UI。
+
+终端方式
+1. 在终端执行以下命令打开 OpenClaw 配置文件。
+
+
+ Bash
+
+    nano ~/.openclaw/openclaw.json
+
+
+2. 在 agents.defaults 节点下增加 memorySearch 相关配置信息，增加的配置信息如下。其中需要将
+    <ARK_API_KEY> 替换为您自己的专属 API Key      。
+
+
+
+
+    {
+        ...
+        "agents": {
+          "defaults": {
+            ...
+            "memorySearch": {
+              "provider": "openai",
+              "model": "doubao-embedding-vision",
+              "remote": {
+                "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+                "apiKey": "<ARK_API_KEY>"
+              }
+            }
+            ...
+
+
+
+                                          版权所有©北京火山引擎科技有限公司                        50/113
+Agent Plan / Coding Plan                                                        3. 接入 AI 工具
+
+
+ JSON}
+     }
+     ...
+   }
+
+
+3. 配置完成后，重启网关使配置生效。
+
+
+ Bash
+
+    openclaw gateway restart
+
+
+
+配置视觉模型
+方舟 Agent Plan 提供生图、生视频模型，支持通过 AI 工具的 Skill 接入并使用。具体配置方法请参见接入
+视觉模型。
+
+
+     注意
+    • 不同的套餐支持的视觉模型有所不同，具体参见支持模型及 Harness。
+    • 视觉模型不支持通过 Auto 及控制台切换使用。
+
+
+
+切换模型
+请根据语言模型配置方式，选择对应的语言模型切换方案。
+
+• 模型配置：Model Name，支持以下两种方式切换模型。
+  前提条件：根据三、配置 OpenClaw步骤完成文件配置，其中 agents.defaults.models 包含支持的模型列
+  表。
+   ◦ 方式 1：全局配置（永久有效）
+     在配置文件中直接修改 agents.defaults.model.primary 为目标模型，修改完成后需要重新启动服务。
+
+
+           JSON
+
+            {
+                "agents": {
+                  "defaults": {
+                    "model": {
+                      "primary": "volcengine-agent-plan/doubao-seed-2.0-code"
+                    }
+                  }
+                }
+            }
+
+
+   ◦ 方式 2：在当前会话切换模型（临时有效）
+     在终端执行 openclaw tui 后，通过 /models 切换模型，当界面返回 "model set to <Model_Name>"
+     时，表示配置生效。
+
+
+                                       版权所有©北京火山引擎科技有限公司                             51/113
+Agent Plan / Coding Plan                                                          3. 接入 AI 工具
+
+
+• 模型配置： volcengine-agent-plan/ark-code-latest ，通过控制台切换模型。
+  配置文件中 agents.defaults.model.primary 为 volcengine-agent-plan/ark-code-latest 。
+  模型切换操作：在开通管理页面 选择要使用的模型，切换后3-5分钟即可生效。
+
+
+接入飞书机器人
+
+前置准备
+安装并配置 OpenClaw，参见二、安装 OpenClaw、三、配置 OpenClaw。
+
+
+     注意
+     飞书插件处于快速迭代阶段，本文使用的插件版本为 2026.3.10，如果实际使用与以下步骤存在差
+     异，可参见 OpenClaw 飞书官网插件 。
+
+
+
+安装飞书插件
+1. 执行以下命令安装飞书插件。
+
+
+    Bash
+
+       npx -y @larksuite/openclaw-lark-tools install
+
+
+   如果执行命令时报错，可在命令行前增加 sudo 重新执行。
+2. 根据界面提示信息，选择新建机器人。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                 52/113
+Agent Plan / Coding Plan                        3. 接入 AI 工具
+
+
+3. 通过飞书客户端扫描二维码，选择一键创建飞书机器人。
+
+
+
+
+4. 在飞书中向机器人发送 /feishu start ，若返回版本号信息，代表安装成功。
+5. 在飞书中向机器人发送消息，开始对话。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司         53/113
+Agent Plan / Coding Plan                                                                  3. 接入 AI 工具
+
+
+
+
+3.4 Hermes Agent
+本文介绍如何配置方舟 Agent Plan 到 Hermes Agent 中使用。
+
+一、前提条件
+• 您已按需订阅 Agent Plan 套餐。如未，请访问 开通管理-Agent Plan                          页面订阅套餐。
+
+
+二、安装 Hermes Agent
+前提条件：支持在 macOS、Linux 和 WSL2 系统中安装 Hermes Agent。
+
+
+     说明
+     Hermes Agent 不支持原生 Windows 环境，需要先安装 WSL2，安装命令 wsl --install 。
+
+
+1. 执行以下命令安装 Hermes Agent，安装过程中会检测并安装 uv、Python、Node.js、ripgrep、ffmpeg
+   等依赖。更多安装说明参见 Hermes Agent 官方文档 。
+
+
+    Bash
+
+       curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/
+       install.sh | bash
+
+
+2. 安装完成后重新加载 Shell。
+
+
+    Bash
+
+       source ~/.bashrc # or: source ~/.zshrc
+
+
+
+
+三、配置 Hermes Agent
+
+方式 1：自动化助手（推荐）
+Ark Helper 是一个编码工具助手，支持快速配置选择的工具接入 Agent Plan。安装并运行该助手，根据界
+面提示操作可自动完成工具配置，降低手动配置的时间成本和出错风险。
+
+
+     注意
+    • Ark Helper 仅支持 MacOS、Linux 系统，暂不支持 Windows 系统。
+    • 以下配置步骤及截图为 Ark Helper 首次使用指引；非首次使用请按界面提示完成套餐配置和工
+      具配置。
+
+
+1. 执行以下命令安装 Ark Helper。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                         54/113
+Agent Plan / Coding Plan                                                                        3. 接入 AI 工具
+
+
+    Bash
+
+       curl -fsSL https://lf3-static.bytednsdoc.com/obj/eden-cn/ylwslo-yrh/ljhwZthlaukjlkulzlp/install.sh
+       | sh
+
+
+   安装完成后，执行以下命令查看安装的版本号。
+
+
+    Bash
+
+       ark-helper --version
+
+
+2. 在命令行界面输入 ark-helper 命令，启动 Ark Helper。默认选择中文。
+
+
+
+
+3. 根据界面提示完成套餐配置。
+   a. 选择要配置的套餐： [Volcano] Volcano Engine (国内) - Agent Plan 。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                55/113
+Agent Plan / Coding Plan                                 3. 接入 AI 工具
+
+
+   b. 配置 API Key：推荐选择 SSO 登录自动获取 API Key 和联网密钥 。根据界面提示完成登录并选择要使用
+      的联网密钥。
+
+
+
+
+   c. 选择默认模型。
+
+
+
+
+4. 根据界面提示点击返回，完成 Hermes Agent 工具配置。
+   a. 选择编码工具： Hermes Agent 。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                  56/113
+Agent Plan / Coding Plan                                              3. 接入 AI 工具
+
+
+   b. 选择操作： 设置 Volcano Agent Plan (API Key) 到 Hermes Agent ，配置完成后，选择 退出 。如果需要重
+      新配置工具，可先选择 卸载 Hermes Agent 配置 ，再重新进行配置流程。
+
+
+
+
+方式 2：手动配置
+执行以下命令配置 Hermes Agent。
+
+
+ Bash
+
+    hermes model
+
+
+1. Select provider：选择 Custom endpoint（enter URL manually） 。
+2. API base URL： https://ark.cn-beijing.volces.com/api/plan/v3
+3. API Key：获取专属 API Key            。
+
+
+
+
+        说明
+        填写 API Key 后在界面上不会显示，请不要多次填写。
+
+
+4. Model name：见支持模型及 Harness，需配置文本生成模型。
+
+
+
+                                       版权所有©北京火山引擎科技有限公司                   57/113
+Agent Plan / Coding Plan                                                3. 接入 AI 工具
+
+
+5. Display name： volcengine-agent-plan
+
+
+四、启动并使用 Hermes Agent
+1. 执行以下命令开启 Hermes Agent。
+
+
+    Bash
+
+       hermes
+
+
+2. 开始使用 Hermes Agent，支持的 CLI Interface 参见官方文档         。
+
+
+其他操作
+
+添加图片生成/视频生成能力
+方舟 Agent Plan Medium 及以上套餐提供图片生成、视频生成模型配额。方舟提供 Skill 帮助 AI 工具快速
+接入并使用。具体配置方法请参见：配置视觉模型。
+
+
+     注意
+    • 不同的套餐支持的视觉模型有所不同，具体参见支持模型及 Harness。
+    • 视觉模型不支持通过 Auto 及控制台切换使用。
+
+
+
+切换模型
+你可以随时根据需求切换文本生成模型。
+
+
+  配置方式                              通过控制台                  修改配置文件
+
+                                    1. 参考三、配置 Hermes
+                                       Agent配置模型名称为 ark-
+                                       code-latest 。
+                                                           参考三、配置 Hermes Agent配
+  切换模型操作                            2. 在开通管理页面 选择要         置模型名称为您需要的模型。
+                                       使用的模型，切换后3-5分
+                                       钟即可生效。
+
+
+
+
+接入飞书机器人
+
+     注意
+
+
+
+
+                                  版权所有©北京火山引擎科技有限公司                          58/113
+Agent Plan / Coding Plan                                                                       3. 接入 AI 工具
+
+
+     本文档基于 Hermes Agent v0.8.0（2026.4.8）编写，工具迭代演进过程配置步骤可能会有差异，
+     可参考以下内容配置关键信息。
+
+
+1. 单击链接          快速创建飞书机器人。
+2. 在终端执行以下命令配置信息平台。
+
+
+    Bash
+
+       hermes gateway setup
+
+
+   ◦ Select a platform to configure：选择 Feishu / Lark
+   ◦ How would you like to set up Feishu / Lark：选择 Scan QR code to create a new bot automatically
+     (recommended) ，通过飞书客户端扫描二维码后，创建飞书机器人。
+
+
+
+
+   ◦ How should direct messages be authorized：选择 Use DM pairing approval
+   ◦ How should group chats be handled：选择 Respond only when @mentioned in groups
+   ◦ Home chat ID：暂不配置
+
+                                    版权所有©北京火山引擎科技有限公司                                               59/113
+Agent Plan / Coding Plan                                        3. 接入 AI 工具
+
+
+   ◦ 选择 done 后， Install the gateway as a launchd service：选择 Y
+   ◦ Start the service now：选择 Y
+
+3. 在飞书打开刚创建的飞书机器人，发送任意消息获取配对码。
+
+
+
+
+4. 在终端执行以下命令对飞书进行配置，其中 <pairing-code> 需替换为获取的配对码。
+
+
+    Bash
+
+       hermes pairing approve feishu <pairing-code>
+
+
+
+
+5. 在飞书中发送 /sethome 命令将飞书会话设置为主会话，然后即可正常在飞书中使用 Hermes agent。
+
+
+
+
+                                   版权所有©北京火山引擎科技有限公司                 60/113
+Agent Plan / Coding Plan                                                        3. 接入 AI 工具
+
+
+
+
+3.5 TRAE
+本文介绍如何配置方舟 Agent Plan 到 TRAE 中使用。
+
+一、前提条件
+• 您已按需订阅 Agent Plan 套餐。如未，请访问 开通管理-Agent Plan                         页面订阅套餐。
+• 您已正确安装 TRAE，如未，请访问 TRAE 官网                     下载并安装对应操作系统的版本。
+
+
+二、配置 TRAE
+1. 进入设置中心添加模型。
+   a. 选择个人用户入口登录后，点击界面右上角的 设置 图标，进入设置中心。
+   b. 在左侧导航栏中，选择 模型，在模型管理页面进行配置。
+   c. 点击 + 添加模型 按钮，界面上显示 添加模型 窗口。
+
+2. 选择服务商：火山引擎 Plan
+3. 选择模型。
+   ◦ 直接从列表中选择提供的模型。
+   ◦ 若希望使用 Agent Plan 支持的其他模型，单击使用其他模型，模型 ID 需使用文本生成模型的名称，
+     详细模型名称参见 支持模型及 Harness。
+
+4. 填写 API 密钥：获取专属 API Key
+
+
+
+
+5. 填写自定义请求地址： https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions
+6. 点击添加模型，完成模型的配置。
+
+
+三、使用 TRAE
+在 AI 对话输入框的右下角，单击当前模型名称，在模型列表中，选择配置的模型。
+选定模型后，即可使用 TRAE 进行开发任务了。
+
+其他操作
+
+
+
+                                  版权所有©北京火山引擎科技有限公司                                  61/113
+Agent Plan / Coding Plan                                            3. 接入 AI 工具
+
+
+添加图片生成/视频生成能力
+方舟 Agent Plan Medium 及以上套餐提供图片生成、视频生成模型配额。方舟提供 Skill 帮助 AI 工具快速
+接入并使用。具体配置方法请参见：配置视觉模型。
+
+
+     注意
+    • 不同的套餐支持的视觉模型有所不同，具体参见支持模型及 Harness。
+    • 视觉模型不支持通过 Auto 及控制台切换使用。
+
+
+
+切换模型
+你可以随时根据需求切换文本生成模型。
+
+
+  配置方式                     通过控制台                        通过TRAE
+
+                                                        1. 参考二、配置 TRAE添加模
+                            1. 参考二、配置 TRAE配置模
+                                                           型信息。
+                               型名称为 ark-code-latest 。
+                                                        2. 在 AI 对话输入框的右下
+  切换模型操作                   2. 在开通管理页面 选择要
+                                                           角，单击当前模型名称，在
+                              使用的模型，切换后3-5分
+                                                           模型列表中，选择配置的模
+                              钟即可生效。
+                                                           型。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                             62/113
+Agent Plan / Coding Plan                       3. 接入 AI 工具
+
+
+
+
+3.6 OpenViking
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司        63/113
+Agent Plan / Coding Plan                                                         3. 接入 AI 工具
+
+
+OpenViking 是专为 AI 智能体（Agent）打造的上下文数据库，主要适用于多 Agent 协同、长期记忆管
+理、复杂任务执行等场景。该数据库采用 viking:// 文件系统范式，将智能体的记忆、资源与技能进行统
+一组织管理，依托分层加载机制按需供给上下文，在减少 Token 消耗的同时提升运行效率，结合目录式
+检索优化信息召回效果。功能上，OpenViking 支持多租户、多用户及多 Agent 隔离，且能在会话结束后
+自动沉淀长期记忆，实现智能体能力的持续积累与自我优化，既有效降低开发者的上下文管理成本，也
+能显著提升 OpenClaw 等智能体的整体运行表现。
+方舟 Agent Plan 支持在 OpenViking 中使用，可参考本文进行配置及使用。
+
+
+     注意
+     OpenViking 工具处于快速迭代阶段，本文使用的版本为 0.2.13，如果实际使用与以下步骤存在差
+     异，可参见 OpenViking：AI 智能体的上下文数据库 。
+
+
+
+
+一、前提条件
+• 您已按需订阅 Agent Plan 套餐。如未，请访问 开通管理-Agent Plan                    页面订阅套餐。
+
+
+二、安装 OpenViking
+
+前提条件
+• 已安装 Python 3.10 或更高版本              。
+• 已安装 Go 1.22 或更高版本              。
+• 已安装 C++ 编译器，且 GCC 9+ 或 Clang 11+。
+
+
+     说明
+     通过命令 clang++ --version 和 clang++ -std=c++17 -E -x c++ - < /dev/null 检查 C++编译器支持情况。
+
+
+
+安装步骤
+执行以下命令安装 OpenViking。
+
+
+ Bash
+
+    pip install openviking --upgrade --force-reinstall
+
+
+安装结束后，执行以下命令查看安装结果，若显示版本号则安装成功。
+
+
+ Bash
+
+    openviking --version
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                    64/113
+Agent Plan / Coding Plan                                                       3. 接入 AI 工具
+
+
+三、配置 OpenViking
+1. 创建配置文件 ~/.openviking/ov.conf ，配置信息如下。需要修改的配置信息如下：
+   ◦ storage``.``workspace ：替换为实际的工作空间路径。
+   ◦ embedding ：配置向量化模型，用于向量化和语义检索。
+         ▪ embedding.dense.model ：支持的 Embedding 模型 doubao-embedding-vision 。
+         ▪ embedding.dense.api_key ：替换为您自己的专属 API Key                      。
+
+
+
+
+   ◦ vlm ：配置语言模型，用于图像和内容理解。
+         ▪ vlm.model ：支持的语言模型，具体参见支持模型及 Harness。
+         ▪ vlm.api_key ：替换为您自己的专属 API Key                    。
+
+
+
+
+    {
+        "storage": {
+          "workspace": "/home/your-name/openviking_workspace"
+        },
+        "log": {
+          "level": "INFO",
+          "output": "stdout"
+        },
+        "embedding": {
+          "dense": {
+            "backend": "volcengine",
+            "api_key": "<ARK_API_KEY>",
+            "model": "doubao-embedding-vision",
+            "api_base": "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "dimension": 1024,
+            "input": "multimodal"
+          }
+        },
+        "vlm": {
+          "backend": "volcengine",
+          "api_key": "<ARK_API_KEY>",
+          "model": "doubao-seed-2.0-pro",
+          "api_base": "https://ark.cn-beijing.volces.com/api/plan/v3",
+          "temperature": 0.1,
+          "max_retries": 3
+
+
+
+
+                                         版权所有©北京火山引擎科技有限公司                          65/113
+Agent Plan / Coding Plan                                             3. 接入 AI 工具
+
+
+ JSON}
+   }
+
+
+2. 设置服务器配置环境变量。
+
+根据系统环境选择对应的方式设置环境变量。
+
+
+     说明
+     如果配置文件放在其他位置，需要在环境变量中指定对应的文件路径。
+
+
+macOS/Linux
+执行以下命令，设置环境变量指向对应的配置文件。
+
+
+ Bash
+
+    export OPENVIKING_CONFIG_FILE=~/.openviking/ov.conf
+
+
+Windows
+选择以下任一方式，设置环境变量指向对应的配置文件。
+
+• PowerShell
+
+
+ Bash
+
+    $env:OPENVIKING_CONFIG_FILE = "$HOME/.openviking/ov.conf"
+
+
+• CMD
+
+
+ Bash
+
+    set "OPENVIKING_CONFIG_FILE=%USERPROFILE%\.openviking\ov.conf"
+
+
+
+
+四、开始使用 OpenViking
+1. 创建 Python 文件 example.py ，代码内容如下。
+
+
+
+
+    import openviking as ov
+
+    # Initialize OpenViking client with data directory
+    client = ov.OpenViking(path="./data")
+
+
+
+                                      版权所有©北京火山引擎科技有限公司                   66/113
+Agent Plan / Coding Plan                                                                 3. 接入 AI 工具
+
+
+   try:
+ Python
+     # Initialize the client
+     client.initialize()
+
+      # Add resource (supports URL, file, or directory)
+      add_result = client.add_resource(
+        path="https://raw.githubusercontent.com/volcengine/OpenViking/refs/heads/main/
+    README.md"
+      )
+      root_uri = add_result['root_uri']
+
+      # Explore the resource tree structure
+      ls_result = client.ls(root_uri)
+      print(f"Directory structure:\n{ls_result}\n")
+
+      # Use glob to find markdown files
+      glob_result = client.glob(pattern="**/*.md", uri=root_uri)
+      if glob_result['matches']:
+         content = client.read(glob_result['matches'][0])
+         print(f"Content preview: {content[:200]}...\n")
+
+      # Wait for semantic processing to complete
+      print("Wait for semantic processing...")
+      client.wait_processed()
+
+      # Get abstract and overview of the resource
+      abstract = client.abstract(root_uri)
+      overview = client.overview(root_uri)
+      print(f"Abstract:\n{abstract}\n\nOverview:\n{overview}\n")
+
+      # Perform semantic search
+      results = client.find("what is openviking", target_uri=root_uri)
+      print("Search results:")
+      for r in results.resources:
+        print(f" {r.uri} (score: {r.score:.4f})")
+
+      # Close the client
+      client.close()
+
+    except Exception as e:
+      print(f"Error: {e}")
+
+
+2. 执行命令 python ``example.py ，输出如下内容则说明 OpenViking 已成功运行。
+
+
+
+
+                                       版权所有©北京火山引擎科技有限公司                                      67/113
+Agent Plan / Coding Plan                                          3. 接入 AI 工具
+
+
+ Plain
+
+    Directory structure:
+    ...
+    Content preview: ...
+
+    Wait for semantic processing...
+    Abstract:
+    ...
+    Overview:
+    ...
+    Search results:
+      viking://resources/... (score: 0.8523)
+      ...
+
+
+
+
+其他操作
+
+CLI 服务端配置并使用 OpenViking
+如果需要将 OpenViking 作为独立的 HTTP 服务运行，然后从任意客户端连接，请参考以下步骤进行配
+置。
+
+前提条件
+已安装并完成配置 OpenViking，具体参见安装 OpenViking、配置 OpenViking。
+
+启动服务
+执行以下命令启动服务。
+
+
+ Bash
+
+    openviking-server
+
+
+启动完成后，在新的命令行界面执行以下命令验证服务启动是否成功，若返回 "status":"ok" 则表示启动成
+功。
+
+
+ Bash
+
+    curl http://localhost:1933/health
+
+
+
+使用 CLI 连接
+1. 创建 CLI 连接配置文件 ~/.openviking/ovcli.conf ，配置信息如下。其中 <ARK_API_KEY> 需替换为您自己
+   的 API Key 。
+
+
+
+
+                                        版权所有©北京火山引擎科技有限公司              68/113
+Agent Plan / Coding Plan                                                                      3. 接入 AI 工具
+
+
+ JSON
+
+    {
+        "url": "http://localhost:1933",
+        "api_key": "<ARK_API_KEY>",
+        "output": "table"
+    }
+
+
+2. 在新的命令行界面执行以下 CLI 命令。
+
+
+ Bash
+
+    # Check system health
+    openviking observer system
+
+    # Add a resource to memory
+    openviking add-resource https://raw.githubusercontent.com/volcengine/OpenViking/refs/heads/
+    main/README.md
+
+    # List all synchronized resources
+    openviking ls viking://resources
+
+    # Query
+    openviking find "what is openviking"
+
+
+
+使用 curl 连接
+启动服务后，也可以在命令行界面使用 curl 命令连接 OpenViking。
+
+
+ Bash
+
+    # Add a resource
+    curl -X POST http://localhost:1933/api/v1/resources \
+     -H "Content-Type: application/json" \
+     -d '{"path": "https://raw.githubusercontent.com/volcengine/OpenViking/refs/heads/main/
+    README.md"}'
+
+    # List resources
+    curl "http://localhost:1933/api/v1/fs/ls?uri=viking://resources/"
+
+    # Semantic search
+    curl -X POST http://localhost:1933/api/v1/search/find \
+     -H "Content-Type: application/json" \
+     -d '{"query": "what is openviking"}'
+
+
+
+
+                                          版权所有©北京火山引擎科技有限公司                                        69/113
+Agent Plan / Coding Plan                                   3. 接入 AI 工具
+
+
+在 OpenClaw 配置 OpenViking 记忆功能
+通过 OpenViking 为 OpenClaw 提供长效记忆能力，配置完成后，OpenClaw 将自动记住对话中的重要信
+息，并在回复前回忆相关内容。
+
+前提条件
+已完成 OpenClaw 的安装与配置，具体参见安装 OpenClaw、配置 OpenClaw。
+
+安装及配置
+具体步骤参见为 OpenClaw 安装 OpenViking 记忆功能 。
+安装完成后，编辑配置文件 ~/.openviking/ov.conf ，使用 Agent Plan 支持的模型。配置信息可参见配置
+OpenViking。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                    70/113
+Agent Plan / Coding Plan                                                                       3. 接入 AI 工具
+
+
+
+
+3.7 其他工具
+方舟 Agent Plan 已适配 Anthropic、OpenAI 接口协议，可兼容对应工具生态。开发者通过配置 Agent
+Plan 专用的 Base URL并指定支持模型，可快速接入并使用相关工具。
+
+
+     注意
+     获取专属 API Key          ：Agent Plan 专属 API Key 与火山方舟平台的 API Key 不同，请勿混用。
+
+
+
+
+适用工具
+
+  接口协议                                  Base URL                              适用工具
+
+                                         https://ark.cn-beijing.volces.com/
+  兼容 Anthropic 接口协议                                                           Claude Code
+                                        api/plan
+
+                                                                              OpenCode、OpenClaw、
+                                         https://ark.cn-beijing.volces.com/   Hermes Agent、Cline、
+  兼容 OpenAI 接口协议
+                                        api/plan/v3                           Cursor、Kilo Code、Roo Code
+                                                                              等
+
+
+
+接入Cline
+
+安装步骤
+打开 VSCode，在扩展市场搜索 Cline 安装。
+
+配置工具
+Cline插件安装完成后，您需要配置以下信息。
+
+• API Provider： OpenAI Compatible （Agent Plan 接口兼容 OpenAI 标准）
+• Base URL： https://ark.cn-beijing.volces.com/api/plan/v3
+• API Key：获取API Key
+• Model ID：支持配置 ark-code-latest 、配置 Model Name 两种方式，具体见模型配置。
+
+配置完成后，就可以在输入框中输入需求，与模型进行交互。
+
+
+
+
+                                       版权所有©北京火山引擎科技有限公司                                             71/113
+Agent Plan / Coding Plan                                                    3. 接入 AI 工具
+
+
+接入Cursor
+
+安装步骤
+官网下载安装包：通过Cursor官网                    下载并安装Cursor。
+
+配置工具
+
+     说明
+     由于 Cursor 的限制，只有订阅了 Cursor Pro 及以上套餐的用户才支持自定义配置模型。
+
+
+Cursor 安装完成后，Models 模块的具体配置如下：
+
+• OpenAI API Key：获取API Key
+• Override OpenAI Base URL： https://ark.cn-beijing.volces.com/api/plan/v3
+• Add Custom Model：支持配置 ark-code-latest 、配置 Model Name 两种方式，具体见模型配置。
+
+
+     注意
+     在 Cursor 中配置 minimax-2.7 、 glm-5.1 、 kimi-k2.6 模型时若遇到名称冲突问题，建议改用
+      minimax-2-7 、 glm-5-1 、 kimi-k2-6 配置。
+
+
+配置完成后，即可在聊天面板中选择配置的模型进行交互。
+
+接入Roo Code
+
+安装步骤
+
+     说明
+     若模型表现异常，建议将插件更新到最新版本（3.43.0 及后续版本）。
+
+
+打开 VSCode，在扩展市场搜索 Roo Code 进行安装，安装完成后选择信任发布者。
+
+
+
+
+配置工具
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                           72/113
+Agent Plan / Coding Plan                                        3. 接入 AI 工具
+
+
+安装完成后，配置以下信息。
+
+• API Provider： OpenAI Compatible （Agent Plan 接口兼容 OpenAI 标准）
+• Base URL： https://ark.cn-beijing.volces.com/api/plan/v3
+• API Key：获取API Key
+• Model：支持配置 ark-code-latest 、配置 Model Name 两种方式，具体见模型配置。
+
+配置完成后，就可以在输入框中输入需求，与模型进行交互。
+
+接入Kilo Code
+
+安装步骤
+打开 VSCode，在扩展市场搜索 kilo code 进行安装，安装完成后选择信任发布者。
+
+
+
+
+配置工具
+选择 Use your own API key，然后配置以下信息。
+
+• API Provider： OpenAI Compatible （Agent Plan 接口兼容 OpenAI 标准）
+• Base URL： https://ark.cn-beijing.volces.com/api/plan/v3
+• API Key：获取API Key
+• Model：支持配置 ark-code-latest 、配置 Model Name 两种方式，具体见模型配置。
+
+配置完成后，就可以在输入框中输入需求，与模型进行交互。
+
+
+
+
+                                       版权所有©北京火山引擎科技有限公司             73/113
+Agent Plan / Coding Plan                                                   4. 接入多模态生成模型
+
+
+
+
+4. 接入多模态生成模型
+4.1 接入向量化模型
+方舟 Agent Plan 提供向量化模型，可以为工具提供语义向量能力，将对话、文档与任务信息等转换为高
+维向量表示，实现基于语义相似度的高效检索。
+相比传统关键词匹配，Embedding 检索在信息量大、对话长、资料分散的场景下，能够更准确地召回相
+关内容，显著降低遗漏与误判。同时，Embedding 为记忆检索、知识库问答与工具调用提供统一的语义
+检索层，帮助工具在不增加主模型推理成本的前提下，提升跨轮次上下文追踪能力与整体效果。
+
+核心配置信息
+在 Agent Plan 中使用向量模型时，需要的核心配置如下：
+
+• 专属 Base URL：https://ark.cn-beijing.volces.com/api/plan/v3，Agent Plan 专属 Base URL 中包含 /
+  plan ，请勿混用其他 Base URL。
+• 专属 API Key：获取专属 API Key        ，其他方舟 API Key 如 Coding Plan API Key 无法在 Agent Plan 中使
+  用。
+
+
+
+
+• 支持的模型： doubao-embedding-vision （对应模型 doubao-embedding-vision-251215            ）
+
+
+        注意
+         ◦ 建议固定使用同一版本的向量化模型，请勿混用不同版本。
+         ◦ 向量化模型只支持在配置文件中指定 Model Name，不支持通过 Auto 及控制台切换使用。
+
+
+
+接入向量化模型
+
+OpenClaw
+OpenClaw 支持配置向量模型，解决大模型原生记忆有限、易产生幻觉、无法适配私有数据的问题，从而
+提升模型在处理复杂任务时的准确性和可靠性。
+
+1. 前提条件：已完成 OpenClaw 的安装与配置，步骤参见二、安装 OpenClaw、三、配置 OpenClaw。
+
+
+                               版权所有©北京火山引擎科技有限公司                                       74/113
+Agent Plan / Coding Plan                                                   4. 接入多模态生成模型
+
+
+2. 选择以下任一方式配置向量模型。
+
+Web UI 方式
+1. 执行以下命令打开 Web UI。
+
+
+ Bash
+
+    openclaw dashboard
+
+
+2. 在左侧菜单栏选择配置 - Settings - Advanced，单击 Open 查看并修改配置信息，在 agents.defaults 节
+   点下增加 memorySearch 相关配置信息，增加的配置信息如下。其中需要将 <ARK_API_KEY> 替换为您自
+   己的专属 API Key 。
+
+
+ JSON
+
+    {
+     ...
+     "agents": {
+       "defaults": {
+         ...
+         "memorySearch": {
+           "provider": "openai",
+           "model": "doubao-embedding-vision",
+           "remote": {
+             "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+             "apiKey": "<ARK_API_KEY>"
+           }
+         }
+         ...
+       }
+     }
+     ...
+    }
+
+
+3. 配置完成后，先保存配置文件，然后单击 Update 更新配置，配置更新完成后需要重新连接服务进入
+   Web UI。
+
+终端方式
+1. 在终端执行以下命令打开 OpenClaw 配置文件。
+
+
+ Bash
+
+    nano ~/.openclaw/openclaw.json
+
+
+2. 在 agents.defaults 节点下增加 memorySearch 相关配置信息，增加的配置信息如下。其中需要将
+    <ARK_API_KEY> 替换为您自己的专属API Key       。
+
+
+
+                                       版权所有©北京火山引擎科技有限公司                           75/113
+Agent Plan / Coding Plan                                                      4. 接入多模态生成模型
+
+
+ JSON
+
+    {
+        ...
+        "agents": {
+          "defaults": {
+            ...
+            "memorySearch": {
+              "provider": "openai",
+              "model": "doubao-embedding-vision",
+              "remote": {
+                "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+                "apiKey": "<ARK_API_KEY>"
+              }
+            }
+            ...
+          }
+        }
+        ...
+    }
+
+
+3. 配置完成后，重启网关使配置生效。
+
+
+ Bash
+
+    openclaw gateway restart
+
+
+
+OpenViking
+OpenViking 是专为 AI 智能体设计的开源上下文数据库，支持多模态 Embedding 模型的集成与接入，实现
+非结构化数据的向量化转换，并提供高效的语义相似度检索能力。
+
+1. 前提条件：已完成 OpenViking 的安装与基础配置，步骤参见 安装 OpenViking、配置 OpenViking。
+2. 在配置文件 ~/.openviking/ov.conf 中新增 embedding 相关配置。其中需要将 <ARK_API_KEY> 替换为您自
+   己的专属 API Key 。
+
+
+
+
+    {
+        ...
+        "embedding": {
+          "dense": {
+            "api_base" : "https://ark.cn-beijing.volces.com/api/plan/v3",
+            "api_key" : "<ARK_API_KEY>",
+            "provider" : "volcengine",
+            "dimension": 1024,
+            "model" : "doubao-embedding-vision"
+
+                                          版权所有©北京火山引擎科技有限公司                           76/113
+Agent Plan / Coding Plan                          4. 接入多模态生成模型
+
+
+ JSON},
+       "max_concurrent": 10
+     }
+     ...
+   }
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司           77/113
+Agent Plan / Coding Plan                                                                4. 接入多模态生成模型
+
+
+
+
+4.2 接入视觉模型
+方舟 Agent Plan 提供图片生成、视频生成模型，支持通过 Skill、API 接口调用两种方式接入并使用生图、
+生视频能力。
+
+通过 Skill 接入
+在 AI 工具中使用图片生成、视频生成能力，建议使用 Skill 方式接入。
+
+方式 1：自动化助手（推荐）
+支持的 AI 工具：Claude Code、OpenCode、OpenClaw。
+Ark Helper 是一个编码工具助手，支持快速配置选择的工具接入 Agent Plan。安装并运行该助手，根据界
+面提示操作可自动完成工具配置，其中包括自动完成视频生成Skill（byted-ark-seedance-skill ）、图片
+生成 Skill（byted-ark-seedream-skill ） 的安装配置，有效降低手动配置的时间成本和出错风险。
+
+
+     注意
+    • Ark Helper 仅支持 MacOS、Linux 系统，暂不支持 Windows 系统。
+    • 以下配置步骤及截图为 Ark Helper 首次使用指引；非首次使用请按界面提示完成套餐配置和工
+      具配置。
+
+
+1. 执行以下命令安装 Ark Helper。
+
+
+    Bash
+
+       curl -fsSL https://lf3-static.bytednsdoc.com/obj/eden-cn/ylwslo-yrh/ljhwZthlaukjlkulzlp/install.sh
+       | sh
+
+
+   安装完成后，执行以下命令查看安装的版本号。
+
+
+    Bash
+
+       ark-helper --version
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                78/113
+Agent Plan / Coding Plan                                       4. 接入多模态生成模型
+
+
+2. 在命令行界面输入 ark-helper 命令，启动 Ark Helper。默认选择中文。
+
+
+
+
+3. 根据界面提示完成套餐配置。
+   a. 选择要配置的套餐： [Volcano] Volcano Engine (国内) - Agent Plan 。
+
+
+
+
+   b. 配置 API Key：推荐选择 SSO 登录自动获取 API Key 和联网密钥 。根据界面提示完成登录并选择要使用
+      的联网密钥。
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司                        79/113
+Agent Plan / Coding Plan                                                4. 接入多模态生成模型
+
+
+   c. 选择默认模型。
+
+
+
+
+4. 根据界面提示点击返回，完成工具配置。以 Claude Code 配置为例，具体步骤如下。
+   a. 选择编码工具： Claude Code 。
+
+
+
+
+   b. 选择操作： 设置 Volcano Agent Plan (API Key + Skills + MCP) 到 Claude Code ，配置完成后，选择 退出 。如
+      果需要重新配置工具，可先选择 卸载 Claude Code 配置 ，再重新进行配置流程。
+
+
+
+
+      完成上述操作后，将自动完成视觉模型 Skill、联网搜索 Skill / MCP 的安装，无需手动安装。
+
+5. 启动配置好的工具，发送视频生成/图片生成提示词，将会触发视觉模型 Skill 生成视频/图片。
+
+
+方式 2：手动安装 Skill
+
+                              版权所有©北京火山引擎科技有限公司                                     80/113
+Agent Plan / Coding Plan                                                                 4. 接入多模态生成模型
+
+
+安装视频生成 Skill
+通过 Skill 方式，可以快速为 AI 工具安装并接入视频生成能力，目前支持的 AI 工具：OpenClaw、Hermes
+Agent、Claude Code。视频生成 Skill 信息参见 byted-ark-seedance-skill 。
+
+OpenClaw
+1. 已完成 OpenClaw 的安装及语言模型的配置，具体步骤见 OpenClaw。
+2. 在终端执行以下命令为 OpenClaw 安装并接入视频生成 Skill byted-ark-seedance-skill 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/volcengine/agentplan -s byted-ark-seedance-skill --
+       agent openclaw
+
+
+3. 安装完成后，可以在 OpenClaw 发送视频生成的提示词，触发并使用生成视频能力。
+
+Hermes Agent
+1. 已完成 Hermes Agent 的安装及语言模型的配置，具体步骤见 Hermes Agent                                  。
+2. 进入 byted-ark-seedance-skill        页面下载 ZIP 压缩包，将解压后的文件粘贴至 ~/.hermes/skills/ 目录
+   下。
+3. 配置完成后，可以在 Hermes Agent 发送视频生成的提示词，触发并使用生成视频能力。
+
+Claude Code
+1. 已完成 Claude Code 的安装及语言模型的配置，具体步骤见 Claude Code。
+2. 在终端执行以下命令为 Claude Code 安装并接入视频生成 Skill byted-ark-seedance-skill 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/volcengine/agentplan -s byted-ark-seedance-skill --
+       agent claude-code
+
+
+3. 配置完成后，可以在 Claude Code 发送视频生成的提示词，触发并使用生成视频能力。
+
+TRAE
+1. 已完成 TRAE 的安装及语言模型的配置，具体步骤见 TRAE。
+2. 在终端执行以下命令下载 byted-ark-seedance-skill 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/volcengine/agentplan -s byted-ark-seedance-skill --
+       agent trae
+
+
+3. 安装完成后，可以在 TRAE 发送视频生成的提示词，触发并使用生成视频能力。
+
+
+安装图片生成 Skill
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                 81/113
+Agent Plan / Coding Plan                                                                4. 接入多模态生成模型
+
+
+通过 Skill 方式，可以快速为 AI 工具安装并接入图片生成能力，目前支持的 AI 工具：OpenClaw、Hermes
+Agent、Claude Code。图片生成 Skill 信息参见 byted-ark-seedream-skill 。
+
+OpenClaw
+1. 已完成 OpenClaw 的安装及语言模型的配置，具体步骤见 OpenClaw。
+2. 在终端执行以下命令为 OpenClaw 安装并接入图片生成 Skill byted-ark-seedream-skill 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/volcengine/agentplan -s byted-ark-seedream-skill
+       --agent openclaw
+
+
+3. 安装完成后，可以在 OpenClaw 发送图片生成的提示词，触发并使用生成图片能力。
+
+Hermes Agent
+1. 已完成 Hermes Agent 的安装及语言模型的配置，具体步骤见 Hermes Agent                                 。
+2. 进入 byted-ark-seedream-skill        页面下载 ZIP 压缩包，将解压后的文件粘贴至 ~/.hermes/skills/ 目录
+   下。
+3. 安装完成后，可以在 Hermes Agent 发送图片生成的提示词，触发并使用生成图片能力。
+
+Claude Code
+1. 已完成 Claude Code 的安装及语言模型的配置，具体步骤见 Claude Code。
+2. 在终端执行以下命令为 Claude Code 安装并接入图片生成 Skill byted-ark-seedream-skill 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/volcengine/agentplan -s byted-ark-seedream-skill
+       --agent claude-code
+
+
+3. 安装完成后，可以在 Claude Code 发送图片生成的提示词，触发并使用生成图片能力。
+
+TRAE
+1. 已完成 TRAE 的安装及语言模型的配置，具体步骤见 TRAE。
+2. 在终端执行以下命令下载 byted-ark-seedream-skill 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/volcengine/agentplan -s byted-ark-seedream-skill
+       --agent trae
+
+
+3. 安装完成后，可以在 TRAE 发送图片生成的提示词，触发并使用生成图片能力。
+
+
+通过 API 接入
+如果使用的 AI 工具不支持接入 Skill，或者无需在 AI 工具中使用，可通过 API 接入的方式使用图片生成、
+视频生成能力。
+
+
+                                     版权所有©北京火山引擎科技有限公司                                                    82/113
+Agent Plan / Coding Plan                                                                           4. 接入多模态生成模型
+
+
+核心配置信息
+在使用 Agent Plan 时，需要使用专属 API Key、专属 Base URL、支持的模型来调用视频生成、图片生成
+API，否则可能会调用失败或产生额外费用。
+
+• 专属 API Key：获取专属 API Key                   ，其他方舟 API Key 如 Coding Plan API Key 无法在 Agent Plan 中使
+  用。
+
+
+
+
+• 支持的模型：见支持模型及 Harness。
+• 专属 Base URL
+
+
+        注意
+        Agent Plan 对应的 API 接口信息中包含 /plan ，请勿混用其他 API 接口。
+
+
+   ◦ Curl 方式：支持的 API 参数可查看对应的 API 文档。
+
+        视频生成 API                                                  图片生成 API
+
+         ▪ 创建视频生成任务                  ： https://ark.cn-
+           beijing.volces.com/api/plan/v3/contents/
+           generations/tasks
+         ▪ 查询视频生成任务                  ： https://ark.cn-
+           beijing.volces.com/api/plan/v3/contents/
+           generations/tasks/{id}
+         ▪ 查询视频生成任务列表                      ： https://ark.cn-      图片生成          ：
+           beijing.volces.com/api/plan/v3/contents/                https://ark.cn-beijing.volces.com/api/plan/v3/images/
+           generations/tasks?page_num={page_num}                  generations
+           &page_size={page_size}&filter.status={filter.status}
+           &filter.task_ids={filter.task_ids}
+           &filter.model={filter.model}
+         ▪ 取消或删除视频生成任务                        ：
+            https://ark.cn-beijing.volces.com/api/plan/v3/
+           contents/generations/tasks/{id}
+
+
+
+   ◦ SDK 方式：
+     专属 Base URL： https://ark.cn-beijing.volces.com/api/plan/v3
+
+
+                                          版权所有©北京火山引擎科技有限公司                                                        83/113
+Agent Plan / Coding Plan                                                         4. 接入多模态生成模型
+
+
+
+调用视频生成 API
+参见视频生成教程 、Doubao Seedance 2.0 系列教程 完成视频生成任务，需注意必须使用 Agent
+Plan 专属 API Key、专属 Base URL 及支持的模型，否则可能会调用失败或产生额外费用。具体参见核心配
+置信息。
+通过 Agent Plan 创建视频生成任务的示例如下：
+
+Curl
+
+ Bash
+
+    curl https://ark.cn-beijing.volces.com/api/plan/v3/contents/generations/tasks \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $AGENT_API_KEY" \
+      -d '{
+       "model": "doubao-seedance-2.0",
+       "content": [
+          {
+             "type": "text",
+             "text": "女孩抱着狐狸，女孩睁开眼，温柔地看向镜头，狐狸友善地抱着，镜头缓缓拉出，女
+    孩的头发被风吹动，可以听到风声"
+          },
+          {
+             "type": "image_url",
+             "image_url": {
+               "url": "https://ark-project.tos-cn-beijing.volces.com/doc_image/i2v_foxrgirl.png"
+             }
+          }
+       ],
+       "generate_audio": true,
+       "ratio": "adaptive",
+       "duration": 5,
+       "watermark": false
+    }'
+
+
+Python
+
+
+
+    import os
+    from volcenginesdkarkruntime import Ark
+
+    client = Ark(
+       # Agent Plan 专属 Base URL
+       base_url="https://ark.cn-beijing.volces.com/api/plan/v3",
+       # Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+    openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+
+
+                                  版权所有©北京火山引擎科技有限公司                                          84/113
+Agent Plan / Coding Plan                                                         4. 接入多模态生成模型
+
+
+     api_key=os.environ.get("AGENT_API_KEY")
+ Python
+   )
+
+    if __name__ == "__main__":
+       print("----- create request -----")
+       resp = client.content_generation.tasks.create(
+         model="doubao-seedance-2.0",
+         content=[
+            {
+               "text": (
+                  "女孩抱着狐狸，女孩睁开眼，温柔地看向镜头，狐狸友善地抱着，镜头缓缓拉出，女孩
+    的头发被风吹动"
+               ),
+               "type": "text"
+            },
+            {
+               "image_url": {
+                  "url": (
+                    "https://ark-project.tos-cn-beijing.volces.com/doc_image/i2v_foxrgirl.png"
+                  )
+               },
+               "type": "image_url"
+            }
+         ],
+         generate_audio=True,
+         ratio="adaptive",
+         duration=5,
+         watermark=False,
+       )
+
+       print(resp)
+
+
+Java
+
+
+
+    package com.ark.sample;
+
+    import com.volcengine.ark.runtime.model.content.generation.*;
+    import
+    com.volcengine.ark.runtime.model.content.generation.CreateContentGenerationTaskRequest.Conte
+    nt;
+    import com.volcengine.ark.runtime.service.ArkService;
+    import okhttp3.ConnectionPool;
+    import okhttp3.Dispatcher;
+
+
+
+
+                                  版权所有©北京火山引擎科技有限公司                                           85/113
+Agent Plan / Coding Plan                                                            4. 接入多模态生成模型
+
+
+    import java.util.ArrayList;
+    import java.util.List;
+    import java.util.concurrent.TimeUnit;
+
+    public class ContentGenerationTaskExample {
+      // Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+    openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+      static String apiKey = System.getenv("AGENT_API_KEY");
+      static ConnectionPool connectionPool = new ConnectionPool(5, 1, TimeUnit.SECONDS);
+      static Dispatcher dispatcher = new Dispatcher();
+      static ArkService service = ArkService.builder()
+          .baseUrl("https://ark.cn-beijing.volces.com/api/plan/v3") // Agent Plan 专属 Base URL
+          .dispatcher(dispatcher)
+          .connectionPool(connectionPool)
+          .apiKey(apiKey)
+          .build();
+
+      public static void main(String[] args) {
+        String model = "doubao-seedance-2.0";
+        Boolean generateAudio = true;
+        String ratio = "adaptive";
+        Long duration = 5L;
+        Boolean watermark = false;
+        System.out.println("----- create request -----");
+        List<Content> contents = new ArrayList<>();
+
+      // Combination of text prompt and parameters
+      contents.add(Content.builder()
+           .type("text")
+           .text("女孩抱着狐狸，女孩睁开眼，温柔地看向镜头，狐狸友善地抱着，镜头缓缓拉出，
+    女孩的头发被风吹动，可以听到风声")
+           .build());
+      // The URL of the first frame image
+      contents.add(Content.builder()
+           .type("image_url")
+           .imageUrl(CreateContentGenerationTaskRequest.ImageUrl.builder()
+                .url("https://ark-project.tos-cn-beijing.volces.com/doc_image/i2v_foxrgirl.png")
+                .build())
+           .build());
+
+        // Create a video generation task
+        CreateContentGenerationTaskRequest createRequest =
+    CreateContentGenerationTaskRequest.builder()
+             .model(model)
+             .content(contents)
+             .generateAudio(generateAudio)
+             .ratio(ratio)
+
+
+                                     版权所有©北京火山引擎科技有限公司                                          86/113
+Agent Plan / Coding Plan                                                           4. 接入多模态生成模型
+
+
+ Java           .duration(duration)
+                .watermark(watermark)
+                .build();
+
+         CreateContentGenerationTaskResult createResult =
+     service.createContentGenerationTask(createRequest);
+         System.out.println(createResult);
+
+             service.shutdownExecutor();
+         }
+     }
+
+
+Go
+
+
+
+     package main
+
+     import (
+       "context"
+       "fmt"
+       "os"
+       "time"
+
+         "github.com/volcengine/volcengine-go-sdk/service/arkruntime"
+         "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+         "github.com/volcengine/volcengine-go-sdk/volcengine"
+     )
+
+     func main() {
+       client := arkruntime.NewClientWithApiKey(
+          // Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+     openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+          os.Getenv("AGENT_API_KEY"),
+          // Agent Plan 专属 Base URL
+          arkruntime.WithBaseUrl("https://ark.cn-beijing.volces.com/api/plan/v3"),
+       )
+       ctx := context.Background()
+       modelEp := "doubao-seedance-2.0"
+
+         // Generate a task
+         fmt.Println("----- create request -----")
+         createReq := model.CreateContentGenerationTaskRequest{
+            Model: modelEp,
+            GenerateAudio: volcengine.Bool(true),
+            Ratio:    volcengine.String("adaptive"),
+
+
+
+                                           版权所有©北京火山引擎科技有限公司                                   87/113
+Agent Plan / Coding Plan                                                          4. 接入多模态生成模型
+
+
+ Go      Duration: volcengine.Int64(5),
+         Watermark: volcengine.Bool(false),
+         Content: []*model.CreateContentGenerationContentItem{
+            {
+               // Combination of text prompt and parameters
+               Type: model.ContentGenerationContentItemTypeText,
+               Text: volcengine.String("女孩抱着狐狸，女孩睁开眼，温柔地看向镜头，狐狸友善地抱着，
+    镜头缓缓拉出，女孩的头发被风吹动，可以听到风声"),
+            },
+            {
+               // The URL of the first frame image
+               Type: model.ContentGenerationContentItemTypeImage,
+               ImageURL: &model.ImageURL{
+                  URL: "https://ark-project.tos-cn-beijing.volces.com/doc_image/i2v_foxrgirl.png",
+               },
+            },
+         },
+      }
+      createResp, err := client.CreateContentGenerationTask(ctx, createReq)
+      if err != nil {
+         fmt.Printf("create content generation error: %v", err)
+         return
+      }
+      taskID := createResp.ID
+      fmt.Printf("Task Created with ID: %s", taskID)
+    }
+
+
+
+调用图片生成 API
+参见Seedream 4.0-5.0 教程 完成图片生成任务，需注意必须使用 Agent Plan 专属 API Key、专属 Base
+URL 及支持的模型，否则可能会调用失败或产生额外费用。具体参见核心配置信息。
+通过 Agent Plan 实现文生图的示例如下：
+
+Curl
+
+
+
+    curl https://ark.cn-beijing.volces.com/api/plan/v3/images/generations \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer $AGENT_API_KEY" \
+     -d '{
+      "model": "doubao-seedream-5.0-lite",
+      "prompt": "充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，眼部焦
+    点锐利，景深较浅，具有Vogue杂志封面的美学风格，采用中画幅拍摄，工作室灯光效果强烈。",
+      "size": "2K",
+      "output_format":"png",
+
+
+
+                                  版权所有©北京火山引擎科技有限公司                                            88/113
+Agent Plan / Coding Plan                                                        4. 接入多模态生成模型
+
+
+ Bash"watermark": false
+   }'
+
+
+Python
+
+ Python
+
+    import os
+    # Install SDK: pip install 'volcengine-python-sdk[ark]' .
+    from volcenginesdkarkruntime import Ark
+
+    client = Ark(
+       # Agent Plan 专属 Base URL
+       base_url="https://ark.cn-beijing.volces.com/api/plan/v3",
+       # Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+    openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+       api_key=os.getenv('AGENT_API_KEY'),
+    )
+
+    imagesResponse = client.images.generate(
+      model="doubao-seedream-5.0-lite",
+      prompt="充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，眼部焦
+    点锐利，景深较浅，具有Vogue杂志封面的美学风格，采用中画幅拍摄，工作室灯光效果强烈。",
+      size="2K",
+      output_format="png",
+      response_format="url",
+      watermark=False
+    )
+
+    print(imagesResponse.data[0].url)
+
+
+Java
+
+
+
+    package com.ark.sample;
+    import com.volcengine.ark.runtime.model.images.generation.*;
+    import com.volcengine.ark.runtime.service.ArkService;
+    import okhttp3.ConnectionPool;
+    import okhttp3.Dispatcher;
+
+    import java.util.Arrays;
+    import java.util.List;
+    import java.util.concurrent.TimeUnit;
+
+    public class ImageGenerationsExample {
+
+
+                                      版权所有©北京火山引擎科技有限公司                                    89/113
+Agent Plan / Coding Plan                                                               4. 接入多模态生成模型
+
+
+ Java public static void main(String[] args) {
+        // Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+   openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+        String apiKey = System.getenv("AGENT_API_KEY");
+        ConnectionPool connectionPool = new ConnectionPool(5, 1, TimeUnit.SECONDS);
+        Dispatcher dispatcher = new Dispatcher();
+        ArkService service = ArkService.builder()
+             .baseUrl("https://ark.cn-beijing.volces.com/api/plan/v3") // Agent Plan 专属 Base URL
+             .dispatcher(dispatcher)
+             .connectionPool(connectionPool)
+             .apiKey(apiKey)
+             .build();
+
+       GenerateImagesRequest generateRequest = GenerateImagesRequest.builder()
+           .model("doubao-seedream-5.0-lite")
+           .prompt("充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，眼
+     部焦点锐利，景深较浅，具有Vogue杂志封面的美学风格，采用中画幅拍摄，工作室灯光效果强
+     烈。")
+           .size("2K")
+           .sequentialImageGeneration("disabled")
+           .outputFormat("png")
+           .responseFormat(ResponseFormat.Url)
+           .stream(false)
+           .watermark(false)
+           .build();
+       ImagesResponse imagesResponse = service.generateImages(generateRequest);
+       System.out.println(imagesResponse.getData().get(0).getUrl());
+
+             service.shutdownExecutor();
+         }
+     }
+
+
+Go
+
+
+
+     package main
+
+     import (
+       "context"
+       "fmt"
+       "os"
+
+         "github.com/volcengine/volcengine-go-sdk/service/arkruntime"
+         "github.com/volcengine/volcengine-go-sdk/service/arkruntime/model"
+         "github.com/volcengine/volcengine-go-sdk/volcengine"
+
+
+                                           版权所有©北京火山引擎科技有限公司                                       90/113
+Agent Plan / Coding Plan                                                          4. 接入多模态生成模型
+
+
+ Go)
+
+    func main() {
+      client := arkruntime.NewClientWithApiKey(
+         // Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+    openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+         os.Getenv("AGENT_API_KEY"),
+         // // Agent Plan 专属 Base URL
+         arkruntime.WithBaseUrl("https://ark.cn-beijing.volces.com/api/plan/v3"),
+      )
+      ctx := context.Background()
+      outputFormat := model.OutputFormatPNG
+
+
+
+     generateReq := model.GenerateImagesRequest{
+       Model:     "doubao-seedream-5.0-lite",
+       Prompt:     "充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，眼
+    部焦点锐利，景深较浅，具有Vogue杂志封面的美学风格，采用中画幅拍摄，工作室灯光效果强
+    烈。",
+       Size:    volcengine.String("2K"),
+       OutputFormat: &outputFormat,
+       ResponseFormat: volcengine.String("url"),
+       Watermark: volcengine.Bool(false),
+     }
+
+        imagesResponse, err := client.GenerateImages(ctx, generateReq)
+        if err != nil {
+          fmt.Printf("generate images error: %v\n", err)
+          return
+        }
+
+        fmt.Printf("%s\n", *imagesResponse.Data[0].Url)
+    }
+
+
+OpenAI
+
+
+
+    import os
+    from openai import OpenAI
+
+    client = OpenAI(
+       # Agent Plan 专属 Base URL
+       base_url="https://ark.cn-beijing.volces.com/api/plan/v3",
+       # Agent Plan 专属 API Key：https://console.volcengine.com/ark/region:ark+cn-beijing/
+    openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan
+
+
+
+                                      版权所有©北京火山引擎科技有限公司                                       91/113
+Agent Plan / Coding Plan                                4. 接入多模态生成模型
+
+
+     api_key=os.getenv('AGENT_API_KEY'),
+ Python
+   )
+
+    imagesResponse = client.images.generate(
+      model="doubao-seedream-5.0-lite",
+      prompt="充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，眼部焦
+    点锐利，景深较浅，具有Vogue杂志封面的美学风格，采用中画幅拍摄，工作室灯光效果强烈。",
+      size="2K",
+      output_format="png",
+      response_format="url",
+      extra_body={
+         "watermark": False,
+      },
+    )
+
+    print(imagesResponse.data[0].url)
+
+
+
+
+                                    版权所有©北京火山引擎科技有限公司           92/113
+Agent Plan / Coding Plan                                    5. 配置 Harness
+
+
+
+
+5. 配置 Harness
+5.1 联网搜索（Beta版）
+联网搜索是面向大模型构建的搜索服务，通过灵活 API 形式提供多垂类、多信源搜索能力，显著提升大模
+型回答的可信度和知识面。
+
+用户权益
+订阅方舟 Agent Plan 个人版套餐，可享受联网搜索的限时免费调用权益。Agent Plan 到期时，下单附赠的
+免费搜索额度也将回收。
+
+• 个人版 Small 套餐：每月赠送 50 次免费搜索额度。
+• 个人版 Medium 套餐：每月赠送 150 次免费搜索额度。
+• 个人版 Large 套餐：每月赠送 400 次免费搜索额度。
+• 个人版 Max 套餐：每月赠送 800 次免费搜索额度。
+
+
+     说明
+    • 免费搜索额度为限时活动，免费额度将在活动截止后调整。
+    • 免费搜索额度每月1日刷新，刷新后已使用的免费额度清零。
+    • 免费额度用尽后，可以在 Agent Plan 控制台       开启超额付费调用，开启后可以继续使用联网搜
+      索服务。
+    • 开启超额付费调用后，每月仍会优先消耗免费额度。
+
+
+
+使用联网搜索
+
+步骤一：订阅套餐并领取联网搜索权益
+1. 在开通管理-Agent Plan        页面，单击操作列的购买按钮，进入购买 Agent Plan 套餐弹框。套餐介绍请
+   参见套餐概览。
+
+
+
+
+                              版权所有©北京火山引擎科技有限公司                    93/113
+Agent Plan / Coding Plan                              5. 配置 Harness
+
+
+2. 领取免费搜索权益。
+   ◦ Agent Plan 新购用户：在购买 Agent Plan 套餐弹框，勾选确认开通联网免费权益，购买的套餐即包
+     含每月赠送的联网搜索额度。
+
+
+
+
+   ◦ 已购买 Agent Plan 套餐的用户：如果未领取联网搜索免费额度，可以在使用配置-配置Harness，单
+     击领取权益。领取成功后购买的套餐即包含每月赠送的联网搜索额度。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                 94/113
+Agent Plan / Coding Plan                                       5. 配置 Harness
+
+
+3. 获取联网搜索 API Key。
+   在 Agent Plan 页面使用配置-配置Harness区域，单击查看联网 API Key 获取联网搜索 API Key。
+
+
+
+
+        注意
+        当前最多支持创建 2 个联网搜索 API Key。
+
+
+
+步骤二：在工具中使用联网搜索
+目前支持通过 MCP Server 或 Skill 两种方式在工具中使用联网搜索。具体接入方式参见 AI 工具接入指南
+ 。
+
+Skill 接入方式
+通过 Skill 方式为 AI 工具快速安装并接入搜索能力。以下为常用 AI 工具的配置方案，其他工具可按需选择
+通过命令安装或通过对话安装方式完成联网搜索 Skill 的安装并使用。
+
+Claude Code
+1. 安装并配置 Claude Code，具体步骤见 Claude Code。
+2. 在终端执行以下命令为 Claude Code 安装并接入联网搜索 Skill byted-web-search 。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                          95/113
+Agent Plan / Coding Plan                                                                     5. 配置 Harness
+
+
+ Plain
+
+    npx skills add https://skills.volces.com/skills/bytedance/agentkit-samples -s byted-web-search --
+    agent claude-code
+
+
+3. 安装完成后，执行 claude 命令启动 Claude Code。
+4. 通过对话方式提供联网搜索 API Key                   完成 Skill 的配置。
+5. 配置完成后，可以在 Claude Code 中使用联网搜索能力。
+
+
+
+
+OpenCode
+1. 安装并配置 OpenCode，具体步骤见 OpenCode                     。
+2. 在终端执行以下命令为 OpenCode 安装并接入联网搜索 Skill byted-web-search 。
+
+
+ Plain
+
+    npx skills add https://skills.volces.com/skills/bytedance/agentkit-samples -s byted-web-search --
+    agent opencode
+
+
+3. 安装完成后，执行 opencode 命令启动 OpenCode。
+4. 通过对话方式提供联网搜索 API Key                   完成 Skill 的配置。
+
+                                    版权所有©北京火山引擎科技有限公司                                               96/113
+Agent Plan / Coding Plan                                                                      5. 配置 Harness
+
+
+5. 配置完成后，可以在 OpenCode 中使用联网搜索能力。
+
+
+
+
+OpenClaw
+1. 安装并配置 OpenClaw，具体步骤见 OpenClaw。
+2. 在终端执行以下命令为 OpenClaw 安装并接入联网搜索 Skill byted-web-search 。
+
+
+    Bash
+
+       npx skills add https://skills.volces.com/skills/bytedance/agentkit-samples -s byted-web-search --
+       agent openclaw
+
+
+3. 安装完成后，执行以下命令启动 OpenClaw。
+
+
+    Bash
+
+       openclaw tui
+
+
+
+
+                                    版权所有©北京火山引擎科技有限公司                                                97/113
+Agent Plan / Coding Plan                                         5. 配置 Harness
+
+
+4. 在对话框中输入联网搜索 API Key      ，完成联网搜索 Skill 配置。
+
+
+
+
+5. Skill 配置完成后可以在 OpenClaw 中使用联网搜索能力。
+
+
+MCP 接入方式
+以下为常用 AI 工具的 MCP 接入方案，其他工具可通过对话方式让模型完成 MCP 的接入。
+
+Claude Code
+1. 安装并配置 Claude Code，具体步骤见 Claude Code。
+2. 编辑配置文件 ~/.claude.json ，添加以下 MCP 配置。其中 <SEARCH_API_KEY> 需替换为联网搜索 API Key
+    。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                            98/113
+Agent Plan / Coding Plan                                                                 5. 配置 Harness
+
+
+    JSON
+
+       {
+         "mcpServers": {
+           "mcp-server-askecho-search-infinity": {
+             "command": "uvx",
+             "args": [
+               "--from",
+               "git+https://github.com/volcengine/mcp-server#subdirectory=server/
+       mcp_server_askecho_search_infinity",
+               "mcp-server-askecho-search-infinity"
+             ],
+             "env": {
+               "ASK_ECHO_SEARCH_INFINITY_API_KEY": "<SEARCH_API_KEY>"
+             }
+           }
+         }
+       }
+
+
+3. 在终端执行 claude 命令启动 Claude 服务后，输入 /mcp 后看到 mcp-server-askecho-search-infinity ，说
+   明配置成功。
+
+
+
+
+4. MCP 安装完成后即可使用联网搜索能力。
+
+OpenCode
+1. 安装并配置 OpenCode，具体步骤见 OpenCode                      。
+2. 编辑配置文件 ~/.config/opencode/opencode.json ，添加以下 MCP 配置，并将 <SEARCH_API_KEY> 替换为联
+   网搜索 API Key 。
+
+
+
+
+       {
+        "mcp": {
+         "mcp-server-askecho-search-infinity": {
+           "type": "local",
+           "enabled": true,
+           "command": ["uvx", "--from", "git+https://github.com/volcengine/mcp-
+       server#subdirectory=server/mcp_server_askecho_search_infinity", "mcp-server-askecho-search-
+       infinity"],
+           "environment": {
+            "ASK_ECHO_SEARCH_INFINITY_API_KEY": "<SEARCH_API_KEY>"
+
+                                     版权所有©北京火山引擎科技有限公司                                          99/113
+Agent Plan / Coding Plan                                                           5. 配置 Harness
+
+
+    JSON }
+          }
+        }
+      }
+
+
+3. 在终端执行 opencode 命令启动 OpenCode 服务后，输入 /mcp 后看到
+    mcp-server-askecho-search-infinity 状态为 Enabled，说明配置成功。
+
+
+
+
+4. MCP 安装完成后即可使用联网搜索能力。
+
+OpenClaw
+1. 安装并配置 OpenClaw，具体步骤见 OpenClaw。
+2. 在终端执行如下命令安装 MCPorter。
+
+
+    Bash
+
+       npm install -g mcporter
+
+
+3. 编辑配置文件 ~/.openclaw/openclaw.json ，添加以下 MCP 配置，并将 <SEARCH_API_KEY> 替换为联网搜
+   索 API Key 。
+
+
+
+
+       {
+        "mcp": {
+         "servers": {
+          "mcp-server-askecho-search-infinity": {
+            "command": "uvx",
+            "args": [
+              "--from",
+              "git+https://github.com/volcengine/mcp-server#subdirectory=server/
+       mcp_server_askecho_search_infinity",
+              "mcp-server-askecho-search-infinity"
+            ],
+            "env": {
+              "ASK_ECHO_SEARCH_INFINITY_API_KEY": "<SEARCH_API_KEY>"
+            }
+          }
+
+
+                                    版权所有©北京火山引擎科技有限公司                                    100/113
+Agent Plan / Coding Plan                                         5. 配置 Harness
+
+
+    JSON}
+        },
+        "skills": {
+            "entries": {
+             "mcporter": {
+               "enabled": true
+             }
+           }
+        }
+      }
+
+
+4. 在终端执行如下命令使配置生效。
+
+
+    Bash
+
+       openclaw gateway restart
+
+
+5. 在项目目录下，执行如下命令查看已安装的 mcp-server-askecho-search-infinity MCP。
+
+
+    Bash
+
+       mcporter list
+
+
+6. 启动 OpenClaw 后，即可使用联网搜索能力。
+
+
+常见问题
+• 联网搜索免费额度用尽后，如何开通联网搜索后付费？
+• 如何关闭联网搜索服务？
+• 如何查看联网搜索付费用量统计？
+• 联网内容插件和联网搜索有什么区别？
+• 套餐升配后额度为什么没有立即生效？
+
+
+服务协议
+• 联网搜索API专用条款
+• 联网搜索API服务等级协议
+
+
+
+
+                                  版权所有©北京火山引擎科技有限公司                    101/113
+Agent Plan / Coding Plan                                         6. 实践指南
+
+
+
+
+6. 实践指南
+6.1 使用 Agent Plan 开发短视频网站
+本文档提供使用 Agent Plan 接入 AI 工具快速打造抖音同款短视频网站的完整实践指南，涵盖从套餐购
+买、环境配置、需求定义全模态素材生产到完整项目开发全流程。通过本文，您可以在分钟级别完成项
+目核心开发，全程无需手动编写代码。
+
+项目概述
+
+项目效果
+
+
+
+
+核心使用能力
+• 语言模型：Agent Plan 支持 Seed 2.0 系列、GLM 系列、Minimax 系列、DeepSeek 系列、Kimi 系列等多
+  种优秀模型，可灵活切换或使用 Auto 模式调度。
+• 生图生视频模型：Agent Plan 提供生图生视频模型，包含字节 SOTA 水平的 Seedance、Seedream，支
+  持通过 Skill 接入并使用。
+• 联网搜索：Agent Plan 提供联网搜索专属 Harness，支持通过 Skill 或 MCP 方式接入。
+• 多工具兼容：Agent Plan 兼容多生态，无缝接入 OpenClaw、Hermes Agent、Claude Code 等主流编程
+  及 AI Agent 工具。
+
+
+成本预估
+完成该项目基础开发预估使用 14,900+ AFP，大约是 3% Max 套餐月额度。实际消耗以具体使用情况为
+准，可能会存在差异。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                       102/113
+Agent Plan / Coding Plan                                               6. 实践指南
+
+
+前置准备
+
+一、购买 Agent Plan
+进入 Agent Plan 控制台          购买 Agent Plan 套餐。套餐详情参见套餐概览。
+
+
+     注意
+     推荐购买 Medium 及以上套餐，Small 套餐不支持生视频模型。
+
+
+
+二、配置工具
+完成套餐购买后，需要获取 Agent Plan 支持的专属 Base URL、专属 API Key 及模型，完成工具配置后才能
+正常使用并抵扣套餐额度。
+
+需要配置的信息
+• 专属 Base URL：
+   ◦ 兼容 Anthropic 接口协议工具： https://ark.cn-beijing.volces.com/api/plan
+   ◦ 兼容 OpenAI 接口协议工具： https://ark.cn-beijing.volces.com/api/plan/v3
+
+• 专属 API Key：获取专属 API Key          ，其他方舟 API Key 无法在 Agent Plan 中使用。
+
+
+
+
+• 支持模型：见支持模型及Harness。
+
+
+接入 AI 工具
+选择支持的 AI 工具并配置 Agent Plan，具体步骤参见二、选择 AI 工具。完成文本生成模型配置后，需要
+安装生图、生视频、联网搜索 Skill，具体如下：
+
+• 安装生图生视频 Skill：配置视觉模型
+• 安装联网搜索 Skill：在控制台配置 Harness 领取联网权益，具体步骤参见 联网搜索（Beta版）。
+
+
+实践流程
+
+
+
+                                 版权所有©北京火山引擎科技有限公司                       103/113
+Agent Plan / Coding Plan                              6. 实践指南
+
+
+一、明确项目需求
+具体的项目需求可参考下面内容。
+请帮我实现一个短视频网站项目：
+1、功能调研：首先使用联网搜索skill调研主流短视频平台的Web端设计，总结关键功能。
+2、页面设计：网页风格简洁时尚，可参考提供截图的页面布局设计。参考截图如下：
+
+
+
+
+3、生成素材：请调用已安装的生图skill绘制网站logo，并使用生视频Skill，生成首页的3条视频素材，主
+题分别为自然风光、美食推荐、美妆护肤。
+
+二、执行任务
+启动工具后，提交上述短视频网站开发项目的需求，AI 工具（以 Claude Code 为例）将自动完成以下关键
+步骤。
+
+1.调用联网搜索 Skill
+通过调用联网搜索 Skill 进行功能调研。
+
+
+
+
+2.调用生图、生视频 Skill 生成素材
+通过调用Seedream、Seedance Skill生成网站所需的多模态素材，例如网站Logo设计、短视频内容、视频
+封面素材等。生成素材示例如下：
+
+
+
+                           版权所有©北京火山引擎科技有限公司            104/113
+Agent Plan / Coding Plan                                                         6. 实践指南
+
+
+                           doubao-
+                                           doubao-        doubao-        doubao-
+  使用模型                     seedream-5.0-
+                                           seedance-2.0   seedance-2.0   seedance-2.0
+                           lite
+
+
+
+
+  生成素材
+
+
+
+
+3.网站生成与预览
+通过 AI 工具自动完成网站基础开发工作，后续可根据需求调整细节或部署上线。
+
+   您可以选用前端设计 Skill 进行页面美化设计。
+
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                             105/113
+Agent Plan / Coding Plan                                           6. 实践指南
+
+
+
+
+三、查询用量消耗
+进入 Agent Plan 控制台 查询 AFP 用量。实际用量消耗根据具体使用情况而定，详情参见积分计费机制
+（AFP）。
+实现该项目预估消耗的 AFP 明细如下：
+
+  消耗项                      消耗量                         预估 AFP 消耗
+
+
+                           开发一个完整的项目、对话消
+                           耗。
+  语言模型                                                 1250 AFP
+                             不同层级模型抵扣系数不
+                             同。
+
+
+
+                           7 张 seedream-5.0-lite 生成的
+                           图片素材。
+  生图模型                                                 693 AFP
+                             一张图消耗 99 AFP。
+
+
+
+                           3个 seedance-2.0 生成的 5秒
+                           视频素材。
+  生视频模型                      约消耗 50w-60w token。        13000 AFP
+                             计算公式：消耗的原始
+                             token / 10,000 * 抵扣系数
+
+
+
+                           版权所有©北京火山引擎科技有限公司                         106/113
+Agent Plan / Coding Plan                                         6. 实践指南
+
+
+
+
+6.2 使用 Agent Plan 开发学习教育网站
+本文档以绘声绘色学古诗-教育网站为例，介绍如何通过 Agent Plan 一站式调用全模态模型及 Harness 完
+成产品落地。借助套餐内的多模态模型，快速产出带人声吟诵的诗境动画短片、古风意境画卷等优质素
+材，并通过优秀编程模型完成高质量网站代码交付。
+
+项目概述
+
+项目效果
+
+
+
+
+核心使用能力
+• 语言模型：Agent Plan 支持 Seed 2.0 系列、GLM 系列、Minimax 系列、DeepSeek 系列、Kimi 系列等多
+  种优秀模型，可灵活切换或使用 Auto 模式调度。
+• 生图生视频模型：Agent Plan 提供生图生视频模型，包含字节 SOTA 水平的 Seedance、Seedream，支
+  持通过 Skill 接入并使用。
+• 联网搜索：Agent Plan 提供联网搜索专属 Harness，支持通过 Skill 或 MCP 方式接入。
+• 多工具兼容：Agent Plan 兼容多生态，无缝接入 OpenClaw、Hermes Agent、Claude Code 等主流编程
+  及 AI Agent 工具。
+
+
+成本预估
+完成该项目基础开发预估使用 19,700+ AFP，大约是 4.6% Max 套餐月额度。实际消耗以具体使用情况为
+准，可能会存在差异。
+
+前置准备
+
+一、购买 Agent Plan
+
+
+                           版权所有©北京火山引擎科技有限公司                       107/113
+Agent Plan / Coding Plan                                               6. 实践指南
+
+
+进入 Agent Plan 控制台          购买 Agent Plan 套餐。套餐详情参见套餐概览。
+
+
+     注意
+     推荐购买 Medium 及以上套餐，Small 套餐不支持生视频模型。
+
+
+
+二、配置工具
+完成套餐购买后，需要获取 Agent Plan 支持的专属 Base URL、专属 API Key 及模型，完成工具配置后才能
+正常使用并抵扣套餐额度。
+
+需要配置的信息
+• 专属 Base URL：
+   ◦ 兼容 Anthropic 接口协议工具： https://ark.cn-beijing.volces.com/api/plan
+   ◦ 兼容 OpenAI 接口协议工具： https://ark.cn-beijing.volces.com/api/plan/v3
+
+• 专属 API Key：获取专属 API Key          ，其他方舟 API Key 无法在 Agent Plan 中使用。
+
+
+
+
+• 支持模型：见支持模型及Harness。
+
+
+接入 AI 工具
+选择支持的 AI 工具并配置 Agent Plan，具体步骤参见二、选择 AI 工具。完成文本生成模型配置后，需要
+安装生图、生视频、联网搜索 Skill，具体如下：
+
+• 安装生图生视频 Skill：配置视觉模型
+• 安装联网搜索 Skill：在控制台配置 Harness 领取联网权益，具体步骤参见 联网搜索（Beta版）。
+
+
+实践流程
+
+一、明确项目需求
+具体的项目需求可参考下面内容。
+
+
+
+
+                                 版权所有©北京火山引擎科技有限公司                       108/113
+Agent Plan / Coding Plan                            6. 实践指南
+
+
+ Plain
+
+    帮我实现一个学古诗教育网站
+    通过沉浸式的诗境动画，让用户"看见诗、听见诗、读懂诗"
+    1、联网搜索3首代表性中小学古诗词，作为精选诗词库
+    2、网页设计：精致的典雅古风，网站图片素材可使用生图skill进行生成，诗文用衬线体模拟书法
+    韵味
+    3、每首诗歌的学习模块包括：
+    - 诗歌原文、诗词解析
+    - 诗境动画短片：使用生视频skill生成带有人声朗诵诗句的意境短片，帮助用户学习
+    - 知识测验：每首诗歌包含5道选择题，可包含作者生平、意境理解等
+
+
+
+二、执行任务
+启动工具后，提交上述古诗学习教育网站开发项目的需求，AI 工具（以 Claude Code 为例）将自动完成以
+下关键步骤。
+
+1.调用联网搜索 Skill
+通过调用联网搜索 Skill 进行古诗词内容搜索。
+
+
+
+
+2.调用生图、生视频 Skill 生成素材
+通过调用Seedream、Seedance Skill生成网站所需的多模态素材，例如带有人声吟诵的动画短片、古风意
+境画卷等。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司          109/113
+Agent Plan / Coding Plan                                                         6. 实践指南
+
+
+                           doubao-
+                                           doubao-        doubao-        doubao-
+  使用模型                     seedream-5.0-
+                                           seedance-2.0   seedance-2.0   seedance-2.0
+                           lite
+
+
+
+
+  生成素材
+
+
+
+
+调用生视频 Skill 过程如下：
+
+
+
+
+3.网站生成与预览
+通过 AI 工具自动完成网站基础开发工作，后续可根据需求调整细节或部署上线。
+
+
+
+                                     版权所有©北京火山引擎科技有限公司                             110/113
+Agent Plan / Coding Plan                                           6. 实践指南
+
+
+   您可以选用前端设计 Skill 进行页面美化设计。
+
+  首页                       诗词库                         诗歌学习页
+
+
+
+
+三、查询用量消耗
+进入 Agent Plan 控制台 查询 AFP 用量。实际用量消耗根据具体使用情况而定，详情参见积分计费机制
+（AFP）。
+实现该项目预估消耗的 AFP 明细如下：
+
+  消耗项                      消耗量                         预估 AFP 消耗
+
+
+                           开发一个完整的项目、对话消
+                           耗。
+  语言模型                                                 3500 AFP
+                             不同层级模型抵扣系数不
+                             同。
+
+
+
+                           3 张 seedream-5.0-lite 生成的
+                           图片素材。
+  生图模型                                                 297 AFP
+                             一张图消耗 99 AFP。
+
+
+
+                           4个 seedance-2.0 生成的 5秒
+                           视频素材。
+  生视频模型                      约消耗 60w-70w token。        16000 AFP
+                             计算公式：消耗的原始
+                             token / 10,000 * 抵扣系数
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                         111/113
+Agent Plan / Coding Plan                                            7. 常见问题
+
+
+
+
+7. 常见问题
+
+关于 Agent Plan
+
+Agent Plan 和 Coding Plan 有什么区别？
+Agent Plan 是在 Coding Plan 基础上升级推出的全新订阅包。具体区别如下：
+
+  对比                        Agent Plan            Coding Plan
+
+                            主打 Agent 场景，向多模态及     主打 Coding 场景，面向个人
+  核心定位                      Harness 发展的全新订阅式大     开发者推出的订阅式 Coding
+                            模型服务套餐包。              大模型服务套餐包。
+
+                            语言模型、向量化模型、视觉
+  模型范围                      模型（生图模型、生视频模          语言模型、向量化模型
+                            型）
+
+  Harness                   联网搜索                  /
+
+                            在 Agent Plan 控制台 获取   在 Coding Plan 控制台 获取
+  Base URL 与 API Key        专属 Base URL 和专属 API   专属 Base URL 和 API Key（方
+                            Key。                  舟 API Key）。
+
+  套餐信息                      4 档套餐，灵活可选择           2 档套餐
+
+                            按照 Agent 燃料值（AFP）消
+  计费方式                                            预估模型调用次数
+                            费抵扣，额度用量清晰可查。
+
+
+
+关于联网搜索
+
+联网搜索免费额度用尽后，如何开通联网搜索后付费？
+当月免费额度用尽后将无法继续使用，如果要继续使用，可以在 Agent Plan 控制台开启超额付费调用，
+开启后会优先消耗免费额度，超额后将进行付费调用联网搜索服务，支持预付费包月和按量后付费两种
+方式。详细计费信息可参见联网搜索产品计费 。
+
+如何关闭联网搜索服务？
+联网搜索是按量后付费型产品，当前官网无法主动关停服务。如有关停需求可提交工单申请                           。
+
+如何查看联网搜索付费用量统计？
+可以在联网搜索控制台数据中心             查看联网搜索付费用量信息。
+
+联网内容插件和联网搜索有什么区别？
+联网内容插件和联网搜索的区别请参见联网搜索产品简介                  。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司                           112/113
+Agent Plan / Coding Plan                       7. 常见问题
+
+
+套餐升配后额度为什么没有立即生效？
+套餐升配后在控制台的额度刷新会存在几十秒的延时，请刷新页面并耐心等待。
+
+
+
+
+                           版权所有©北京火山引擎科技有限公司     113/113
+

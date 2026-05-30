@@ -13,9 +13,10 @@ import {
   CheckCircle,
   Mail,
   UserCircle,
-  Camera
+  Image as ImageIcon
 } from 'lucide-react';
 import Link from 'next/link';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -34,7 +35,8 @@ export default function ProfileSettingsPage() {
   const [success, setSuccess] = useState(false);
   const [formData, setFormData] = useState({
     username: '',
-    email: ''
+    email: '',
+    avatar: ''
   });
 
   // 加载用户信息
@@ -43,37 +45,25 @@ export default function ProfileSettingsPage() {
     setError(null);
     try {
       // 尝试从用户信息接口获取
-      const response = await fetch(`${API_BASE}/auth/me`);
+      const response = await fetchWithAuth(`${API_BASE}/auth/me`);
       if (response.ok) {
         const data = await response.json();
         setProfile(data);
         setFormData({
           username: data.username || '',
-          email: data.email || ''
+          email: data.email || '',
+          avatar: data.avatar || ''
         });
       } else {
-        // 如果没有用户信息接口，显示示例
-        setProfile({
-          id: 'user-1',
-          username: '示例用户',
-          email: 'user@example.com'
-        });
-        setFormData({
-          username: '示例用户',
-          email: 'user@example.com'
-        });
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || data.message || `加载用户信息失败：HTTP ${response.status}`);
       }
     } catch (err) {
       console.error('加载用户信息失败:', err);
-      setProfile({
-        id: 'user-1',
-        username: '示例用户',
-        email: 'user@example.com'
-      });
-      setFormData({
-        username: '示例用户',
-        email: 'user@example.com'
-      });
+      const message = err instanceof Error ? err.message : '加载用户信息失败';
+      setError(message);
+      setProfile(null);
+      setFormData({ username: '', email: '', avatar: '' });
     } finally {
       setLoading(false);
     }
@@ -89,16 +79,25 @@ export default function ProfileSettingsPage() {
     setError(null);
     setSuccess(false);
     try {
-      const response = await fetch(`${API_BASE}/auth/profile`, {
+      const response = await fetchWithAuth(`${API_BASE}/auth/profile`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
       if (response.ok) {
+        const data = await response.json();
+        setProfile(data);
+        setFormData({
+          username: data.username || '',
+          email: data.email || '',
+          avatar: data.avatar || ''
+        });
+        localStorage.setItem('user', JSON.stringify(data));
         setSuccess(true);
         setTimeout(() => setSuccess(false), 3000);
       } else {
-        throw new Error('保存失败');
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.detail || data.message || '保存失败');
       }
     } catch (err: any) {
       setError(err.message || '保存失败，请重试');
@@ -107,18 +106,12 @@ export default function ProfileSettingsPage() {
     }
   };
 
-  // 处理头像上传
-  const handleAvatarChange = () => {
-    // 头像上传功能预留
-    alert('头像上传功能开发中...');
-  };
-
   if (loading) {
     return (
       <MainLayout>
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
-          <span className="ml-3 text-white/60">加载中...</span>
+          <span className="ml-3 text-white/60">加载中…</span>
         </div>
       </MainLayout>
     );
@@ -129,14 +122,14 @@ export default function ProfileSettingsPage() {
       <div className="space-y-6 max-w-2xl">
         {/* 页面标题 */}
         <div className="flex items-center gap-4">
-          <Link href="/settings">
-            <Button variant="ghost" size="icon" className="text-white/60 hover:text-white">
+          <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white">
+            <Link href="/settings">
               <span className="sr-only">返回</span>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
-            </Button>
-          </Link>
+            </Link>
+          </Button>
           <div>
             <h1 className="text-2xl font-bold text-white">个人资料</h1>
             <p className="text-white/60 mt-1">管理您的个人信息</p>
@@ -175,6 +168,9 @@ export default function ProfileSettingsPage() {
                   <img
                     src={profile.avatar}
                     alt={profile.username}
+                    width={96}
+                    height={96}
+                    loading="lazy"
                     className="w-24 h-24 rounded-full object-cover"
                   />
                 ) : (
@@ -183,23 +179,18 @@ export default function ProfileSettingsPage() {
                   </div>
                 )}
                 <button
-                  onClick={handleAvatarChange}
+                  type="button"
+                  disabled
+                  aria-label="头像由下方图片 URL 设置"
+                  title="头像由下方图片URL保存到资料中"
                   className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-violet-600 hover:bg-violet-700 flex items-center justify-center text-white"
                 >
-                  <Camera className="w-4 h-4" />
+                  <ImageIcon className="w-4 h-4" />
                 </button>
               </div>
               <div>
                 <p className="text-white font-medium">{profile?.username}</p>
-                <p className="text-white/60 text-sm mt-1">建议上传正方形图片</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAvatarChange}
-                  className="mt-2 border-white/20 text-white"
-                >
-                  上传头像
-                </Button>
+                <p className="text-white/60 text-sm mt-1">使用公开可访问的正方形图片 URL</p>
               </div>
             </div>
           </CardContent>
@@ -233,6 +224,17 @@ export default function ProfileSettingsPage() {
                 className="bg-white/5 border-white/10 text-white max-w-md"
               />
             </div>
+            <div>
+              <label className="block text-sm text-white/60 mb-2">头像 URL</label>
+              <Input
+                type="url"
+                value={formData.avatar}
+                onChange={(e) => setFormData({ ...formData, avatar: e.target.value })}
+                placeholder="https://example.com/avatar.png"
+                className="bg-white/5 border-white/10 text-white max-w-md"
+              />
+              <p className="text-xs text-white/40 mt-2">保存后会同步到个人资料并写入数据库。</p>
+            </div>
           </CardContent>
         </Card>
 
@@ -240,7 +242,7 @@ export default function ProfileSettingsPage() {
         <div className="flex items-center gap-3">
           <Button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || !profile}
             className="bg-violet-600 hover:bg-violet-700"
           >
             {saving ? (
@@ -250,11 +252,11 @@ export default function ProfileSettingsPage() {
             )}
             保存修改
           </Button>
-          <Link href="/settings">
-            <Button variant="outline" className="border-white/20 text-white">
+          <Button asChild variant="outline" className="border-white/20 text-white">
+            <Link href="/settings">
               取消
-            </Button>
-          </Link>
+            </Link>
+          </Button>
         </div>
       </div>
     </MainLayout>

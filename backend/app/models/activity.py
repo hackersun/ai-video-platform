@@ -1,6 +1,7 @@
 """
 活动记录模型
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 from sqlalchemy import Column, String, DateTime, ForeignKey, Text
 from app.core.database import Base
@@ -17,7 +18,7 @@ class Activity(Base):
     entity_id = Column(String(36), index=True)
     title = Column(String(200))
     description = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
     def __repr__(self):
         return f"<Activity {self.id} user={self.user_id} {self.activity_type} {self.entity_type}>"

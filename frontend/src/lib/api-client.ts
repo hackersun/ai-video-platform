@@ -32,22 +32,30 @@ type TTSJob = {
   updated_at: string;
 };
 
-type TTSGenerateParams = {
-  text: string;
-  model?: string;
-  voice: string;
-  speed: number;
-  title?: string;
-  api_key: string;
-  shot_id?: string;
+type WorkflowStatusParams = {
+  novel_id?: string;
+  chapter_id?: string;
+  script_id?: string;
+  storyboard_id?: string;
 };
 
-type TTSGenerateResponse = {
-  task_id: string;
-  job_id: string;
-  status: string;
-  message: string;
+type TTSGenerateParams = {
+  text_content: string;
+  voice_model: string;
+  speed: number;
+  title?: string;
+  api_provider?: string;
+  model_config_id?: string;
+  model_id?: string;
+  novel_id?: string;
+  chapter_id?: string;
+  script_id?: string;
+  storyboard_id?: string;
+  shot_id?: string;
+  character_id?: string;
 };
+
+type TTSGenerateResponse = TTSJob;
 
 type SynthesisJob = {
   id: string;
@@ -67,17 +75,57 @@ type SynthesisJob = {
 };
 
 type SynthesisGenerateParams = {
-  video_url: string;
-  audio_url: string;
+  video_job_id?: string;
+  tts_job_id?: string;
+  video_url?: string;
+  audio_url?: string;
   title?: string;
-  api_key: string;
+  project_id?: string;
+  workflow_id?: string;
 };
 
-type SynthesisGenerateResponse = {
-  task_id: string;
+type SynthesisGenerateResponse = SynthesisJob;
+
+type SynthesisExecuteParams = {
+  video_urls: string[];
+  audio_urls?: string[];
+  subtitles?: Array<{ text: string; start_time: number; end_time: number; style?: any }>;
+  title?: string;
+  output_format?: string;
+  quality?: string;
+  project_id?: string;
+  workflow_id?: string;
+};
+
+type SynthesisExecuteResponse = {
   job_id: string;
   status: string;
-  message: string;
+  video_url?: string;
+  cover_url?: string;
+  duration_seconds?: number;
+  error?: string;
+};
+
+type NovelImportChapter = {
+  title: string;
+  chapter_number?: number;
+  word_count?: number;
+  preview?: string;
+};
+
+type NovelImportConfirmParams = {
+  job_id: string;
+  title?: string;
+  description?: string;
+  genre?: string;
+  tags?: string[];
+};
+
+type UsageLogParams = {
+  limit?: number;
+  offset?: number;
+  model?: string;
+  status?: string;
 };
 
 
@@ -118,7 +166,7 @@ class ApiClient {
 
     const token = this.getToken();
     const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...(options.headers as Record<string, string> || {}),
     };
     if (token) {
@@ -195,35 +243,44 @@ class ApiClient {
   
   // ========== Coding Plan 相关 ==========
   
-  async generateCodingPlan(requirement: string, apiKey: string, model: string = 'qwen-coder-plus') {
+  async generateCodingPlan(requirement: string, apiKey?: string, model?: string, modelConfigId?: string) {
     return this.request<any>('/coding-plan/generate', {
       method: 'POST',
-      body: JSON.stringify({ requirement, api_key: apiKey, model }),
+      body: JSON.stringify({ requirement, api_key: apiKey || undefined, model, model_config_id: modelConfigId || undefined }),
     });
   }
   
-  async generateNovelWithPlan(prompt: string, apiKey: string, model: string = 'qwen-coder-plus') {
+  async generateNovelWithPlan(prompt: string, apiKey?: string, model?: string, modelConfigId?: string) {
     return this.request<any>('/coding-plan/novel', {
       method: 'POST',
-      body: JSON.stringify({ prompt, api_key: apiKey, model }),
+      body: JSON.stringify({ prompt, api_key: apiKey || undefined, model, model_config_id: modelConfigId || undefined }),
     });
   }
   
-  async autoGenerate(userInput: string, generateType: string, apiKey: string) {
+  async autoGenerate(userInput: string, generateType: string, apiKey?: string, modelConfigId?: string) {
     return this.request<any>('/coding-plan/auto-generate', {
       method: 'POST',
       body: JSON.stringify({ 
         user_input: userInput, 
         generate_type: generateType,
-        api_key: apiKey,
+        api_key: apiKey || undefined,
+        model_config_id: modelConfigId || undefined,
       }),
     });
   }
   
   // ========== 角色管理相关 ==========
   
-  async getCharacters() {
-    return this.request<any[]>('/characters');
+  async getCharacters(params: {
+    novel_id?: string;
+    chapter_id?: string;
+    include_global?: boolean;
+  } = {}) {
+    const search = new URLSearchParams();
+    if (params.novel_id) search.set('novel_id', params.novel_id);
+    if (params.chapter_id) search.set('chapter_id', params.chapter_id);
+    if (params.include_global !== undefined) search.set('include_global', String(params.include_global));
+    return this.request<any[]>(`/characters${search.toString() ? `?${search}` : ''}`);
   }
   
   async createCharacter(character: any) {
@@ -276,6 +333,61 @@ class ApiClient {
     });
   }
 
+  async getNovelSeriesPlan(novelId: string) {
+    return this.request<any>(`/novels/${novelId}/series-plan`);
+  }
+
+  async generateNovelSeriesPlan(novelId: string, params: {
+    target_episode_count?: number;
+    chapters_per_episode?: number;
+    target_duration_seconds?: number;
+    aspect_ratio?: string;
+    style?: string;
+    persist?: boolean;
+  } = {}) {
+    return this.request<any>(`/novels/${novelId}/series-plan`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async previewNovelImport(file: File) {
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<any>('/novels/import/preview', {
+      method: 'POST',
+      body: formData,
+      headers: {},
+    });
+  }
+
+  async confirmNovelImport(data: NovelImportConfirmParams) {
+    return this.request<any>('/novels/import/confirm', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getNovelImportJobs() {
+    return this.request<any[]>('/novels/import/jobs');
+  }
+
+  async getNovelImportJob(jobId: string) {
+    return this.request<any>(`/novels/import/jobs/${jobId}`);
+  }
+
+  async createChapter(data: {
+    novel_id: string;
+    title: string;
+    content?: string;
+    chapter_number?: number;
+  }) {
+    return this.request<any>('/chapters', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getChapter(chapterId: string) {
     return this.request<any>(`/chapters/${chapterId}`);
   }
@@ -294,6 +406,56 @@ class ApiClient {
   async deleteChapter(chapterId: string) {
     return this.request<any>(`/chapters/${chapterId}`, {
       method: 'DELETE',
+    });
+  }
+
+  // ========== 一键生产链路相关 ==========
+
+  async getChapterProductionStatus(chapterId: string) {
+    return this.request<any>(`/chapters/${chapterId}/production-status`);
+  }
+
+  async generateChapterScript(chapterId: string, data: {
+    style?: string;
+    genre?: string;
+    model_config_id?: string;
+  } = {}) {
+    return this.request<any>(`/chapters/${chapterId}/generate-script`, {
+      method: 'POST',
+      body: JSON.stringify({
+        style: 'anime',
+        ...data,
+      }),
+    });
+  }
+
+  async generateChapterStoryboard(chapterId: string, data: {
+    style?: string;
+    genre?: string;
+    model_config_id?: string;
+    shot_count?: number;
+  } = {}) {
+    return this.request<any>(`/chapters/${chapterId}/generate-storyboard`, {
+      method: 'POST',
+      body: JSON.stringify({
+        style: 'anime',
+        ...data,
+      }),
+    });
+  }
+
+  async generateChapterAll(chapterId: string, data: {
+    style?: string;
+    genre?: string;
+    model_config_id?: string;
+    shot_count?: number;
+  } = {}) {
+    return this.request<any>(`/chapters/${chapterId}/generate-all`, {
+      method: 'POST',
+      body: JSON.stringify({
+        style: 'anime',
+        ...data,
+      }),
     });
   }
 
@@ -320,14 +482,74 @@ class ApiClient {
       method: 'DELETE',
     });
   }
+
+  async getScriptGenerateContext(chapterId: string, params: { style?: string; genre?: string } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.style) searchParams.set('style', params.style);
+    if (params.genre) searchParams.set('genre', params.genre);
+    const qs = searchParams.toString();
+    return this.request<any>(`/scripts/generate-context/${chapterId}${qs ? `?${qs}` : ''}`);
+  }
+
+  async checkScriptConsistency(scriptId: string) {
+    return this.request<any>(`/scripts/${scriptId}/check-consistency`);
+  }
+
+  async getScriptVersions(scriptId: string) {
+    return this.request<any[]>(`/scripts/${scriptId}/versions`);
+  }
+
+  async createScriptVersion(scriptId: string, note?: string) {
+    return this.request<any>(`/scripts/${scriptId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  async restoreScriptVersion(scriptId: string, snapshotId: string) {
+    return this.request<any>(`/scripts/${scriptId}/versions/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ snapshot_id: snapshotId }),
+    });
+  }
   
   // ========== 分镜管理相关 ==========
 
-  async getStoryboards(scriptId?: string) {
-    if (scriptId) {
-      return this.request<any[]>(`/storyboards/script/${scriptId}`);
+  async getScripts(params: { novel_id?: string; chapter_id?: string; page?: number; page_size?: number } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params.chapter_id) searchParams.set('chapter_id', params.chapter_id);
+    if (params.page) searchParams.set('page', String(params.page));
+    if (params.page_size) searchParams.set('page_size', String(params.page_size));
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/scripts${qs ? `?${qs}` : ''}`);
+  }
+
+  async generateScript(data: {
+    chapter_id: string;
+    style?: string;
+    genre?: string;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/scripts/generate', {
+      method: 'POST',
+      body: JSON.stringify({
+        style: 'anime',
+        ...data,
+      }),
+    });
+  }
+
+  async getStoryboards(params?: string | { script_id?: string; novel_id?: string; chapter_id?: string }) {
+    if (typeof params === 'string') {
+      return this.request<any[]>(`/storyboards/script/${params}`);
     }
-    return this.request<any[]>('/storyboards');
+    const searchParams = new URLSearchParams();
+    if (params?.script_id) searchParams.set('script_id', params.script_id);
+    if (params?.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params?.chapter_id) searchParams.set('chapter_id', params.chapter_id);
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/storyboards${qs ? `?${qs}` : ''}`);
   }
 
   async getStoryboard(storyboardId: string) {
@@ -393,19 +615,32 @@ class ApiClient {
 
   // ========== 图像生成相关 ==========
 
-  async generateCharacterAvatar(characterId: string, params: { prompt: string }) {
-    return this.request<any>('/images/generate', {
+  async generateCharacterAvatar(characterId: string, params: { style?: string; model_config_id?: string } = {}) {
+    return this.request<any>(`/characters/${characterId}/generate-avatar`, {
       method: 'POST',
       body: JSON.stringify({
-        prompt: params.prompt,
-        model: 'Doubao-Seedream-4.5',
-        character_id: characterId,
+        style: params.style || 'anime',
+        model_config_id: params.model_config_id,
       }),
     });
   }
 
   async getImageJobStatus(taskId: string) {
     return this.request<any>(`/images/status/${taskId}`);
+  }
+
+  async getImageJobs(params: { limit?: number; status?: string } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.limit) searchParams.set('limit', String(params.limit));
+    if (params.status) searchParams.set('status', params.status);
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/images/jobs${qs ? `?${qs}` : ''}`);
+  }
+
+  async deleteImageJob(jobId: string) {
+    return this.request<any>(`/images/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
   }
 
   async generateShotImage(shotId: string) {
@@ -428,12 +663,37 @@ class ApiClient {
     });
   }
   
-  async getVideoJobs() {
-    return this.request<any[]>('/video/jobs');
+  async getVideoJobs(params: {
+    project_id?: string;
+    workflow_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    storyboard_id?: string;
+    shot_id?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) searchParams.set(key, String(value));
+    });
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/video/jobs${qs ? `?${qs}` : ''}`);
   }
   
   async getVideoJobStatus(jobId: string) {
     return this.request<any>(`/video/jobs/${jobId}`);
+  }
+
+  async cancelVideoJob(jobId: string) {
+    return this.request<any>(`/video/jobs/${jobId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteVideoJob(jobId: string) {
+    return this.request<any>(`/video/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
   }
   
   // ========== TTS 相关 ==========
@@ -449,6 +709,12 @@ class ApiClient {
     });
   }
 
+  async deleteTTSJob(jobId: string) {
+    return this.request<any>(`/tts/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
+  }
+
   // ========== 音视频合成相关 ==========
 
   async getSynthesisJobs() {
@@ -456,9 +722,88 @@ class ApiClient {
   }
 
   async generateSynthesis(params: SynthesisGenerateParams) {
-    return this.request<SynthesisGenerateResponse>('/synthesis/generate', {
+    return this.request<SynthesisGenerateResponse>('/synthesis/create', {
       method: 'POST',
       body: JSON.stringify(params),
+    });
+  }
+
+  async executeSynthesis(params: SynthesisExecuteParams): Promise<SynthesisExecuteResponse> {
+    return this.request<SynthesisExecuteResponse>('/synthesis/execute', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async synthesizeVideos(params: SynthesisExecuteParams) {
+    return this.request<SynthesisJob>('/synthesis/synthesize', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async publishSynthesis(jobId: string, data: { title?: string; visibility?: string } = {}) {
+    return this.request<any>('/synthesis/publish', {
+      method: 'POST',
+      body: JSON.stringify({
+        synthesis_job_id: jobId,
+        title: data.title,
+        metadata: { visibility: data.visibility || 'private' },
+      }),
+    });
+  }
+
+  async exportSynthesis(jobId: string, data: { format?: string } = {}) {
+    return this.request<any>('/synthesis/publish', {
+      method: 'POST',
+      body: JSON.stringify({
+        synthesis_job_id: jobId,
+        title: data.format ? `导出 ${data.format.toUpperCase()}` : undefined,
+        metadata: { format: data.format || 'json' },
+      }),
+    });
+  }
+
+  async getPublications(params: { status?: string; include_archived?: boolean } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.status) searchParams.set('status', params.status);
+    if (params.include_archived) searchParams.set('include_archived', 'true');
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/synthesis/publications${qs ? `?${qs}` : ''}`);
+  }
+
+  async updatePublication(publicationId: string, data: { title?: string; status?: string; metadata?: Record<string, any> }) {
+    return this.request<any>(`/synthesis/publications/${publicationId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async revokePublication(publicationId: string) {
+    return this.request<any>(`/synthesis/publications/${publicationId}/revoke`, {
+      method: 'POST',
+    });
+  }
+
+  async deletePublication(publicationId: string) {
+    return this.request<any>(`/synthesis/publications/${publicationId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async publishVideo(publicationId: string) {
+    return this.request<any>(`/synthesis/publications/${publicationId}/publish`, {
+      method: 'POST',
+    });
+  }
+
+  async getPublicationDownload(publicationId: string) {
+    return this.request<any>(`/synthesis/publications/${publicationId}/download`);
+  }
+
+  async deleteSynthesisJob(jobId: string) {
+    return this.request<any>(`/synthesis/jobs/${jobId}`, {
+      method: 'DELETE',
     });
   }
 
@@ -468,10 +813,39 @@ class ApiClient {
     return this.request<any>('/dashboard/stats');
   }
 
+  async getAnalyticsDashboard(days: number = 14) {
+    return this.request<any>(`/dashboard/analytics?days=${days}`);
+  }
+
   // ========== 使用统计 ==========
 
   async getUsageStats(period: string = 'day') {
-    return this.request<any>(`/usage-stats?period=${period}`);
+    if (period === 'day' || period === 'daily') {
+      return this.getDailyUsage(30);
+    }
+    return this.getUsageSummary();
+  }
+
+  async getUsageSummary() {
+    return this.request<any>('/usage-stats/summary');
+  }
+
+  async getUsageByModel() {
+    return this.request<any[]>('/usage-stats/by-model');
+  }
+
+  async getDailyUsage(days: number = 30) {
+    return this.request<any[]>(`/usage-stats/daily?days=${days}`);
+  }
+
+  async getUsageLogs(params: UsageLogParams = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
+    if (params.model) searchParams.set('model', params.model);
+    if (params.status) searchParams.set('status', params.status);
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/usage-stats/logs${qs ? `?${qs}` : ''}`);
   }
 
   // ========== Workflow 工作流相关 ==========
@@ -480,21 +854,54 @@ class ApiClient {
     return this.request<any>('/workflow/steps');
   }
 
-  async startWorkflow(params: { title?: string; novel_id?: string }) {
+  async getWorkflows(params: {
+    limit?: number;
+    offset?: number;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.limit !== undefined) searchParams.set('limit', String(params.limit));
+    if (params.offset !== undefined) searchParams.set('offset', String(params.offset));
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/workflow${qs ? `?${qs}` : ''}`);
+  }
+
+  async startWorkflow(params: { title?: string; novel_id?: string; chapter_id?: string; script_id?: string; storyboard_id?: string }) {
     return this.request<any>('/workflow/start', {
       method: 'POST',
       body: JSON.stringify(params),
     });
   }
 
+  async updateWorkflowStep(
+    workflowId: string,
+    params: {
+      current_step: number;
+      completed_steps?: number[];
+      status?: string;
+      novel_id?: string;
+      chapter_id?: string;
+      script_id?: string;
+      storyboard_id?: string;
+      video_job_ids?: string[];
+      tts_job_ids?: string[];
+      synthesis_job_ids?: string[];
+    }
+  ) {
+    return this.request<any>(`/workflow/${workflowId}/step`, {
+      method: 'PUT',
+      body: JSON.stringify(params),
+    });
+  }
+
   async getWorkflowStatus(
     workflowId: string,
-    params?: { novel_id?: string; chapter_id?: string; script_id?: string }
+    params?: WorkflowStatusParams
   ) {
     const searchParams = new URLSearchParams();
     if (params?.novel_id) searchParams.set('novel_id', params.novel_id);
     if (params?.chapter_id) searchParams.set('chapter_id', params.chapter_id);
     if (params?.script_id) searchParams.set('script_id', params.script_id);
+    if (params?.storyboard_id) searchParams.set('storyboard_id', params.storyboard_id);
     const qs = searchParams.toString();
     return this.request<any>(`/workflow/status/${workflowId}${qs ? `?${qs}` : ''}`);
   }
@@ -504,12 +911,564 @@ class ApiClient {
     params: {
       video_job_ids: string[];
       tts_job_ids?: string[];
+      media_job_ids?: string[];
       title?: string;
+      transition_style?: string;
+      transition_duration_seconds?: number;
+      include_subtitles?: boolean;
+      subtitle_mode?: string;
+      audio_mix_strategy?: string;
+      quality_profile?: string;
     }
   ) {
     return this.request<any>(`/workflow/concatenate/${workflowId}`, {
       method: 'POST',
       body: JSON.stringify(params),
+    });
+  }
+
+  async preflightWorkflowRender(workflowId: string, synthesisJobId?: string, params: {
+    use_editable_timeline?: boolean;
+    timeline_id?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (synthesisJobId) searchParams.set('synthesis_job_id', synthesisJobId);
+    if (params.use_editable_timeline !== undefined) {
+      searchParams.set('use_editable_timeline', params.use_editable_timeline ? 'true' : 'false');
+    }
+    if (params.timeline_id) searchParams.set('timeline_id', params.timeline_id);
+    const qs = searchParams.toString();
+    return this.request<any>(`/workflow/${workflowId}/render/preflight${qs ? `?${qs}` : ''}`);
+  }
+
+  async renderWorkflowPackage(workflowId: string, params: {
+    synthesis_job_id?: string;
+    force?: boolean;
+    quality_profile?: string;
+    render_backend?: string;
+    external_config_id?: string;
+    burn_subtitles?: boolean;
+    use_editable_timeline?: boolean;
+    timeline_id?: string;
+  } = {}) {
+    return this.request<any>(`/workflow/${workflowId}/render`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async syncWorkflowTimeline(workflowId: string, params: {
+    synthesis_job_id?: string;
+    name?: string;
+    force?: boolean;
+  } = {}) {
+    return this.request<any>(`/workflow/${workflowId}/timeline/sync`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async getTimelineTracks(timelineId: string) {
+    return this.request<any[]>(`/timelines/${timelineId}/tracks`);
+  }
+
+  async getTimelineClips(timelineId: string) {
+    return this.request<any[]>(`/timelines/${timelineId}/clips`);
+  }
+
+  async getProjectTimelines(projectId: string) {
+    return this.request<any[]>(`/timelines/project/${projectId}`);
+  }
+
+  async getTimeline(timelineId: string) {
+    return this.request<any>(`/timelines/${timelineId}`);
+  }
+
+  async updateTimeline(timelineId: string, data: Record<string, any>) {
+    return this.request<any>(`/timelines/${timelineId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateTimelineTrack(timelineId: string, trackId: string, data: Record<string, any>) {
+    return this.request<any>(`/timelines/${timelineId}/tracks/${trackId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createTimelineClip(timelineId: string, data: Record<string, any>) {
+    return this.request<any>(`/timelines/${timelineId}/clips`, {
+      method: 'POST',
+      body: JSON.stringify({ ...data, timeline_id: timelineId }),
+    });
+  }
+
+  async updateTimelineClip(timelineId: string, clipId: string, data: Record<string, any>) {
+    return this.request<any>(`/timelines/${timelineId}/clips/${clipId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteTimelineClip(timelineId: string, clipId: string) {
+    return this.request<any>(`/timelines/${timelineId}/clips/${clipId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async generateWorkflowMediaBatch(workflowId: string, params: {
+    strategy?: string;
+    shot_ids?: string[];
+    duration_seconds?: number;
+    resolution?: string;
+    subtitle_mode?: string;
+    audio_mode?: string;
+    model_config_id?: string;
+    audio_model_config_id?: string;
+    voice_model?: string;
+    speed?: number;
+  } = {}) {
+    return this.request<any>(`/workflow/${workflowId}/generate-media-batch`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  // ========== Short Video Production 相关 ==========
+
+  async generateShortEpisodePlan(params: {
+    novel_id: string;
+    chapter_id?: string;
+    target_duration_seconds?: number;
+    aspect_ratio?: string;
+    style?: string;
+  }) {
+    return this.request<any>('/short-video/episode-plan', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async refreshShotProductionContract(shotId: string, persist: boolean = true) {
+    const searchParams = new URLSearchParams();
+    searchParams.set('persist', persist ? 'true' : 'false');
+    return this.request<any>(`/short-video/shots/${shotId}/production-contract?${searchParams}`);
+  }
+
+  async getWorkflowShortVideoReadiness(workflowId: string, params: {
+    target_duration_seconds?: number;
+    aspect_ratio?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.target_duration_seconds) {
+      searchParams.set('target_duration_seconds', String(params.target_duration_seconds));
+    }
+    if (params.aspect_ratio) searchParams.set('aspect_ratio', params.aspect_ratio);
+    const qs = searchParams.toString();
+    return this.request<any>(`/short-video/workflow/${workflowId}/readiness${qs ? `?${qs}` : ''}`);
+  }
+
+  async refreshWorkflowShortVideoContracts(workflowId: string, params: {
+    shot_ids?: string[];
+  } = {}) {
+    return this.request<any>(`/short-video/workflow/${workflowId}/refresh-contracts`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  // ========== Unified Media / Subtitle 相关 ==========
+
+  async generateMedia(params: any) {
+    return this.request<any>('/media/generate', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async getMediaJobs(params: {
+    task_type?: string;
+    media_type?: string;
+    workflow_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    storyboard_id?: string;
+    shot_id?: string;
+    status?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) searchParams.set(key, String(value));
+    });
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/media/jobs${qs ? `?${qs}` : ''}`);
+  }
+
+  async getSubtitleTrack(trackId: string) {
+    return this.request<any>(`/subtitles/tracks/${trackId}`);
+  }
+
+  async getSubtitleTracks(params: {
+    workflow_id?: string;
+    media_job_id?: string;
+    shot_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    storyboard_id?: string;
+    include_segments?: boolean;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== '') searchParams.set(key, String(value));
+    });
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/subtitles/tracks${qs ? `?${qs}` : ''}`);
+  }
+
+  async createSubtitleTrackFromShot(data: { shot_id: string; duration_seconds?: number; language?: string; kind?: string; title?: string }) {
+    return this.request<any>('/subtitles/from-shot', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateSubtitleSegment(trackId: string, segmentId: string, data: any) {
+    return this.request<any>(`/subtitles/tracks/${trackId}/segments/${segmentId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createSubtitleSegment(trackId: string, data: any) {
+    return this.request<any>(`/subtitles/tracks/${trackId}/segments`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteSubtitleSegment(trackId: string, segmentId: string) {
+    return this.request<any>(`/subtitles/tracks/${trackId}/segments/${segmentId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async exportSubtitleTrack(trackId: string, format: 'srt' | 'vtt' | 'ass' = 'srt') {
+    return this.request<any>(`/subtitles/tracks/${trackId}/export`, {
+      method: 'POST',
+      body: JSON.stringify({ format }),
+    });
+  }
+
+  // ========== Production Adapter / External Capability 相关 ==========
+
+  async getExternalProviders() {
+    return this.request<any[]>('/external/providers');
+  }
+
+  async getExternalConfigs() {
+    return this.request<any[]>('/external/configs');
+  }
+
+  async getExternalCapabilityStatus() {
+    return this.request<any>('/external/capability-status');
+  }
+
+  async createExternalConfig(data: any) {
+    return this.request<any>('/external/configs', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateExternalConfig(configId: string, data: any) {
+    return this.request<any>(`/external/configs/${configId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async testExternalConfig(configId: string) {
+    return this.request<any>(`/external/configs/${configId}/test`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteExternalConfig(configId: string) {
+    return this.request<any>(`/external/configs/${configId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getShotProductionContext(shotId: string) {
+    return this.request<any>(`/shots/${shotId}/production-context`);
+  }
+
+  async updateShotProductionContext(shotId: string, data: any) {
+    return this.request<any>(`/shots/${shotId}/production-context`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getShotQuality(shotId: string) {
+    return this.request<any>(`/shots/${shotId}/quality`);
+  }
+
+  async refreshShotQuality(shotId: string) {
+    return this.request<any>(`/shots/${shotId}/quality`, {
+      method: 'POST',
+    });
+  }
+
+  async refreshShotsQuality(shotIds: string[]) {
+    return this.request<any>('/shots/quality/batch', {
+      method: 'POST',
+      body: JSON.stringify({ shot_ids: shotIds }),
+    });
+  }
+
+  // ========== Production Control 相关 ==========
+
+  async getNovelProductionPack(novelId: string, params: {
+    create_missing_assets?: boolean;
+    persist?: boolean;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.create_missing_assets !== undefined) {
+      searchParams.set('create_missing_assets', String(params.create_missing_assets));
+    }
+    if (params.persist !== undefined) {
+      searchParams.set('persist', String(params.persist));
+    }
+    const qs = searchParams.toString();
+    return this.request<any>(`/production-control/novels/${novelId}/production-pack${qs ? `?${qs}` : ''}`);
+  }
+
+  async createNovelProductionPack(novelId: string, data: {
+    create_missing_assets?: boolean;
+    persist?: boolean;
+  } = {}) {
+    return this.request<any>(`/production-control/novels/${novelId}/production-pack`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async applyWorkflowAssetLocks(workflowId: string, data: {
+    create_missing_assets?: boolean;
+    persist?: boolean;
+  } = {}) {
+    return this.request<any>(`/production-control/workflow/${workflowId}/asset-locks`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async auditWorkflowMedia(workflowId: string, data: {
+    persist_remote?: boolean;
+    dry_run?: boolean;
+  } = {}) {
+    return this.request<any>(`/production-control/workflow/${workflowId}/media-audit`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async checkWorkflowProductionQuality(workflowId: string, data: {
+    persist?: boolean;
+  } = {}) {
+    return this.request<any>(`/production-control/workflow/${workflowId}/quality-check`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async runProducerAssistant(workflowId: string, data: {
+    auto_fix?: boolean;
+  } = {}) {
+    return this.request<any>(`/production-control/workflow/${workflowId}/producer-assistant`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ========== Project / Team 相关 ==========
+
+  async getProjects() {
+    return this.request<any[]>('/projects');
+  }
+
+  async getProject(projectId: string) {
+    return this.request<any>(`/projects/${projectId}`);
+  }
+
+  async getProjectMembers(projectId: string) {
+    return this.request<any[]>(`/projects/${projectId}/members`);
+  }
+
+  async createProjectMember(projectId: string, data: { user_id?: string; email?: string; role: string }) {
+    return this.request<any>(`/projects/${projectId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: data.user_id || data.email,
+        role: data.role,
+      }),
+    });
+  }
+
+  async updateProjectMember(projectId: string, memberUserId: string, data: { role?: string; is_active?: boolean }) {
+    return this.request<any>(`/projects/${projectId}/members/${memberUserId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteProjectMember(projectId: string, memberUserId: string) {
+    return this.request<any>(`/projects/${projectId}/members/${memberUserId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ========== Asset / Template 相关 ==========
+
+  async getAssetCategories() {
+    return this.request<any[]>('/assets/categories');
+  }
+
+  async getAssets(params: {
+    category?: string;
+    project_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    entity_id?: string;
+    scope?: string;
+    search?: string;
+    include_public?: boolean;
+    limit?: number;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.category) searchParams.set('category', params.category);
+    if (params.project_id) searchParams.set('project_id', params.project_id);
+    if (params.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params.chapter_id) searchParams.set('chapter_id', params.chapter_id);
+    if (params.script_id) searchParams.set('script_id', params.script_id);
+    if (params.entity_id) searchParams.set('entity_id', params.entity_id);
+    if (params.scope) searchParams.set('scope', params.scope);
+    if (params.search) searchParams.set('search', params.search);
+    if (params.include_public !== undefined) searchParams.set('include_public', String(params.include_public));
+    if (params.limit) searchParams.set('limit', String(params.limit));
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/assets${qs ? `?${qs}` : ''}`);
+  }
+
+  async createAsset(data: any) {
+    return this.request<any>('/assets', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAsset(assetId: string, data: any) {
+    return this.request<any>(`/assets/${assetId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAsset(assetId: string) {
+    return this.request<any>(`/assets/${assetId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async updateAssetScope(assetId: string, data: {
+    scope: 'global' | 'project' | 'novel' | 'chapter' | 'script' | 'entity';
+    project_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    entity_id?: string;
+  }) {
+    return this.request<any>(`/assets/${assetId}/scope`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ========== 资产生成和版本锁定 ==========
+
+  async generateCharacterAssets(data: {
+    character_id: string;
+    style?: string;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/assets/generate-character', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async generateSceneAssets(data: {
+    scene_id: string;
+    scene_name: string;
+    scene_description: string;
+    style?: string;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/assets/generate-scene', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async generatePropAssets(data: {
+    prop_id: string;
+    prop_name: string;
+    prop_description: string;
+    style?: string;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/assets/generate-prop', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async lockAsset(assetId: string) {
+    return this.request<any>(`/assets/${assetId}/lock`, {
+      method: 'POST',
+    });
+  }
+
+  async unlockAsset(assetId: string) {
+    return this.request<any>(`/assets/${assetId}/unlock`, {
+      method: 'POST',
+    });
+  }
+
+  async getEntityAssets(entityId: string, params?: {
+    entity_type?: string;
+    include_locked_only?: boolean;
+  }) {
+    const searchParams = new URLSearchParams();
+    if (params?.entity_type) searchParams.set('entity_type', params.entity_type);
+    if (params?.include_locked_only) searchParams.set('include_locked_only', 'true');
+    const qs = searchParams.toString();
+    return this.request<any>(`/assets/entity/${entityId}${qs ? `?${qs}` : ''}`);
+  }
+
+  async getEntityAssetVersions(entityId: string, entityType: string) {
+    return this.request<any[]>(`/assets/entity/${entityId}/versions?entity_type=${entityType}`);
+  }
+
+  async batchLockAssets(assetIds: string[]) {
+    return this.request<any>('/assets/batch-lock', {
+      method: 'POST',
+      body: JSON.stringify(assetIds),
     });
   }
 
@@ -528,9 +1487,9 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({
         prompt: data.prompt,
-        model: 'qwen-long',
-        max_tokens: 8000,
-        temperature: 0.8,
+        genre: data.genre || '通用',
+        chapter_count: data.chapter_count || 3,
+        style: data.style,
       }),
     });
   }
@@ -539,8 +1498,11 @@ class ApiClient {
    * 生成章节
    */
   async generateChapter(novelId: string, data: {
-    chapter_title: string;
+    chapter_title?: string;
     prev_chapter_content?: string;
+    target_word_count?: number;
+    instruction?: string;
+    model_config_id?: string;
   }) {
     return this.request<any>('/chapters/generate', {
       method: 'POST',
@@ -548,17 +1510,301 @@ class ApiClient {
     });
   }
 
+  async aiAssistChapter(chapterId: string, data: {
+    mode: 'rewrite' | 'extend' | 'polish';
+    instruction?: string;
+    target_word_count?: number;
+    sync_story_bible?: boolean;
+    model_config_id?: string;
+  }) {
+    return this.request<any>(`/chapters/${chapterId}/ai-assist`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   /**
    * 提取角色
    */
   async extractCharacters(data: {
-    text: string;
+    text?: string;
     novel_id?: string;
+    chapter_id?: string;
     character_count?: number;
+    auto_generate_avatar?: boolean;
+    model_config_id?: string;
+    image_model_config_id?: string;
   }) {
     return this.request<any>('/characters/extract', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async extractNovelEntities(data: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    text?: string;
+    entity_types?: string[];
+    persist?: boolean;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/story-bibles/entities/extract', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async extractEntitiesAndAssets(data: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    text?: string;
+    entity_types?: string[];
+    persist_entities?: boolean;
+    create_assets?: boolean;
+    asset_scope?: 'global' | 'novel' | 'chapter' | 'script' | 'entity';
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/story-bibles/entities/extract-assets', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getStoryEntities(params: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    entity_type?: string;
+    scope?: string;
+    limit?: number;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params.chapter_id) searchParams.set('chapter_id', params.chapter_id);
+    if (params.script_id) searchParams.set('script_id', params.script_id);
+    if (params.entity_type) searchParams.set('entity_type', params.entity_type);
+    if (params.scope) searchParams.set('scope', params.scope);
+    if (params.limit) searchParams.set('limit', String(params.limit));
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/story-bibles/entities${qs ? `?${qs}` : ''}`);
+  }
+
+  async getStoryEntityStats(params: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    scope?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params.chapter_id) searchParams.set('chapter_id', params.chapter_id);
+    if (params.script_id) searchParams.set('script_id', params.script_id);
+    if (params.scope) searchParams.set('scope', params.scope);
+    const qs = searchParams.toString();
+    return this.request<any>(`/story-bibles/entities/stats${qs ? `?${qs}` : ''}`);
+  }
+
+  async getStoryProductionPack(novelId: string) {
+    return this.request<any>(`/story-bibles/entities/production-pack/${novelId}`);
+  }
+
+  async checkStoryEntityConsistency(data: { novel_id: string; chapter_id?: string }) {
+    return this.request<any>('/story-bibles/entities/check-consistency', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createStoryEntity(data: any) {
+    return this.request<any>('/story-bibles/entities', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateStoryEntity(entityId: string, data: any) {
+    return this.request<any>(`/story-bibles/entities/${entityId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateStoryEntityScope(entityId: string, data: {
+    scope: 'global' | 'novel' | 'chapter' | 'script';
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+  }) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/scope`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createStoryEntityVersion(entityId: string, note?: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ note }),
+    });
+  }
+
+  async restoreStoryEntityVersion(entityId: string, snapshotId: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/versions/restore`, {
+      method: 'POST',
+      body: JSON.stringify({ snapshot_id: snapshotId }),
+    });
+  }
+
+  async deleteStoryEntity(entityId: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async mergeStoryEntities(data: {
+    source_entity_ids: string[];
+    target_entity_id: string;
+    keep_source_as_alias?: boolean;
+  }) {
+    return this.request<any>('/story-bibles/entities/merge', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async bulkApproveStoryEntities(data: {
+    entity_ids: string[];
+    approved?: boolean;
+  }) {
+    return this.request<any>('/story-bibles/entities/bulk-approve', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // ========== Story Bible 相关 ==========
+
+  async getStoryBibles(params?: { novel_id?: string; project_id?: string }) {
+    const searchParams = new URLSearchParams();
+    if (params?.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params?.project_id) searchParams.set('project_id', params.project_id);
+    const qs = searchParams.toString();
+    return this.request<any[]>(`/story-bibles${qs ? `?${qs}` : ''}`);
+  }
+
+  async createStoryBible(data: {
+    novel_id?: string;
+    project_id?: string;
+    title: string;
+    style?: string;
+    worldview?: string;
+    character_rules?: any[];
+    scene_rules?: any[];
+    prop_rules?: any[];
+    event_timeline?: any[];
+    negative_prompt?: string;
+    extra_data?: Record<string, any>;
+  }) {
+    return this.request<any>('/story-bibles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async generateStoryBible(data: {
+    novel_id: string;
+    project_id?: string;
+    title?: string;
+    style?: string;
+    negative_prompt?: string;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/story-bibles/generate-from-novel', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async syncStoryBible(storyBibleId: string, data: any) {
+    return this.request<any>(`/story-bibles/${storyBibleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async syncStoryBibleFromChapter(data: { story_bible_id: string; chapter_id: string }) {
+    return this.request<any>('/story-bibles/sync-from-chapter', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async checkStoryBible(data: {
+    story_bible_id: string;
+    novel_id?: string;
+    chapter_id?: string;
+    text?: string;
+  }) {
+    return this.request<any>('/story-bibles/check-consistency', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getStoryBibleStateMachine(storyBibleId: string) {
+    return this.request<any>(`/story-bibles/${storyBibleId}/state-machine`);
+  }
+
+  async generateStoryBibleStateMachine(storyBibleId: string, data: {
+    novel_id?: string;
+    persist?: boolean;
+  } = {}) {
+    return this.request<any>(`/story-bibles/${storyBibleId}/state-machine`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async checkStoryBibleStateMachine(storyBibleId: string, data: {
+    novel_id?: string;
+    persist?: boolean;
+  } = {}) {
+    return this.request<any>(`/story-bibles/${storyBibleId}/state-machine/check`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async resolveStoryBibleConflict(data: {
+    story_bible_id: string;
+    issue_code: string;
+    resolution: string;
+    resolved_data?: Record<string, any>;
+    entity_id?: string;
+  }) {
+    return this.request<any>('/story-bibles/resolve-conflict', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getStoryBible(storyBibleId: string) {
+    return this.request<any>(`/story-bibles/${storyBibleId}`);
+  }
+
+  async updateStoryBible(storyBibleId: string, data: any) {
+    return this.request<any>(`/story-bibles/${storyBibleId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteStoryBible(storyBibleId: string) {
+    return this.request<any>(`/story-bibles/${storyBibleId}`, {
+      method: 'DELETE',
     });
   }
 
@@ -568,6 +1814,7 @@ class ApiClient {
   async generateStoryboard(scriptId: string, data: {
     shot_count?: number;
     style?: string;
+    model_config_id?: string;
   }) {
     return this.request<any>('/storyboards/generate', {
       method: 'POST',
@@ -575,6 +1822,35 @@ class ApiClient {
         script_id: scriptId,
         shot_count: data.shot_count || 5,
         style: data.style || 'anime',
+        model_config_id: data.model_config_id,
+      }),
+    });
+  }
+
+  async getStoryboardTemplates() {
+    return this.request<any[]>('/storyboards/templates');
+  }
+
+  async generateSmartStoryboard(data: {
+    novel_id: string;
+    chapter_id?: string;
+    template_id?: string;
+    shot_count?: number;
+    style?: string;
+    title?: string;
+    story_bible_id?: string;
+    project_id?: string;
+    use_ai_refine?: boolean;
+    use_consistency_context?: boolean;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/storyboards/generate-smart', {
+      method: 'POST',
+      body: JSON.stringify({
+        style: 'anime',
+        use_ai_refine: false,
+        use_consistency_context: true,
+        ...data,
       }),
     });
   }

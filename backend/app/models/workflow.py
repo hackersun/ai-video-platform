@@ -1,6 +1,7 @@
 """
 Workflow 模型 - 工作流持久化存储
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text
@@ -15,6 +16,7 @@ class Workflow(Base):
 
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
 
     title = Column(String(200), nullable=False)
     status = Column(String(20), default="pending")  # pending, running, completed, failed
@@ -37,8 +39,8 @@ class Workflow(Base):
     metadata_ = Column("metadata", JSON, default=dict)
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
     def __repr__(self):
         return f"<Workflow {self.id} title={self.title} status={self.status}>"

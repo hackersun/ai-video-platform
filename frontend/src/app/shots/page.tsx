@@ -3,9 +3,26 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
+import { useToast } from '@/components/ui/toast';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import apiClient from '@/lib/api-client';
+import {
+  CAMERA_ANGLE_LABELS,
+  CAMERA_ANGLE_OPTIONS,
+  CAMERA_MOVEMENT_LABELS,
+  CAMERA_MOVEMENT_OPTIONS,
+  COLOR_GRADING_LABELS,
+  COLOR_GRADING_OPTIONS,
+  EMOTION_LABELS,
+  EMOTION_OPTIONS,
+  LIGHTING_LABELS,
+  LIGHTING_OPTIONS,
+  getShotAttributeLabel,
+} from '@/lib/shot-labels';
 import {
   Film,
   Loader2,
@@ -23,15 +40,30 @@ import {
   Trash2,
   ChevronDown,
   X,
-  ImageIcon
+  ImageIcon,
+  ShieldCheck
 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 interface Shot {
   id: string;
   storyboard_id: string;
   storyboard_title?: string;
+  script_id?: string;
+  script_title?: string;
+  novel_id?: string;
+  novel_title?: string;
+  chapter_id?: string;
+  chapter_title?: string;
   shot_number: number;
   duration: number;
   prompt?: string;
@@ -48,15 +80,43 @@ interface Shot {
   color_grading?: string;
   image_url?: string;
   image_status?: string;
+  keyframes?: any[];
+  character_refs?: any[];
+  extra_data?: any;
   created_at: string;
   updated_at: string;
 }
 
 interface Storyboard {
   id: string;
+  script_id?: string;
+  novel_id?: string;
+  chapter_id?: string;
   title: string;
+  script_title?: string;
   shot_count: number;
   total_duration: number;
+  content?: any;
+}
+
+interface Script {
+  id: string;
+  title: string;
+  novel_id?: string;
+  chapter_id?: string;
+  novel_title?: string;
+}
+
+interface Novel {
+  id: string;
+  title: string;
+}
+
+interface Chapter {
+  id: string;
+  novel_id?: string;
+  title: string;
+  chapter_number?: number;
 }
 
 const VIDEO_STATUS_LABELS: Record<string, string> = {
@@ -66,54 +126,53 @@ const VIDEO_STATUS_LABELS: Record<string, string> = {
   failed: '失败'
 };
 
-const CAMERA_ANGLES = ['全景', '远景', '中景', '近景', '特写', '跟拍', '摇镜头', '推镜头', '俯拍', '仰拍'];
-const EMOTIONS = ['neutral', 'happy', 'sad', 'angry', 'surprised', 'tense', 'relaxed', 'excited'];
-
-const EMOTION_LABELS: Record<string, string> = {
-  neutral: '平静',
-  happy: '开心',
-  sad: '悲伤',
-  angry: '愤怒',
-  surprised: '惊讶',
-  tense: '紧张',
-  relaxed: '放松',
-  excited: '兴奋'
+const QUALITY_STATUS_LABELS: Record<string, string> = {
+  ready: '可生成',
+  warning: '需注意',
+  blocked: '阻断',
+  unchecked: '未检查',
 };
 
-const CAMERA_MOVEMENT_LABELS: Record<string, string> = {
-  static: '固定',
-  pan_left: '左摇',
-  pan_right: '右摇',
-  tilt_up: '上摇',
-  tilt_down: '下摇',
-  zoom_in: '推进',
-  zoom_out: '拉远',
-  dolly: '移动',
-  crane: '升降',
-  handheld: '手持'
+const QUALITY_STATUS_CLASSES: Record<string, string> = {
+  ready: 'bg-green-500/20 text-green-300',
+  warning: 'bg-yellow-500/20 text-yellow-200',
+  blocked: 'bg-red-500/20 text-red-300',
+  unchecked: 'bg-white/10 text-white/45',
 };
 
-const LIGHTING_LABELS: Record<string, string> = {
-  natural: '自然光',
-  dramatic: '戏剧光',
-  soft: '柔光',
-  rim: '轮廓光',
-  back: '逆光',
-  neon: '霓虹',
-  moonlight: '月光',
-  golden_hour: '黄金时段'
+const REVIEW_STATE_LABELS: Record<string, string> = {
+  pending_review: '待审核',
+  changes_requested: '需修改',
+  approved: '已通过',
+  locked: '已锁定',
 };
+
+const getShotQualityStatus = (shot: Shot) => shot.extra_data?.quality_report?.status || 'unchecked';
+const getShotQualityScore = (shot: Shot) => shot.extra_data?.quality_report?.score;
+const getShotReviewState = (shot: Shot) =>
+  shot.extra_data?.production_context?.review_state || shot.extra_data?.review_state || 'pending_review';
 
 export default function ShotsPage() {
+  const { toast } = useToast();
   const router = useRouter();
   const [shots, setShots] = useState<Shot[]>([]);
   const [storyboards, setStoryboards] = useState<Storyboard[]>([]);
+  const [scripts, setScripts] = useState<Script[]>([]);
+  const [novels, setNovels] = useState<Novel[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedNovel, setSelectedNovel] = useState<string>('all');
+  const [selectedChapter, setSelectedChapter] = useState<string>('all');
+  const [selectedScript, setSelectedScript] = useState<string>('all');
   const [selectedStoryboard, setSelectedStoryboard] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedQuality, setSelectedQuality] = useState<string>('all');
+  const [selectedReviewState, setSelectedReviewState] = useState<string>('all');
   const [selectedShot, setSelectedShot] = useState<Shot | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Shot | null>(null);
+  const [deletingShotId, setDeletingShotId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editData, setEditData] = useState<Partial<Shot>>({});
   const [saving, setSaving] = useState(false);
@@ -121,63 +180,125 @@ export default function ShotsPage() {
   const [showFilters, setShowFilters] = useState(false);
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [batchProgress, setBatchProgress] = useState<Record<string, string>>({});
+  const [productionContext, setProductionContext] = useState<any>({});
+  const [qualityReport, setQualityReport] = useState<any>({});
+  const [budgetEstimate, setBudgetEstimate] = useState<any>({});
+  const [qualityLoading, setQualityLoading] = useState(false);
+  const [qualityBatchLoading, setQualityBatchLoading] = useState(false);
+  const [reviewBatchLoading, setReviewBatchLoading] = useState(false);
+  const [productionSaving, setProductionSaving] = useState(false);
+  const [productionForm, setProductionForm] = useState({
+    assetLocksJson: '[]',
+    keyframesJson: '[]',
+    multiviewJson: '[]',
+    entityBindingsJson: '[]',
+    lipSyncJson: '{}',
+    reviewState: 'pending_review',
+    reviewNotes: '',
+    reviewAssignees: '',
+  });
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
-  // 加载分镜列表
-  const loadStoryboards = async () => {
+  const getChapterLabel = (chapterId?: string) => {
+    const chapter = chapters.find((item) => item.id === chapterId);
+    if (!chapter) return chapterId ? `章节 ${chapterId.slice(0, 8)}...` : '未绑定章节';
+    return chapter.chapter_number ? `第${chapter.chapter_number}章 ${chapter.title}` : chapter.title;
+  };
+
+  const loadChaptersForNovel = async (novelId: string) => {
+    if (!novelId || novelId === 'all') {
+      setChapters([]);
+      return [];
+    }
     try {
-      const response = await fetchWithAuth(`${API_BASE}/scripts`);
-      if (response.ok) {
-        const data = await response.json();
-        // Also try to get storyboards
-        if (data[0]?.id) {
-          const sbResponse = await fetchWithAuth(`${API_BASE}/storyboards/script/${data[0].id}`);
-          if (sbResponse.ok) {
-            const sbData = await sbResponse.json();
-            setStoryboards(Array.isArray(sbData) ? sbData.map((s: any) => ({
-              id: s.id,
-              title: s.title,
-              shot_count: s.shot_count,
-              total_duration: s.total_duration
-            })) : []);
-          }
-        }
+      const response = await fetchWithAuth(`${API_BASE}/chapters/novel/${novelId}`);
+      if (!response.ok) {
+        setChapters([]);
+        return [];
       }
+      const data = await response.json();
+      const list = Array.isArray(data) ? data : [];
+      setChapters(list);
+      return list;
     } catch (err) {
-      console.error('加载分镜失败:', err);
+      console.error('加载章节失败:', err);
+      setChapters([]);
+      return [];
     }
   };
 
-  // 加载所有镜头
+  // 加载所有镜头和上游链路
   const loadShots = async () => {
     setLoading(true);
     setError(null);
     try {
-      // 先获取所有剧本
+      const novelsRes = await fetchWithAuth(`${API_BASE}/novels`);
+      if (novelsRes.ok) {
+        const novelData = await novelsRes.json();
+        setNovels(Array.isArray(novelData) ? novelData : []);
+      }
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlNovelId = urlParams.get('novel_id') || '';
+      const urlChapterId = urlParams.get('chapter_id') || '';
+      const urlScriptId = urlParams.get('script_id') || '';
+      const urlStoryboardId = urlParams.get('storyboard_id') || '';
+      if (urlNovelId) {
+        setSelectedNovel(urlNovelId);
+        await loadChaptersForNovel(urlNovelId);
+      }
+      if (urlChapterId) setSelectedChapter(urlChapterId);
+      if (urlScriptId) setSelectedScript(urlScriptId);
+      if (urlStoryboardId) setSelectedStoryboard(urlStoryboardId);
+
       const scriptsRes = await fetchWithAuth(`${API_BASE}/scripts`);
       if (!scriptsRes.ok) throw new Error('加载剧本失败');
-      const scripts = await scriptsRes.json();
+      const scriptsData = await scriptsRes.json();
+      const scriptsList: Script[] = Array.isArray(scriptsData) ? scriptsData : [];
+      setScripts(scriptsList);
 
       // 再获取每个剧本的分镜和镜头
       const allShots: Shot[] = [];
-      for (const script of scripts) {
+      const allStoryboards: Storyboard[] = [];
+      for (const script of scriptsList) {
         const sbRes = await fetchWithAuth(`${API_BASE}/storyboards/script/${script.id}`);
         if (sbRes.ok) {
           const sbs = await sbRes.json();
           for (const sb of Array.isArray(sbs) ? sbs : []) {
+            const sbNovelId = sb.novel_id || sb.content?.novel_id || script.novel_id;
+            const sbChapterId = sb.chapter_id || sb.content?.chapter_id || script.chapter_id;
+            const sbWithLineage: Storyboard = {
+              id: sb.id,
+              script_id: script.id,
+              novel_id: sbNovelId,
+              chapter_id: sbChapterId,
+              title: sb.title,
+              script_title: script.title,
+              shot_count: sb.shot_count,
+              total_duration: sb.total_duration,
+              content: sb.content,
+            };
+            allStoryboards.push(sbWithLineage);
             const shotsRes = await fetchWithAuth(`${API_BASE}/shots/storyboard/${sb.id}`);
             if (shotsRes.ok) {
               const shotsData = await shotsRes.json();
               const shotsWithTitle = (Array.isArray(shotsData) ? shotsData : []).map((shot: any) => ({
                 ...shot,
-                storyboard_title: sb.title
+                storyboard_title: sb.title,
+                script_id: script.id,
+                script_title: script.title,
+                novel_id: sbNovelId,
+                novel_title: script.novel_title,
+                chapter_id: sbChapterId,
+                chapter_title: getChapterLabel(sbChapterId),
               }));
               allShots.push(...shotsWithTitle);
             }
           }
         }
       }
+      setStoryboards(allStoryboards);
       setShots(allShots);
     } catch (err: any) {
       console.error('加载镜头失败:', err);
@@ -188,19 +309,49 @@ export default function ShotsPage() {
   };
 
   useEffect(() => {
-    loadStoryboards();
     loadShots();
   }, []);
+
+  useEffect(() => {
+    if (selectedNovel !== 'all') {
+      loadChaptersForNovel(selectedNovel);
+    } else {
+      setChapters([]);
+      setSelectedChapter('all');
+    }
+  }, [selectedNovel]);
 
   // 筛选镜头
   const filteredShots = shots.filter(shot => {
     const matchesSearch = !searchQuery ||
       shot.prompt?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       shot.dialogue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      shot.visual_description?.toLowerCase().includes(searchQuery.toLowerCase());
+      shot.visual_description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      shot.storyboard_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      shot.script_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      shot.novel_title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      shot.chapter_title?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesNovel = selectedNovel === 'all' || shot.novel_id === selectedNovel;
+    const matchesChapter = selectedChapter === 'all' || shot.chapter_id === selectedChapter;
+    const matchesScript = selectedScript === 'all' || shot.script_id === selectedScript;
     const matchesStoryboard = selectedStoryboard === 'all' || shot.storyboard_id === selectedStoryboard;
     const matchesStatus = selectedStatus === 'all' || shot.video_status === selectedStatus;
-    return matchesSearch && matchesStoryboard && matchesStatus;
+    const matchesQuality = selectedQuality === 'all' || getShotQualityStatus(shot) === selectedQuality;
+    const matchesReview = selectedReviewState === 'all' || getShotReviewState(shot) === selectedReviewState;
+    return matchesSearch && matchesNovel && matchesChapter && matchesScript && matchesStoryboard && matchesStatus && matchesQuality && matchesReview;
+  });
+
+  const filteredScriptsForSelect = scripts.filter(script => {
+    if (selectedNovel !== 'all' && script.novel_id !== selectedNovel) return false;
+    if (selectedChapter !== 'all' && script.chapter_id !== selectedChapter) return false;
+    return true;
+  });
+
+  const filteredStoryboardsForSelect = storyboards.filter(storyboard => {
+    if (selectedNovel !== 'all' && storyboard.novel_id !== selectedNovel) return false;
+    if (selectedChapter !== 'all' && storyboard.chapter_id !== selectedChapter) return false;
+    if (selectedScript !== 'all' && storyboard.script_id !== selectedScript) return false;
+    return true;
   });
 
   // 选择/取消选择镜头
@@ -225,13 +376,20 @@ export default function ShotsPage() {
 
   // 生成视频（单个）
   const handleGenerateVideo = (shot: Shot) => {
-    router.push(`/video-generation?shot_id=${shot.id}&prompt=${encodeURIComponent(shot.prompt || shot.visual_description || '')}`);
+    const params = new URLSearchParams();
+    if (shot.novel_id) params.set('novel_id', shot.novel_id);
+    if (shot.chapter_id) params.set('chapter_id', shot.chapter_id);
+    if (shot.script_id) params.set('script_id', shot.script_id);
+    if (shot.storyboard_id) params.set('storyboard_id', shot.storyboard_id);
+    params.set('shot_id', shot.id);
+    params.set('prompt', shot.prompt || shot.visual_description || '');
+    router.push(`/video-generation?${params.toString()}`);
   };
 
   // 生成语音（单个）
   const handleGenerateTTS = async (shot: Shot) => {
     if (!shot.dialogue) {
-      alert('该镜头没有对话文本，无法生成语音');
+      toast({ title: '无法生成语音', description: '该镜头没有对话文本。', type: 'info' });
       return;
     }
     try {
@@ -247,13 +405,13 @@ export default function ShotsPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        alert(`语音生成任务已创建: ${data.status}`);
+        toast({ title: '语音生成任务已创建', description: `当前状态：${data.status || '已提交'}`, type: 'success' });
       } else {
         const err = await res.json();
-        alert(`生成失败: ${err.detail || err.message || '未知错误'}`);
+        toast({ title: '生成失败', description: err.detail || err.message || '未知错误', type: 'error' });
       }
     } catch (err: any) {
-      alert(`生成失败: ${err.message}`);
+      toast({ title: '生成失败', description: err.message || '请稍后重试。', type: 'error' });
     }
   };
 
@@ -352,6 +510,105 @@ export default function ShotsPage() {
     setSelectedShot(shot);
     setEditData({ ...shot });
     setIsEditing(true);
+    loadProductionContext(shot);
+    loadShotQuality(shot);
+  };
+
+  const loadProductionContext = async (shot: Shot) => {
+    const fallback = shot.extra_data?.production_context || {};
+    try {
+      const response = await apiClient.getShotProductionContext(shot.id);
+      const context = response.production_context || fallback;
+      setProductionContext(context);
+      setProductionForm({
+        assetLocksJson: JSON.stringify(context.asset_version_locks || [], null, 2),
+        keyframesJson: JSON.stringify(context.keyframes || shot.keyframes || [], null, 2),
+        multiviewJson: JSON.stringify(context.character_multiview_refs || [], null, 2),
+        entityBindingsJson: JSON.stringify(context.entity_reference_bindings || [], null, 2),
+        lipSyncJson: JSON.stringify(context.lip_sync || {}, null, 2),
+        reviewState: context.review_state || 'pending_review',
+        reviewNotes: context.review_notes || '',
+        reviewAssignees: (context.review_assignees || []).join(', '),
+      });
+    } catch (err) {
+      setProductionContext(fallback);
+      setProductionForm({
+        assetLocksJson: JSON.stringify(fallback.asset_version_locks || [], null, 2),
+        keyframesJson: JSON.stringify(fallback.keyframes || shot.keyframes || [], null, 2),
+        multiviewJson: JSON.stringify(fallback.character_multiview_refs || [], null, 2),
+        entityBindingsJson: JSON.stringify(fallback.entity_reference_bindings || [], null, 2),
+        lipSyncJson: JSON.stringify(fallback.lip_sync || {}, null, 2),
+        reviewState: fallback.review_state || 'pending_review',
+        reviewNotes: fallback.review_notes || '',
+        reviewAssignees: (fallback.review_assignees || []).join(', '),
+      });
+    }
+  };
+
+  const loadShotQuality = async (shot: Shot) => {
+    setQualityLoading(true);
+    try {
+      const response = await apiClient.getShotQuality(shot.id);
+      setQualityReport(response.quality_report || {});
+      setBudgetEstimate(response.budget_estimate || {});
+    } catch (err) {
+      setQualityReport(shot.extra_data?.quality_report || {});
+      setBudgetEstimate(shot.extra_data?.budget_estimate || {});
+    } finally {
+      setQualityLoading(false);
+    }
+  };
+
+  const refreshShotQuality = async () => {
+    if (!selectedShot) return;
+    setQualityLoading(true);
+    try {
+      const response = await apiClient.refreshShotQuality(selectedShot.id);
+      setQualityReport(response.quality_report || {});
+      setBudgetEstimate(response.budget_estimate || {});
+      setShots(prev => prev.map(s => s.id === selectedShot.id ? {
+        ...s,
+        extra_data: {
+          ...(s.extra_data || {}),
+          quality_report: response.quality_report,
+          budget_estimate: response.budget_estimate,
+        },
+      } : s));
+    } catch (err: any) {
+      toast({ title: '质量检查失败', description: err.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setQualityLoading(false);
+    }
+  };
+
+  const applyQualityItemsToShots = (items: any[]) => {
+    setShots(prev => prev.map(shot => {
+      const item = items.find((entry: any) => entry.shot_id === shot.id);
+      if (!item) return shot;
+      return {
+        ...shot,
+        extra_data: {
+          ...(shot.extra_data || {}),
+          quality_report: item.quality_report,
+          budget_estimate: item.budget_estimate,
+        },
+      };
+    }));
+  };
+
+  const handleBatchRefreshQuality = async () => {
+    const shotIds = Array.from(selectedShots);
+    if (shotIds.length === 0) return;
+    setQualityBatchLoading(true);
+    try {
+      const response = await apiClient.refreshShotsQuality(shotIds);
+      applyQualityItemsToShots(response.items || []);
+      toast({ title: '批量质量检查完成', description: `已重检 ${response.refreshed || 0} 个镜头。`, type: 'success' });
+    } catch (err: any) {
+      toast({ title: '批量质量检查失败', description: err.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setQualityBatchLoading(false);
+    }
   };
 
   // 保存镜头
@@ -366,22 +623,96 @@ export default function ShotsPage() {
       });
       if (response.ok) {
         const updated: Shot = await response.json();
-        setShots(shots.map(s => s.id === updated.id ? { ...updated, storyboard_title: selectedShot.storyboard_title } : s));
-        setSelectedShot(updated);
+        const updatedWithLineage = { ...selectedShot, ...updated };
+        setShots(shots.map(s => s.id === updated.id ? updatedWithLineage : s));
+        setSelectedShot(updatedWithLineage);
         setIsEditing(false);
+        toast({ title: '镜头已保存', type: 'success' });
       } else {
         throw new Error('保存失败');
       }
     } catch (err: any) {
-      alert(err.message || '保存失败');
+      toast({ title: '保存失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setSaving(false);
     }
   };
 
+  const parseJsonField = (value: string, fallback: any) => {
+    const trimmed = value.trim();
+    if (!trimmed) return fallback;
+    return JSON.parse(trimmed);
+  };
+
+  const handleSaveProductionContext = async () => {
+    if (!selectedShot) return;
+    setProductionSaving(true);
+    try {
+      const payload = {
+        asset_version_locks: parseJsonField(productionForm.assetLocksJson, []),
+        keyframes: parseJsonField(productionForm.keyframesJson, []),
+        character_multiview_refs: parseJsonField(productionForm.multiviewJson, []),
+        entity_reference_bindings: parseJsonField(productionForm.entityBindingsJson, []),
+        lip_sync: parseJsonField(productionForm.lipSyncJson, {}),
+        review_state: productionForm.reviewState,
+        review_notes: productionForm.reviewNotes,
+        review_assignees: productionForm.reviewAssignees
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean),
+      };
+      const response = await apiClient.updateShotProductionContext(selectedShot.id, payload);
+      setProductionContext(response.production_context || {});
+      setShots(prev => prev.map(s => s.id === selectedShot.id ? {
+        ...s,
+        keyframes: payload.keyframes,
+        extra_data: {
+          ...(s.extra_data || {}),
+          production_context: response.production_context,
+        },
+      } : s));
+      await refreshShotQuality();
+      toast({ title: '生产上下文已保存', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '生产上下文保存失败', description: err.message || '请检查 JSON 格式。', type: 'error' });
+    } finally {
+      setProductionSaving(false);
+    }
+  };
+
+  const handleBatchReviewState = async (reviewState: string) => {
+    const shotIds = Array.from(selectedShots);
+    if (shotIds.length === 0) return;
+    setReviewBatchLoading(true);
+    try {
+      const updatedContexts: Record<string, any> = {};
+      for (const shotId of shotIds) {
+        const response = await apiClient.updateShotProductionContext(shotId, {
+          review_state: reviewState,
+          review_notes: reviewState === 'approved' ? '批量审核通过' : '批量标记需修改',
+        });
+        updatedContexts[shotId] = response.production_context || {};
+      }
+      setShots(prev => prev.map(shot => updatedContexts[shot.id] ? {
+        ...shot,
+        extra_data: {
+          ...(shot.extra_data || {}),
+          production_context: updatedContexts[shot.id],
+        },
+      } : shot));
+      const qualityResponse = await apiClient.refreshShotsQuality(shotIds);
+      applyQualityItemsToShots(qualityResponse.items || []);
+      toast({ title: '批量审核已更新', description: `已更新 ${shotIds.length} 个镜头审核状态。`, type: 'success' });
+    } catch (err: any) {
+      toast({ title: '批量审核失败', description: err.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setReviewBatchLoading(false);
+    }
+  };
+
   // 删除镜头
   const handleDelete = async (shotId: string) => {
-    if (!confirm('确定要删除这个镜头吗？')) return;
+    setDeletingShotId(shotId);
     try {
       const response = await fetchWithAuth(`${API_BASE}/shots/${shotId}`, {
         method: 'DELETE'
@@ -392,10 +723,13 @@ export default function ShotsPage() {
           setSelectedShot(null);
           setIsEditing(false);
         }
+        toast({ title: '镜头已删除', type: 'success' });
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('删除镜头失败:', err);
-      alert('删除失败');
+      toast({ title: '删除失败', description: err?.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setDeletingShotId(null);
     }
   };
 
@@ -416,9 +750,9 @@ export default function ShotsPage() {
               <Film className="w-7 h-7" />
               镜头管理
             </h1>
-            <p className="text-white/60 mt-1">管理所有分镜中的镜头</p>
+            <p className="text-white/60 mt-1">管理镜头、资产版本锁、关键帧、多视图参考、口型和审核状态</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             {selectedShots.size > 0 && (
               <Button
                 onClick={handleBatchGenerateImages}
@@ -427,6 +761,36 @@ export default function ShotsPage() {
               >
                 {batchGenerating ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ImageIcon className="w-4 h-4 mr-1" />}
                 批量生成参考图 ({selectedShots.size})
+              </Button>
+            )}
+            {selectedShots.size > 0 && (
+              <Button
+                onClick={handleBatchRefreshQuality}
+                disabled={qualityBatchLoading}
+                className="bg-cyan-600 hover:bg-cyan-700"
+              >
+                {qualityBatchLoading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
+                批量重检 ({selectedShots.size})
+              </Button>
+            )}
+            {selectedShots.size > 0 && (
+              <Button
+                onClick={() => handleBatchReviewState('approved')}
+                disabled={reviewBatchLoading}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                {reviewBatchLoading ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <CheckSquare className="w-4 h-4 mr-1" />}
+                批量通过
+              </Button>
+            )}
+            {selectedShots.size > 0 && (
+              <Button
+                onClick={() => handleBatchReviewState('changes_requested')}
+                disabled={reviewBatchLoading}
+                variant="outline"
+                className="border-yellow-500/50 text-yellow-200 hover:bg-yellow-500/10"
+              >
+                退回修改
               </Button>
             )}
             {selectedShots.size > 0 && (
@@ -449,6 +813,25 @@ export default function ShotsPage() {
             </Button>
           </div>
         </div>
+
+        <Card className="bg-cyan-500/10 border-cyan-500/20">
+          <CardContent className="p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="text-white font-medium flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-cyan-300" />
+                镜头生产上下文已接入
+              </div>
+              <div className="text-white/55 text-sm mt-1">
+                打开任意镜头的编辑面板，可维护资产锁、关键帧、多视图角色参考、口型配置和多人审核状态。
+              </div>
+            </div>
+            <Button asChild variant="outline" className="border-cyan-500/40 text-cyan-100 hover:bg-cyan-500/10">
+              <Link href="/production-adapters">
+                生产适配配置
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
 
         {/* 统计信息 */}
         <div className="grid grid-cols-4 gap-4">
@@ -486,18 +869,72 @@ export default function ShotsPage() {
         {showFilters && (
           <Card className="bg-white/5 border-white/10">
             <CardContent className="p-4">
-              <div className="grid grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-8 gap-4">
                 <div>
                   <label className="text-sm text-white/60 mb-1 block">搜索</label>
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                     <Input
-                      placeholder="搜索镜头内容..."
+                      placeholder="搜索镜头内容…"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
                     />
                   </div>
+                </div>
+                <div>
+                  <label className="text-sm text-white/60 mb-1 block">小说</label>
+                  <select
+                    value={selectedNovel}
+                    onChange={(e) => {
+                      setSelectedNovel(e.target.value);
+                      setSelectedChapter('all');
+                      setSelectedScript('all');
+                      setSelectedStoryboard('all');
+                    }}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="all">全部小说</option>
+                    {novels.map(novel => (
+                      <option key={novel.id} value={novel.id}>{novel.title}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-white/60 mb-1 block">章节</label>
+                  <select
+                    value={selectedChapter}
+                    onChange={(e) => {
+                      setSelectedChapter(e.target.value);
+                      setSelectedScript('all');
+                      setSelectedStoryboard('all');
+                    }}
+                    disabled={selectedNovel === 'all'}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white disabled:opacity-50"
+                  >
+                    <option value="all">全部章节</option>
+                    {chapters.map(chapter => (
+                      <option key={chapter.id} value={chapter.id}>
+                        {chapter.chapter_number ? `第${chapter.chapter_number}章 ` : ''}{chapter.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-white/60 mb-1 block">剧本</label>
+                  <select
+                    value={selectedScript}
+                    onChange={(e) => {
+                      setSelectedScript(e.target.value);
+                      setSelectedStoryboard('all');
+                    }}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="all">全部剧本</option>
+                    {filteredScriptsForSelect.map(script => (
+                      <option key={script.id} value={script.id}>{script.title}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-sm text-white/60 mb-1 block">分镜</label>
@@ -507,7 +944,7 @@ export default function ShotsPage() {
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                   >
                     <option value="all">全部</option>
-                    {storyboards.map(sb => (
+                    {filteredStoryboardsForSelect.map(sb => (
                       <option key={sb.id} value={sb.id}>{sb.title}</option>
                     ))}
                   </select>
@@ -526,12 +963,49 @@ export default function ShotsPage() {
                     <option value="failed">失败</option>
                   </select>
                 </div>
+                <div>
+                  <label className="text-sm text-white/60 mb-1 block">质量状态</label>
+                  <select
+                    value={selectedQuality}
+                    onChange={(e) => setSelectedQuality(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="all">全部</option>
+                    <option value="ready">可生成</option>
+                    <option value="warning">需注意</option>
+                    <option value="blocked">阻断</option>
+                    <option value="unchecked">未检查</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm text-white/60 mb-1 block">审核状态</label>
+                  <select
+                    value={selectedReviewState}
+                    onChange={(e) => setSelectedReviewState(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="all">全部</option>
+                    <option value="pending_review">待审核</option>
+                    <option value="changes_requested">需修改</option>
+                    <option value="approved">已通过</option>
+                    <option value="locked">已锁定</option>
+                  </select>
+                </div>
               </div>
-              {(searchQuery || selectedStoryboard !== 'all' || selectedStatus !== 'all') && (
+              {(searchQuery || selectedNovel !== 'all' || selectedChapter !== 'all' || selectedScript !== 'all' || selectedStoryboard !== 'all' || selectedStatus !== 'all' || selectedQuality !== 'all' || selectedReviewState !== 'all') && (
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => { setSearchQuery(''); setSelectedStoryboard('all'); setSelectedStatus('all'); }}
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedNovel('all');
+                    setSelectedChapter('all');
+                    setSelectedScript('all');
+                    setSelectedStoryboard('all');
+                    setSelectedStatus('all');
+                    setSelectedQuality('all');
+                    setSelectedReviewState('all');
+                  }}
                   className="mt-2 text-white/60 hover:text-white"
                 >
                   <X className="w-4 h-4 mr-1" />
@@ -546,7 +1020,7 @@ export default function ShotsPage() {
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-violet-400" />
-            <span className="ml-3 text-white/60">加载中...</span>
+            <span className="ml-3 text-white/60">加载中…</span>
           </div>
         )}
 
@@ -594,41 +1068,63 @@ export default function ShotsPage() {
                 {filteredShots.map((shot) => (
                   <Card
                     key={shot.id}
-                    className={`bg-white/5 border-white/10 hover:border-violet-500/30 transition-all cursor-pointer ${
+                    className={`bg-white/5 border-white/10 hover:border-violet-500/30 transition-colors cursor-pointer ${
                       selectedShots.has(shot.id) ? 'ring-2 ring-violet-500' : ''
                     }`}
                     onClick={() => !isEditing && setSelectedShot(shot)}
                   >
                     <CardContent className="p-4 relative">
+                      {(() => {
+                        const qualityStatus = getShotQualityStatus(shot);
+                        const qualityScore = getShotQualityScore(shot);
+                        const reviewState = getShotReviewState(shot);
+                        return (
+                          <div className="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
+                            <span className={`px-2 py-0.5 rounded text-xs ${QUALITY_STATUS_CLASSES[qualityStatus] || QUALITY_STATUS_CLASSES.unchecked}`}>
+                              {QUALITY_STATUS_LABELS[qualityStatus] || qualityStatus}
+                              {qualityScore !== undefined ? ` ${qualityScore}` : ''}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-white/10 text-white/55 text-xs">
+                              {REVIEW_STATE_LABELS[reviewState] || reviewState}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       {/* Image status overlay */}
                       {batchProgress[shot.id] === "generating" && (
-                        <span className="absolute top-2 left-2 z-10 px-2 py-1 bg-yellow-500 text-white text-xs rounded flex items-center gap-1">
+                        <span className="absolute top-2 left-2 z-20 px-2 py-1 bg-yellow-500 text-white text-xs rounded flex items-center gap-1">
                           <Loader2 className="w-3 h-3 animate-spin" />
-                          生成中...
+                          生成中…
                         </span>
                       )}
                       {batchProgress[shot.id] === "succeeded" && (
-                        <span className="absolute top-2 left-2 z-10 px-2 py-1 bg-green-500 text-white text-xs rounded">
+                        <span className="absolute top-2 left-2 z-20 px-2 py-1 bg-green-500 text-white text-xs rounded">
                           图片已生成
                         </span>
                       )}
                       {batchProgress[shot.id] === "failed" && (
-                        <span className="absolute top-2 left-2 z-10 px-2 py-1 bg-red-500 text-white text-xs rounded">
+                        <span className="absolute top-2 left-2 z-20 px-2 py-1 bg-red-500 text-white text-xs rounded">
                           生成失败
                         </span>
                       )}
                       {shot.image_status === "succeeded" && shot.image_url && (
                         <img
-                          src={shot.image_url}
+                          src={toMediaUrl(shot.image_url)}
                           className="absolute inset-0 w-full h-full object-cover opacity-20 rounded-lg"
                           alt=""
+                          width={480}
+                          height={270}
+                          loading="lazy"
                         />
                       )}
-                      <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-start justify-between mb-3 pr-24">
                         <div className="flex items-center gap-2">
                           <button
+                            type="button"
+                            aria-label={`${selectedShots.has(shot.id) ? '取消选择' : '选择'}镜头 ${shot.shot_number}`}
+                            title={selectedShots.has(shot.id) ? '取消选择' : '选择镜头'}
                             onClick={(e) => { e.stopPropagation(); toggleShotSelection(shot.id); }}
-                            className="text-white/40 hover:text-violet-400"
+                            className="rounded text-white/40 transition-colors hover:text-violet-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
                           >
                             {selectedShots.has(shot.id) ? (
                               <CheckSquare className="w-4 h-4" />
@@ -648,6 +1144,8 @@ export default function ShotsPage() {
                             <Button
                               variant="ghost"
                               size="icon"
+                              aria-label={`播放镜头 ${shot.shot_number} 视频`}
+                              title="播放视频"
                               className="w-6 h-6 text-green-400"
                               onClick={(e) => { e.stopPropagation(); window.open(shot.video_url, '_blank'); }}
                             >
@@ -657,6 +1155,8 @@ export default function ShotsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            aria-label={`编辑镜头 ${shot.shot_number}`}
+                            title="编辑镜头"
                             className="w-6 h-6 text-white/40 hover:text-white"
                             onClick={(e) => { e.stopPropagation(); handleEdit(shot); }}
                           >
@@ -665,8 +1165,11 @@ export default function ShotsPage() {
                           <Button
                             variant="ghost"
                             size="icon"
+                            aria-label={`删除镜头 ${shot.shot_number}`}
+                            title="删除镜头"
                             className="w-6 h-6 text-red-400/60 hover:text-red-400"
-                            onClick={(e) => { e.stopPropagation(); handleDelete(shot.id); }}
+                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(shot); }}
+                            disabled={deletingShotId === shot.id}
                           >
                             <Trash2 className="w-3 h-3" />
                           </Button>
@@ -682,6 +1185,12 @@ export default function ShotsPage() {
                           <p className="text-white/60 text-xs line-clamp-2">{shot.visual_description}</p>
                         )}
 
+                        {(shot.novel_title || shot.chapter_title || shot.script_title) && (
+                          <div className="rounded border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/45 line-clamp-2">
+                            {[shot.novel_title, shot.chapter_title, shot.script_title].filter(Boolean).join(' / ')}
+                          </div>
+                        )}
+
                         {/* 元数据 */}
                         <div className="flex flex-wrap gap-2 text-xs text-white/40">
                           <span className="flex items-center gap-1">
@@ -691,20 +1200,43 @@ export default function ShotsPage() {
                           {shot.camera_angle && (
                             <span className="flex items-center gap-1">
                               <Camera className="w-3 h-3" />
-                              {shot.camera_angle}
+                              {getShotAttributeLabel(CAMERA_ANGLE_LABELS, shot.camera_angle)}
                             </span>
                           )}
                           {shot.camera_movement && (
                             <span className="px-1.5 py-0.5 rounded bg-white/10">
-                              {CAMERA_MOVEMENT_LABELS[shot.camera_movement] || shot.camera_movement}
+                              {getShotAttributeLabel(CAMERA_MOVEMENT_LABELS, shot.camera_movement)}
                             </span>
                           )}
                           {shot.emotion && (
                             <span className="px-1.5 py-0.5 rounded bg-white/10">
-                              {EMOTION_LABELS[shot.emotion] || shot.emotion}
+                              {getShotAttributeLabel(EMOTION_LABELS, shot.emotion)}
+                            </span>
+                          )}
+                          {shot.lighting && (
+                            <span className="px-1.5 py-0.5 rounded bg-white/10">
+                              {getShotAttributeLabel(LIGHTING_LABELS, shot.lighting)}
+                            </span>
+                          )}
+                          {shot.color_grading && (
+                            <span className="px-1.5 py-0.5 rounded bg-white/10">
+                              {getShotAttributeLabel(COLOR_GRADING_LABELS, shot.color_grading)}
                             </span>
                           )}
                         </div>
+
+                        {(shot.extra_data?.quality_report?.warnings?.length || shot.extra_data?.quality_report?.blockers?.length) && (
+                          <div className="rounded border border-white/10 bg-black/20 px-2 py-1 text-xs text-white/50">
+                            {shot.extra_data?.quality_report?.blockers?.length ? (
+                              <span className="text-red-300">阻断 {shot.extra_data.quality_report.blockers.length}</span>
+                            ) : (
+                              <span className="text-yellow-200">风险 {shot.extra_data.quality_report.warnings.length}</span>
+                            )}
+                            {shot.extra_data?.budget_estimate?.estimated_total_tokens && (
+                              <span className="ml-2">预算 {shot.extra_data.budget_estimate.estimated_total_tokens} tokens</span>
+                            )}
+                          </div>
+                        )}
 
                         {/* 台词 */}
                         {shot.dialogue && (
@@ -768,11 +1300,11 @@ export default function ShotsPage() {
                       ? '尝试调整筛选条件'
                       : '在分镜管理中创建镜头'}
                   </p>
-                  <Link href="/storyboards">
-                    <Button className="mt-4 bg-violet-600 hover:bg-violet-700">
+                  <Button asChild className="mt-4 bg-violet-600 hover:bg-violet-700">
+                    <Link href="/storyboards">
                       前往分镜管理
-                    </Button>
-                  </Link>
+                    </Link>
+                  </Button>
                 </CardContent>
               </Card>
             )}
@@ -780,20 +1312,15 @@ export default function ShotsPage() {
         )}
 
         {/* 镜头编辑弹窗 */}
-        {isEditing && selectedShot && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={() => setIsEditing(false)}>
-            <div className="bg-[#1a1a2e] border border-white/10 rounded-xl w-full max-w-2xl max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                    <Edit2 className="w-5 h-5" />
-                    编辑镜头 {selectedShot.shot_number}
-                  </h2>
-                  <Button variant="ghost" size="icon" onClick={() => setIsEditing(false)} className="text-white/60 hover:text-white">
-                    <X className="w-5 h-5" />
-                  </Button>
-                </div>
-
+        <Dialog open={isEditing && Boolean(selectedShot)} onOpenChange={(open) => setIsEditing(open)}>
+          {selectedShot && (
+            <DialogContent className="max-w-2xl gap-6 bg-[#1a1a2e] p-6">
+              <DialogHeader className="pr-10">
+                <DialogTitle className="flex items-center gap-2">
+                  <Edit2 className="w-5 h-5" />
+                  编辑镜头 {selectedShot.shot_number}
+                </DialogTitle>
+              </DialogHeader>
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -823,7 +1350,7 @@ export default function ShotsPage() {
                       onChange={(e) => setEditData({ ...editData, prompt: e.target.value })}
                       rows={3}
                       className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-white/40 resize-none"
-                      placeholder="描述镜头画面..."
+                      placeholder="描述镜头画面…"
                     />
                   </div>
 
@@ -834,7 +1361,7 @@ export default function ShotsPage() {
                       onChange={(e) => setEditData({ ...editData, visual_description: e.target.value })}
                       rows={2}
                       className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-white/40 resize-none"
-                      placeholder="视觉细节描述..."
+                      placeholder="视觉细节描述…"
                     />
                   </div>
 
@@ -843,7 +1370,7 @@ export default function ShotsPage() {
                     <Input
                       value={editData.dialogue || ''}
                       onChange={(e) => setEditData({ ...editData, dialogue: e.target.value })}
-                      placeholder="输入台词..."
+                      placeholder="输入台词…"
                       className="bg-white/5 border-white/10 text-white"
                     />
                   </div>
@@ -857,7 +1384,7 @@ export default function ShotsPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                       >
                         <option value="">选择角度</option>
-                        {CAMERA_ANGLES.map(a => <option key={a} value={a}>{a}</option>)}
+                        {CAMERA_ANGLE_OPTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                       </select>
                     </div>
                     <div>
@@ -868,8 +1395,8 @@ export default function ShotsPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                       >
                         <option value="">选择运镜</option>
-                        {Object.entries(CAMERA_MOVEMENT_LABELS).map(([k, v]) => (
-                          <option key={k} value={k}>{v}</option>
+                        {CAMERA_MOVEMENT_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
                     </div>
@@ -884,8 +1411,8 @@ export default function ShotsPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                       >
                         <option value="">选择情绪</option>
-                        {Object.entries(EMOTION_LABELS).map(([k, v]) => (
-                          <option key={k} value={k}>{v}</option>
+                        {EMOTION_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
                     </div>
@@ -897,11 +1424,190 @@ export default function ShotsPage() {
                         className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                       >
                         <option value="">选择光线</option>
-                        {Object.entries(LIGHTING_LABELS).map(([k, v]) => (
-                          <option key={k} value={k}>{v}</option>
+                        {LIGHTING_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                       </select>
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="text-sm text-white/60 mb-1 block">调色</label>
+                    <select
+                      value={editData.color_grading || ''}
+                      onChange={(e) => setEditData({ ...editData, color_grading: e.target.value })}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                    >
+                      <option value="">选择调色</option>
+                      {COLOR_GRADING_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-white font-medium flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4 text-cyan-300" />
+                          生产上下文
+                        </div>
+                        <div className="text-xs text-white/50 mt-1">
+                          资产版本锁、关键帧、多视图角色参考、实体引用、口型和审核状态会随媒体任务提交给生产适配器。
+                        </div>
+                      </div>
+                      {productionContext.updated_at && (
+                        <div className="text-xs text-white/40">已更新</div>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div className="rounded border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-medium text-white">质量检查</div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={refreshShotQuality}
+                            disabled={qualityLoading}
+                            className="h-7 border-cyan-500/30 text-cyan-100 hover:bg-cyan-500/10"
+                          >
+                            {qualityLoading ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <ShieldCheck className="w-3 h-3 mr-1" />}
+                            重新检查
+                          </Button>
+                        </div>
+                        <div className="mt-2 text-xs text-white/55">
+                          状态：{qualityReport.status || 'unknown'}，评分：{qualityReport.score ?? '-'}
+                        </div>
+                        {Array.isArray(qualityReport.blockers) && qualityReport.blockers.length > 0 && (
+                          <div className="mt-2 text-xs text-red-300 space-y-1">
+                            {qualityReport.blockers.map((item: string, index: number) => (
+                              <div key={index}>• {item}</div>
+                            ))}
+                          </div>
+                        )}
+                        {Array.isArray(qualityReport.warnings) && qualityReport.warnings.length > 0 && (
+                          <div className="mt-2 text-xs text-yellow-200 space-y-1">
+                            {qualityReport.warnings.map((item: string, index: number) => (
+                              <div key={index}>• {item}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="rounded border border-white/10 bg-black/20 p-3">
+                        <div className="text-sm font-medium text-white">预算提示</div>
+                        <div className="mt-2 text-xs text-white/55 space-y-1">
+                          <div>预估时长：{budgetEstimate.estimated_duration_seconds ?? selectedShot.duration ?? 4}s</div>
+                          <div>提示词 token：{budgetEstimate.estimated_prompt_tokens ?? '-'}</div>
+                          <div>字幕 token：{budgetEstimate.estimated_subtitle_tokens ?? '-'}</div>
+                          <div>合计 token：{budgetEstimate.estimated_total_tokens ?? '-'}</div>
+                          {budgetEstimate.estimated_video_task?.default_model_id && (
+                            <div>视频默认模型：{budgetEstimate.estimated_video_task.default_model_id}</div>
+                          )}
+                          {budgetEstimate.estimated_direct_av_task?.default_model_id && (
+                            <div>直生音视频默认模型：{budgetEstimate.estimated_direct_av_task.default_model_id}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">资产版本锁 JSON</label>
+                        <textarea
+                          rows={5}
+                          value={productionForm.assetLocksJson}
+                          onChange={(e) => setProductionForm({ ...productionForm, assetLocksJson: e.target.value })}
+                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                          placeholder='[{"asset_id":"...","role":"character_front","version":1}]'
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">关键帧 JSON</label>
+                        <textarea
+                          rows={5}
+                          value={productionForm.keyframesJson}
+                          onChange={(e) => setProductionForm({ ...productionForm, keyframesJson: e.target.value })}
+                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                          placeholder='[{"time":0,"role":"start"},{"time":4,"role":"end"}]'
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">多视图角色参考 JSON</label>
+                        <textarea
+                          rows={5}
+                          value={productionForm.multiviewJson}
+                          onChange={(e) => setProductionForm({ ...productionForm, multiviewJson: e.target.value })}
+                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                          placeholder='[{"character":"主角","front":"...","side":"..."}]'
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">实体参考绑定 JSON</label>
+                        <textarea
+                          rows={5}
+                          value={productionForm.entityBindingsJson}
+                          onChange={(e) => setProductionForm({ ...productionForm, entityBindingsJson: e.target.value })}
+                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                          placeholder='[{"entity_id":"...","role":"character_primary","usage":"character_reference"}]'
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">口型/唇形 JSON</label>
+                        <textarea
+                          rows={5}
+                          value={productionForm.lipSyncJson}
+                          onChange={(e) => setProductionForm({ ...productionForm, lipSyncJson: e.target.value })}
+                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                          placeholder='{"mode":"provider","language":"zh-CN"}'
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">审核状态</label>
+                        <select
+                          value={productionForm.reviewState}
+                          onChange={(e) => setProductionForm({ ...productionForm, reviewState: e.target.value })}
+                          className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                        >
+                          <option value="pending_review">待审核</option>
+                          <option value="changes_requested">需修改</option>
+                          <option value="approved">已通过</option>
+                          <option value="locked">已锁定</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">审核人</label>
+                        <Input
+                          value={productionForm.reviewAssignees}
+                          onChange={(e) => setProductionForm({ ...productionForm, reviewAssignees: e.target.value })}
+                          placeholder="director, animator"
+                          className="bg-white/5 border-white/10 text-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm text-white/60 mb-1 block">审核备注</label>
+                        <Input
+                          value={productionForm.reviewNotes}
+                          onChange={(e) => setProductionForm({ ...productionForm, reviewNotes: e.target.value })}
+                          placeholder="需要保持服装和道具一致"
+                          className="bg-white/5 border-white/10 text-white"
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      onClick={handleSaveProductionContext}
+                      disabled={productionSaving}
+                      className="border-cyan-500/40 text-cyan-100 hover:bg-cyan-500/10"
+                    >
+                      {productionSaving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
+                      保存生产上下文
+                    </Button>
                   </div>
 
                   <div className="flex gap-3 pt-4">
@@ -922,11 +1628,26 @@ export default function ShotsPage() {
                     </Button>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        )}
+            </DialogContent>
+          )}
+        </Dialog>
       </div>
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="删除镜头"
+        description={`确定要删除镜头 ${deleteTarget?.shot_number ?? ''}？删除后该镜头会从当前分镜列表移除。`}
+        confirmText="删除镜头"
+        destructive
+        loading={Boolean(deleteTarget && deletingShotId === deleteTarget.id)}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          await handleDelete(deleteTarget.id);
+          setDeleteTarget(null);
+        }}
+      />
     </MainLayout>
   );
 }

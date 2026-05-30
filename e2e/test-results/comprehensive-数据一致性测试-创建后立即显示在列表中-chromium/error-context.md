@@ -1,0 +1,81 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - heading "小说管理" [level=1] [ref=e65]
+            - paragraph [ref=e66]: 管理您的作品和章节
+          - link "创建小说" [ref=e67] [cursor=pointer]:
+            - /url: /novels/new
+            - button "创建小说" [ref=e68]:
+              - img [ref=e69]
+              - text: 创建小说
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - img [ref=e74]
+            - textbox "搜索小说标题或描述..." [ref=e77]
+          - generic [ref=e78]:
+            - button "全部" [ref=e79] [cursor=pointer]
+            - button "仙侠" [ref=e80] [cursor=pointer]
+            - button "都市" [ref=e81] [cursor=pointer]
+            - button "科幻" [ref=e82] [cursor=pointer]
+            - button "历史" [ref=e83] [cursor=pointer]
+            - button "言情" [ref=e84] [cursor=pointer]
+            - button "悬疑" [ref=e85] [cursor=pointer]
+        - generic [ref=e86]:
+          - generic [ref=e87]:
+            - button "全部" [ref=e88] [cursor=pointer]
+            - button "草稿" [ref=e89] [cursor=pointer]
+            - button "连载中" [ref=e90] [cursor=pointer]
+            - button "已完成" [ref=e91] [cursor=pointer]
+          - generic [ref=e93]:
+            - img [ref=e94]
+            - paragraph [ref=e97]: 没有找到小说
+            - link "创建第一本小说" [ref=e98] [cursor=pointer]:
+              - /url: /novels/new
+              - button "创建第一本小说" [ref=e99]
+  - alert [ref=e100]
+```

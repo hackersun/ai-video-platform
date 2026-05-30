@@ -90,14 +90,14 @@ export default function SecuritySettingsPage() {
       <div className="space-y-6 max-w-2xl">
         {/* 页面标题 */}
         <div className="flex items-center gap-4">
-          <Link href="/settings">
-            <Button variant="ghost" size="icon" className="text-white/60 hover:text-white">
+          <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white">
+            <Link href="/settings">
               <span className="sr-only">返回</span>
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
               </svg>
-            </Button>
-          </Link>
+            </Link>
+          </Button>
           <div>
             <h1 className="text-2xl font-bold text-white">安全设置</h1>
             <p className="text-white/60 mt-1">管理您的账户安全</p>
@@ -146,6 +146,8 @@ export default function SecuritySettingsPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? '隐藏当前密码' : '显示当前密码'}
+                  title={showPassword ? '隐藏密码' : '显示密码'}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -166,6 +168,8 @@ export default function SecuritySettingsPage() {
                 <button
                   type="button"
                   onClick={() => setShowNewPassword(!showNewPassword)}
+                  aria-label={showNewPassword ? '隐藏新密码' : '显示新密码'}
+                  title={showNewPassword ? '隐藏密码' : '显示密码'}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
                 >
                   {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -186,6 +190,8 @@ export default function SecuritySettingsPage() {
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  aria-label={showConfirmPassword ? '隐藏确认新密码' : '显示确认新密码'}
+                  title={showConfirmPassword ? '隐藏密码' : '显示密码'}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
                 >
                   {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}

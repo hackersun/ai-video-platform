@@ -1,9 +1,8 @@
 """
 AI平台模型配置
-定义各能力类型的默认模型
+定义各能力类型的默认模型。
 
-火山引擎API Key（已验证可用）: be8feb9d-6b08-406e-8447-b22b87cd907a
-百炼API Key（已验证无效，返回401）
+API Key 必须来自用户配置或环境变量，不能写入代码。
 """
 
 from enum import Enum
@@ -25,8 +24,7 @@ class ModelProvider(str, Enum):
     BAIDU = "baidu"        # 百度文心
 
 
-# 火山引擎模型Endpoint IDs (已验证可用)
-# API Key: be8feb9d-6b08-406e-8447-b22b87cd907a
+# 火山引擎模型Endpoint IDs
 VOLCANO_ENDPOINT_IDS = {
     "Doubao-Seedream-4.5": "ep-20260320112226-rgndq",
     "Doubao-Seed-2.0-pro": "ep-20260320111926-sn9tg",
@@ -38,9 +36,7 @@ VOLCANO_ENDPOINT_IDS = {
 
 
 # 各能力默认模型配置
-# 注意：
-# - 由于百炼API Key无效，文本生成改用火山引擎 doubao-pro-32k
-# - 火山引擎API Key已验证可用: be8feb9d-6b08-406e-8447-b22b87cd907a
+# 注意：默认模型只定义能力选择，不包含任何用户凭据。
 DEFAULT_MODEL_CONFIG = {
     ModelCapability.TEXT_GENERATION: {
         "provider": ModelProvider.VOLCANO,
@@ -124,15 +120,9 @@ def get_image_size_options() -> list:
     ]
 
 
-# 已验证可用的API Keys
-VERIFIED_API_KEYS = {
-    "volcano": "be8feb9d-6b08-406e-8447-b22b87cd907a",
-}
-
-
 def get_verified_api_key(provider: str = "volcano") -> str:
-    """获取已验证的API Key"""
-    return VERIFIED_API_KEYS.get(provider, "")
+    """兼容旧调用：API Key 不再从代码读取。"""
+    return ""
 
 
 def get_endpoint_id(model_id: str) -> str:

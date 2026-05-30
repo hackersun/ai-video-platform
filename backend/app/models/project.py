@@ -1,6 +1,7 @@
 """
 动漫制作项目模型 - 顶层容器
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
@@ -63,8 +64,8 @@ class Project(Base):
     tags = Column(JSON)  # ["玄幻", "热血", "都市"]
     extra_data = Column(JSON)  # 扩展字段
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class ProjectMember(Base):
@@ -81,6 +82,6 @@ class ProjectMember(Base):
     role = Column(String(20), default="editor")  # owner, editor, viewer
     is_active = Column(Boolean, default=True)
 
-    invited_at = Column(DateTime, default=datetime.utcnow)
+    invited_at = Column(DateTime, default=utc_now)
     joined_at = Column(DateTime)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)

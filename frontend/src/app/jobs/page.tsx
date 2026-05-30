@@ -4,31 +4,41 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   ListTodo, 
   RefreshCw,
-  Clock,
   Video,
   Mic,
   Image as ImageIcon,
-  CheckCircle,
   AlertCircle,
   Loader2,
   Trash2,
   Download,
-  Eye
+  Eye,
+  XCircle
 } from 'lucide-react';
+import apiClient from '@/lib/api-client';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 // 任务数据类型
 interface Job {
   id: string;
   name: string;
-  type: 'video' | 'tts' | 'image' | 'script';
+  type: 'video' | 'tts' | 'image' | 'synthesis';
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   createdAt: string;
+  createdAtTime: number;
   startedAt?: string;
   completedAt?: string;
   duration?: number;
@@ -36,72 +46,18 @@ interface Job {
   error?: string;
 }
 
-// 模拟任务数据
-const MOCK_JOBS: Job[] = [
-  {
-    id: '1',
-    name: '第一章视频生成',
-    type: 'video',
-    status: 'completed',
-    progress: 100,
-    createdAt: '2024-03-15 14:30:00',
-    startedAt: '2024-03-15 14:30:05',
-    completedAt: '2024-03-15 14:35:20',
-    duration: 315,
-    output: '/output/video_001.mp4'
-  },
-  {
-    id: '2',
-    name: '角色配音生成',
-    type: 'tts',
-    status: 'running',
-    progress: 65,
-    createdAt: '2024-03-15 14:35:00',
-    startedAt: '2024-03-15 14:35:10',
-  },
-  {
-    id: '3',
-    name: '场景图片生成',
-    type: 'image',
-    status: 'pending',
-    progress: 0,
-    createdAt: '2024-03-15 14:40:00',
-  },
-  {
-    id: '4',
-    name: '剧本优化',
-    type: 'script',
-    status: 'failed',
-    progress: 45,
-    createdAt: '2024-03-15 14:25:00',
-    startedAt: '2024-03-15 14:25:05',
-    completedAt: '2024-03-15 14:26:30',
-    error: 'API 调用超时'
-  },
-  {
-    id: '5',
-    name: '第二章视频生成',
-    type: 'video',
-    status: 'cancelled',
-    progress: 30,
-    createdAt: '2024-03-15 14:20:00',
-    startedAt: '2024-03-15 14:20:10',
-    completedAt: '2024-03-15 14:22:00',
-  }
-];
-
 const TYPE_ICONS = {
   video: Video,
   tts: Mic,
   image: ImageIcon,
-  script: ListTodo
+  synthesis: ListTodo
 };
 
 const TYPE_LABELS = {
   video: '视频生成',
   tts: '语音合成',
   image: '图片生成',
-  script: '剧本处理'
+  synthesis: '音视频合成'
 };
 
 const STATUS_LABELS = {
@@ -120,16 +76,251 @@ const STATUS_COLORS = {
   cancelled: 'bg-gray-500/20 text-gray-400'
 };
 
+type JobTypeFilter = 'all' | Job['type'];
+type OutputFilter = 'all' | 'withOutput' | 'withoutOutput' | 'withError';
+type TimeRangeFilter = 'all' | 'today' | '7d' | '30d' | 'custom';
+type SortMode = 'newest' | 'oldest' | 'progress' | 'duration';
+
+const typeOptions = [
+  { value: 'all', label: '全部类型' },
+  { value: 'video', label: TYPE_LABELS.video },
+  { value: 'tts', label: TYPE_LABELS.tts },
+  { value: 'image', label: TYPE_LABELS.image },
+  { value: 'synthesis', label: TYPE_LABELS.synthesis },
+];
+
+const timeRangeOptions = [
+  { value: 'all', label: '全部时间' },
+  { value: 'today', label: '今天' },
+  { value: '7d', label: '近 7 天' },
+  { value: '30d', label: '近 30 天' },
+  { value: 'custom', label: '自定义日期' },
+];
+
+const outputOptions = [
+  { value: 'all', label: '全部产物' },
+  { value: 'withOutput', label: '有产物' },
+  { value: 'withoutOutput', label: '无产物' },
+  { value: 'withError', label: '有错误信息' },
+];
+
+const sortOptions = [
+  { value: 'newest', label: '最新创建优先' },
+  { value: 'oldest', label: '最早创建优先' },
+  { value: 'progress', label: '进度高优先' },
+  { value: 'duration', label: '耗时长优先' },
+];
+
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<Job[]>(MOCK_JOBS);
+  const [jobs, setJobs] = useState<Job[]>([]);
   const [activeTab, setActiveTab] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [typeFilter, setTypeFilter] = useState<JobTypeFilter>('all');
+  const [timeRange, setTimeRange] = useState<TimeRangeFilter>('all');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [outputFilter, setOutputFilter] = useState<OutputFilter>('all');
+  const [sortMode, setSortMode] = useState<SortMode>('newest');
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionJobId, setActionJobId] = useState<string | null>(null);
+
+  const normalizeStatus = (status?: string): Job['status'] => {
+    if (status === 'succeeded' || status === 'completed') return 'completed';
+    if (status === 'running' || status === 'generating' || status === 'processing') return 'running';
+    if (status === 'failed') return 'failed';
+    if (status === 'cancelled') return 'cancelled';
+    return 'pending';
+  };
+
+  const toDateText = (value?: string) => {
+    if (!value) return '-';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN');
+  };
+
+  const toDateTime = (value?: string) => {
+    if (!value) return 0;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  };
+
+  const mapJob = (raw: any, type: Job['type']): Job => ({
+    id: raw.id || raw.job_id || raw.task_id,
+    name: raw.title || raw.prompt || raw.text || `${TYPE_LABELS[type]}任务`,
+    type,
+    status: normalizeStatus(raw.status),
+    progress: raw.progress ?? (raw.status === 'succeeded' ? 100 : 0),
+    createdAt: toDateText(raw.created_at),
+    createdAtTime: toDateTime(raw.created_at),
+    completedAt: raw.completed_at ? toDateText(raw.completed_at) : undefined,
+    duration: Math.round(raw.duration_seconds || raw.duration || 0) || undefined,
+    output: raw.output_url || raw.video_url || raw.audio_url || raw.image_urls?.[0],
+    error: raw.error_message,
+  });
+
+  const loadJobs = async () => {
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const [videos, ttsJobs, images, synthesis] = await Promise.all([
+        apiClient.getVideoJobs(),
+        apiClient.getTTSJobs(),
+        apiClient.getImageJobs({ limit: 100 }),
+        apiClient.getSynthesisJobs(),
+      ]);
+
+      const mergedJobs = [
+        ...videos.map((job: any) => mapJob(job, 'video')),
+        ...ttsJobs.map((job: any) => mapJob(job, 'tts')),
+        ...images.map((job: any) => mapJob(job, 'image')),
+        ...synthesis.map((job: any) => mapJob(job, 'synthesis')),
+      ].sort((a, b) => b.createdAtTime - a.createdAtTime);
+
+      setJobs(mergedJobs);
+    } catch (err: any) {
+      setLoadError(err.message || '任务加载失败');
+      setJobs([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const canCancel = (job: Job) => (
+    job.type === 'video' && ['pending', 'running', 'failed'].includes(job.status)
+  );
+
+  const handleCancel = async (job: Job) => {
+    setActionJobId(job.id);
+    setLoadError(null);
+    try {
+      const updated = await apiClient.cancelVideoJob(job.id);
+      setJobs(prev => prev.map(item => (
+        item.id === job.id ? mapJob(updated, 'video') : item
+      )));
+    } catch (err: any) {
+      setLoadError(err.message || '取消任务失败');
+    } finally {
+      setActionJobId(null);
+    }
+  };
+
+  const handleDelete = async (job: Job) => {
+    setActionJobId(job.id);
+    setLoadError(null);
+    try {
+      if (job.type === 'video') {
+        await apiClient.deleteVideoJob(job.id);
+      } else if (job.type === 'tts') {
+        await apiClient.deleteTTSJob(job.id);
+      } else if (job.type === 'image') {
+        await apiClient.deleteImageJob(job.id);
+      } else {
+        await apiClient.deleteSynthesisJob(job.id);
+      }
+      setJobs(prev => prev.filter(item => item.id !== job.id));
+    } catch (err: any) {
+      setLoadError(err.message || '删除任务失败');
+    } finally {
+      setActionJobId(null);
+    }
+  };
+
+  const handleOpenOutput = (job: Job) => {
+    const output = toMediaUrl(job.output);
+    if (output) {
+      window.open(output, '_blank');
+    }
+  };
+
+  const handleDownloadOutput = (job: Job) => {
+    const output = toMediaUrl(job.output);
+    if (!output) return;
+    const link = document.createElement('a');
+    link.href = output;
+    link.download = `${job.name || job.id}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  useEffect(() => {
+    loadJobs();
+  }, []);
+
+  const getTimeBounds = () => {
+    const now = new Date();
+    if (timeRange === 'today') {
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      return { start, end: now.getTime() };
+    }
+    if (timeRange === '7d') {
+      return { start: now.getTime() - 7 * 24 * 60 * 60 * 1000, end: now.getTime() };
+    }
+    if (timeRange === '30d') {
+      return { start: now.getTime() - 30 * 24 * 60 * 60 * 1000, end: now.getTime() };
+    }
+    if (timeRange === 'custom') {
+      const start = startDate ? new Date(`${startDate}T00:00:00`).getTime() : 0;
+      const end = endDate ? new Date(`${endDate}T23:59:59`).getTime() : 0;
+      return {
+        start: Number.isNaN(start) ? 0 : start,
+        end: Number.isNaN(end) ? 0 : end,
+      };
+    }
+    return { start: 0, end: 0 };
+  };
+
+  const resetFilters = () => {
+    setSearchQuery('');
+    setActiveTab('all');
+    setTypeFilter('all');
+    setTimeRange('all');
+    setStartDate('');
+    setEndDate('');
+    setOutputFilter('all');
+    setSortMode('newest');
+  };
+
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() ||
+    activeTab !== 'all' ||
+    typeFilter !== 'all' ||
+    timeRange !== 'all' ||
+    outputFilter !== 'all' ||
+    sortMode !== 'newest'
+  );
 
   // 筛选任务
+  const timeBounds = getTimeBounds();
   const filteredJobs = jobs.filter(job => {
-    const matchesSearch = job.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    const searchableText = [
+      job.name,
+      job.id,
+      TYPE_LABELS[job.type],
+      STATUS_LABELS[job.status],
+      job.error,
+    ].filter(Boolean).join(' ').toLowerCase();
+    const matchesSearch = !normalizedSearch || searchableText.includes(normalizedSearch);
     const matchesStatus = activeTab === 'all' || job.status === activeTab;
-    return matchesSearch && matchesStatus;
+    const matchesType = typeFilter === 'all' || job.type === typeFilter;
+    const matchesOutput =
+      outputFilter === 'all' ||
+      (outputFilter === 'withOutput' && Boolean(job.output)) ||
+      (outputFilter === 'withoutOutput' && !job.output) ||
+      (outputFilter === 'withError' && Boolean(job.error));
+    const matchesTime =
+      timeRange === 'all' ||
+      Boolean(job.createdAtTime) &&
+        (!timeBounds.start || job.createdAtTime >= timeBounds.start) &&
+        (!timeBounds.end || job.createdAtTime <= timeBounds.end);
+    return matchesSearch && matchesStatus && matchesType && matchesOutput && matchesTime;
+  }).sort((a, b) => {
+    if (sortMode === 'oldest') return a.createdAtTime - b.createdAtTime;
+    if (sortMode === 'progress') return b.progress - a.progress;
+    if (sortMode === 'duration') return (b.duration || 0) - (a.duration || 0);
+    return b.createdAtTime - a.createdAtTime;
   });
 
   // 统计
@@ -138,7 +329,8 @@ export default function JobsPage() {
     pending: jobs.filter(j => j.status === 'pending').length,
     running: jobs.filter(j => j.status === 'running').length,
     completed: jobs.filter(j => j.status === 'completed').length,
-    failed: jobs.filter(j => j.status === 'failed').length
+    failed: jobs.filter(j => j.status === 'failed').length,
+    cancelled: jobs.filter(j => j.status === 'cancelled').length
   };
 
   // 格式化时间
@@ -192,22 +384,116 @@ export default function JobsPage() {
           </Card>
         </div>
 
-        {/* 搜索栏 */}
+        {/* 查询过滤 */}
         <Card className="bg-white/5 border-white/10">
-          <CardContent className="p-4">
-            <div className="flex gap-4">
-              <div className="flex-1 relative">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle className="text-base text-white">查询过滤</CardTitle>
+              <p className="text-sm text-white/50">
+                当前显示 {filteredJobs.length} / {jobs.length} 个任务
+              </p>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4 p-4 pt-0">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+              <label className="space-y-2 xl:col-span-2">
+                <span className="text-xs font-medium text-white/60">关键字</span>
                 <Input
-                  placeholder="搜索任务..."
+                  name="job-search"
+                  autoComplete="off"
+                  placeholder="搜索名称、ID、错误信息…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-medium text-white/60">任务类型</span>
+                <Select
+                  name="job-type-filter"
+                  value={typeFilter}
+                  onChange={(e) => setTypeFilter(e.target.value as JobTypeFilter)}
+                  options={typeOptions}
+                  aria-label="按任务类型筛选"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-medium text-white/60">时间范围</span>
+                <Select
+                  name="job-time-filter"
+                  value={timeRange}
+                  onChange={(e) => setTimeRange(e.target.value as TimeRangeFilter)}
+                  options={timeRangeOptions}
+                  aria-label="按创建时间筛选"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-medium text-white/60">产物状态</span>
+                <Select
+                  name="job-output-filter"
+                  value={outputFilter}
+                  onChange={(e) => setOutputFilter(e.target.value as OutputFilter)}
+                  options={outputOptions}
+                  aria-label="按产物状态筛选"
+                />
+              </label>
+              <label className="space-y-2">
+                <span className="text-xs font-medium text-white/60">排序</span>
+                <Select
+                  name="job-sort"
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+                  options={sortOptions}
+                  aria-label="任务排序方式"
+                />
+              </label>
+            </div>
+
+            {timeRange === 'custom' && (
+              <div className="grid gap-3 rounded-lg border border-white/10 bg-black/20 p-3 sm:grid-cols-2">
+                <label className="space-y-2">
+                  <span className="text-xs font-medium text-white/60">开始日期</span>
+                  <Input
+                    type="date"
+                    name="job-start-date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </label>
+                <label className="space-y-2">
+                  <span className="text-xs font-medium text-white/60">结束日期</span>
+                  <Input
+                    type="date"
+                    name="job-end-date"
+                    value={endDate}
+                    min={startDate || undefined}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </label>
               </div>
-              <Button variant="outline" className="border-white/20 text-white">
-                <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+
+            <div className="flex flex-col gap-3 border-t border-white/10 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-white/45">
+                可组合状态、类型、时间和产物条件；操作按钮不会受筛选状态影响。
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="text-white/70 hover:text-white"
+                  onClick={resetFilters}
+                  disabled={!hasActiveFilters}
+                >
+                  重置筛选
+                </Button>
+                <Button variant="outline" className="border-white/20 text-white" onClick={loadJobs} disabled={isLoading}>
+                {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
                 刷新
-              </Button>
+                </Button>
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -220,13 +506,25 @@ export default function JobsPage() {
             <TabsTrigger value="running" className="data-[state=active]:bg-teal-600">运行中</TabsTrigger>
             <TabsTrigger value="completed" className="data-[state=active]:bg-teal-600">已完成</TabsTrigger>
             <TabsTrigger value="failed" className="data-[state=active]:bg-teal-600">失败</TabsTrigger>
+            <TabsTrigger value="cancelled" className="data-[state=active]:bg-teal-600">已取消</TabsTrigger>
           </TabsList>
 
           <TabsContent value={activeTab} className="mt-4">
-            {filteredJobs.length > 0 ? (
+            {loadError && (
+              <div className="mb-4 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+                {loadError}
+              </div>
+            )}
+            {isLoading ? (
+              <div className="text-center py-12">
+                <Loader2 className="w-10 h-10 mx-auto text-teal-400 animate-spin" />
+                <p className="text-white/40 mt-4">正在加载任务</p>
+              </div>
+            ) : filteredJobs.length > 0 ? (
               <div className="space-y-3">
                 {filteredJobs.map((job) => {
                   const Icon = TYPE_ICONS[job.type];
+                  const isActing = actionJobId === job.id;
                   return (
                     <Card key={job.id} className="bg-white/5 border-white/10">
                       <CardContent className="p-4">
@@ -254,7 +552,7 @@ export default function JobsPage() {
                               <div className="mt-3">
                                 <div className="w-full bg-white/10 rounded-full h-2">
                                   <div 
-                                    className="bg-teal-500 h-2 rounded-full transition-all"
+                                    className="bg-teal-500 h-2 rounded-full transition-[width]"
                                     style={{ width: `${job.progress}%` }}
                                   />
                                 </div>
@@ -270,15 +568,51 @@ export default function JobsPage() {
                           </div>
                           <div className="flex items-center gap-2">
                             {job.status === 'completed' && job.output && (
-                              <Button variant="ghost" size="icon" className="text-white/60">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-white/60"
+                                onClick={() => handleDownloadOutput(job)}
+                                aria-label={`下载${job.name}输出`}
+                                title="下载或打开输出"
+                              >
                                 <Download className="w-4 h-4" />
                               </Button>
                             )}
-                            <Button variant="ghost" size="icon" className="text-white/60">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-white/60"
+                              onClick={() => handleOpenOutput(job)}
+                              disabled={!job.output}
+                              aria-label={`查看${job.name}输出`}
+                              title="查看输出"
+                            >
                               <Eye className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="text-white/60 hover:text-red-400">
-                              <Trash2 className="w-4 h-4" />
+                            {canCancel(job) && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-white/60 hover:text-yellow-400"
+                                onClick={() => handleCancel(job)}
+                                disabled={isActing}
+                                aria-label={`取消${job.name}`}
+                                title="取消任务"
+                              >
+                                {isActing ? <Loader2 className="w-4 h-4 animate-spin" /> : <XCircle className="w-4 h-4" />}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-white/60 hover:text-red-400"
+                              onClick={() => handleDelete(job)}
+                              disabled={isActing}
+                              aria-label={`删除归档${job.name}`}
+                              title="删除归档"
+                            >
+                              {isActing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
                             </Button>
                           </div>
                         </div>

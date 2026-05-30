@@ -1,0 +1,93 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "系统设置" [level=1] [ref=e64]
+          - paragraph [ref=e65]: 管理您的账户和偏好设置
+        - generic [ref=e66]:
+          - link "个人资料 管理您的个人信息和头像" [ref=e67] [cursor=pointer]:
+            - /url: /settings/profile
+            - generic [ref=e70]:
+              - img [ref=e72]
+              - generic [ref=e75]:
+                - heading "个人资料" [level=3] [ref=e76]
+                - paragraph [ref=e77]: 管理您的个人信息和头像
+              - img [ref=e78]
+          - link "通知设置 配置消息通知偏好" [ref=e80] [cursor=pointer]:
+            - /url: /settings/notifications
+            - generic [ref=e83]:
+              - img [ref=e85]
+              - generic [ref=e88]:
+                - heading "通知设置" [level=3] [ref=e89]
+                - paragraph [ref=e90]: 配置消息通知偏好
+              - img [ref=e91]
+          - link "安全设置 修改密码和安全选项" [ref=e93] [cursor=pointer]:
+            - /url: /settings/security
+            - generic [ref=e96]:
+              - img [ref=e98]
+              - generic [ref=e100]:
+                - heading "安全设置" [level=3] [ref=e101]
+                - paragraph [ref=e102]: 修改密码和安全选项
+              - img [ref=e103]
+          - link "外观设置 自定义界面主题和颜色" [ref=e105] [cursor=pointer]:
+            - /url: /settings/appearance
+            - generic [ref=e108]:
+              - img [ref=e110]
+              - generic [ref=e116]:
+                - heading "外观设置" [level=3] [ref=e117]
+                - paragraph [ref=e118]: 自定义界面主题和颜色
+              - img [ref=e119]
+        - generic [ref=e121]:
+          - heading "快捷设置" [level=3] [ref=e123]
+          - generic [ref=e124]:
+            - generic [ref=e125]:
+              - generic [ref=e126]: 自动保存
+              - button "已开启" [ref=e127] [cursor=pointer]
+            - generic [ref=e128]:
+              - generic [ref=e129]: 深色模式
+              - button "已开启" [ref=e130] [cursor=pointer]
+  - alert [ref=e131]
+```

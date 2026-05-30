@@ -20,8 +20,9 @@ class OpenAIService:
     # API 基础地址
     BASE_URL = "https://api.openai.com/v1"
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
         self.api_key = api_key
+        self.base_url = (base_url or self.BASE_URL).rstrip("/")
         self.headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
@@ -46,7 +47,7 @@ class OpenAIService:
             max_tokens: 最大token数
             stream: 是否流式输出
         """
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
 
         payload = {
             "model": model,
@@ -92,7 +93,7 @@ class OpenAIService:
             model: 模型ID，默认 gpt-4o
             detail: 图像细节级别 low, high, auto
         """
-        url = f"{self.BASE_URL}/chat/completions"
+        url = f"{self.base_url}/chat/completions"
 
         content = []
         image_source = None
@@ -171,7 +172,7 @@ class OpenAIService:
         Returns:
             包含 image_urls 的字典（可能包含本地路径）
         """
-        url = f"{self.BASE_URL}/images/generations"
+        url = f"{self.base_url}/images/generations"
 
         payload = {
             "model": model,

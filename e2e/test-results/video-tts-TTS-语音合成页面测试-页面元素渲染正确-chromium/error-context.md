@@ -1,0 +1,153 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "语音合成" [level=1] [ref=e64]
+          - paragraph [ref=e65]: 将文本转换为自然语音
+        - generic [ref=e66]:
+          - generic [ref=e67]:
+            - generic [ref=e68]:
+              - heading "文本输入 AI 优化" [level=3] [ref=e70]:
+                - generic [ref=e71]:
+                  - img [ref=e72]
+                  - text: 文本输入
+                - button "AI 优化" [ref=e75] [cursor=pointer]:
+                  - img [ref=e76]
+                  - text: AI 优化
+              - generic [ref=e78]:
+                - textbox "请输入火山引擎 API Key" [ref=e79]
+                - textbox "请输入要转换为语音的文本..." [ref=e80]
+                - generic [ref=e81]:
+                  - generic [ref=e82]: 当前 0 字符
+                  - generic [ref=e83]: 预计时长约 0 秒
+            - generic [ref=e84]:
+              - heading "声音设置" [level=3] [ref=e86]:
+                - img [ref=e87]
+                - text: 声音设置
+              - generic [ref=e90]:
+                - generic [ref=e91]:
+                  - generic [ref=e92]: 声音角色
+                  - generic [ref=e93]:
+                    - generic [ref=e94] [cursor=pointer]:
+                      - generic [ref=e96]: 年轻男声
+                      - generic [ref=e97]: 活力
+                    - generic [ref=e98] [cursor=pointer]:
+                      - generic [ref=e100]: 中年男声
+                      - generic [ref=e101]: 成熟
+                    - generic [ref=e102] [cursor=pointer]:
+                      - generic [ref=e104]: 老年男声
+                      - generic [ref=e105]: 沉稳
+                    - generic [ref=e106] [cursor=pointer]:
+                      - generic [ref=e107]:
+                        - generic [ref=e108]: 年轻女声
+                        - img [ref=e109]
+                      - generic [ref=e112]: 活泼
+                    - generic [ref=e113] [cursor=pointer]:
+                      - generic [ref=e115]: 中年女声
+                      - generic [ref=e116]: 温柔
+                    - generic [ref=e117] [cursor=pointer]:
+                      - generic [ref=e119]: 老年女声
+                      - generic [ref=e120]: 慈祥
+                - generic [ref=e121]:
+                  - generic [ref=e122]:
+                    - generic [ref=e123]: 语速
+                    - generic [ref=e124]: 1.0x
+                  - slider [ref=e125] [cursor=pointer]: "1"
+                  - generic [ref=e126]:
+                    - generic [ref=e127]: 0.5x
+                    - generic [ref=e128]: 1.0x
+                    - generic [ref=e129]: 2.0x
+                - generic [ref=e130]:
+                  - generic [ref=e131]:
+                    - generic [ref=e132]: 音调
+                    - generic [ref=e133]: "0"
+                  - slider [ref=e134] [cursor=pointer]: "0"
+                  - generic [ref=e135]:
+                    - generic [ref=e136]: "-12"
+                    - generic [ref=e137]: "0"
+                    - generic [ref=e138]: "+12"
+                - generic [ref=e139]:
+                  - generic [ref=e140]:
+                    - generic [ref=e141]: 音量
+                    - generic [ref=e142]: 100%
+                  - slider [ref=e143] [cursor=pointer]: "100"
+            - generic [ref=e146]:
+              - generic [ref=e147]:
+                - button [disabled]:
+                  - img
+                - button [disabled]:
+                  - img
+                - generic [ref=e148]: 输入文本后点击生成
+              - generic [ref=e149]:
+                - button "下载" [disabled]:
+                  - img
+                  - text: 下载
+                - button "生成语音" [disabled]:
+                  - img
+                  - text: 生成语音
+          - generic [ref=e150]:
+            - generic [ref=e151]:
+              - heading "最近使用" [level=3] [ref=e153]:
+                - img [ref=e154]
+                - text: 最近使用
+              - paragraph [ref=e159]: 暂无历史记录
+            - generic [ref=e160]:
+              - heading "快捷示例" [level=3] [ref=e162]:
+                - img [ref=e163]
+                - text: 快捷示例
+              - generic [ref=e166]:
+                - generic [ref=e167] [cursor=pointer]: 欢迎来到AI视频创作平台
+                - generic [ref=e168] [cursor=pointer]: 今天天气晴朗，适合外出游玩
+                - generic [ref=e169] [cursor=pointer]: 科技创新引领未来发展
+            - generic [ref=e171]:
+              - heading "💡 使用技巧" [level=4] [ref=e172]
+              - list [ref=e173]:
+                - listitem [ref=e174]: • 建议单次输入不超过500字
+                - listitem [ref=e175]: • 适当添加标点符号改善停顿
+                - listitem [ref=e176]: • 使用AI优化功能改善文本
+                - listitem [ref=e177]: • 可调节音调模拟不同情绪
+  - alert [ref=e178]
+```

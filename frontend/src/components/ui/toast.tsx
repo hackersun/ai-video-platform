@@ -1,8 +1,14 @@
 'use client';
 
-import { useEffect, useState, useCallback, createContext, useContext, ReactNode } from 'react';
-
-// ========== 类型定义 ==========
+import {
+  useEffect,
+  useState,
+  useCallback,
+  createContext,
+  useContext,
+  ReactNode,
+} from 'react';
+import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
 
 export type ToastType = 'success' | 'error' | 'info';
 
@@ -16,16 +22,11 @@ export type ToastItem = ToastOptions & {
   id: string;
 };
 
-// ========== Context ==========
-
 type ToastContextValue = {
   toast: (options: ToastOptions) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | undefined>(undefined);
-
-// ========== Provider ==========
-
 const AUTO_DISMISS_MS = 4000;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -35,14 +36,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = useCallback(
-    (options: ToastOptions) => {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      const item: ToastItem = { id, type: 'info', ...options };
-      setToasts((prev) => [...prev, item]);
-    },
-    []
-  );
+  const toast = useCallback((options: ToastOptions) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setToasts((prev) => [...prev, { id, type: 'info', ...options }]);
+  }, []);
 
   return (
     <ToastContext.Provider value={{ toast }}>
@@ -52,8 +49,6 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-// ========== Hook ==========
-
 export function useToast(): ToastContextValue {
   const context = useContext(ToastContext);
   if (context === undefined) {
@@ -61,8 +56,6 @@ export function useToast(): ToastContextValue {
   }
   return context;
 }
-
-// ========== Container ==========
 
 function ToastContainer({
   toasts,
@@ -73,16 +66,9 @@ function ToastContainer({
 }) {
   return (
     <div
-      style={{
-        position: 'fixed',
-        bottom: '1.5rem',
-        right: '1.5rem',
-        zIndex: 9999,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '0.5rem',
-        pointerEvents: 'none',
-      }}
+      aria-live="polite"
+      aria-atomic="true"
+      className="fixed bottom-4 left-4 right-4 z-[9999] flex flex-col gap-2 pointer-events-none sm:left-auto sm:right-4 sm:w-[24rem]"
     >
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} onDismiss={onDismiss} />
@@ -90,8 +76,6 @@ function ToastContainer({
     </div>
   );
 }
-
-// ========== Individual Toast ==========
 
 function ToastItem({
   toast,
@@ -103,108 +87,70 @@ function ToastItem({
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    // Trigger enter animation
     const show = requestAnimationFrame(() => setVisible(true));
-
-    const timer = setTimeout(() => {
+    const hide = window.setTimeout(() => {
       setVisible(false);
-      setTimeout(() => onDismiss(toast.id), 300); // fade-out duration
+      window.setTimeout(() => onDismiss(toast.id), 200);
     }, AUTO_DISMISS_MS);
 
     return () => {
       cancelAnimationFrame(show);
-      clearTimeout(timer);
+      clearTimeout(hide);
     };
   }, [toast.id, onDismiss]);
 
-  const borderColor = {
-    success: '#22c55e',
-    error: '#ef4444',
-    info: '#3b82f6',
-  }[toast.type || 'info'];
+  const variant = toast.type || 'info';
+  const meta = {
+    success: {
+      icon: CheckCircle2,
+      border: 'border-emerald-500/30',
+      text: 'text-emerald-300',
+      accent: 'from-emerald-500/15',
+    },
+    error: {
+      icon: AlertCircle,
+      border: 'border-rose-500/30',
+      text: 'text-rose-300',
+      accent: 'from-rose-500/15',
+    },
+    info: {
+      icon: Info,
+      border: 'border-sky-500/30',
+      text: 'text-sky-300',
+      accent: 'from-sky-500/15',
+    },
+  }[variant];
 
-  const icon = {
-    success: '\u2713',
-    error: '\u2717',
-    info: 'i',
-  }[toast.type || 'info'];
-
-  const iconColor = borderColor;
+  const Icon = meta.icon;
 
   return (
     <div
-      style={{
-        backgroundColor: '#fff',
-        border: `1px solid ${borderColor}`,
-        borderLeft: `4px solid ${borderColor}`,
-        borderRadius: '0.5rem',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-        padding: '0.75rem 1rem',
-        minWidth: '280px',
-        maxWidth: '400px',
-        opacity: visible ? 1 : 0,
-        transform: visible ? 'translateX(0)' : 'translateX(100%)',
-        transition: 'opacity 0.3s ease, transform 0.3s ease',
-        pointerEvents: 'auto',
-      }}
+      role="status"
+      className={`pointer-events-auto overflow-hidden rounded-2xl border bg-slate-950/95 shadow-2xl backdrop-blur-xl transition-[opacity,transform] duration-200 ${meta.border} ${
+        visible ? 'translate-y-0 opacity-100' : 'translate-y-2 opacity-0'
+      }`}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem' }}>
-        <div
-          style={{
-            width: '1.5rem',
-            height: '1.5rem',
-            borderRadius: '50%',
-            border: `2px solid ${iconColor}`,
-            color: iconColor,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            flexShrink: 0,
-          }}
-        >
-          {icon}
+      <div className={`h-1 bg-gradient-to-r ${meta.accent} to-transparent`} />
+      <div className="flex items-start gap-3 p-4">
+        <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border ${meta.border} ${meta.text}`}>
+          <Icon className="h-4 w-4" />
         </div>
-        <div style={{ flex: 1 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: '0.875rem',
-              fontWeight: 600,
-              color: '#1f2937',
-            }}
-          >
-            {toast.title}
-          </p>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-white">{toast.title}</p>
           {toast.description && (
-            <p
-              style={{
-                margin: '0.25rem 0 0',
-                fontSize: '0.8125rem',
-                color: '#6b7280',
-              }}
-            >
-              {toast.description}
-            </p>
+            <p className="mt-1 text-sm leading-5 text-white/60">{toast.description}</p>
           )}
         </div>
         <button
+          type="button"
+          aria-label="关闭提示"
           onClick={() => {
             setVisible(false);
-            setTimeout(() => onDismiss(toast.id), 300);
+            window.setTimeout(() => onDismiss(toast.id), 200);
           }}
-          style={{
-            background: 'none',
-            border: 'none',
-            cursor: 'pointer',
-            color: '#9ca3af',
-            fontSize: '1rem',
-            padding: '0 0 0 0.5rem',
-            lineHeight: 1,
-          }}
+          className="rounded-full p-1 text-white/45 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
         >
-          {'\u00d7'}
+          <X className="h-4 w-4" />
         </button>
       </div>
     </div>

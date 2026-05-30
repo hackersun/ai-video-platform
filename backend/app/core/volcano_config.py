@@ -33,9 +33,15 @@ ENDPOINT_IDS = {
     # 视频生成模型
     "Doubao-Seedance-1.5-pro":   "doubao-seedance-1-5-pro-251215",
     "Doubao-Seedance-1.0-pro-fast": "ep-20260322134751-fbglz",
+    "Doubao-Seedance-2.0": "doubao-seedance-2-0-260128",
+    "Doubao-Seedance-2.0-fast": "doubao-seedance-2-0-fast-260128",
     # 数据库模型ID映射（llm_models表的model_id字段）
     "volcano-seedance-1-5-pro":   "doubao-seedance-1-5-pro-251215",
     "volcano-seedance-1-0-pro-fast": "ep-20260322134751-fbglz",
+    "volcano-seedance-2-0": "doubao-seedance-2-0-260128",
+    "volcano-seedance-2-0-fast": "doubao-seedance-2-0-fast-260128",
+    "doubao-seedance-2-0-260128": "doubao-seedance-2-0-260128",
+    "doubao-seedance-2-0-fast-260128": "doubao-seedance-2-0-fast-260128",
     "volcano-seedream-4.5":       "ep-20260320112226-rgndq",
     "volcano-seedream-5.0-lite":  "ep-20260320113731-jzjkn",
 }
@@ -67,7 +73,6 @@ VOLCANO_MODELS = [
         "use_cases": ["对话", "快速响应", "轻量任务"],
         "version": "1.8",
         "is_verified": True,
-        "verified_key": "be8feb9d-6b08-406e-8447-b22b87cd907a",
     },
 
     # ========== 图像生成模型 ==========
@@ -87,7 +92,6 @@ VOLCANO_MODELS = [
         "use_cases": ["角色形象", "场景图", "道具图", "参考图"],
         "version": "4.5",
         "is_verified": True,
-        "verified_key": "be8feb9d-6b08-406e-8447-b22b87cd907a",
     },
     {
         "id": "Doubao-Seedream-5.0-lite",
@@ -105,7 +109,6 @@ VOLCANO_MODELS = [
         "use_cases": ["角色形象", "场景图", "快速生成"],
         "version": "5.0-lite",
         "is_verified": True,
-        "verified_key": "be8feb9d-6b08-406e-8447-b22b87cd907a",
     },
 
     # ========== 视频生成模型 ==========
@@ -124,7 +127,6 @@ VOLCANO_MODELS = [
         "use_cases": ["视频生成", "动画制作", "镜头视频"],
         "version": "1.0-pro-fast",
         "is_verified": True,
-        "verified_key": "be8feb9d-6b08-406e-8447-b22b87cd907a",
     },
     {
         "id": "Doubao-Seedance-1.5-pro",
@@ -143,6 +145,40 @@ VOLCANO_MODELS = [
         "is_verified": False,
         "note": "需在火山引擎控制台开启模型权限",
     },
+    {
+        "id": "Doubao-Seedance-2.0",
+        "name": "Doubao-Seedance-2.0",
+        "name_cn": "豆包Seedance-2.0",
+        "type": "video-generation",
+        "endpoint": "/contents/generations/tasks",
+        "api_model_id": "doubao-seedance-2-0-260128",
+        "capabilities": ["text-to-video", "image-to-video"],
+        "supported_durations": [4, 5, 8, 10],
+        "supported_resolutions": ["480p", "720p", "1080p"],
+        "cost_per_second": 0,
+        "description": "豆包Seedance 2.0，高质量视频生成，支持文生视频/图生视频",
+        "use_cases": ["视频生成", "动画制作", "高质量镜头视频"],
+        "version": "2.0",
+        "is_verified": False,
+        "note": "需在火山引擎控制台开启模型权限",
+    },
+    {
+        "id": "Doubao-Seedance-2.0-fast",
+        "name": "Doubao-Seedance-2.0-fast",
+        "name_cn": "豆包Seedance-2.0-fast",
+        "type": "video-generation",
+        "endpoint": "/contents/generations/tasks",
+        "api_model_id": "doubao-seedance-2-0-fast-260128",
+        "capabilities": ["text-to-video", "image-to-video"],
+        "supported_durations": [4, 5, 8, 10],
+        "supported_resolutions": ["480p", "720p", "1080p"],
+        "cost_per_second": 0,
+        "description": "豆包Seedance 2.0 Fast，面向批量镜头草稿和快速迭代的视频生成模型",
+        "use_cases": ["视频生成", "批量镜头", "快速预览"],
+        "version": "2.0-fast",
+        "is_verified": False,
+        "note": "需在火山引擎控制台开启模型权限",
+    },
 ]
 
 
@@ -154,8 +190,8 @@ VOLCANO_USE_CASES = {
     "图像生成":    ["Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
     "角色形象":    ["Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
     "场景参考图":  ["Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
-    "视频生成":    ["Doubao-Seedance-1.0-pro-fast", "Doubao-Seedance-1.5-pro"],
-    "镜头视频":    ["Doubao-Seedance-1.0-pro-fast", "Doubao-Seedance-1.5-pro"],
+    "视频生成":    ["Doubao-Seedance-2.0-fast", "Doubao-Seedance-2.0", "Doubao-Seedance-1.5-pro", "Doubao-Seedance-1.0-pro-fast"],
+    "镜头视频":    ["Doubao-Seedance-2.0-fast", "Doubao-Seedance-2.0", "Doubao-Seedance-1.5-pro", "Doubao-Seedance-1.0-pro-fast"],
 }
 
 
@@ -163,7 +199,7 @@ VOLCANO_USE_CASES = {
 
 DEFAULT_TEXT_MODEL   = "doubao-seed-1-8-251228"
 DEFAULT_IMAGE_MODEL  = "Doubao-Seedream-4.5"
-DEFAULT_VIDEO_MODEL  = "Doubao-Seedance-1.0-pro-fast"  # 优先用已验证的快速版
+DEFAULT_VIDEO_MODEL  = "Doubao-Seedance-2.0-fast"
 
 
 # ============== 辅助函数 ==============

@@ -1,0 +1,140 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "视频生成" [level=1] [ref=e64]:
+            - img [ref=e65]
+            - text: 视频生成
+          - paragraph [ref=e68]: 使用AI生成高质量视频
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - img [ref=e72]
+            - generic [ref=e74]:
+              - paragraph [ref=e75]: 未配置 API Key
+              - paragraph [ref=e76]: 请先配置火山引擎 API Key 才能生成视频
+          - link "前往配置" [ref=e77] [cursor=pointer]:
+            - /url: /llm-config
+            - button "前往配置" [ref=e78]
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - generic [ref=e81]:
+              - heading "提供商" [level=3] [ref=e83]:
+                - img [ref=e84]
+                - text: 提供商
+              - generic [ref=e89] [cursor=pointer]:
+                - generic [ref=e90]:
+                  - generic [ref=e91]: 🔥
+                  - generic [ref=e92]:
+                    - generic [ref=e93]: 火山引擎
+                    - generic [ref=e94]: 约50分/秒
+                - img [ref=e95]
+            - generic [ref=e98]:
+              - heading "参数配置" [level=3] [ref=e100]:
+                - img [ref=e101]
+                - text: 参数配置
+              - generic [ref=e104]:
+                - generic [ref=e105]:
+                  - generic [ref=e106]: 视频描述
+                  - textbox "描述你想要生成的视频内容..." [ref=e107]: 无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验
+                - generic [ref=e108]:
+                  - generic [ref=e109]: 参考图片URL（可选）
+                  - textbox "输入图片URL用于图生视频" [ref=e110]
+                - generic [ref=e111]:
+                  - generic [ref=e112]:
+                    - generic [ref=e113]: 时长
+                    - generic [ref=e114]: 5秒
+                  - slider [ref=e115] [cursor=pointer]: "5"
+                  - generic [ref=e116]:
+                    - generic [ref=e117]: 4s
+                    - generic [ref=e118]: 10s
+                - generic [ref=e119]:
+                  - generic [ref=e120]: 分辨率
+                  - generic [ref=e121]:
+                    - button "480p" [ref=e122] [cursor=pointer]
+                    - button "720p" [ref=e123] [cursor=pointer]
+                    - button "1080p" [ref=e124] [cursor=pointer]
+            - button "开始生成" [disabled]:
+              - img
+              - text: 开始生成
+          - generic [ref=e125]:
+            - generic [ref=e126]:
+              - heading "视频预览" [level=3] [ref=e128]:
+                - img [ref=e129]
+                - text: 视频预览
+              - generic [ref=e133]:
+                - img [ref=e134]
+                - paragraph [ref=e137]: 输入描述并点击"开始生成"
+            - generic [ref=e138]:
+              - heading "生成历史" [level=3] [ref=e140]:
+                - img [ref=e141]
+                - text: 生成历史
+                - button [ref=e144] [cursor=pointer]:
+                  - img [ref=e145]
+              - generic [ref=e151]:
+                - img [ref=e152]
+                - paragraph [ref=e155]: 暂无生成历史
+                - paragraph [ref=e156]: 生成视频后会显示在这里
+            - generic [ref=e158]:
+              - heading "当前使用" [level=4] [ref=e159]
+              - list [ref=e160]:
+                - listitem [ref=e161]:
+                  - text: •
+                  - strong [ref=e162]: "模型:"
+                  - text: Doubao-Seedance-1.5-pro
+                - listitem [ref=e163]:
+                  - text: •
+                  - strong [ref=e164]: "ID:"
+                  - text: doubao-seedance-1-5-pro-251215
+                - listitem [ref=e165]:
+                  - text: •
+                  - strong [ref=e166]: "提供商:"
+                  - text: 火山引擎
+                - listitem [ref=e167]:
+                  - text: •
+                  - strong [ref=e168]: "支持:"
+                  - text: 文生视频、图生视频
+  - alert [ref=e169]
+```

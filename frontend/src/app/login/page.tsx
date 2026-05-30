@@ -6,20 +6,20 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { 
+import {
   Sparkles,
   User,
   Lock,
   Loader2,
   CheckCircle,
   XCircle,
-  ArrowRight
+  ArrowRight,
 } from 'lucide-react';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -31,7 +31,6 @@ export default function LoginPage() {
     setError('');
     setSuccess('');
 
-    // 验证
     if (!username || !password) {
       setError('请填写用户名和密码');
       return;
@@ -40,38 +39,18 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          username,
-          password,
-        }),
-      });
+      const result = await login(username, password);
 
-      const data = await res.json();
-
-      if (data.success) {
+      if (result.success) {
         setSuccess('登录成功！正在跳转...');
-        // 清理旧token后保存新的
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
-        // 保存token到localStorage
-        if (data.access_token) {
-          localStorage.setItem('auth_token', data.access_token);
-          localStorage.setItem('user', JSON.stringify(data.user));
-        }
-        // 2秒后跳转到控制台
         setTimeout(() => {
           router.push('/dashboard');
-        }, 1500);
+        }, 1000);
       } else {
-        setError(data.detail || data.message || '登录失败');
+        setError(result.detail || result.message || '登录失败');
       }
-    } catch (err) {
-      setError('网络错误，请稍后重试');
+    } catch (err: any) {
+      setError(err?.message || '网络错误，请稍后重试');
     } finally {
       setIsLoading(false);
     }
@@ -177,6 +156,9 @@ export default function LoginPage() {
                   立即注册
                 </Link>
               </p>
+              <Link href="/forgot-password" className="mt-3 inline-block text-sm text-white/50 hover:text-white">
+                忘记密码？
+              </Link>
             </div>
           </CardContent>
         </Card>

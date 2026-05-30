@@ -1,6 +1,7 @@
 """
 章节模型
 """
+from app.core.time_utils import utc_now
 from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey
 from datetime import datetime
 from app.core.database import Base
@@ -18,5 +19,5 @@ class Chapter(Base):
     chapter_number = Column(Integer, nullable=False, default=1)
     word_count = Column(Integer, default=0)
     status = Column(String(20), default="draft")  # draft, writing, completed
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

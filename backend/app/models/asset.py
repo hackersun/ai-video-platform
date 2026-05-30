@@ -2,6 +2,7 @@
 资产库模型 - 角色/场景/道具/服装/提示词模板等
 支持项目资产库 + 全局资产库双层复用
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
@@ -24,7 +25,7 @@ class AssetCategory(Base):
     sort_order = Column(Integer, default=0)
     parent_id = Column(String(36), ForeignKey("asset_categories.id"), nullable=True)
     is_system = Column(Boolean, default=False)  # 系统内置分类不可删除
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
 
 
 # 预置分类数据
@@ -78,6 +79,11 @@ class Asset(Base):
     project_id = Column(
         String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
     )  # NULL = 全局资产
+    novel_id = Column(String(36), nullable=True, index=True)
+    chapter_id = Column(String(36), nullable=True, index=True)
+    script_id = Column(String(36), nullable=True, index=True)
+    entity_id = Column(String(36), nullable=True, index=True)
+    entity_type = Column(String(20), nullable=True)  # character, scene, prop, event
 
     # === 提示词模板 ===
     prompt_template = Column(Text)  # "{{character}}在{{scene}}中{{action}}"
@@ -96,9 +102,20 @@ class Asset(Base):
     is_active = Column(Boolean, default=True)
     is_featured = Column(Boolean, default=False)  # 是否精选
 
-    # === 来源追踪 ===
-    source_url = Column(Text)  # 原始URL(如果是导入的)
-    generation_params = Column(JSON)  # 生成时的参数
+    # === 版本管理 ===
+    version = Column(Integer, default=1)  # 版本号
+    is_locked = Column(Boolean, default=False)  # 是否锁定
+    locked_at = Column(DateTime, nullable=True)
+    locked_by = Column(String(36), nullable=True)  # 锁定用户ID
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # === 定稿标志 ===
+    is_final = Column(Boolean, default=False)  # 是否是定稿
+    replaced_by_id = Column(String(36), nullable=True)  # 被哪个版本替代
+
+    # === 来源追踪 ===
+    source_job_id = Column(String(36), nullable=True)  # 生成此资产的job ID
+    source_prompt = Column(Text, nullable=True)  # 生成时的prompt
+
+    # === 时间戳 ===
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

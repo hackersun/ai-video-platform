@@ -1,0 +1,58 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e4]:
+      - generic [ref=e5]:
+        - img [ref=e6]
+        - generic [ref=e8]: AI驱动的视频创作平台
+      - heading "让创意无限可能" [level=1] [ref=e9]
+      - paragraph [ref=e10]:
+        - text: 从小说到视频，AI助力您的创作之旅。
+        - text: 简单、高效、专业。
+      - generic [ref=e11]:
+        - button "开始创作" [ref=e12] [cursor=pointer]:
+          - text: 开始创作
+          - img [ref=e13]
+        - button "了解更多" [ref=e15] [cursor=pointer]
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - img [ref=e18]
+          - text: 支持多种小说格式导入
+        - generic [ref=e21]:
+          - img [ref=e22]
+          - text: 智能角色管理系统
+        - generic [ref=e25]:
+          - img [ref=e26]
+          - text: 可视化剧本编辑器
+        - generic [ref=e29]:
+          - img [ref=e30]
+          - text: AI辅助视频生成
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - heading "强大功能" [level=2] [ref=e36]
+        - paragraph [ref=e37]: 为您的创作提供全方位支持
+      - generic [ref=e38]:
+        - generic [ref=e39]:
+          - img [ref=e41]
+          - heading "AI智能创作" [level=3] [ref=e43]
+          - paragraph [ref=e44]: 基于大语言模型，自动生成精彩剧本
+        - generic [ref=e45]:
+          - img [ref=e47]
+          - heading "精美视觉" [level=3] [ref=e53]
+          - paragraph [ref=e54]: 现代化UI设计，流畅动画效果
+        - generic [ref=e55]:
+          - img [ref=e57]
+          - heading "高效工作流" [level=3] [ref=e59]
+          - paragraph [ref=e60]: 从小说到视频，一站式创作体验
+        - generic [ref=e61]:
+          - img [ref=e63]
+          - heading "视频生成" [level=3] [ref=e65]
+          - paragraph [ref=e66]: AI驱动，一键生成高质量视频
+    - generic [ref=e71]:
+      - heading "准备好开始了吗？" [level=2] [ref=e72]
+      - paragraph [ref=e73]: 立即加入，开启您的AI视频创作之旅。 无需信用卡，免费开始使用。
+      - button "免费开始" [ref=e74] [cursor=pointer]:
+        - text: 免费开始
+        - img [ref=e75]
+    - contentinfo [ref=e77]:
+      - generic [ref=e78]: © 2024 AI视频平台. All rights reserved.
+  - alert [ref=e79]

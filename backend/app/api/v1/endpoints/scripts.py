@@ -2,19 +2,29 @@
 剧本管理 API 端点
 """
 
+from app.core.time_utils import utc_now
 from datetime import datetime
-from typing import List, Optional
+import re
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
-from app.models.llm_config import LLMProvider, LLMModel, LLMConfig
-from app.models import Script, Novel, Chapter
+from app.models import Script, Novel, Chapter, StoryEntity
+from app.services.consistency_context import build_consistency_prompt
+from app.services.novel_continuity import build_novel_continuity_package
+from app.services.story_prompt_context import (
+    build_story_context_block,
+    compact_text,
+    load_story_prompt_context,
+)
 from app.api.v1.endpoints.dashboard import log_activity
 
 router = APIRouter(tags=["剧本管理"])
@@ -25,6 +35,7 @@ router = APIRouter(tags=["剧本管理"])
 class ScriptCreate(BaseModel):
     """创建剧本"""
     novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
     title: str = Field(..., min_length=1, max_length=200)
     description: Optional[str] = None
     content: Optional[str] = None
@@ -41,10 +52,20 @@ class ScriptCreate(BaseModel):
             raise ValueError("novel_id cannot be blank")
         return value
 
+    @field_validator("chapter_id", mode="before")
+    @classmethod
+    def validate_chapter_id(cls, value):
+        if value is None:
+            return value
+        if isinstance(value, str) and value.strip() == "":
+            raise ValueError("chapter_id cannot be blank")
+        return value
+
 
 class ScriptUpdate(BaseModel):
     """更新剧本"""
     novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
     title: Optional[str] = None
     description: Optional[str] = None
     content: Optional[str] = None
@@ -62,12 +83,22 @@ class ScriptUpdate(BaseModel):
             raise ValueError("novel_id cannot be blank")
         return value
 
+    @field_validator("chapter_id", mode="before")
+    @classmethod
+    def validate_chapter_id(cls, value):
+        if value is None:
+            return value
+        if isinstance(value, str) and value.strip() == "":
+            raise ValueError("chapter_id cannot be blank")
+        return value
+
 
 class ScriptResponse(BaseModel):
     """剧本响应"""
     id: str
     user_id: str
     novel_id: Optional[str]
+    chapter_id: Optional[str] = None
     novel_title: Optional[str] = None
     title: str
     description: Optional[str]
@@ -80,55 +111,67 @@ class ScriptResponse(BaseModel):
     updated_at: datetime
 
 
+class ScriptContextResponse(BaseModel):
+    """剧本生成上下文响应"""
+    novel_id: str
+    chapter_id: str
+    story_bible_id: Optional[str] = None
+    chapter_title: Optional[str] = None
+    previous_chapter: Optional[Dict[str, Any]] = None
+    next_chapter: Optional[Dict[str, Any]] = None
+    context_block: str
+    summary: Dict[str, Any]
+    generation_context: Dict[str, Any]
+
+
+class ScriptConsistencyCheckResponse(BaseModel):
+    """剧本一致性检查响应"""
+    script_id: str
+    issue_count: int
+    issues: List[Dict[str, Any]]
+    summary: Dict[str, Any]
+
+
+class ScriptVersionResponse(BaseModel):
+    """剧本版本快照响应"""
+    id: str
+    note: Optional[str] = None
+    created_at: str
+    title: str
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+
+class ScriptVersionCreateRequest(BaseModel):
+    note: Optional[str] = Field(None, max_length=200, description="版本备注")
+
+
+class ScriptVersionRestoreRequest(BaseModel):
+    snapshot_id: str = Field(..., description="要恢复的版本ID")
+
+
 class ScriptGenerateRequest(BaseModel):
     """AI生成剧本请求"""
     chapter_id: str = Field(..., description="章节ID")
     style: str = Field(default="anime", description="剧本风格（anime/anime_cartoon/realistic等）")
     genre: Optional[str] = Field(None, description="剧本类型（可选）")
+    model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
 
 
 # ============== LLM API Key 辅助函数 ==============
 
-async def get_user_qwen_api_key(db: AsyncSession, user_id: str) -> tuple[str, str, str, Optional[str]]:
-    """
-    获取用户的千问/DashScope API密钥
-
-    Returns:
-        tuple: (api_key, provider_name, model_id)
-
-    Raises:
-        HTTPException: 如果未找到有效配置
-    """
-    result = await db.execute(
-        select(LLMConfig, LLMModel, LLMProvider)
-        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
-        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
-        .where(
-            and_(
-                LLMConfig.user_id == user_id,
-                LLMConfig.is_active == True,
-                LLMProvider.name.in_(["qianlian", "dashscope", "qwen"]),
-            )
-        )
-        .order_by(desc(LLMConfig.is_default), desc(LLMConfig.last_used_at))
+async def get_user_qwen_api_key(
+    db: AsyncSession,
+    user_id: str,
+    model_config_id: Optional[str] = None,
+) -> tuple[str, str, str, Optional[str]]:
+    """获取用户默认文本模型配置。"""
+    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
+        db,
+        user_id,
+        config_id=model_config_id,
     )
-    row = result.first()
-
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="请先配置千问/百炼大模型API密钥"
-        )
-
-    config, model, provider = row
-
-    if not config.api_key:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="大模型API密钥未设置"
-        )
-
-    return config.api_key, provider.name, model.model_id, model.base_url
+    return api_key or "", provider_name or "", model_id or "", base_url
 
 
 
@@ -145,6 +188,34 @@ async def get_novel_for_user(db: AsyncSession, novel_id: str, user_id: str):
     return novel
 
 
+async def get_chapter_for_user(db: AsyncSession, chapter_id: str, user_id: str) -> Chapter:
+    result = await db.execute(
+        select(Chapter).where(and_(Chapter.id == chapter_id, Chapter.user_id == user_id))
+    )
+    chapter = result.scalar_one_or_none()
+    if chapter is None:
+        raise HTTPException(status_code=404, detail="章节不存在")
+    return chapter
+
+
+async def list_chapters_for_novel(db: AsyncSession, novel_id: str, user_id: str) -> list[Chapter]:
+    result = await db.execute(
+        select(Chapter)
+        .where(and_(Chapter.novel_id == novel_id, Chapter.user_id == user_id))
+        .order_by(Chapter.chapter_number)
+    )
+    return list(result.scalars().all())
+
+
+def chapter_neighbors(chapters: list[Chapter], chapter_id: str) -> tuple[Optional[Chapter], Optional[Chapter]]:
+    for index, chapter in enumerate(chapters):
+        if chapter.id == chapter_id:
+            prev_chapter = chapters[index - 1] if index > 0 else None
+            next_chapter = chapters[index + 1] if index < len(chapters) - 1 else None
+            return prev_chapter, next_chapter
+    return None, None
+
+
 async def get_novel_title_map(db: AsyncSession, user_id: str, novel_ids: set[str]) -> dict[str, str]:
     if not novel_ids:
         return {}
@@ -159,10 +230,12 @@ async def get_novel_title_map(db: AsyncSession, user_id: str, novel_ids: set[str
 
 
 def build_script_response(script: Script, novel_title: Optional[str] = None) -> ScriptResponse:
+    extra_data = script.extra_data if isinstance(script.extra_data, dict) else {}
     return ScriptResponse(
         id=script.id,
         user_id=script.user_id,
         novel_id=script.novel_id,
+        chapter_id=script.chapter_id or extra_data.get("chapter_id"),
         novel_title=novel_title,
         title=script.title,
         description=script.description,
@@ -176,21 +249,556 @@ def build_script_response(script: Script, novel_title: Optional[str] = None) -> 
     )
 
 
+def _extract_names(items: list[Any], key: str = "name", limit: int = 12) -> list[str]:
+    names: list[str] = []
+    for item in items or []:
+        if isinstance(item, dict):
+            name = str(item.get(key) or item.get("title") or "").strip()
+        else:
+            name = str(item or "").strip()
+        if name and name not in names:
+            names.append(name)
+        if len(names) >= limit:
+            break
+    return names
+
+
+def _relationship_items(entities: list[StoryEntity]) -> list[dict[str, Any]]:
+    relationships: list[dict[str, Any]] = []
+    for entity in entities:
+        attrs = entity.attributes if isinstance(entity.attributes, dict) else {}
+        raw_items = attrs.get("relationships")
+        if not isinstance(raw_items, list):
+            continue
+        for item in raw_items:
+            if isinstance(item, dict):
+                relationships.append(
+                    {
+                        **item,
+                        "source_entity_id": entity.id,
+                        "source_entity_name": entity.name,
+                    }
+                )
+    return relationships
+
+
+async def load_story_entities_for_scope(
+    db: AsyncSession,
+    user_id: str,
+    novel_id: str,
+    chapter_id: Optional[str] = None,
+) -> list[StoryEntity]:
+    query = select(StoryEntity).where(
+        and_(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
+    )
+    result = await db.execute(query.order_by(StoryEntity.entity_type, desc(StoryEntity.updated_at)))
+    return list(result.scalars().all())
+
+
+def _priority_sort_entities(items: list[StoryEntity], priority_text: str) -> list[StoryEntity]:
+    def score(entity: StoryEntity) -> tuple[int, int, str]:
+        name = entity.name or ""
+        position = priority_text.find(name) if name else -1
+        in_text = 0 if position >= 0 else 1
+        return (in_text, position if position >= 0 else 999999, name)
+
+    return sorted(items, key=score)
+
+
+def build_production_pack_summary(entities: list[StoryEntity], *, priority_text: str = "") -> dict[str, Any]:
+    grouped: dict[str, list[StoryEntity]] = {
+        "character": [],
+        "scene": [],
+        "prop": [],
+        "event": [],
+    }
+    for entity in entities:
+        grouped.setdefault(entity.entity_type, []).append(entity)
+    for entity_type in grouped:
+        grouped[entity_type] = _priority_sort_entities(grouped[entity_type], priority_text)
+    relationships = _relationship_items(grouped.get("character", []))
+    return {
+        "characters": [
+            {"id": item.id, "name": item.name, "description": compact_text(item.description or item.evidence, 120)}
+            for item in grouped.get("character", [])[:12]
+        ],
+        "scenes": [
+            {"id": item.id, "name": item.name, "description": compact_text(item.description or item.evidence, 120)}
+            for item in grouped.get("scene", [])[:10]
+        ],
+        "props": [
+            {"id": item.id, "name": item.name, "description": compact_text(item.description or item.evidence, 120)}
+            for item in grouped.get("prop", [])[:10]
+        ],
+        "events": [
+            {"id": item.id, "name": item.name, "description": compact_text(item.description or item.evidence, 140)}
+            for item in grouped.get("event", [])[:12]
+        ],
+        "relationships": relationships[:20],
+    }
+
+
+def build_relationship_block(relationships: list[dict[str, Any]]) -> str:
+    if not relationships:
+        return "暂无明确人物关系，请仅依据小说正文和 Story Bible 中已有设定。"
+    lines = []
+    for item in relationships[:20]:
+        source = item.get("source_entity_name") or item.get("source") or item.get("from") or "未知角色"
+        target = item.get("target") or item.get("target_name") or item.get("to") or item.get("name") or "未知对象"
+        relation = item.get("relation") or item.get("type") or item.get("description") or "关联"
+        status_text = item.get("status") or item.get("state") or ""
+        lines.append(f"- {source} -> {target}：{relation}{f'（{status_text}）' if status_text else ''}")
+    return "\n".join(lines)
+
+
+def build_event_timeline_block(events: list[dict[str, Any]]) -> str:
+    if not events:
+        return "暂无明确事件线，请从当前章节正文中抽取事件因果。"
+    lines = []
+    for index, event in enumerate(events[:16], start=1):
+        name = event.get("name") or event.get("title") or f"事件{index}"
+        desc = compact_text(event.get("description"), 160)
+        lines.append(f"{index}. {name}{f'：{desc}' if desc else ''}")
+    return "\n".join(lines)
+
+
+async def build_script_generation_context(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    chapter: Chapter,
+    novel: Novel,
+    style: str,
+    genre: Optional[str] = None,
+) -> dict[str, Any]:
+    chapters = await list_chapters_for_novel(db, novel.id, user_id)
+    prev_chapter, next_chapter = chapter_neighbors(chapters, chapter.id)
+    story_context = await load_story_prompt_context(
+        db,
+        user_id,
+        novel_id=novel.id,
+        chapter_id=chapter.id,
+        title=novel.title,
+        genre=genre or novel.genre,
+        description=novel.description,
+        style=style,
+        limit_chapters=8,
+    )
+    entities = await load_story_entities_for_scope(db, user_id, novel.id, chapter.id)
+    priority_text = "\n".join(
+        part
+        for part in (
+            chapter.content or "",
+            prev_chapter.content if prev_chapter else "",
+            novel.description or "",
+        )
+        if part
+    )
+    production_pack = build_production_pack_summary(entities, priority_text=priority_text)
+    consistency_context = await build_consistency_prompt(
+        db,
+        user_id,
+        task="script_generation",
+        base_prompt=chapter.content or novel.description or novel.title,
+        novel_id=novel.id,
+        extra_context={
+            "小说标题": novel.title,
+            "小说类型": genre or novel.genre,
+            "当前章节": f"第{chapter.chapter_number}章《{chapter.title}》",
+            "上一章": f"{prev_chapter.title}: {compact_text(prev_chapter.content, 800)}" if prev_chapter else None,
+            "下一章": f"{next_chapter.title}: {compact_text(next_chapter.content, 600)}" if next_chapter else None,
+            "人物关系": build_relationship_block(production_pack["relationships"]),
+            "事件时间线": build_event_timeline_block(production_pack["events"]),
+        },
+    )
+    novel_continuity = await build_novel_continuity_package(
+        db,
+        user_id,
+        novel_id=novel.id,
+        chapter_id=chapter.id,
+        story_bible_id=story_context.get("story_bible_id"),
+        model_id=consistency_context["metadata"].get("default_model_id"),
+        task="script_generation",
+    )
+    return {
+        "novel": novel,
+        "chapter": chapter,
+        "chapters": chapters,
+        "prev_chapter": prev_chapter,
+        "next_chapter": next_chapter,
+        "story_context": story_context,
+        "production_pack": production_pack,
+        "consistency_prompt": consistency_context["prompt"],
+        "consistency_metadata": consistency_context["metadata"],
+        "novel_continuity": novel_continuity,
+    }
+
+
+def summarize_script_context(context: dict[str, Any]) -> dict[str, Any]:
+    story_context = context["story_context"]
+    production_pack = context["production_pack"]
+    prev_chapter = context.get("prev_chapter")
+    next_chapter = context.get("next_chapter")
+    return {
+        "story_bible_id": story_context.get("story_bible_id"),
+        "previous_chapter": (
+            {
+                "id": prev_chapter.id,
+                "title": prev_chapter.title,
+                "chapter_number": prev_chapter.chapter_number,
+                "summary": compact_text(prev_chapter.content, 260),
+            }
+            if prev_chapter
+            else None
+        ),
+        "next_chapter": (
+            {
+                "id": next_chapter.id,
+                "title": next_chapter.title,
+                "chapter_number": next_chapter.chapter_number,
+                "summary": compact_text(next_chapter.content, 220),
+            }
+            if next_chapter
+            else None
+        ),
+        "characters": _extract_names(production_pack.get("characters") or []),
+        "scenes": _extract_names(production_pack.get("scenes") or []),
+        "props": _extract_names(production_pack.get("props") or []),
+        "events": _extract_names(production_pack.get("events") or []),
+        "relationships": production_pack.get("relationships") or [],
+        "counts": {
+            "characters": len(production_pack.get("characters") or []),
+            "scenes": len(production_pack.get("scenes") or []),
+            "props": len(production_pack.get("props") or []),
+            "events": len(production_pack.get("events") or []),
+            "relationships": len(production_pack.get("relationships") or []),
+        },
+    }
+
+
+def build_script_prompt_blocks(
+    *,
+    novel: Novel,
+    chapter: Chapter,
+    context: dict[str, Any],
+    style_desc: str,
+    genre_hint: str,
+) -> tuple[str, str]:
+    story_context = context["story_context"]
+    production_pack = context["production_pack"]
+    prev_chapter = context.get("prev_chapter")
+    next_chapter = context.get("next_chapter")
+    chapter_content = chapter.content or ""
+    max_chars = 20000
+    chapter_for_prompt = chapter_content[:max_chars]
+    if len(chapter_content) > max_chars:
+        chapter_for_prompt += "\n\n[章节内容过长已截断]"
+    continuity_prompt_block = (
+        (context.get("novel_continuity") or {}).get("prompt_block")
+        or "【整部小说连续性锁】\n未找到小说级连续性上下文。"
+    )
+    system_prompt = f"""你是专业中文影视剧本作家、分镜导演和动漫短剧统筹。你需要把小说章节改编为可直接进入分镜、镜头、配音、字幕和视频生成的剧本。
+
+【基本信息】
+小说名称：《{novel.title}》
+小说简介：{novel.description or '暂无'}
+{genre_hint}
+目标风格：{style_desc}
+
+【连续性硬约束】
+1. 只能把当前章节已经发生的内容改编成剧本，上一章只作为前情，下一章只作为不可矛盾的后续约束。
+2. 不能凭空更改人物姓名、身份关系、场景位置、道具状态、事件结果和对白口吻。
+3. 必须使用 Story Bible/实体库中的人物、场景、道具、事件作为主要生产锚点。
+4. 每场必须有清晰戏剧功能：人物目标、阻碍、冲突变化、事件结果或下一场钩子。
+5. 对白必须符合人物关系和小说题材，避免“角色A/角色B”这类占位称呼。
+6. 输出必须是中文剧本正文，不要输出 Markdown 表格、解释、推理过程。
+
+【输出格式】
+第一行必须是：剧本标题：[标题]
+后续按“第N场”组织，每场包含：场景类型、时长、地点、人物、戏剧核心、画面描述、对话/旁白、镜头序列、音效/音乐提示、字幕要点。"""
+
+    user_prompt = f"""【统一故事上下文】
+{build_story_context_block(story_context, include_chapters=True)}
+
+{continuity_prompt_block}
+
+【上一章前情】
+{f"第{prev_chapter.chapter_number}章《{prev_chapter.title}》：{compact_text(prev_chapter.content, 1200)}" if prev_chapter else "无，本章为开端或缺少上一章。"}
+
+【下一章不可矛盾约束】
+{f"第{next_chapter.chapter_number}章《{next_chapter.title}》：{compact_text(next_chapter.content, 900)}" if next_chapter else "无。"}
+
+【人物关系】
+{build_relationship_block(production_pack.get("relationships") or [])}
+
+【事件时间线】
+{build_event_timeline_block(production_pack.get("events") or [])}
+
+【一致性组合提示】
+{context["consistency_prompt"]}
+
+【当前章节】
+第{chapter.chapter_number}章《{chapter.title}》
+
+【章节正文】
+{chapter_for_prompt}
+
+请把当前章节改编为 3-5 个主要场景，每个场景拆出 3-8 个镜头。"""
+    return system_prompt, user_prompt
+
+
+def build_dev_script_content(
+    *,
+    novel: Novel,
+    chapter: Chapter,
+    context: dict[str, Any],
+    style_desc: str,
+) -> str:
+    summary = summarize_script_context(context)
+    protagonist = (summary["characters"] or ["主角"])[0]
+    scene = (summary["scenes"] or ["核心场景"])[0]
+    prop = (summary["props"] or ["关键道具"])[0]
+    event = (summary["events"] or ["关键事件"])[0]
+    prev_title = summary["previous_chapter"]["title"] if summary.get("previous_chapter") else "故事开端"
+    next_title = summary["next_chapter"]["title"] if summary.get("next_chapter") else "后续章节"
+    return f"""剧本标题：第{chapter.chapter_number}章《{chapter.title}》动漫短剧改编
+
+【第1场】开场钩子
+- 场景类型：外景/内景 日夜依据原文
+- 时长：约8秒
+- 地点：{scene}
+- 人物：{protagonist}
+- 戏剧核心：承接《{prev_title}》的结果，用{prop}或异常画面引出{event}。
+
+【画面描述】
+{style_desc}。镜头先交代{scene}的空间和氛围，再把注意力推向{protagonist}与{prop}，保证人物造型、道具状态和事件因果与小说一致。
+
+【对话/旁白】
+- {protagonist}：（低声）"这件事还没有结束。"
+- （旁白）"上一章留下的线索，在这一刻重新指向{event}。"
+
+【镜头序列】
+1. 全景 - 固定 - 展示{scene}和当前气氛。
+2. 近景 - 推镜 - {protagonist}注意到{prop}的状态变化。
+3. 特写 - 固定 - {prop}成为本场视觉钩子。
+
+【音效/音乐提示】
+- 环境音：贴合{scene}的空间声。
+- 背景音乐：悬念推进。
+- 字幕要点：保留关键对白并标注说话人。
+
+【第2场】冲突推进
+- 场景类型：中景动作场
+- 时长：约12秒
+- 地点：{scene}
+- 人物：{protagonist}
+- 戏剧核心：{protagonist}围绕{event}做出选择，推动下一场。
+
+【画面描述】
+角色动作、表情和站位要清楚，避免新增无关角色。道具状态必须承接上一场。
+
+【对话/旁白】
+- {protagonist}：（坚定）"我会查清楚。"
+
+【镜头序列】
+1. 中景 - 跟拍 - 角色移动并确认线索。
+2. 特写 - 固定 - 表情变化。
+3. 远景 - 拉镜 - 留出转场空间。
+
+【音效/音乐提示】
+- 环境音：节奏加快。
+- 背景音乐：冲突升级。
+- 字幕要点：对白短句化，适配短视频。
+
+【第3场】结尾承接
+- 场景类型：悬念场
+- 时长：约8秒
+- 地点：{scene}
+- 人物：{protagonist}
+- 戏剧核心：本章结果必须能自然接到《{next_title}》，不提前改写后续事件。
+
+【画面描述】
+用一个未解决动作或关键信号收束，形成下一集钩子。
+
+【对话/旁白】
+- （旁白）"真正的答案，还藏在下一道门后。"
+
+【镜头序列】
+1. 特写 - 固定 - 关键物件或线索。
+2. 近景 - 推镜 - 角色反应。
+3. 黑场/转场 - 固定 - 留出字幕和片尾节奏。
+
+【音效/音乐提示】
+- 环境音：短暂停顿。
+- 背景音乐：悬念收束。
+- 字幕要点：保留最后一句钩子。"""
+
+
+def _script_context_metadata(
+    *,
+    context: dict[str, Any],
+    provider: str,
+    model_id: str,
+    ai_refined: bool,
+) -> dict[str, Any]:
+    summary = summarize_script_context(context)
+    novel_continuity = context.get("novel_continuity") or {}
+    return {
+        "story_bible_id": summary.get("story_bible_id"),
+        "provider": provider,
+        "model_id": model_id,
+        "ai_refined": ai_refined,
+        "generated_at": utc_now().isoformat(),
+        "prev_chapter_id": summary["previous_chapter"]["id"] if summary.get("previous_chapter") else None,
+        "next_chapter_id": summary["next_chapter"]["id"] if summary.get("next_chapter") else None,
+        "characters": summary.get("characters") or [],
+        "scenes": summary.get("scenes") or [],
+        "props": summary.get("props") or [],
+        "events": summary.get("events") or [],
+        "relationships": summary.get("relationships") or [],
+        "counts": summary.get("counts") or {},
+        "consistency_metadata": context.get("consistency_metadata") or {},
+        "novel_series_seed": novel_continuity.get("novel_series_seed"),
+        "chapter_seed": novel_continuity.get("chapter_seed"),
+        "continuity_lock": novel_continuity.get("continuity_lock"),
+        "previous_chapter_context": novel_continuity.get("previous_chapter_context"),
+        "current_chapter_context": novel_continuity.get("current_chapter_context"),
+        "next_chapter_constraint": novel_continuity.get("next_chapter_constraint"),
+        "previous_chapter_state": novel_continuity.get("previous_chapter_state"),
+        "chapter_state_snapshot": novel_continuity.get("chapter_state_snapshot"),
+        "state_machine_version": novel_continuity.get("state_machine_version"),
+        "event_timeline_tail": novel_continuity.get("event_timeline_tail") or [],
+    }
+
+
+def _append_script_snapshot(script: Script, note: Optional[str]) -> dict[str, Any]:
+    extra_data = dict(script.extra_data or {})
+    snapshots = list(extra_data.get("version_snapshots") or [])
+    snapshot = {
+        "id": str(uuid4()),
+        "note": note or "手动快照",
+        "created_at": utc_now().isoformat(),
+        "title": script.title,
+        "description": script.description,
+        "content": script.content,
+        "genre": script.genre,
+        "style": script.style,
+        "duration": script.duration,
+        "status": script.status,
+        "novel_id": script.novel_id,
+        "chapter_id": script.chapter_id or extra_data.get("chapter_id"),
+    }
+    snapshots.append(snapshot)
+    extra_data["version_snapshots"] = snapshots[-30:]
+    script.extra_data = extra_data
+    script.updated_at = utc_now()
+    return snapshot
+
+
+def _issue(code: str, severity: str, message: str, evidence: Optional[str] = None) -> dict[str, Any]:
+    return {"code": code, "severity": severity, "message": message, "evidence": evidence}
+
+
+async def check_script_consistency_internal(
+    db: AsyncSession,
+    user_id: str,
+    script: Script,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    extra_data = script.extra_data if isinstance(script.extra_data, dict) else {}
+    chapter_id = script.chapter_id or extra_data.get("chapter_id")
+    known_names = {"characters": [], "scenes": [], "props": [], "events": []}
+    chapter = None
+    novel = None
+    if chapter_id:
+        chapter = await get_chapter_for_user(db, chapter_id, user_id)
+        if script.novel_id and chapter.novel_id != script.novel_id:
+            issues.append(_issue("chapter_novel_mismatch", "error", "剧本绑定章节不属于剧本绑定小说"))
+        novel = await get_novel_for_user(db, chapter.novel_id, user_id)
+        context = await build_script_generation_context(
+            db,
+            user_id,
+            chapter=chapter,
+            novel=novel,
+            style=script.style or "anime",
+            genre=script.genre,
+        )
+        summary = summarize_script_context(context)
+        known_names = {
+            "characters": summary.get("characters") or [],
+            "scenes": summary.get("scenes") or [],
+            "props": summary.get("props") or [],
+            "events": summary.get("events") or [],
+        }
+        if summary.get("next_chapter") and script.content and summary["next_chapter"]["title"] in script.content:
+            issues.append(
+                _issue(
+                    "future_chapter_as_past",
+                    "warning",
+                    "剧本文本疑似把下一章标题写入当前章内容，请确认没有提前改写后续剧情。",
+                    summary["next_chapter"]["title"],
+                )
+            )
+    else:
+        issues.append(_issue("missing_chapter_link", "warning", "剧本未绑定章节，无法做完整章节连续性检查"))
+
+    content = script.content or ""
+    if "角色A" in content or "角色B" in content:
+        issues.append(_issue("placeholder_speaker", "error", "对白中仍存在角色A/角色B占位称呼"))
+
+    dialogue_speakers = sorted(set(re.findall(r"^\s*-\s*([^：（:]{1,12})[：:（]", content, flags=re.MULTILINE)))
+    for speaker in dialogue_speakers:
+        if speaker in {"旁白", "画外音"}:
+            continue
+        if known_names["characters"] and speaker not in known_names["characters"]:
+            issues.append(_issue("unknown_dialogue_speaker", "warning", f"对白说话人未在角色库中登记：{speaker}", speaker))
+
+    for label, names in (("scene", known_names["scenes"]), ("prop", known_names["props"]), ("event", known_names["events"])):
+        if names and not any(name in content for name in names[:8]):
+            label_cn = {"scene": "场景", "prop": "道具", "event": "事件"}[label]
+            issues.append(_issue(f"missing_{label}_anchor", "warning", f"剧本没有明显引用已登记{label_cn}锚点"))
+
+    context_meta = extra_data.get("generation_context") if isinstance(extra_data.get("generation_context"), dict) else {}
+    if not context_meta:
+        issues.append(_issue("missing_generation_context", "warning", "剧本缺少生成上下文元数据，后续分镜一致性较弱"))
+
+    summary = {
+        "chapter_id": chapter_id,
+        "novel_id": script.novel_id or getattr(novel, "id", None),
+        "known_names": known_names,
+        "dialogue_speakers": dialogue_speakers,
+        "has_generation_context": bool(context_meta),
+    }
+    return issues, summary
+
+
 # ============== API 端点 ==============
 
 @router.get("", response_model=List[ScriptResponse])
 async def list_scripts(
+    novel_id: Optional[str] = Query(None, description="按小说过滤剧本"),
+    chapter_id: Optional[str] = Query(None, description="按章节过滤剧本"),
+    page: Optional[int] = Query(None, ge=1, description="分页页码；不传时保持返回全部兼容旧前端"),
+    page_size: Optional[int] = Query(None, ge=1, le=100, description="分页大小；不传时保持返回全部兼容旧前端"),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
     """获取用户的所有剧本"""
 
-    result = await db.execute(
-        select(Script)
-        .where(Script.user_id == user_id)
-        .order_by(desc(Script.updated_at))
-    )
+    query = select(Script).where(Script.user_id == user_id)
+    if novel_id:
+        query = query.where(Script.novel_id == novel_id)
+    result = await db.execute(query.order_by(desc(Script.updated_at)))
     scripts = result.scalars().all()
+    if chapter_id:
+        scripts = [
+            script for script in scripts
+            if script.chapter_id == chapter_id
+            or (isinstance(script.extra_data, dict) and script.extra_data.get("chapter_id") == chapter_id)
+        ]
+    if page and page_size:
+        start = (page - 1) * page_size
+        scripts = scripts[start:start + page_size]
 
     novel_title_map = await get_novel_title_map(
         db,
@@ -228,6 +836,44 @@ async def get_script(
     return build_script_response(script, novel_title)
 
 
+@router.get("/generate-context/{chapter_id}", response_model=ScriptContextResponse)
+async def get_script_generate_context(
+    chapter_id: str,
+    style: str = Query("anime", description="剧本风格"),
+    genre: Optional[str] = Query(None, description="剧本类型"),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取从章节生成剧本时会使用的统一故事上下文。"""
+    chapter = await get_chapter_for_user(db, chapter_id, user_id)
+    novel = await get_novel_for_user(db, chapter.novel_id, user_id)
+    context = await build_script_generation_context(
+        db,
+        user_id,
+        chapter=chapter,
+        novel=novel,
+        style=style,
+        genre=genre,
+    )
+    summary = summarize_script_context(context)
+    return ScriptContextResponse(
+        novel_id=novel.id,
+        chapter_id=chapter.id,
+        story_bible_id=summary.get("story_bible_id"),
+        chapter_title=chapter.title,
+        previous_chapter=summary.get("previous_chapter"),
+        next_chapter=summary.get("next_chapter"),
+        context_block=build_story_context_block(context["story_context"], include_chapters=True),
+        summary=summary,
+        generation_context=_script_context_metadata(
+            context=context,
+            provider="preview",
+            model_id=context["consistency_metadata"].get("default_model_id") or "",
+            ai_refined=False,
+        ),
+    )
+
+
 @router.post("", response_model=ScriptResponse, status_code=status.HTTP_201_CREATED)
 async def create_script(
     script: ScriptCreate,
@@ -237,21 +883,31 @@ async def create_script(
     """创建剧本"""
 
     novel_title = None
-    if script.novel_id:
-        novel = await get_novel_for_user(db, script.novel_id, user_id)
+    novel_id = script.novel_id
+    chapter_id = script.chapter_id
+    if chapter_id:
+        chapter = await get_chapter_for_user(db, chapter_id, user_id)
+        if novel_id and chapter.novel_id != novel_id:
+            raise HTTPException(status_code=422, detail="章节不属于指定小说")
+        novel_id = chapter.novel_id
+    if novel_id:
+        novel = await get_novel_for_user(db, novel_id, user_id)
         novel_title = novel.title
+    extra_data = {"chapter_id": chapter_id} if chapter_id else {}
 
     db_script = Script(
         id=str(uuid4()),
         user_id=user_id,
-        novel_id=script.novel_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
         title=script.title,
         description=script.description,
         content=script.content,
         genre=script.genre,
         style=script.style,
         duration=script.duration,
-        status="draft"
+        status="draft",
+        extra_data=extra_data,
     )
     db.add(db_script)
     await db.commit()
@@ -288,11 +944,29 @@ async def update_script(
         raise HTTPException(status_code=404, detail="剧本不存在")
 
     update_data = script_update.model_dump(exclude_unset=True)
-    if "novel_id" in update_data and update_data["novel_id"]:
+    if any(key in update_data for key in ("title", "description", "content", "genre", "style", "duration", "status", "novel_id", "chapter_id")):
+        _append_script_snapshot(db_script, "更新前自动快照")
+
+    next_novel_id = update_data.get("novel_id", db_script.novel_id)
+    next_chapter_id = update_data.get("chapter_id", db_script.chapter_id)
+    if next_chapter_id:
+        chapter = await get_chapter_for_user(db, next_chapter_id, user_id)
+        if next_novel_id and chapter.novel_id != next_novel_id:
+            raise HTTPException(status_code=422, detail="章节不属于指定小说")
+        next_novel_id = chapter.novel_id
+        update_data["novel_id"] = next_novel_id
+    elif "novel_id" in update_data and update_data["novel_id"]:
         await get_novel_for_user(db, update_data["novel_id"], user_id)
 
     for key, value in update_data.items():
         setattr(db_script, key, value)
+    if "chapter_id" in update_data:
+        extra_data = dict(db_script.extra_data or {})
+        if update_data["chapter_id"]:
+            extra_data["chapter_id"] = update_data["chapter_id"]
+        else:
+            extra_data.pop("chapter_id", None)
+        db_script.extra_data = extra_data
 
     await db.commit()
     await db.refresh(db_script)
@@ -327,6 +1001,130 @@ async def delete_script(
     return {"message": "剧本已删除"}
 
 
+@router.get("/{script_id}/check-consistency", response_model=ScriptConsistencyCheckResponse)
+async def check_script_consistency(
+    script_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """检查剧本与小说、章节、人物、场景、道具和事件上下文的一致性。"""
+    result = await db.execute(
+        select(Script).where(and_(Script.id == script_id, Script.user_id == user_id))
+    )
+    script = result.scalar_one_or_none()
+    if not script:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    issues, summary = await check_script_consistency_internal(db, user_id, script)
+    return ScriptConsistencyCheckResponse(
+        script_id=script.id,
+        issue_count=len(issues),
+        issues=issues,
+        summary=summary,
+    )
+
+
+@router.get("/{script_id}/versions", response_model=List[ScriptVersionResponse])
+async def list_script_versions(
+    script_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取剧本版本快照。"""
+    result = await db.execute(
+        select(Script).where(and_(Script.id == script_id, Script.user_id == user_id))
+    )
+    script = result.scalar_one_or_none()
+    if not script:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    extra_data = script.extra_data if isinstance(script.extra_data, dict) else {}
+    snapshots = extra_data.get("version_snapshots") if isinstance(extra_data.get("version_snapshots"), list) else []
+    return [
+        ScriptVersionResponse(
+            id=item.get("id"),
+            note=item.get("note"),
+            created_at=item.get("created_at"),
+            title=item.get("title") or script.title,
+            description=item.get("description"),
+            status=item.get("status"),
+        )
+        for item in reversed(snapshots)
+        if isinstance(item, dict) and item.get("id") and item.get("created_at")
+    ]
+
+
+@router.post("/{script_id}/versions", response_model=ScriptVersionResponse, status_code=status.HTTP_201_CREATED)
+async def create_script_version(
+    script_id: str,
+    request: ScriptVersionCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """手动创建剧本版本快照。"""
+    result = await db.execute(
+        select(Script).where(and_(Script.id == script_id, Script.user_id == user_id))
+    )
+    script = result.scalar_one_or_none()
+    if not script:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    snapshot = _append_script_snapshot(script, request.note)
+    await db.commit()
+    return ScriptVersionResponse(
+        id=snapshot["id"],
+        note=snapshot.get("note"),
+        created_at=snapshot["created_at"],
+        title=snapshot["title"],
+        description=snapshot.get("description"),
+        status=snapshot.get("status"),
+    )
+
+
+@router.post("/{script_id}/versions/restore", response_model=ScriptResponse)
+async def restore_script_version(
+    script_id: str,
+    request: ScriptVersionRestoreRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """恢复剧本版本快照。"""
+    result = await db.execute(
+        select(Script).where(and_(Script.id == script_id, Script.user_id == user_id))
+    )
+    script = result.scalar_one_or_none()
+    if not script:
+        raise HTTPException(status_code=404, detail="剧本不存在")
+    extra_data = dict(script.extra_data or {})
+    snapshots = extra_data.get("version_snapshots") if isinstance(extra_data.get("version_snapshots"), list) else []
+    snapshot = next((item for item in snapshots if isinstance(item, dict) and item.get("id") == request.snapshot_id), None)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="剧本版本不存在")
+
+    _append_script_snapshot(script, "恢复前自动快照")
+    script.title = snapshot.get("title") or script.title
+    script.description = snapshot.get("description")
+    script.content = snapshot.get("content")
+    script.genre = snapshot.get("genre")
+    script.style = snapshot.get("style")
+    script.duration = snapshot.get("duration")
+    script.status = snapshot.get("status") or script.status
+    script.novel_id = snapshot.get("novel_id") or script.novel_id
+    script.chapter_id = snapshot.get("chapter_id") or script.chapter_id
+    extra_data = dict(script.extra_data or {})
+    if script.chapter_id:
+        extra_data["chapter_id"] = script.chapter_id
+    extra_data["last_restored_snapshot_id"] = request.snapshot_id
+    extra_data["last_restored_at"] = utc_now().isoformat()
+    script.extra_data = extra_data
+    script.updated_at = utc_now()
+    await db.commit()
+    await db.refresh(script)
+
+    novel_title = None
+    if script.novel_id:
+        novel = await get_novel_for_user(db, script.novel_id, user_id)
+        novel_title = novel.title
+    return build_script_response(script, novel_title)
+
+
 @router.post("/generate", response_model=ScriptResponse, status_code=status.HTTP_201_CREATED)
 async def generate_script(
     request: ScriptGenerateRequest,
@@ -335,63 +1133,14 @@ async def generate_script(
 ):
     """AI生成剧本 - 将章节内容转换为分镜头剧本"""
 
-    # 获取用户的API密钥
-    api_key, provider_name, model_id, base_url = await get_user_qwen_api_key(db, user_id)
-
-    if provider_name == "qianlian":
-        from app.services.qianlian_service import QianlianService
-        service = QianlianService(api_key, base_url)
-    elif provider_name in ("dashscope", "qwen"):
-        from app.services.dashscope_service import DashScopeService
-        service = DashScopeService(api_key, base_url)
-    else:
-        from app.services.qianlian_service import QianlianService
-        service = QianlianService(api_key, base_url)
-
-    # 获取章节内容
-    chapter_result = await db.execute(
-        select(Chapter).where(and_(Chapter.id == request.chapter_id, Chapter.user_id == user_id))
-    )
-    chapter = chapter_result.scalar_one_or_none()
-
-    if not chapter:
-        raise HTTPException(status_code=404, detail="章节不存在")
-
+    chapter = await get_chapter_for_user(db, request.chapter_id, user_id)
     if not chapter.content:
         raise HTTPException(status_code=400, detail="章节内容为空，无法生成剧本")
 
     chapter_id = chapter.id
     novel_id = chapter.novel_id
     chapter_title = chapter.title
-    chapter_content = chapter.content
-
-    # 获取小说信息
-    novel = None
-    novel_title = None
-    novel_description = None
-    novel_genre = None
-    if novel_id:
-        novel_result = await db.execute(
-            select(Novel).where(and_(Novel.id == novel_id, Novel.user_id == user_id)))
-        novel = novel_result.scalar_one_or_none()
-        if novel:
-            novel_title = novel.title
-            novel_description = novel.description
-            novel_genre = novel.genre
-
-    # 获取同小说其他章节（用于剧情上下文）
-    other_chapters_context = ""
-    if novel_id:
-        other_result = await db.execute(
-            select(Chapter)
-            .where(and_(Chapter.novel_id == novel_id, Chapter.user_id == user_id, Chapter.id != chapter_id))
-            .order_by(Chapter.chapter_number)
-        )
-        other_chapters = other_result.scalars().all()
-        if other_chapters:
-            prev_ch = other_chapters[-1] if other_chapters else None
-            if prev_ch and prev_ch.content:
-                other_chapters_context += f"\n\n【前情提要 - 第{prev_ch.chapter_number}章《{prev_ch.title}》】\n{prev_ch.content[:1500]}"
+    novel = await get_novel_for_user(db, novel_id, user_id)
 
     # 风格配置
     style_configs = {
@@ -402,97 +1151,54 @@ async def generate_script(
         "fantasy": "奇幻风格：魔法效果、异世界设定、史诗场景，大场面调度",
     }
     style_desc = style_configs.get(request.style, f"风格：{request.style or '默认'}")
-    genre_hint = f"类型：{request.genre or novel_genre or '玄幻'}" if request.genre or novel_genre else ""
+    genre_hint = f"类型：{request.genre or novel.genre or '通用'}"
+    generation_context = await build_script_generation_context(
+        db,
+        user_id,
+        chapter=chapter,
+        novel=novel,
+        style=request.style,
+        genre=request.genre,
+    )
+    system_prompt, user_prompt = build_script_prompt_blocks(
+        novel=novel,
+        chapter=chapter,
+        context=generation_context,
+        style_desc=style_desc,
+        genre_hint=genre_hint,
+    )
 
-    # 截断过长内容
-    max_chars = 20000
-    chapter_for_prompt = chapter_content
-    if len(chapter_content or "") > max_chars:
-        chapter_for_prompt = (chapter_content or "")[:max_chars] + "\n\n[章节内容过长已截断]"
-
-    # 构建增强版剧本生成提示词
-    system_prompt = f"""你是一个专业的电影剧本作家和分镜导演。你需要将小说章节内容转换为专业的、有吸引力的分镜头剧本。
-
-【基本信息】
-小说名称：《{novel_title or '未知'}》
-小说简介：{novel_description or '暂无'}
-{genre_hint}
-目标风格：{style_desc}
-
-【前情提要】
-{other_chapters_context if other_chapters_context else "（本章为故事开端，无前情）"}
-
-【剧本创作核心要求】
-
-一、整体结构
-将章节分解为3-5个主要场景（Scene），每个场景要有明确的戏剧推动力，不能平铺直叙。
-
-二、每个场景的剧本格式（严格按以下格式输出）：
-
-【第N场】场景标题
-- 场景类型：[内景/外景] [日/夜/晨/昏/黎明]
-- 时长：约X秒
-- 地点：[具体位置]
-- 人物：[出场角色列表]
-- 戏剧核心：[本场景的主要矛盾/冲突是什么]
-
-【画面描述】
-[详细的镜头画面描述：构图方式、光线色调、人物位置、表情、动作、环境氛围。注意玄幻类的功法特效、光效色彩]
-
-【对话/旁白】
-[本场景的对白]
-- 角色A：（情绪/语气）"对白内容"
-- 角色B：（情绪/语气）"对白内容"
-- （旁白）"叙述性文字"
-
-【镜头序列】（分解为3-8个具体镜头）
-1. [镜头类型] - [景别：远/全/中/近/特] - [运镜方式：推/拉/摇/移/跟/固定] - [画面内容描述]
-2. [镜头类型] - [景别] - [运镜方式] - [画面内容描述]
-（依次列出所有镜头）
-
-【音效/音乐提示】
-- 环境音：[风声、雨声、人群嘈杂、山林鸟鸣、修炼场灵气涌动等]
-- 背景音乐：[紧张悬疑、轻松愉悦、史诗大气、悲伤抒情、战斗激烈等]
-- 特效提示：[灵气光芒、打斗光效、烟雾弥漫、水波荡漾等]
-
-【戏剧张力评级】（1-5星）
-⭐⭐⭐⭐☆
-
-三、创作要点
-1. **戏剧冲突优先**：每个场景必须有推动剧情的核心矛盾，不能流水账
-2. **情感节奏**：有紧张场景也要有舒缓过渡，张弛有度
-3. **视觉奇观**：玄幻/修仙类注意功法特效、灵气光效；战斗场景要有冲击力
-4. **全程中文**：所有内容、描述、术语全部使用中文
-5. **可执行性**：画面描述要能直接指导美术和摄影师执行
-
-请输出完整的分镜头剧本："""
-
-    user_prompt = f"""请将以下小说章节内容转换为专业的分镜头剧本。深入分析章节的戏剧冲突、高潮和情感节奏，每个场景要有明确的冲突推动力。
-
-【章节标题】{chapter_title}
-
-【章节正文】
-{chapter_for_prompt}
-
-请输出完整的分镜头剧本。**重要：输出格式**：
-第一行必须是剧本标题，格式：「剧本标题：[自动生成的剧本标题]」（不用markdown）
-第二行起是剧本正文内容。"""
-
+    provider_name = "dev_mode"
+    model_id = generation_context["consistency_metadata"].get("default_model_id") or ""
+    ai_refined = False
     try:
+        api_key, provider_name, model_id, base_url = await get_user_text_model_config(
+            db,
+            user_id,
+            raise_if_missing=True,
+            config_id=request.model_config_id,
+        )
+        service = create_text_generation_service(api_key or "", provider_name or "", base_url)
         response = await service.safe_chat_completion(
             model=model_id,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.8,
+            temperature=0.68,
             max_tokens=12000
         )
-
         script_content = response["choices"][0]["message"]["content"]
-
+        ai_refined = True
     except HTTPException:
-        raise
+        if not is_dev_mode():
+            raise
+        script_content = build_dev_script_content(
+            novel=novel,
+            chapter=chapter,
+            context=generation_context,
+            style_desc=style_desc,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -500,16 +1206,14 @@ async def generate_script(
         )
 
     # 从AI返回内容中提取标题
-    # 格式：「剧本标题：xxx」或「剧本标题: xxx」
-    import re
-    title_match = re.search(r'「剧本标题[：:]\s*(.+?)」', script_content)
+    script_content = (script_content or "").strip().strip("`").strip()
+    title_match = re.search(r"[「\"]?剧本标题[：:]\s*(.+?)[」\"]?\s*(?:\n|$)", script_content)
     if title_match:
-        script_title = title_match.group(1).strip()
-        # 从content中去掉标题行，只保留正文
+        script_title = title_match.group(1).strip(" 「」\"")
         lines = script_content.split('\n')
         content_start = 0
         for i, line in enumerate(lines):
-            if '「剧本标题' in line:
+            if '剧本标题' in line:
                 content_start = i + 1
                 break
         script_content = '\n'.join(lines[content_start:]).strip()
@@ -523,15 +1227,38 @@ async def generate_script(
         id=script_id,
         user_id=user_id,
         novel_id=novel_id,
+        chapter_id=chapter_id,
         title=script_title,
         description=f"改编自《{chapter_title}》，{style_desc}",
         content=script_content,
-        genre=request.genre or "unknown",
+        genre=request.genre or novel.genre or "unknown",
         style=request.style,
-        status="draft"
+        status="completed",
+        extra_data={
+            "source": "chapter_script_generation",
+            "chapter_id": chapter_id,
+            "chapter_title": chapter_title,
+            "chapter_number": chapter.chapter_number,
+            "generation_context": _script_context_metadata(
+                context=generation_context,
+                provider=provider_name or "unknown",
+                model_id=model_id or "",
+                ai_refined=ai_refined,
+            ),
+        },
     )
     db.add(db_script)
     await db.commit()
     await db.refresh(db_script)
 
-    return build_script_response(db_script, novel_title)
+    await log_activity(
+        db=db,
+        user_id=user_id,
+        activity_type="generated",
+        entity_type="script",
+        entity_id=db_script.id,
+        title=f"AI生成剧本: {db_script.title}",
+    )
+    await db.commit()
+
+    return build_script_response(db_script, novel.title)

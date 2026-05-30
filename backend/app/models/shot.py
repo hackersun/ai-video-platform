@@ -1,6 +1,7 @@
 """
 镜头模型
 """
+from app.core.time_utils import utc_now
 from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, JSON, Float, Boolean
 from datetime import datetime
 from app.core.database import Base
@@ -13,6 +14,7 @@ class Shot(Base):
     id = Column(String(36), primary_key=True)
     storyboard_id = Column(String(36), ForeignKey("storyboards.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String(36), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     shot_number = Column(Integer, nullable=False, default=1)
     duration = Column(Integer, default=4)
     prompt = Column(Text)
@@ -67,5 +69,5 @@ class Shot(Base):
     image_status = Column(String(20), default="pending")  # pending/generating/succeeded/failed
     image_asset_id = Column(String(36), ForeignKey("assets.id", ondelete="SET NULL"), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

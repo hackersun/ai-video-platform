@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { 
   FileText, 
   Plus, 
@@ -23,7 +25,6 @@ import {
   Play,
   CheckCircle,
   AlertCircle,
-  X,
   Save,
   Loader2,
   Sparkles,
@@ -33,6 +34,14 @@ import {
   RefreshCw
 } from 'lucide-react';
 import Link from 'next/link';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { apiClient } from '@/lib/api-client';
+import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import {
+  getDefaultConfigForCapability,
+  SavedModelConfig,
+} from '@/lib/model-configs';
+import { useToast } from '@/components/ui/toast';
 
 // 剧本数据类型
 interface Script {
@@ -45,6 +54,7 @@ interface Script {
   duration?: number;
   status: 'draft' | 'writing' | 'completed';
   novel_id?: string;
+  chapter_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -54,6 +64,13 @@ interface Novel {
   id: string;
   title: string;
   description?: string;
+}
+
+interface Chapter {
+  id: string;
+  novel_id?: string;
+  title: string;
+  chapter_number?: number;
 }
 
 const STATUS_LABELS = {
@@ -68,26 +85,64 @@ const STATUS_COLORS = {
   completed: 'bg-green-500/20 text-green-400'
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 export default function ScriptsPage() {
+  const { toast } = useToast();
   const [scripts, setScripts] = useState<Script[]>([]);
   const [novels, setNovels] = useState<Novel[]>([]);
+  const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilterNovelId, setSelectedFilterNovelId] = useState('');
+  const [selectedFilterChapterId, setSelectedFilterChapterId] = useState('');
+  const [filtersInitialized, setFiltersInitialized] = useState(false);
+  const [aiChapters, setAiChapters] = useState<Chapter[]>([]);
   const [activeTab, setActiveTab] = useState('all');
   const [showModal, setShowModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editingScript, setEditingScript] = useState<Script | null>(null);
+  const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
+  const [textModelConfigId, setTextModelConfigId] = useState('');
   
   // AI生成相关状态
   const [showAIGenerateModal, setShowAIGenerateModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [aiGenerateType, setAiGenerateType] = useState<'from_novel' | 'custom'>('custom');
   const [selectedNovelId, setSelectedNovelId] = useState('');
+  const [selectedChapterId, setSelectedChapterId] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [generationResult, setGenerationResult] = useState<string | null>(null);
+  const [generationContext, setGenerationContext] = useState<any | null>(null);
+  const [loadingGenerationContext, setLoadingGenerationContext] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Script | null>(null);
+  const [deletingScript, setDeletingScript] = useState(false);
+  const [storyboardTarget, setStoryboardTarget] = useState<Script | null>(null);
+  const [creatingStoryboard, setCreatingStoryboard] = useState(false);
+
+  const loadChapters = async (novelId: string) => {
+    const list = await fetchChaptersForNovel(novelId);
+    setChapters(list);
+    return list;
+  };
+
+  const fetchChaptersForNovel = async (novelId: string) => {
+    if (!novelId) {
+      return [];
+    }
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/chapters/novel/${novelId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const list = Array.isArray(data) ? data : [];
+        return list;
+      }
+    } catch (err) {
+      console.error('加载章节失败:', err);
+    }
+    return [];
+  };
   
   // 表单数据
   const [formData, setFormData] = useState({
@@ -102,7 +157,7 @@ export default function ScriptsPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE}/api/v1/scripts`);
+      const response = await fetchWithAuth(`${API_BASE}/scripts`);
       if (!response.ok) {
         throw new Error('加载失败');
       }
@@ -120,7 +175,7 @@ export default function ScriptsPage() {
   // 加载小说列表
   const loadNovels = async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/novels`);
+      const response = await fetchWithAuth(`${API_BASE}/novels`);
       if (response.ok) {
         const data = await response.json();
         setNovels(data || []);
@@ -130,17 +185,50 @@ export default function ScriptsPage() {
     }
   };
 
+  const loadModelConfigs = async () => {
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (!response.ok) return;
+      const configs = await response.json();
+      const list = Array.isArray(configs) ? configs : [];
+      setModelConfigs(list);
+      const textDefault = getDefaultConfigForCapability(list, 'text');
+      if (textDefault) setTextModelConfigId(textDefault.id);
+    } catch (err) {
+      console.error('加载模型配置失败:', err);
+    }
+  };
+
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const novelId = params.get('novel_id') || '';
+    const chapterId = params.get('chapter_id') || '';
+    if (novelId) setSelectedFilterNovelId(novelId);
+    if (chapterId) setSelectedFilterChapterId(chapterId);
+    setFiltersInitialized(true);
     loadScripts();
     loadNovels();
+    loadModelConfigs();
   }, []);
+
+  useEffect(() => {
+    if (!filtersInitialized) return;
+    if (selectedFilterNovelId) {
+      loadChapters(selectedFilterNovelId);
+    } else {
+      setChapters([]);
+      setSelectedFilterChapterId('');
+    }
+  }, [filtersInitialized, selectedFilterNovelId]);
 
   // 筛选剧本
   const filteredScripts = scripts.filter(script => {
     const matchesSearch = script.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           script.description?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesNovel = !selectedFilterNovelId || script.novel_id === selectedFilterNovelId;
+    const matchesChapter = !selectedFilterChapterId || script.chapter_id === selectedFilterChapterId;
     const matchesStatus = activeTab === 'all' || script.status === activeTab;
-    return matchesSearch && matchesStatus;
+    return matchesSearch && matchesNovel && matchesChapter && matchesStatus;
   });
 
   // 打开创建弹窗
@@ -158,20 +246,58 @@ export default function ScriptsPage() {
   // 打开AI生成弹窗
   const handleOpenAIGenerate = () => {
     setAiGenerateType('from_novel');
-    setSelectedNovelId(novels.length > 0 ? novels[0].id : '');
+    const defaultNovelId = selectedFilterNovelId || (novels.length > 0 ? novels[0].id : '');
+    setSelectedNovelId(defaultNovelId);
+    setSelectedChapterId(selectedFilterChapterId || '');
+    if (defaultNovelId) {
+      fetchChaptersForNovel(defaultNovelId).then((list) => {
+        setAiChapters(list);
+        if (!selectedFilterChapterId && list.length > 0) {
+          setSelectedChapterId(list[0].id);
+        }
+      });
+    } else {
+      setAiChapters([]);
+    }
     setCustomPrompt('');
     setGenerationResult(null);
+    setGenerationContext(null);
     setShowAIGenerateModal(true);
   };
 
+  const loadGenerationContext = async (chapterId: string, style?: string, genre?: string) => {
+    if (!chapterId) {
+      setGenerationContext(null);
+      return;
+    }
+    setLoadingGenerationContext(true);
+    try {
+      const context = await apiClient.getScriptGenerateContext(chapterId, {
+        style: style || formData.style || 'anime',
+        genre: genre || formData.genre || undefined,
+      });
+      setGenerationContext(context);
+    } catch (err: any) {
+      setGenerationContext({ error: err?.message || '上下文加载失败' });
+    } finally {
+      setLoadingGenerationContext(false);
+    }
+  };
+
+  useEffect(() => {
+    if (showAIGenerateModal && aiGenerateType === 'from_novel' && selectedChapterId) {
+      loadGenerationContext(selectedChapterId);
+    }
+  }, [showAIGenerateModal, aiGenerateType, selectedChapterId]);
+
   // AI生成剧本
   const handleAIGenerate = async () => {
-    if (aiGenerateType === 'from_novel' && !selectedNovelId) {
-      alert('请选择关联的小说');
+    if (aiGenerateType === 'from_novel' && !selectedChapterId) {
+      toast({ title: '请选择章节', description: '需要先选择要改编的章节。', type: 'error' });
       return;
     }
     if (aiGenerateType === 'custom' && !customPrompt.trim()) {
-      alert('请输入剧本描述');
+      toast({ title: '请输入剧本描述', description: '补充描述后再开始生成。', type: 'error' });
       return;
     }
 
@@ -179,40 +305,53 @@ export default function ScriptsPage() {
     setGenerationResult(null);
 
     try {
-      // 获取选中小说的内容作为上下文
-      let context = '';
       if (aiGenerateType === 'from_novel') {
-        const novelRes = await fetch(`${API_BASE}/api/v1/novels/${selectedNovelId}`);
-        if (novelRes.ok) {
-          const novel = await novelRes.json();
-          context = `小说标题: ${novel.title}\n小说简介: ${novel.description || ''}\n小说内容: ${novel.content || ''}`;
+        const response = await fetchWithAuth(`${API_BASE}/scripts/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chapter_id: selectedChapterId,
+            style: formData.style || 'anime',
+            genre: formData.genre || undefined,
+            model_config_id: textModelConfigId || undefined,
+          }),
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.detail || error.message || `AI 生成失败：HTTP ${response.status}`);
         }
+        const script = await response.json();
+        setGenerationResult(script.content || script.description || '生成成功');
+        const check = await apiClient.checkScriptConsistency(script.id).catch(() => null);
+        if (check) {
+          setGenerationContext((prev: any) => ({
+            ...(prev || {}),
+            latest_check: check,
+            generated_script_id: script.id,
+          }));
+        }
+        await loadScripts();
+        return;
       }
 
-      // 调用AI生成API
-      const response = await fetch(`${API_BASE}/api/v1/coding-plan/storyboard`, {
+      const response = await fetchWithAuth(`${API_BASE}/coding-plan/storyboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          scene_description: aiGenerateType === 'from_novel' 
-            ? `基于小说内容生成视频剧本:\n${context}` 
-            : customPrompt,
-          api_key: 'demo-key',  // 后端会使用默认配置
-          model: 'qwen-vl-plus'
-        })
+          scene_description: customPrompt,
+          model_config_id: textModelConfigId || undefined,
+        }),
       });
-
-      if (response.ok) {
-        const result = await response.json();
-        setGenerationResult(result.storyboard || result.result || '生成成功');
-      } else {
-        // 如果API不可用，使用模拟生成
-        setGenerationResult(`# 生成的剧本\n\n## 第一幕：开场\n\n**场景描述**：主人公出现在山谷中，阳光照射，光影交织。\n\n**镜头序列**：\n1. 全景 - 山谷全景，阳光从云层中透出\n2. 中景 - 主人公背影，向远方望去\n3. 特写 - 主人公面部表情，坚定而沉思\n\n**台词**：\n- （旁白）"这是一个关于成长与救赎的故事..."\n\n## 第二幕：旅程开始\n\n**场景描述**：主人公踏上旅程，周围风景流转。\n\n**镜头序列**：\n1. 跟拍 - 主人公走在山路上\n2. 摇镜头 - 展示沿途风景\n3. 远景 - 主人公身影渐行渐远\n\n**特效**：光晕效果，岁月流转感\n\n---\n*本剧本由AI自动生成*`);
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || error.message || `AI 生成失败：HTTP ${response.status}`);
       }
+      const result = await response.json();
+      setGenerationResult(result.storyboard || result.result || '生成成功');
     } catch (err) {
       console.error('AI生成失败:', err);
-      // 模拟生成结果
-      setGenerationResult(`# 生成的剧本\n\n## 第一幕：开场\n\n**场景描述**：主人公出现在山谷中，阳光照射。\n\n**镜头序列**：\n1. 全景 - 山谷全景\n2. 中景 - 主人公背影\n3. 特写 - 面部表情\n\n## 第二幕：旅程\n\n**场景描述**：主人公踏上旅程。\n\n**镜头序列**：\n1. 跟拍 - 走在山路上\n2. 远景 - 身影渐行渐远\n\n---\n*AI生成（离线模式）*`);
+      const message = err instanceof Error ? err.message : 'AI 生成失败';
+      toast({ title: 'AI 生成失败', description: message, type: 'error' });
     } finally {
       setIsGenerating(false);
     }
@@ -221,6 +360,10 @@ export default function ScriptsPage() {
   // 应用生成的剧本
   const handleApplyGenerated = async () => {
     if (!generationResult) return;
+    if (aiGenerateType === 'from_novel') {
+      setShowAIGenerateModal(false);
+      return;
+    }
 
     // 解析生成的剧本内容，创建新剧本
     const title = generationResult.match(/^#\s+(.+)$/m)?.[1] || 'AI生成剧本';
@@ -228,7 +371,7 @@ export default function ScriptsPage() {
 
     setIsSaving(true);
     try {
-      const response = await fetch(`${API_BASE}/api/v1/scripts`, {
+      const response = await fetchWithAuth(`${API_BASE}/scripts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -243,13 +386,13 @@ export default function ScriptsPage() {
       if (response.ok) {
         await loadScripts();
         setShowAIGenerateModal(false);
-        alert('剧本已创建！');
+        toast({ title: '剧本已创建', description: title, type: 'success' });
       } else {
         throw new Error('保存失败');
       }
     } catch (err) {
       console.error('保存失败:', err);
-      alert('保存失败');
+      toast({ title: '保存失败', description: '请重试。', type: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -270,7 +413,7 @@ export default function ScriptsPage() {
   // 保存剧本
   const handleSave = async () => {
     if (!formData.title.trim()) {
-      alert('请输入剧本标题');
+      toast({ title: '请输入剧本标题', description: '标题是保存剧本的必填项。', type: 'error' });
       return;
     }
 
@@ -284,12 +427,12 @@ export default function ScriptsPage() {
       };
 
       const response = editingScript
-        ? await fetch(`${API_BASE}/api/v1/scripts/${editingScript.id}`, {
+        ? await fetchWithAuth(`${API_BASE}/scripts/${editingScript.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...payload, status: editingScript.status })
           })
-        : await fetch(`${API_BASE}/api/v1/scripts`, {
+        : await fetchWithAuth(`${API_BASE}/scripts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -298,12 +441,17 @@ export default function ScriptsPage() {
       if (response.ok) {
         await loadScripts();
         setShowModal(false);
+        toast({
+          title: editingScript ? '剧本已更新' : '剧本已创建',
+          description: formData.title,
+          type: 'success',
+        });
       } else {
         throw new Error('保存失败');
       }
     } catch (err) {
       console.error('保存失败:', err);
-      alert('保存失败，请重试');
+      toast({ title: '保存失败', description: '请重试。', type: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -311,28 +459,27 @@ export default function ScriptsPage() {
 
   // 删除剧本
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个剧本吗？')) return;
-    
     try {
-      const response = await fetch(`${API_BASE}/api/v1/scripts/${id}`, {
+      const response = await fetchWithAuth(`${API_BASE}/scripts/${id}`, {
         method: 'DELETE'
       });
       
       if (response.ok) {
         setScripts(scripts.filter(s => s.id !== id));
+        toast({ title: '剧本已删除', description: '列表已更新。', type: 'success' });
       } else {
         throw new Error('删除失败');
       }
     } catch (err) {
       console.error('删除失败:', err);
-      alert('删除失败，请重试');
+      toast({ title: '删除失败', description: '请重试。', type: 'error' });
     }
   };
 
   // 复制剧本
   const handleDuplicate = async (script: Script) => {
     try {
-      const response = await fetch(`${API_BASE}/api/v1/scripts`, {
+      const response = await fetchWithAuth(`${API_BASE}/scripts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -345,22 +492,21 @@ export default function ScriptsPage() {
       
       if (response.ok) {
         await loadScripts();
+        toast({ title: '剧本已复制', description: `${script.title} (副本)`, type: 'success' });
       } else {
         throw new Error('复制失败');
       }
     } catch (err) {
       console.error('复制失败:', err);
-      alert('复制失败，请重试');
+      toast({ title: '复制失败', description: '请重试。', type: 'error' });
     }
   };
 
   // 生成分镜
   const handleGenerateStoryboard = async (script: Script) => {
-    if (!confirm(`是否为剧本"${script.title}"生成分镜？`)) return;
-
     try {
       // 调用AI生成storyboard
-      const response = await fetch(`${API_BASE}/api/v1/storyboards`, {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -371,15 +517,15 @@ export default function ScriptsPage() {
       });
 
       if (response.ok) {
-        const storyboard = await response.json();
-        alert(`分镜已创建！跳转到分镜页面...`);
+        await response.json();
+        toast({ title: '分镜已创建', description: '正在跳转到分镜页面。', type: 'success' });
         window.location.href = '/storyboards';
       } else {
         throw new Error('创建失败');
       }
     } catch (err) {
       console.error('生成分镜失败:', err);
-      alert('生成分镜失败，请重试');
+      toast({ title: '生成分镜失败', description: '请重试。', type: 'error' });
     }
   };
 
@@ -403,12 +549,12 @@ export default function ScriptsPage() {
     <MainLayout>
       <div className="space-y-6">
         {/* 页面标题 */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-white">剧本管理</h1>
             <p className="text-white/60 mt-1">管理视频剧本和分镜脚本</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3 sm:justify-end">
             <Button 
               variant="outline"
               className="border-violet-500/50 text-violet-400 hover:bg-violet-600/20"
@@ -455,16 +601,42 @@ export default function ScriptsPage() {
         {/* 搜索栏 */}
         <Card className="bg-white/5 border-white/10">
           <CardContent className="p-4">
-            <div className="flex gap-4">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_13rem_13rem]">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                 <Input
-                  placeholder="搜索剧本标题或描述..."
+                  placeholder="搜索剧本标题或描述…"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
               </div>
+              <select
+                value={selectedFilterNovelId}
+                onChange={(e) => {
+                  setSelectedFilterNovelId(e.target.value);
+                  setSelectedFilterChapterId('');
+                }}
+                className="w-full min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+              >
+                <option value="">全部小说</option>
+                {novels.map((novel) => (
+                  <option key={novel.id} value={novel.id}>{novel.title}</option>
+                ))}
+              </select>
+              <select
+                value={selectedFilterChapterId}
+                onChange={(e) => setSelectedFilterChapterId(e.target.value)}
+                disabled={!selectedFilterNovelId}
+                className="w-full min-w-0 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white disabled:opacity-50"
+              >
+                <option value="">全部章节</option>
+                {chapters.map((chapter) => (
+                  <option key={chapter.id} value={chapter.id}>
+                    {chapter.chapter_number ? `第${chapter.chapter_number}章 ` : ''}{chapter.title}
+                  </option>
+                ))}
+              </select>
             </div>
           </CardContent>
         </Card>
@@ -473,7 +645,7 @@ export default function ScriptsPage() {
         {loading && (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-8 h-8 animate-spin text-blue-400" />
-            <span className="ml-3 text-white/60">加载中...</span>
+            <span className="ml-3 text-white/60">加载中…</span>
           </div>
         )}
 
@@ -498,7 +670,7 @@ export default function ScriptsPage() {
         {/* 状态标签页 */}
         {!loading && !error && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList className="bg-white/5">
+            <TabsList className="h-auto max-w-full flex-wrap justify-start bg-white/5">
               <TabsTrigger value="all" className="data-[state=active]:bg-blue-600">全部</TabsTrigger>
               <TabsTrigger value="draft" className="data-[state=active]:bg-blue-600">草稿</TabsTrigger>
               <TabsTrigger value="writing" className="data-[state=active]:bg-blue-600">连载中</TabsTrigger>
@@ -511,21 +683,38 @@ export default function ScriptsPage() {
                   {filteredScripts.map((script) => (
                     <Card key={script.id} className="bg-white/5 border-white/10 hover:border-blue-500/30 transition-colors">
                       <CardContent className="p-4">
-                        <div className="flex items-start justify-between">
-                          <Link href={`/scripts/${script.id}`} className="flex-1 block">
-                            <div className="flex items-center gap-3">
-                              <FileText className="w-5 h-5 text-blue-400" />
-                              <h3 className="text-lg font-semibold text-white hover:text-blue-400 transition-colors">{script.title}</h3>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <Link href={`/scripts/${script.id}`} className="min-w-0 flex-1 block">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <FileText className="h-5 w-5 shrink-0 text-blue-400" />
+                              <h3 className="min-w-0 break-words text-lg font-semibold text-white transition-colors hover:text-blue-400">{script.title}</h3>
                               <span className={`px-2 py-0.5 rounded text-xs ${STATUS_COLORS[script.status]}`}>
                                 {STATUS_LABELS[script.status]}
                               </span>
                             </div>
                             {script.description && (
-                              <p className="text-sm text-white/40 mt-1">{script.description}</p>
+                              <p className="mt-1 break-words text-sm text-white/40">{script.description}</p>
                             )}
-                            <div className="flex items-center gap-4 mt-3 text-sm text-white/40">
+                            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-white/40">
                               {script.genre && <span>{script.genre}</span>}
                               {script.style && <span>{script.style}</span>}
+                              {script.novel_id && (
+                                <span>{novels.find((novel) => novel.id === script.novel_id)?.title || '已绑定小说'}</span>
+                              )}
+                              {script.chapter_id && (
+                                <span>
+                                  {chapters.find((chapter) => chapter.id === script.chapter_id)?.title || '已绑定章节'}
+                                </span>
+                              )}
+                              {script.chapter_id && (
+                                <Link
+                                  href={`/storyboards?script_id=${script.id}&novel_id=${script.novel_id || ''}&chapter_id=${script.chapter_id}`}
+                                  className="text-blue-300 hover:text-blue-200"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  生成分镜
+                                </Link>
+                              )}
                               <span className="flex items-center gap-1">
                                 <Clock className="w-4 h-4" />
                                 {formatDuration(script.duration)}
@@ -533,34 +722,36 @@ export default function ScriptsPage() {
                               <span>更新于 {new Date(script.updated_at).toLocaleDateString()}</span>
                             </div>
                           </Link>
-                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex flex-wrap items-center gap-2 sm:justify-end" onClick={(e) => e.stopPropagation()}>
                             {script.status === 'completed' && (
                               <Button 
                                 variant="ghost" 
                                 size="sm"
                                 className="text-violet-400 hover:text-violet-300"
-                                onClick={() => handleGenerateStoryboard(script)}
+                                onClick={() => setStoryboardTarget(script)}
                               >
                                 <LayoutGrid className="w-4 h-4 mr-1" />
                                 生成分镜
                               </Button>
                             )}
                             {script.status === 'completed' && (
-                              <Link href={`/video-generation?script=${script.id}`}>
-                                <Button variant="ghost" size="sm" className="text-violet-400 hover:text-violet-300">
+                              <Button asChild variant="ghost" size="sm" className="text-violet-400 hover:text-violet-300">
+                                <Link href={`/video-generation?script=${script.id}`}>
                                   <Play className="w-4 h-4 mr-1" />
                                   生成视频
-                                </Button>
-                              </Link>
-                            )}
-                            <Link href={`/scripts/${script.id}`}>
-                              <Button variant="ghost" size="icon" className="text-white/60 hover:text-white">
-                                <Eye className="w-4 h-4" />
+                                </Link>
                               </Button>
-                            </Link>
+                            )}
+                            <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`查看《${script.title}》`} title="查看">
+                              <Link href={`/scripts/${script.id}`}>
+                                <Eye className="w-4 h-4" />
+                              </Link>
+                            </Button>
                             <Button 
                               variant="ghost" 
                               size="icon" 
+                              aria-label={`编辑《${script.title}》`}
+                              title="编辑"
                               className="text-white/60 hover:text-white"
                               onClick={() => handleEdit(script)}
                             >
@@ -569,6 +760,8 @@ export default function ScriptsPage() {
                             <Button 
                               variant="ghost" 
                               size="icon" 
+                              aria-label={`复制《${script.title}》`}
+                              title="复制"
                               className="text-white/60 hover:text-white"
                               onClick={() => handleDuplicate(script)}
                             >
@@ -577,8 +770,10 @@ export default function ScriptsPage() {
                             <Button 
                               variant="ghost" 
                               size="icon" 
+                              aria-label={`删除《${script.title}》`}
+                              title="删除"
                               className="text-white/60 hover:text-red-400"
-                              onClick={() => handleDelete(script.id)}
+                              onClick={() => setDeleteTarget(script)}
                             >
                               <Trash2 className="w-4 h-4" />
                             </Button>
@@ -610,26 +805,58 @@ export default function ScriptsPage() {
             </TabsContent>
           </Tabs>
         )}
+        <ConfirmDialog
+          open={Boolean(deleteTarget)}
+          title="删除剧本"
+          description={`确定要删除「${deleteTarget?.title || ''}」吗？此操作无法撤销。`}
+          confirmText="删除"
+          destructive
+          loading={deletingScript}
+          onOpenChange={(open) => {
+            if (!open) setDeleteTarget(null);
+          }}
+          onConfirm={async () => {
+            if (!deleteTarget) return;
+            setDeletingScript(true);
+            try {
+              await handleDelete(deleteTarget.id);
+              setDeleteTarget(null);
+            } finally {
+              setDeletingScript(false);
+            }
+          }}
+        />
+        <ConfirmDialog
+          open={Boolean(storyboardTarget)}
+          title="生成分镜"
+          description={`是否为「${storyboardTarget?.title || ''}」创建分镜？创建后会跳转到分镜页面。`}
+          confirmText="生成分镜"
+          loading={creatingStoryboard}
+          onOpenChange={(open) => {
+            if (!open) setStoryboardTarget(null);
+          }}
+          onConfirm={async () => {
+            if (!storyboardTarget) return;
+            setCreatingStoryboard(true);
+            try {
+              await handleGenerateStoryboard(storyboardTarget);
+              setStoryboardTarget(null);
+            } finally {
+              setCreatingStoryboard(false);
+            }
+          }}
+        />
       </div>
 
       {/* 创建/编辑剧本弹窗 */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="bg-white/10 backdrop-blur-lg border-white/20 w-full max-w-lg">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-white">
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="max-w-lg border-white/20 bg-slate-950/95">
+            <DialogHeader className="pr-10">
+              <DialogTitle>
                 {editingScript ? '编辑剧本' : '创建剧本'}
-              </CardTitle>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={() => setShowModal(false)}
-                className="text-white/60 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
               <div>
                 <label className="text-sm text-white/60 mb-2 block">剧本标题 *</label>
                 <Input
@@ -643,7 +870,7 @@ export default function ScriptsPage() {
               <div>
                 <label className="text-sm text-white/60 mb-2 block">剧本描述</label>
                 <Textarea
-                  placeholder="简要描述剧本内容..."
+                  placeholder="简要描述剧本内容…"
                   value={formData.description}
                   onChange={(e) => setFormData({...formData, description: e.target.value})}
                   rows={3}
@@ -688,7 +915,7 @@ export default function ScriptsPage() {
                   {isSaving ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      保存中...
+                      保存中…
                     </>
                   ) : (
                     <>
@@ -698,30 +925,20 @@ export default function ScriptsPage() {
                   )}
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </div>
+        </DialogContent>
+      </Dialog>
 
       {/* AI生成剧本弹窗 */}
-      {showAIGenerateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <Card className="bg-white/10 backdrop-blur-lg border-white/20 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-white flex items-center gap-2">
+      <Dialog open={showAIGenerateModal} onOpenChange={setShowAIGenerateModal}>
+        <DialogContent className="max-w-2xl border-white/20 bg-slate-950/95">
+            <DialogHeader className="pr-10">
+              <DialogTitle className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-violet-400" />
                 AI生成剧本
-              </CardTitle>
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                onClick={() => setShowAIGenerateModal(false)}
-                className="text-white/60 hover:text-white"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </CardHeader>
-            <CardContent className="space-y-4">
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
               {/* 生成方式选择 */}
               <div>
                 <label className="text-sm text-white/60 mb-2 block">生成方式</label>
@@ -745,23 +962,103 @@ export default function ScriptsPage() {
                 </div>
               </div>
 
+              <ModelCapabilitySelector
+                capability="text"
+                configs={modelConfigs}
+                value={textModelConfigId}
+                onChange={setTextModelConfigId}
+                disabled={isGenerating}
+                title="剧本生成模型"
+                description="从章节改编剧本或自定义描述生成技术分镜时，都会使用这里选择的文本模型配置。"
+              />
+
               {/* 选择小说 */}
               {aiGenerateType === 'from_novel' && (
-                <div>
-                  <label className="text-sm text-white/60 mb-2 block">选择小说</label>
-                  <select
-                    value={selectedNovelId}
-                    onChange={(e) => setSelectedNovelId(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
-                  >
-                    <option value="">选择小说...</option>
-                    {novels.map(novel => (
-                      <option key={novel.id} value={novel.id}>{novel.title}</option>
-                    ))}
-                  </select>
-                  {novels.length === 0 && (
-                    <p className="text-white/40 text-sm mt-1">暂无可用小说，请先创建小说</p>
-                  )}
+                <div className="space-y-3">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="text-sm text-white/60 mb-2 block">选择小说</label>
+                      <select
+                        value={selectedNovelId}
+                        onChange={(e) => {
+                          const nextNovelId = e.target.value;
+                          setSelectedNovelId(nextNovelId);
+                          setSelectedChapterId('');
+                          setGenerationContext(null);
+                          if (nextNovelId) {
+                            fetchChaptersForNovel(nextNovelId).then((list) => {
+                              setAiChapters(list);
+                              if (list.length > 0) setSelectedChapterId(list[0].id);
+                            });
+                          } else {
+                            setAiChapters([]);
+                          }
+                        }}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
+                      >
+                        <option value="">选择小说…</option>
+                        {novels.map(novel => (
+                          <option key={novel.id} value={novel.id}>{novel.title}</option>
+                        ))}
+                      </select>
+                      {novels.length === 0 && (
+                        <p className="text-white/40 text-sm mt-1">暂无可用小说，请先创建小说</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="text-sm text-white/60 mb-2 block">选择章节</label>
+                      <select
+                        value={selectedChapterId}
+                        onChange={(e) => setSelectedChapterId(e.target.value)}
+                        disabled={!selectedNovelId}
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white disabled:opacity-50"
+                      >
+                        <option value="">选择章节…</option>
+                        {aiChapters.map((chapter) => (
+                          <option key={chapter.id} value={chapter.id}>
+                            {chapter.chapter_number ? `第${chapter.chapter_number}章 ` : ''}{chapter.title}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedNovelId && aiChapters.length === 0 && (
+                        <p className="text-white/40 text-sm mt-1">该小说暂无章节，请先创建章节内容</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-white/10 bg-white/5 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium text-white/80">生成上下文预览</div>
+                      {loadingGenerationContext && <Loader2 className="h-4 w-4 animate-spin text-violet-300" />}
+                    </div>
+                    {generationContext?.error ? (
+                      <div className="text-sm text-red-300">{generationContext.error}</div>
+                    ) : generationContext ? (
+                      <div className="space-y-2 text-sm text-white/60">
+                        <div className="flex flex-wrap gap-2">
+                          <span className="rounded bg-white/10 px-2 py-1">人物 {generationContext.summary?.counts?.characters || 0}</span>
+                          <span className="rounded bg-white/10 px-2 py-1">场景 {generationContext.summary?.counts?.scenes || 0}</span>
+                          <span className="rounded bg-white/10 px-2 py-1">道具 {generationContext.summary?.counts?.props || 0}</span>
+                          <span className="rounded bg-white/10 px-2 py-1">事件 {generationContext.summary?.counts?.events || 0}</span>
+                          <span className="rounded bg-white/10 px-2 py-1">关系 {generationContext.summary?.counts?.relationships || 0}</span>
+                        </div>
+                        <div>前情：{generationContext.previous_chapter?.title || '无'}；后续约束：{generationContext.next_chapter?.title || '无'}</div>
+                        <div className="line-clamp-2">人物：{(generationContext.summary?.characters || []).join('、') || '未提取'}</div>
+                        <div className="line-clamp-2">场景/道具/事件：{[
+                          ...(generationContext.summary?.scenes || []),
+                          ...(generationContext.summary?.props || []),
+                          ...(generationContext.summary?.events || []),
+                        ].slice(0, 8).join('、') || '未提取'}</div>
+                        {generationContext.latest_check && (
+                          <div className={generationContext.latest_check.issue_count ? 'text-yellow-200' : 'text-green-300'}>
+                            生成后一致性检查：{generationContext.latest_check.issue_count || 0} 个提示
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-sm text-white/40">选择章节后会自动加载 Story Bible、人物关系、事件线和章节承接信息。</div>
+                    )}
+                  </div>
                 </div>
               )}
 
@@ -770,7 +1067,7 @@ export default function ScriptsPage() {
                 <div>
                   <label className="text-sm text-white/60 mb-2 block">剧本描述</label>
                   <Textarea
-                    placeholder="描述你想要生成的剧本内容...\n例如：\n- 仙侠风格\n- 主人公离开山门\n- 遇到神秘老者\n- 获得传承"
+                    placeholder="描述你想要生成的剧本内容…\n例如：\n- 仙侠风格\n- 主人公离开山门\n- 遇到神秘老者\n- 获得传承"
                     value={customPrompt}
                     onChange={(e) => setCustomPrompt(e.target.value)}
                     rows={6}
@@ -782,13 +1079,13 @@ export default function ScriptsPage() {
               {/* 生成按钮 */}
               <Button
                 onClick={handleAIGenerate}
-                disabled={isGenerating || (aiGenerateType === 'from_novel' && !selectedNovelId) || (aiGenerateType === 'custom' && !customPrompt.trim())}
+                disabled={isGenerating || (aiGenerateType === 'from_novel' && !selectedChapterId) || (aiGenerateType === 'custom' && !customPrompt.trim())}
                 className="w-full bg-violet-600 hover:bg-violet-700"
               >
                 {isGenerating ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    AI生成中...
+                    AI生成中…
                   </>
                 ) : (
                   <>
@@ -839,15 +1136,14 @@ export default function ScriptsPage() {
                       ) : (
                         <CheckCircle className="w-4 h-4 mr-2" />
                       )}
-                      创建剧本
+                      {aiGenerateType === 'from_novel' ? '已创建，关闭' : '创建剧本'}
                     </Button>
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </div>
+        </DialogContent>
+      </Dialog>
     </MainLayout>
   );
 }

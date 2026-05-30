@@ -4,6 +4,7 @@
 一个 Timeline 包含多个 Track (轨道)
 一个 Track 包含多个 Clip (片段)
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
@@ -59,8 +60,8 @@ class Timeline(Base):
     preview_url = Column(Text)  # 预览URL
     extra_data = Column(JSON)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class Track(Base):
@@ -95,8 +96,8 @@ class Track(Base):
     # === 效果 ===
     effects = Column(JSON)  # 轨道级效果
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
 
 class Clip(Base):
@@ -182,5 +183,5 @@ class Clip(Base):
     font_color = Column(String(20), default="#FFFFFF")
     background_color = Column(String(20))  # 字幕背景
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

@@ -2,11 +2,19 @@
 FastAPI 应用入口
 """
 
+from pathlib import Path
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+
+ALLOWED_ORIGIN_REGEX = (
+    r"^https://([a-z0-9-]+--)?hackersun-ai-video-platform\.netlify\.app$"
+    r"|^http://(localhost|127\.0\.0\.1)(:\d+)?$"
+)
 
 app = FastAPI(
     title="AI视频平台",
@@ -17,11 +25,21 @@ app = FastAPI(
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[],
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,
 )
+
+
+@app.middleware("http")
+async def add_private_network_cors_header(request: Request, call_next):
+    response = await call_next(request)
+    if request.headers.get("origin"):
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
 
 
 @app.exception_handler(Exception)
@@ -38,12 +56,17 @@ async def global_exception_handler(request: Request, exc: Exception):
             "Access-Control-Allow-Methods": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Private-Network": "true",
         },
     )
 
 
 # 注册API路由
 app.include_router(api_router, prefix="/api/v1")
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+STATIC_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/health")

@@ -9,6 +9,7 @@ sys.path.insert(0, '.')
 
 from app.core.database import sync_engine
 from sqlalchemy.orm import Session
+from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_MODELS, VOLCANO_AGENT_PLAN_PROVIDER
 from app.models.llm_config import LLMProvider, LLMModel
 
 
@@ -31,13 +32,14 @@ def init_llm_providers_and_models():
             "website_url": "https://www.volcengine.com/",
             "doc_url": "https://www.volcengine.com/docs/82379"
         },
+        VOLCANO_AGENT_PLAN_PROVIDER,
         {
             "id": "qianlian",
             "name": "qianlian",
             "name_cn": "阿里百炼",
             "name_en": "Alibaba Qianlian",
             "provider_type": "cloud",
-            "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+            "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1",
             "auth_type": "bearer",
             "is_active": True,
             "is_builtin": True,
@@ -91,6 +93,7 @@ def init_llm_providers_and_models():
     
     # 模型配置
     models = [
+        *VOLCANO_AGENT_PLAN_MODELS,
         # 火山引擎 - 文本模型
         {
             "id": "volcano-doubao-seed-1-8",
@@ -128,6 +131,42 @@ def init_llm_providers_and_models():
             "is_recommended": False,
             "is_active": True,
             "description": "豆包Seedance 1.0 Pro快速版，图生视频/文生视频，速度快"
+        },
+        {
+            "id": "volcano-seedance-2-0",
+            "provider_id": "volcano",
+            "model_id": "doubao-seedance-2-0-260128",
+            "model_name": "Doubao-Seedance-2.0",
+            "model_name_cn": "豆包Seedance-2.0",
+            "model_type": "video",
+            "capabilities": ["text-to-video", "image-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "豆包Seedance 2.0，高质量文生视频/图生视频模型"
+        },
+        {
+            "id": "volcano-seedance-2-0-fast",
+            "provider_id": "volcano",
+            "model_id": "doubao-seedance-2-0-fast-260128",
+            "model_name": "Doubao-Seedance-2.0-fast",
+            "model_name_cn": "豆包Seedance-2.0-fast",
+            "model_type": "video",
+            "capabilities": ["text-to-video", "image-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "豆包Seedance 2.0 Fast，适合批量镜头草稿和快速预览"
         },
         {
             "id": "volcano-video",

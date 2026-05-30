@@ -1,0 +1,414 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - heading "大模型配置" [level=1] [ref=e64]:
+            - img [ref=e65]
+            - text: 大模型配置
+          - paragraph [ref=e68]: 配置和管理AI模型服务，支持火山引擎、阿里千问等
+        - generic [ref=e69]:
+          - generic [ref=e71]:
+            - heading "选择模型" [level=3] [ref=e73]:
+              - img [ref=e74]
+              - text: 选择模型
+            - generic [ref=e76]:
+              - generic [ref=e77]:
+                - button "🔥 火山引擎" [ref=e78] [cursor=pointer]
+                - button "🟠 阿里百炼" [ref=e79] [cursor=pointer]
+                - button "🐱 阿里千问" [ref=e80] [cursor=pointer]
+              - generic [ref=e81]:
+                - generic [ref=e84] [cursor=pointer]:
+                  - generic [ref=e85]:
+                    - img [ref=e86]
+                    - text: 豆包Seed-1.8
+                  - generic [ref=e88]: 上下文4096 • 输入¥0.5/千token
+                  - generic [ref=e89]: 豆包最新轻量级模型，性价比高
+                - generic [ref=e92] [cursor=pointer]:
+                  - generic [ref=e93]:
+                    - img [ref=e94]
+                    - text: 火山视频生成
+                    - generic [ref=e97]: 推荐
+                  - generic [ref=e98]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e99]: 火山引擎高质量视频生成模型
+                - generic [ref=e102] [cursor=pointer]:
+                  - generic [ref=e103]:
+                    - text: 豆包Seedream-4.5
+                    - generic [ref=e104]: 推荐
+                  - generic [ref=e105]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e106]: 豆包高质量图像生成模型
+                - generic [ref=e109] [cursor=pointer]:
+                  - generic [ref=e110]:
+                    - img [ref=e111]
+                    - text: 豆包Seedance-1.5-pro
+                    - generic [ref=e114]: 推荐
+                  - generic [ref=e115]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e116]: 火山引擎高质量视频生成模型，支持4/8/10秒视频
+                - generic [ref=e119] [cursor=pointer]:
+                  - generic [ref=e120]: 豆包Seedream-5.0-lite
+                  - generic [ref=e121]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e122]: 豆包轻量级图像生成模型
+                - generic [ref=e125] [cursor=pointer]:
+                  - generic [ref=e126]:
+                    - text: 豆包TTS
+                    - generic [ref=e127]: 推荐
+                  - generic [ref=e128]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e129]: 豆包语音合成，支持多种音色和语速
+                - generic [ref=e132] [cursor=pointer]:
+                  - generic [ref=e133]: 豆包TTS英文
+                  - generic [ref=e134]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e135]: 豆包英文语音合成
+                - generic [ref=e138] [cursor=pointer]:
+                  - generic [ref=e139]: 豆包TTS粤语
+                  - generic [ref=e140]: 上下文0 • 输入¥0/千token
+                  - generic [ref=e141]: 豆包粤语语音合成
+          - generic [ref=e142]:
+            - generic [ref=e143]:
+              - heading "API Key 配置" [level=3] [ref=e145]:
+                - img [ref=e146]
+                - text: API Key 配置
+              - generic [ref=e150]:
+                - generic [ref=e151]:
+                  - generic [ref=e152]: 配置名称
+                  - textbox "例如：我的豆包配置" [ref=e153]
+                - generic [ref=e154]:
+                  - generic [ref=e155]: 服务商
+                  - combobox [ref=e156] [cursor=pointer]:
+                    - option "选择服务商" [disabled]
+                    - option "火山引擎" [selected]
+                    - option "阿里百炼"
+                    - option "千问(DashScope)"
+                  - generic [ref=e157]:
+                    - generic [ref=e158]:
+                      - img [ref=e159]
+                      - generic [ref=e162]: API地址
+                    - code [ref=e163]: https://ark.cn-beijing.volces.com/api/v3
+                - generic [ref=e164]:
+                  - generic [ref=e165]: 模型
+                  - combobox [ref=e166] [cursor=pointer]:
+                    - option "选择模型" [disabled] [selected]
+                    - option "豆包Seed-1.8"
+                    - option "火山视频生成"
+                    - option "豆包Seedream-4.5"
+                    - option "豆包Seedance-1.5-pro"
+                    - option "豆包Seedream-5.0-lite"
+                    - option "豆包TTS"
+                    - option "豆包TTS英文"
+                    - option "豆包TTS粤语"
+                - generic [ref=e167]:
+                  - generic [ref=e168]: API Key *
+                  - textbox "请输入API Key" [ref=e169]
+                - generic [ref=e170]:
+                  - generic [ref=e171]: API Secret (可选)
+                  - textbox "部分服务商需要" [ref=e172]
+                - group [ref=e173]:
+                  - generic "高级参数" [ref=e174] [cursor=pointer]:
+                    - img [ref=e175]
+                    - text: 高级参数
+                - generic [ref=e177] [cursor=pointer]:
+                  - checkbox "设为默认配置" [ref=e178]
+                  - text: 设为默认配置
+                - generic [ref=e179]:
+                  - button "测试连接" [disabled]:
+                    - img
+                    - text: 测试连接
+                  - button "保存配置" [disabled]:
+                    - img
+                    - text: 保存配置
+            - generic [ref=e180]:
+              - heading "已保存配置 12个" [level=3] [ref=e182]:
+                - img [ref=e183]
+                - text: 已保存配置
+                - generic [ref=e186]: 12个
+              - generic [ref=e188]:
+                - generic [ref=e189]:
+                  - generic [ref=e190]:
+                    - generic [ref=e191]:
+                      - generic [ref=e192]:
+                        - text: 测试配置
+                        - generic [ref=e193]: 默认
+                      - generic [ref=e194]: 千问3.5-Plus • 使用0次
+                    - generic [ref=e195]:
+                      - button "测试" [ref=e196] [cursor=pointer]:
+                        - img [ref=e197]
+                      - button "设为默认" [ref=e199] [cursor=pointer]:
+                        - img [ref=e200]
+                      - button "编辑" [ref=e203] [cursor=pointer]:
+                        - img [ref=e204]
+                      - button "删除" [ref=e206] [cursor=pointer]:
+                        - img [ref=e207]
+                  - generic [ref=e210]:
+                    - img [ref=e211]
+                    - generic [ref=e214]: 已验证
+                - generic [ref=e215]:
+                  - generic [ref=e216]:
+                    - generic [ref=e217]:
+                      - generic [ref=e218]: 测试配置
+                      - generic [ref=e219]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e220]:
+                      - button "测试" [ref=e221] [cursor=pointer]:
+                        - img [ref=e222]
+                      - button "设为默认" [ref=e224] [cursor=pointer]:
+                        - img [ref=e225]
+                      - button "编辑" [ref=e228] [cursor=pointer]:
+                        - img [ref=e229]
+                      - button "删除" [ref=e231] [cursor=pointer]:
+                        - img [ref=e232]
+                  - generic [ref=e235]:
+                    - img [ref=e236]
+                    - generic [ref=e240]: 未验证
+                - generic [ref=e241]:
+                  - generic [ref=e242]:
+                    - generic [ref=e243]:
+                      - generic [ref=e244]: 火山引擎测试
+                      - generic [ref=e245]: 豆包Seed-1.8 • 使用0次
+                    - generic [ref=e246]:
+                      - button "测试" [ref=e247] [cursor=pointer]:
+                        - img [ref=e248]
+                      - button "设为默认" [ref=e250] [cursor=pointer]:
+                        - img [ref=e251]
+                      - button "编辑" [ref=e254] [cursor=pointer]:
+                        - img [ref=e255]
+                      - button "删除" [ref=e257] [cursor=pointer]:
+                        - img [ref=e258]
+                  - generic [ref=e261]:
+                    - img [ref=e262]
+                    - generic [ref=e265]: 已验证
+                - generic [ref=e266]:
+                  - generic [ref=e267]:
+                    - generic [ref=e268]:
+                      - generic [ref=e269]: 测试配置
+                      - generic [ref=e270]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e271]:
+                      - button "测试" [ref=e272] [cursor=pointer]:
+                        - img [ref=e273]
+                      - button "设为默认" [ref=e275] [cursor=pointer]:
+                        - img [ref=e276]
+                      - button "编辑" [ref=e279] [cursor=pointer]:
+                        - img [ref=e280]
+                      - button "删除" [ref=e282] [cursor=pointer]:
+                        - img [ref=e283]
+                  - generic [ref=e286]:
+                    - img [ref=e287]
+                    - generic [ref=e291]: 未验证
+                - generic [ref=e292]:
+                  - generic [ref=e293]:
+                    - generic [ref=e294]:
+                      - generic [ref=e295]: 测试配置
+                      - generic [ref=e296]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e297]:
+                      - button "测试" [ref=e298] [cursor=pointer]:
+                        - img [ref=e299]
+                      - button "设为默认" [ref=e301] [cursor=pointer]:
+                        - img [ref=e302]
+                      - button "编辑" [ref=e305] [cursor=pointer]:
+                        - img [ref=e306]
+                      - button "删除" [ref=e308] [cursor=pointer]:
+                        - img [ref=e309]
+                  - generic [ref=e312]:
+                    - img [ref=e313]
+                    - generic [ref=e317]: 未验证
+                - generic [ref=e318]:
+                  - generic [ref=e319]:
+                    - generic [ref=e320]:
+                      - generic [ref=e321]: 测试配置
+                      - generic [ref=e322]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e323]:
+                      - button "测试" [ref=e324] [cursor=pointer]:
+                        - img [ref=e325]
+                      - button "设为默认" [ref=e327] [cursor=pointer]:
+                        - img [ref=e328]
+                      - button "编辑" [ref=e331] [cursor=pointer]:
+                        - img [ref=e332]
+                      - button "删除" [ref=e334] [cursor=pointer]:
+                        - img [ref=e335]
+                  - generic [ref=e338]:
+                    - img [ref=e339]
+                    - generic [ref=e343]: 未验证
+                - generic [ref=e344]:
+                  - generic [ref=e345]:
+                    - generic [ref=e346]:
+                      - generic [ref=e347]: 测试配置
+                      - generic [ref=e348]: 千问3.5-Plus • 使用0次
+                    - generic [ref=e349]:
+                      - button "测试" [ref=e350] [cursor=pointer]:
+                        - img [ref=e351]
+                      - button "设为默认" [ref=e353] [cursor=pointer]:
+                        - img [ref=e354]
+                      - button "编辑" [ref=e357] [cursor=pointer]:
+                        - img [ref=e358]
+                      - button "删除" [ref=e360] [cursor=pointer]:
+                        - img [ref=e361]
+                  - generic [ref=e364]:
+                    - img [ref=e365]
+                    - generic [ref=e369]: 未验证
+                - generic [ref=e370]:
+                  - generic [ref=e371]:
+                    - generic [ref=e372]:
+                      - generic [ref=e373]: 测试配置
+                      - generic [ref=e374]: 千问3.5-Plus • 使用0次
+                    - generic [ref=e375]:
+                      - button "测试" [ref=e376] [cursor=pointer]:
+                        - img [ref=e377]
+                      - button "设为默认" [ref=e379] [cursor=pointer]:
+                        - img [ref=e380]
+                      - button "编辑" [ref=e383] [cursor=pointer]:
+                        - img [ref=e384]
+                      - button "删除" [ref=e386] [cursor=pointer]:
+                        - img [ref=e387]
+                  - generic [ref=e390]:
+                    - img [ref=e391]
+                    - generic [ref=e395]: 未验证
+                - generic [ref=e396]:
+                  - generic [ref=e397]:
+                    - generic [ref=e398]:
+                      - generic [ref=e399]: 测试配置
+                      - generic [ref=e400]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e401]:
+                      - button "测试" [ref=e402] [cursor=pointer]:
+                        - img [ref=e403]
+                      - button "设为默认" [ref=e405] [cursor=pointer]:
+                        - img [ref=e406]
+                      - button "编辑" [ref=e409] [cursor=pointer]:
+                        - img [ref=e410]
+                      - button "删除" [ref=e412] [cursor=pointer]:
+                        - img [ref=e413]
+                  - generic [ref=e416]:
+                    - img [ref=e417]
+                    - generic [ref=e421]: 未验证
+                - generic [ref=e422]:
+                  - generic [ref=e423]:
+                    - generic [ref=e424]:
+                      - generic [ref=e425]: 测试配置
+                      - generic [ref=e426]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e427]:
+                      - button "测试" [ref=e428] [cursor=pointer]:
+                        - img [ref=e429]
+                      - button "设为默认" [ref=e431] [cursor=pointer]:
+                        - img [ref=e432]
+                      - button "编辑" [ref=e435] [cursor=pointer]:
+                        - img [ref=e436]
+                      - button "删除" [ref=e438] [cursor=pointer]:
+                        - img [ref=e439]
+                  - generic [ref=e442]:
+                    - img [ref=e443]
+                    - generic [ref=e447]: 未验证
+                - generic [ref=e448]:
+                  - generic [ref=e449]:
+                    - generic [ref=e450]:
+                      - generic [ref=e451]: 测试配置
+                      - generic [ref=e452]: 豆包Seedance-1.5-pro • 使用0次
+                    - generic [ref=e453]:
+                      - button "测试" [ref=e454] [cursor=pointer]:
+                        - img [ref=e455]
+                      - button "设为默认" [ref=e457] [cursor=pointer]:
+                        - img [ref=e458]
+                      - button "编辑" [ref=e461] [cursor=pointer]:
+                        - img [ref=e462]
+                      - button "删除" [ref=e464] [cursor=pointer]:
+                        - img [ref=e465]
+                  - generic [ref=e468]:
+                    - img [ref=e469]
+                    - generic [ref=e473]: 未验证
+                - generic [ref=e474]:
+                  - generic [ref=e475]:
+                    - generic [ref=e476]:
+                      - generic [ref=e477]: 测试配置
+                      - generic [ref=e478]: 豆包Seed-1.8 • 使用0次
+                    - generic [ref=e479]:
+                      - button "测试" [ref=e480] [cursor=pointer]:
+                        - img [ref=e481]
+                      - button "设为默认" [ref=e483] [cursor=pointer]:
+                        - img [ref=e484]
+                      - button "编辑" [ref=e487] [cursor=pointer]:
+                        - img [ref=e488]
+                      - button "删除" [ref=e490] [cursor=pointer]:
+                        - img [ref=e491]
+                  - generic [ref=e494]:
+                    - img [ref=e495]
+                    - generic [ref=e499]: 未验证
+            - generic [ref=e501]:
+              - heading "如何获取API Key?" [level=4] [ref=e502]:
+                - img [ref=e503]
+                - text: 如何获取API Key?
+              - list [ref=e507]:
+                - listitem [ref=e508]:
+                  - text: •
+                  - strong [ref=e509]: "火山引擎:"
+                  - link "volcengine.com" [ref=e510] [cursor=pointer]:
+                    - /url: https://www.volcengine.com
+                - listitem [ref=e511]:
+                  - text: •
+                  - strong [ref=e512]: "阿里百炼:"
+                  - link "阿里云百炼" [ref=e513] [cursor=pointer]:
+                    - /url: https://bailian.console.aliyun.com
+                - listitem [ref=e514]:
+                  - text: •
+                  - strong [ref=e515]: "阿里千问:"
+                  - link "阿里云DashScope" [ref=e516] [cursor=pointer]:
+                    - /url: https://dashscope.console.aliyun.com
+            - generic [ref=e518]:
+              - heading "常见错误说明" [level=4] [ref=e519]:
+                - img [ref=e520]
+                - text: 常见错误说明
+              - list [ref=e522]:
+                - listitem [ref=e523]:
+                  - text: 🔑
+                  - strong [ref=e524]: "Key无效:"
+                  - text: API Key格式或值错误
+                - listitem [ref=e525]:
+                  - text: 🌐
+                  - strong [ref=e526]: "网络失败:"
+                  - text: 网络不通或API地址错误
+                - listitem [ref=e527]:
+                  - text: ⏱️
+                  - strong [ref=e528]: "配额用完:"
+                  - text: 当月用量已达上限
+                - listitem [ref=e529]:
+                  - text: 🖥️
+                  - strong [ref=e530]: "服务端错误:"
+                  - text: 服务商服务器异常
+  - alert [ref=e531]
+```

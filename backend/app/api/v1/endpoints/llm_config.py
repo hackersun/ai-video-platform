@@ -3,6 +3,7 @@
 支持多模型接入配置管理
 """
 
+from app.core.time_utils import utc_now
 from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
@@ -15,10 +16,43 @@ from sqlalchemy import select, update, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
+from app.core.model_registry import get_registry, get_task_default
 from app.core.security import get_current_user_id
-from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
+from app.core.volcano_agent_plan_config import (
+    VOLCANO_AGENT_PLAN_BASE_URL,
+    VOLCANO_AGENT_PLAN_MODELS,
+    VOLCANO_AGENT_PLAN_PROVIDER,
+    VOLCANO_AGENT_PLAN_PROVIDER_ID,
+)
+from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog, encrypt_key
 
 router = APIRouter(tags=["大模型配置"])
+
+
+@router.get("/registry")
+async def get_model_registry():
+    """获取统一模型注册表。
+
+    该接口为前端提供文本、图像、声音、视频模型的统一规划；用户 API Key
+    仍通过 `/llm/configs` 管理。
+    """
+    return get_registry()
+
+
+@router.get("/task-defaults")
+async def list_task_defaults():
+    """获取所有生产任务的默认模型选择。"""
+    registry = get_registry()
+    return {"task_defaults": registry["task_defaults"]}
+
+
+@router.get("/task-defaults/{task}")
+async def get_task_default_model(task: str):
+    """获取单个任务的默认模型选择。"""
+    task_default = get_task_default(task)
+    if task_default is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="任务默认模型不存在")
+    return task_default
 
 
 # ============== 请求/响应模型 ==============
@@ -53,6 +87,13 @@ class LLMModelResponse(BaseModel):
     is_recommended: bool
     description: Optional[str]
     base_url: Optional[str] = None
+    user_config_id: Optional[str] = None
+    user_config_name: Optional[str] = None
+    user_configured: bool = False
+    user_config_count: int = 0
+    user_is_default: bool = False
+    user_test_status: Optional[str] = None
+    user_test_message: Optional[str] = None
 
 
 class LLMConfigCreateRequest(BaseModel):
@@ -73,6 +114,10 @@ class LLMConfigResponse(BaseModel):
     id: str
     user_id: str
     model_id: str
+    config_model_id: Optional[str] = None
+    api_model_id: Optional[str] = None
+    model_type: Optional[str] = None
+    model_capabilities: List[str] = Field(default_factory=list)
     provider_id: str  # 前端用于判断配置属于哪个服务商
     model_name: str
     provider_name: str
@@ -91,9 +136,9 @@ class LLMConfigResponse(BaseModel):
 
 class LLMTestRequest(BaseModel):
     """测试请求"""
-    api_key: str = Field(..., description="API密钥")
-    provider_id: str = Field(..., description="提供商ID")
-    model_id: str = Field(..., description="模型ID")
+    api_key: Optional[str] = Field(None, description="API密钥")
+    provider_id: Optional[str] = Field(None, description="提供商ID")
+    model_id: Optional[str] = Field(None, description="模型ID")
     message: str = Field("你好，请介绍一下自己", description="测试消息")
 
 
@@ -104,6 +149,100 @@ class LLMTestResponse(BaseModel):
     response: Optional[str]
     response_time_ms: Optional[int]
     tokens_used: Optional[int]
+
+
+def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Optional[LLMProvider]) -> dict:
+    provider_id = provider.name if provider else model.provider_id
+    return {
+        "id": config.id,
+        "user_id": config.user_id,
+        "model_id": model.model_id,
+        "config_model_id": config.model_id,
+        "api_model_id": model.model_id,
+        "model_type": model.model_type,
+        "model_capabilities": model.capabilities or [],
+        "provider_id": provider_id,
+        "model_name": model.model_name_cn or model.model_name,
+        "provider_name": provider.name_cn if provider else "未知",
+        "name": config.name,
+        "temperature": config.temperature,
+        "top_p": config.top_p,
+        "max_tokens": config.max_tokens,
+        "is_active": config.is_active,
+        "is_default": config.is_default,
+        "test_status": config.test_status,
+        "test_message": config.test_message,
+        "usage_count": config.usage_count,
+        "created_at": config.created_at,
+        "updated_at": config.updated_at,
+    }
+
+
+def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
+    if model is None:
+        return False
+    values = [
+        getattr(model, "id", None),
+        getattr(model, "model_id", None),
+        getattr(model, "model_name", None),
+        getattr(model, "model_name_cn", None),
+        getattr(model, "description", None),
+    ]
+    text = " ".join(str(value or "").lower() for value in values)
+    if not text:
+        return False
+    return (
+        "test-video-" in text
+        or "test-audio-" in text
+        or "test-image-" in text
+        or "test-text-" in text
+        or text.startswith("test-")
+        or "doubao-seedance-test" in text
+        or "doubao-seedance-consistency-test" in text
+        or "speech-test" in text
+    )
+
+
+def _model_capability_group(model: LLMModel) -> str:
+    model_type = (model.model_type or "").lower()
+    if model_type in {"chat", "completion", "text-generation", "text_generation", "llm", "vision"}:
+        return "text"
+    if model_type in {"image", "image-generation", "image_generation"}:
+        return "image"
+    if model_type in {"tts", "audio", "speech"}:
+        return "audio"
+    if model_type in {"video", "video-generation", "video_generation"}:
+        return "video"
+    if model_type == "embedding":
+        return "embedding"
+    return model_type or "other"
+
+
+async def clear_default_configs_for_model_group(
+    db: AsyncSession,
+    user_id: str,
+    model: LLMModel,
+    *,
+    exclude_config_id: Optional[str] = None,
+) -> None:
+    """Keep one default per capability group, not one global default."""
+    group = _model_capability_group(model)
+    result = await db.execute(
+        select(LLMConfig, LLMModel)
+        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+        .where(
+            and_(
+                LLMConfig.user_id == user_id,
+                LLMConfig.is_active == True,
+                LLMConfig.is_default == True,
+            )
+        )
+    )
+    for config, existing_model in result.all():
+        if exclude_config_id and config.id == exclude_config_id:
+            continue
+        if _model_capability_group(existing_model) == group:
+            config.is_default = False
 
 
 # ============== 预设数据 ==============
@@ -122,6 +261,7 @@ DEFAULT_PROVIDERS = [
         "website_url": "https://www.volcengine.com",
         "doc_url": "https://www.volcengine.com/docs/82379"
     },
+    VOLCANO_AGENT_PLAN_PROVIDER,
     {
         "id": "qwen",
         "name": "qwen",
@@ -177,6 +317,7 @@ DEFAULT_PROVIDERS = [
 ]
 
 DEFAULT_MODELS = [
+    *VOLCANO_AGENT_PLAN_MODELS,
     # 火山引擎模型
     {
         "id": "doubao-seed-1-8",
@@ -319,22 +460,68 @@ DEFAULT_MODELS = [
         "model_id": "Doubao-Seed-2.0-pro",
         "model_name": "Doubao-Seed-2.0-pro",
         "model_name_cn": "豆包Seed-2.0-pro",
-        "model_type": "video-generation",
-        "capabilities": ["text-to-video", "image-to-video", "video-edit"],
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode"],
         "context_window": 4096,
         "max_tokens": 4096,
         "input_cost_per_1k": 0.5,
         "output_cost_per_1k": 0.5,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": False,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": False,
+        "description": "火山引擎豆包 Seed 2.0 文本模型",
+        "version": "2.0-pro",
+        "release_date": "2026-03-01",
+        "endpoint_id": "ep-20260320111926-sn9tg"
+    },
+    {
+        "id": "doubao-seedance-2.0",
+        "provider_id": "volcano",
+        "model_id": "doubao-seedance-2-0-260128",
+        "model_name": "Doubao-Seedance-2.0",
+        "model_name_cn": "豆包Seedance-2.0",
+        "model_type": "video-generation",
+        "capabilities": ["text-to-video", "image-to-video"],
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
         "supports_streaming": False,
         "supports_function_calling": False,
         "supports_vision": False,
         "supports_json_mode": False,
         "is_active": True,
         "is_recommended": True,
-        "description": "火山引擎高质量视频生成模型，支持文生视频、图生视频",
-        "version": "2.0-pro",
-        "release_date": "2026-03-01",
-        "endpoint_id": "ep-20260320111926-sn9tg"
+        "description": "豆包Seedance 2.0，高质量视频生成，支持文生视频、图生视频",
+        "version": "2.0",
+        "release_date": "2026-01-28",
+        "endpoint_id": "doubao-seedance-2-0-260128"
+    },
+    {
+        "id": "doubao-seedance-2.0-fast",
+        "provider_id": "volcano",
+        "model_id": "doubao-seedance-2-0-fast-260128",
+        "model_name": "Doubao-Seedance-2.0-fast",
+        "model_name_cn": "豆包Seedance-2.0-fast",
+        "model_type": "video-generation",
+        "capabilities": ["text-to-video", "image-to-video"],
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": False,
+        "supports_function_calling": False,
+        "supports_vision": False,
+        "supports_json_mode": False,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "豆包Seedance 2.0 Fast，适合批量镜头草稿和快速预览",
+        "version": "2.0-fast",
+        "release_date": "2026-01-28",
+        "endpoint_id": "doubao-seedance-2-0-fast-260128"
     },
     # 千问模型
     {
@@ -811,9 +998,94 @@ DEFAULT_MODELS = [
 
 # ============== 辅助函数 ==============
 
+_LLM_MODEL_COLUMNS = {
+    "id",
+    "provider_id",
+    "model_id",
+    "model_name",
+    "model_name_cn",
+    "model_type",
+    "capabilities",
+    "context_window",
+    "max_tokens",
+    "input_cost_per_1k",
+    "output_cost_per_1k",
+    "supports_streaming",
+    "supports_function_calling",
+    "supports_vision",
+    "supports_json_mode",
+    "is_active",
+    "is_recommended",
+    "description",
+    "version",
+    "release_date",
+    "base_url",
+}
+
+
+def _prepare_model_seed(model_data: dict) -> dict:
+    """Normalize DEFAULT_MODELS entries for the SQLAlchemy model."""
+    model_copy = {key: value for key, value in model_data.items() if key in _LLM_MODEL_COLUMNS}
+    if isinstance(model_copy.get("release_date"), str):
+        try:
+            model_copy["release_date"] = datetime.fromisoformat(model_copy["release_date"])
+        except ValueError:
+            model_copy["release_date"] = None
+    return model_copy
+
+
+async def ensure_default_providers(db: AsyncSession) -> None:
+    """Insert/update built-in providers without requiring an empty table."""
+    changed = False
+    for provider_data in DEFAULT_PROVIDERS:
+        provider = await db.get(LLMProvider, provider_data["id"])
+        if provider is None:
+            db.add(LLMProvider(**provider_data))
+            changed = True
+            continue
+        for key, value in provider_data.items():
+            if key != "id" and getattr(provider, key, None) != value:
+                setattr(provider, key, value)
+                changed = True
+    if changed:
+        await db.commit()
+
+
+async def ensure_default_models(db: AsyncSession) -> None:
+    """Insert/update built-in models so new catalog entries appear in existing databases."""
+    changed = False
+    for model_data in DEFAULT_MODELS:
+        model_copy = _prepare_model_seed(model_data)
+        model = await db.get(LLMModel, model_copy["id"])
+        if model is None:
+            db.add(LLMModel(**model_copy))
+            changed = True
+            continue
+        for key, value in model_copy.items():
+            if key != "id" and getattr(model, key, None) != value:
+                setattr(model, key, value)
+                changed = True
+    if changed:
+        await db.commit()
+
+
 async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
     """测试火山引擎API，根据模型类型走不同端点"""
     from app.core.volcano_config import VOLCANO_MODELS, get_endpoint_id
+    image_model_ids = {"Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite", "volcano-seedream-4.5", "volcano-seedream-5.0-lite"}
+    video_model_ids = {
+        "Doubao-Seedance-1.5-pro",
+        "Doubao-Seedance-1.0-pro-fast",
+        "Doubao-Seedance-2.0",
+        "Doubao-Seedance-2.0-fast",
+        "doubao-seedance-1-5-pro-251215",
+        "doubao-seedance-2-0-260128",
+        "doubao-seedance-2-0-fast-260128",
+        "volcano-seedance-1-5-pro",
+        "volcano-seedance-1-0-pro-fast",
+        "volcano-seedance-2-0",
+        "volcano-seedance-2-0-fast",
+    }
 
     # 查找模型配置
     model_config = {}
@@ -823,6 +1095,11 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
             model_config = m
             model_type = m.get("type", "text-generation")
             break
+    if model_type == "text-generation":
+        if model_id in image_model_ids:
+            model_type = "image-generation"
+        elif model_id in video_model_ids:
+            model_type = "video-generation"
 
     # 解析实际调用的 model（图像/视频用 endpoint_id，文本用 model_id）
     actual_model = get_endpoint_id(model_id)  # volcano_config 会正确解析
@@ -931,6 +1208,109 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
         }
 
 
+def _is_video_model_id(model_id: str) -> bool:
+    return any(key in model_id for key in ("seedance", "video"))
+
+
+def _is_image_model_id(model_id: str) -> bool:
+    return any(key in model_id for key in ("seedream", "image"))
+
+
+async def test_volcano_agent_plan_api(api_key: str, model_id: str, message: str) -> dict:
+    """Test Volcano Ark Agent Plan with the dedicated /api/plan/v3 endpoint."""
+    base_url = VOLCANO_AGENT_PLAN_BASE_URL
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    if _is_video_model_id(model_id):
+        url = f"{base_url}/contents/generations/tasks"
+        method = "GET"
+        params = {"page_num": 1, "page_size": 1}
+        data = None
+    elif _is_image_model_id(model_id):
+        # Agent Plan image validation has no documented no-op endpoint. Use the
+        # read-only multimodal task list to verify the dedicated key/base URL
+        # without creating a billable image generation task.
+        url = f"{base_url}/contents/generations/tasks"
+        method = "GET"
+        params = {"page_num": 1, "page_size": 1}
+        data = None
+    else:
+        url = f"{base_url}/chat/completions"
+        method = "POST"
+        params = None
+        data = {
+            "model": model_id,
+            "messages": [{"role": "user", "content": message}],
+            "max_tokens": 100,
+        }
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            if method == "GET":
+                response = await client.get(url, params=params, headers=headers)
+            else:
+                response = await client.post(url, json=data, headers=headers)
+
+            if response.status_code == 200:
+                result = response.json()
+                if _is_video_model_id(model_id):
+                    response_text = "Agent Plan 视频任务查询端点验证通过，未提交生成任务。"
+                    tokens_used = 0
+                elif _is_image_model_id(model_id):
+                    response_text = "Agent Plan 专属 Key 与 /api/plan/v3 验证通过，未提交图像生成任务。"
+                    tokens_used = 0
+                else:
+                    response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
+                    tokens_used = result.get("usage", {}).get("total_tokens", 0)
+                return {
+                    "success": True,
+                    "message": "火山方舟 Agent Plan API 连接成功！",
+                    "response": response_text,
+                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                    "tokens_used": tokens_used,
+                }
+
+            try:
+                err_json = response.json()
+                err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
+            except Exception:
+                err_msg = response.text[:200]
+            return {
+                "success": False,
+                "message": f"[HTTP {response.status_code}] Agent Plan API错误: {err_msg}\n端点: {url}",
+                "response": None,
+                "response_time_ms": int(response.elapsed.total_seconds() * 1000),
+                "tokens_used": 0,
+            }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "message": f"Agent Plan 连接超时(60s)，请检查网络或 API 地址\n请求地址: {url}",
+            "response": None,
+            "response_time_ms": 60000,
+            "tokens_used": 0,
+        }
+    except httpx.ConnectError as e:
+        return {
+            "success": False,
+            "message": f"Agent Plan 连接失败，无法访问 API 地址: {e}\n请求地址: {url}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Agent Plan 测试异常: {str(e)[:300]}",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0,
+        }
+
+
 async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
     """测试阿里千问API"""
     url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
@@ -940,8 +1320,8 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
     }
     data = {
         "model": model_id,
-        "input": {"messages": [{"role": "user", "content": message}]},
-        "parameters": {"max_tokens": 100}
+        "messages": [{"role": "user", "content": message}],
+        "max_tokens": 100
     }
 
     try:
@@ -950,7 +1330,7 @@ async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
 
             if response.status_code == 200:
                 result = response.json()
-                content = result.get("output", {}).get("text") or result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
+                content = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
                 return {
                     "success": True,
                     "message": "阿里千问 API 连接成功！",
@@ -1307,62 +1687,76 @@ async def list_providers(
     db: AsyncSession = Depends(get_db)
 ):
     """获取大模型提供商列表"""
+    await ensure_default_providers(db)
     result = await db.execute(
         select(LLMProvider).where(LLMProvider.is_active == True)
     )
-    providers = result.scalars().all()
-    
-    if not providers:
-        # 初始化预设数据
-        for provider_data in DEFAULT_PROVIDERS:
-            provider = LLMProvider(**provider_data)
-            db.add(provider)
-        await db.commit()
-        
-        # 重新查询
-        result = await db.execute(
-            select(LLMProvider).where(LLMProvider.is_active == True)
-        )
-        providers = result.scalars().all()
-    
-    return providers
+    return result.scalars().all()
 
 
 @router.get("/models", response_model=List[LLMModelResponse])
 async def list_models(
     provider: Optional[str] = None,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
 ):
     """获取大模型列表"""
-    from datetime import datetime
-    
+    await ensure_default_models(db)
     query = select(LLMModel).where(LLMModel.is_active == True)
     
     if provider:
         query = query.where(LLMModel.provider_id == provider)
     
     result = await db.execute(query)
-    models = result.scalars().all()
-    
+    models = [model for model in result.scalars().all() if not _is_internal_test_model(model)]
     if not models:
-        # 初始化预设模型
-        for model_data in DEFAULT_MODELS:
-            # 转换 release_date 字符串为 datetime 对象
-            model_copy = model_data.copy()
-            if 'release_date' in model_copy and model_copy['release_date']:
-                try:
-                    model_copy['release_date'] = datetime.fromisoformat(model_copy['release_date'])
-                except:
-                    model_copy['release_date'] = None
-            model = LLMModel(**model_copy)
-            db.add(model)
-        await db.commit()
-        
-        # 重新查询
-        result = await db.execute(query)
-        models = result.scalars().all()
-    
-    return models
+        return []
+
+    config_result = await db.execute(
+        select(LLMConfig)
+        .where(
+            and_(
+                LLMConfig.user_id == user_id,
+                LLMConfig.is_active == True,
+                LLMConfig.model_id.in_([model.id for model in models]),
+            )
+        )
+        .order_by(desc(LLMConfig.is_default), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
+    )
+    configs_by_model: dict[str, list[LLMConfig]] = {}
+    for config in config_result.scalars().all():
+        configs_by_model.setdefault(config.model_id, []).append(config)
+
+    responses = []
+    for model in models:
+        configs = configs_by_model.get(model.id, [])
+        primary = configs[0] if configs else None
+        responses.append({
+            "id": model.id,
+            "provider_id": model.provider_id,
+            "model_id": model.model_id,
+            "model_name": model.model_name,
+            "model_name_cn": model.model_name_cn,
+            "model_type": model.model_type,
+            "capabilities": model.capabilities or [],
+            "context_window": model.context_window,
+            "max_tokens": model.max_tokens,
+            "input_cost_per_1k": model.input_cost_per_1k,
+            "output_cost_per_1k": model.output_cost_per_1k,
+            "is_active": model.is_active,
+            "is_recommended": model.is_recommended,
+            "description": model.description,
+            "base_url": model.base_url,
+            "user_config_id": primary.id if primary else None,
+            "user_config_name": primary.name if primary else None,
+            "user_configured": bool(primary),
+            "user_config_count": len(configs),
+            "user_is_default": bool(primary and primary.is_default),
+            "user_test_status": primary.test_status if primary else None,
+            "user_test_message": primary.test_message if primary else None,
+        })
+
+    return responses
 
 
 @router.get("/configs", response_model=List[LLMConfigResponse])
@@ -1386,31 +1780,15 @@ async def list_configs(
     configs = []
     for row in result.all():
         config, model = row
+        if _is_internal_test_model(model):
+            continue
         # 获取provider名称
         provider_result = await db.execute(
             select(LLMProvider).where(LLMProvider.id == model.provider_id)
         )
         provider = provider_result.scalar_one_or_none()
         
-        configs.append({
-            "id": config.id,
-            "user_id": config.user_id,
-            "model_id": config.model_id,
-            "provider_id": provider.name if provider else model.provider_id,
-            "model_name": model.model_name_cn or model.model_name,
-            "provider_name": provider.name_cn if provider else "未知",
-            "name": config.name,
-            "temperature": config.temperature,
-            "top_p": config.top_p,
-            "max_tokens": config.max_tokens,
-            "is_active": config.is_active,
-            "is_default": config.is_default,
-            "test_status": config.test_status,
-            "test_message": config.test_message,
-            "usage_count": config.usage_count,
-            "created_at": config.created_at,
-            "updated_at": config.updated_at
-        })
+        configs.append(build_llm_config_response(config, model, provider))
     
     return configs
 
@@ -1434,31 +1812,57 @@ async def create_config(
             detail="模型不存在"
         )
     
-    # 如果设为默认，取消其他默认配置
-    if request.is_default:
-        await db.execute(
-            update(LLMConfig)
-            .where(and_(LLMConfig.user_id == user_id, LLMConfig.is_default == True))
-            .values(is_default=False)
-        )
-    
-    # TODO: 加密存储API密钥
-    config = LLMConfig(
-        id=str(uuid4()),
-        user_id=user_id,
-        model_id=request.model_id,
-        name=request.name,
-        api_key=request.api_key,  # 需要加密
-        api_secret=request.api_secret,
-        temperature=request.temperature,
-        top_p=request.top_p,
-        max_tokens=request.max_tokens,
-        extra_params=request.extra_params,
-        is_default=request.is_default,
-        test_status="pending"
+    existing_result = await db.execute(
+        select(LLMConfig).where(
+            and_(
+                LLMConfig.user_id == user_id,
+                LLMConfig.model_id == request.model_id,
+                LLMConfig.is_active == True,
+            )
+        ).order_by(desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
     )
-    
-    db.add(config)
+    config = existing_result.scalars().first()
+
+    # 如果设为默认，只取消同一能力类别的其他默认配置。
+    if request.is_default:
+        await clear_default_configs_for_model_group(
+            db,
+            user_id,
+            model,
+            exclude_config_id=config.id if config else None,
+        )
+
+    if config:
+        existing_plain_key = config.get_api_key_decrypted()
+        api_key_changed = request.api_key != existing_plain_key
+        config.name = request.name
+        config.api_key = encrypt_key(request.api_key)
+        config.api_secret = request.api_secret
+        config.temperature = request.temperature
+        config.top_p = request.top_p
+        config.max_tokens = request.max_tokens
+        config.extra_params = request.extra_params
+        config.is_default = request.is_default
+        if api_key_changed:
+            config.test_status = "pending"
+            config.test_message = "配置已更新，请重新测试连接"
+    else:
+        config = LLMConfig(
+            id=str(uuid4()),
+            user_id=user_id,
+            model_id=request.model_id,
+            name=request.name,
+            api_key=encrypt_key(request.api_key),
+            api_secret=request.api_secret,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            max_tokens=request.max_tokens,
+            extra_params=request.extra_params,
+            is_default=request.is_default,
+            test_status="pending"
+        )
+        db.add(config)
+
     await db.commit()
     await db.refresh(config)
     
@@ -1468,25 +1872,7 @@ async def create_config(
     )
     provider = provider_result.scalar_one_or_none()
     
-    return {
-        "id": config.id,
-        "user_id": config.user_id,
-        "model_id": config.model_id,
-        "provider_id": provider.name if provider else model.provider_id,
-        "model_name": model.model_name_cn or model.model_name,
-        "provider_name": provider.name_cn if provider else "未知",
-        "name": config.name,
-        "temperature": config.temperature,
-        "top_p": config.top_p,
-        "max_tokens": config.max_tokens,
-        "is_active": config.is_active,
-        "is_default": config.is_default,
-        "test_status": config.test_status,
-        "test_message": config.test_message,
-        "usage_count": config.usage_count,
-        "created_at": config.created_at,
-        "updated_at": config.updated_at
-    }
+    return build_llm_config_response(config, model, provider)
 
 
 @router.post("/configs/test", response_model=LLMTestResponse)
@@ -1495,6 +1881,12 @@ async def test_api_connection(
     db: AsyncSession = Depends(get_db)
 ):
     """测试API连接（无需保存配置）"""
+    if not request.api_key or not request.provider_id or not request.model_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="测试未保存配置时必须提供 api_key、provider_id 和 model_id",
+        )
+
     # 获取模型信息
     result = await db.execute(
         select(LLMModel).where(LLMModel.id == request.model_id)
@@ -1512,7 +1904,9 @@ async def test_api_connection(
     # 根据提供商调用不同的测试函数
     if model_provider_id == "volcano":
         return await test_volcano_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "qwen":
+    elif model_provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
+        return await test_volcano_agent_plan_api(request.api_key, model_id, request.message)
+    elif model_provider_id in ("qwen", "dashscope"):
         return await test_qwen_api(request.api_key, model_id, request.message)
     elif model_provider_id == "qianlian":
         return await test_qianlian_api(request.api_key, model_id, request.message)
@@ -1567,17 +1961,23 @@ async def test_config(
     provider = provider_result.scalar_one_or_none()
     provider_id = provider.id if provider else model.provider_id
     
+    api_key = config.get_api_key_decrypted()
+
     # 根据提供商调用测试
     if provider_id == "volcano":
-        test_result = await test_volcano_api(config.api_key, model.model_id, request.message)
-    elif provider_id == "qwen":
-        test_result = await test_qwen_api(config.api_key, model.model_id, request.message)
+        test_result = await test_volcano_api(api_key, model.model_id, request.message)
+    elif provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
+        test_result = await test_volcano_agent_plan_api(api_key, model.model_id, request.message)
+    elif provider_id in ("qwen", "dashscope"):
+        test_result = await test_qwen_api(api_key, model.model_id, request.message)
     elif provider_id == "qianlian":
-        test_result = await test_qianlian_api(config.api_key, model.model_id, request.message)
+        test_result = await test_qianlian_api(api_key, model.model_id, request.message)
     elif provider_id == "baidu":
-        test_result = await test_baidu_api(config.api_key, model.model_id, request.message)
+        test_result = await test_baidu_api(api_key, model.model_id, request.message)
     elif provider_id == "openai":
-        test_result = await test_openai_api(config.api_key, model.model_id, request.message)
+        test_result = await test_openai_api(api_key, model.model_id, request.message)
+    elif provider_id == "minimax":
+        test_result = await test_minimax_api(api_key, model.model_id, request.message)
     else:
         test_result = {
             "success": False,
@@ -1590,7 +1990,7 @@ async def test_config(
     # 更新测试状态
     config.test_status = "success" if test_result["success"] else "failed"
     config.test_message = test_result["message"]
-    config.tested_at = datetime.utcnow()
+    config.tested_at = utc_now()
     await db.commit()
     
     return test_result
@@ -1621,15 +2021,27 @@ async def update_config(
         )
     
     # 更新字段
+    if request.is_default:
+        target_model = await db.get(LLMModel, request.model_id)
+        if target_model is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在")
+        await clear_default_configs_for_model_group(db, user_id, target_model, exclude_config_id=config_id)
+
+    existing_plain_key = config.get_api_key_decrypted()
+    api_key_changed = request.api_key != existing_plain_key
+
     config.name = request.name
-    config.api_key = request.api_key  # 需要加密
+    config.model_id = request.model_id
+    config.api_key = encrypt_key(request.api_key)
     config.api_secret = request.api_secret
     config.temperature = request.temperature
     config.top_p = request.top_p
     config.max_tokens = request.max_tokens
     config.extra_params = request.extra_params
     config.is_default = request.is_default
-    config.test_status = "pending"  # 重置测试状态
+    config.test_status = "pending" if api_key_changed else config.test_status
+    if api_key_changed:
+        config.test_message = "配置已更新，请重新测试连接"
     
     await db.commit()
     await db.refresh(config)
@@ -1646,24 +2058,7 @@ async def update_config(
     )
     provider = provider_result.scalar_one_or_none()
     
-    return {
-        "id": config.id,
-        "user_id": config.user_id,
-        "model_id": config.model_id,
-        "model_name": model.model_name_cn or model.model_name,
-        "provider_name": provider.name_cn if provider else "未知",
-        "name": config.name,
-        "temperature": config.temperature,
-        "top_p": config.top_p,
-        "max_tokens": config.max_tokens,
-        "is_active": config.is_active,
-        "is_default": config.is_default,
-        "test_status": config.test_status,
-        "test_message": config.test_message,
-        "usage_count": config.usage_count,
-        "created_at": config.created_at,
-        "updated_at": config.updated_at
-    }
+    return build_llm_config_response(config, model, provider)
 
 
 @router.delete("/configs/{config_id}")
@@ -1702,34 +2097,31 @@ async def set_default_config(
     user_id: str = Depends(get_current_user_id)
 ):
     """设为默认配置"""
-    # 取消其他默认配置
-    await db.execute(
-        update(LLMConfig)
-        .where(and_(LLMConfig.user_id == user_id, LLMConfig.is_default == True))
-        .values(is_default=False)
-    )
-    
-    # 设置新的默认配置
     result = await db.execute(
-        select(LLMConfig).where(
+        select(LLMConfig, LLMModel)
+        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+        .where(
             and_(
                 LLMConfig.id == config_id,
                 LLMConfig.user_id == user_id
             )
         )
     )
-    config = result.scalar_one_or_none()
+    row = result.first()
     
-    if not config:
+    if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="配置不存在"
         )
+
+    config, model = row
+    await clear_default_configs_for_model_group(db, user_id, model, exclude_config_id=config_id)
     
     config.is_default = True
     await db.commit()
 
-    return {"message": "已设为默认配置"}
+    return {"message": f"已设为{_model_capability_group(model)}能力默认配置"}
 
 
 @router.get("/api-key/{provider}", response_model=dict)
@@ -1739,15 +2131,18 @@ async def get_api_key_by_provider(
     user_id: str = Depends(get_current_user_id)
 ):
     """
-    获取用户配置的指定 Provider API Key（解密后）。
+    获取用户是否已配置指定 Provider。
 
-    用于前端页面（如视频生成）从用户已保存的配置中获取 API Key。
+    用于前端页面（如视频生成）判断是否可以使用后端保存的默认配置。
+    出于安全考虑，此接口不返回解密后的 API Key。
     支持的 provider: volcano, qianlian, minimax, dashscope, openai
     """
     from app.core.api_key_utils import get_user_api_key
+    from app.core.dev_generation import is_dev_mode
+
     api_key, base_url = await get_user_api_key(
         db, user_id, provider, raise_if_missing=False
     )
     if not api_key:
-        return {"api_key": None, "base_url": None, "configured": False}
-    return {"api_key": api_key, "base_url": base_url, "configured": True}
+        return {"api_key": None, "base_url": None, "configured": False, "dev_mode": is_dev_mode()}
+    return {"api_key": None, "base_url": base_url, "configured": True, "dev_mode": is_dev_mode()}

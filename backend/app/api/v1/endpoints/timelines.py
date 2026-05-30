@@ -1,6 +1,7 @@
 """
 时间线编辑 API 端点 - Timeline/Track/Clip CRUD
 """
+from app.core.time_utils import utc_now
 from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
@@ -390,7 +391,7 @@ async def update_timeline(
     update_data = request.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(t, key, value)
-    t.updated_at = datetime.utcnow()
+    t.updated_at = utc_now()
     await db.commit()
     await db.refresh(t)
     return build_timeline_response(t)
@@ -515,19 +516,23 @@ async def list_clips(
     return [build_clip_response(c) for c in clips]
 
 
-@router.post("", response_model=ClipResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/{timeline_id}/clips", response_model=ClipResponse, status_code=status.HTTP_201_CREATED)
 async def create_clip(
+    timeline_id: str,
     request: ClipCreate,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
     """添加片段"""
+    if request.timeline_id != timeline_id:
+        raise HTTPException(status_code=422, detail="片段所属时间线与路径不一致")
+
     # 验证时间线
-    await get_timeline_for_user(db, request.timeline_id, user_id)
+    await get_timeline_for_user(db, timeline_id, user_id)
 
     # 验证轨道
     track_result = await db.execute(
-        select(Track).where(and_(Track.id == request.track_id, Track.timeline_id == request.timeline_id))
+        select(Track).where(and_(Track.id == request.track_id, Track.timeline_id == timeline_id))
     )
     if not track_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="轨道不存在")
@@ -535,7 +540,7 @@ async def create_clip(
     clip = Clip(
         id=str(uuid4()),
         user_id=user_id,
-        timeline_id=request.timeline_id,
+        timeline_id=timeline_id,
         track_id=request.track_id,
         source_type=request.source_type,
         source_id=request.source_id,
@@ -587,7 +592,7 @@ async def update_clip(
     update_data = request.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(clip, key, value)
-    clip.updated_at = datetime.utcnow()
+    clip.updated_at = utc_now()
     await db.commit()
     await db.refresh(clip)
     return build_clip_response(clip)
@@ -609,7 +614,7 @@ async def delete_clip(
     if not clip:
         raise HTTPException(status_code=404, detail="片段不存在")
     clip.is_active = False
-    clip.updated_at = datetime.utcnow()
+    clip.updated_at = utc_now()
     await db.commit()
 
 
@@ -634,6 +639,6 @@ async def reorder_clips(
         if clip:
             clip.position = order.get("position", clip.position)
             clip.track_id = order.get("track_id", clip.track_id)
-            clip.updated_at = datetime.utcnow()
+            clip.updated_at = utc_now()
     await db.commit()
     return {"message": "排序已更新"}

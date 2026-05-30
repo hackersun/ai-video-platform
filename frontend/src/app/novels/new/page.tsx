@@ -1,11 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { useToast } from '@/components/ui/toast';
 import { 
   BookOpen, 
   ArrowLeft,
@@ -19,6 +21,19 @@ import {
   Loader2
 } from 'lucide-react';
 import Link from 'next/link';
+import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import {
+  getDefaultConfigForCapability,
+  SavedModelConfig,
+} from '@/lib/model-configs';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 // 小说类型选项
 const GENRE_OPTIONS = [
@@ -40,7 +55,13 @@ const STYLE_OPTIONS = [
 ];
 
 export default function NewNovelPage() {
+  const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
+  const [isGeneratingIntro, setIsGeneratingIntro] = useState(false);
+  const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
+  const [textModelConfigId, setTextModelConfigId] = useState('');
+  const [imageModelConfigId, setImageModelConfigId] = useState('');
   const [novel, setNovel] = useState({
     title: '',
     description: '',
@@ -51,29 +72,49 @@ export default function NewNovelPage() {
     intro: ''
   });
 
+  useEffect(() => {
+    loadModelConfigs();
+  }, []);
+
+  const loadModelConfigs = async () => {
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      if (!response.ok) return;
+      const configs = await response.json();
+      const list = Array.isArray(configs) ? configs : [];
+      setModelConfigs(list);
+      const textDefault = getDefaultConfigForCapability(list, 'text');
+      const imageDefault = getDefaultConfigForCapability(list, 'image');
+      if (textDefault) setTextModelConfigId(textDefault.id);
+      if (imageDefault) setImageModelConfigId(imageDefault.id);
+    } catch (error) {
+      console.error('加载模型配置失败:', error);
+    }
+  };
+
   // 保存小说
   const handleSave = async (publish: boolean = false) => {
     if (!novel.title.trim()) {
-      alert('请输入小说标题');
+      toast({ title: '请输入小说标题', type: 'info' });
       return;
     }
     if (!novel.genre) {
-      alert('请选择小说题材');
+      toast({ title: '请选择小说题材', type: 'info' });
       return;
     }
 
     setIsSaving(true);
     try {
       // 保存到后端API
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/novels`, {
+      const response = await fetchWithAuth(`${API_BASE}/novels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: novel.title,
           description: novel.description,
           genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
-          content: novel.intro || '',
-          status: publish ? 'writing' : 'draft'
+          tags: novel.tags.split(',').map(tag => tag.trim()).filter(Boolean),
+          cover_url: novel.cover || undefined,
         })
       });
       
@@ -81,12 +122,12 @@ export default function NewNovelPage() {
         throw new Error('保存失败');
       }
       
-      alert(publish ? '发布成功！' : '保存成功！');
+      toast({ title: publish ? '发布成功' : '保存成功', type: 'success' });
       // 跳转到小说列表
       window.location.href = '/novels';
     } catch (error) {
       console.error('保存失败:', error);
-      alert('保存失败，请检查后端服务是否启动');
+      toast({ title: '保存失败', description: '请检查后端服务是否启动。', type: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -95,14 +136,78 @@ export default function NewNovelPage() {
   // AI 生成简介
   const handleAIGenerate = async () => {
     if (!novel.title || !novel.genre) {
-      alert('请先填写标题和题材');
+      toast({ title: '请先填写标题和题材', type: 'info' });
       return;
     }
-    
-    // 模拟 AI 生成
-    const generatedIntro = `这是一个关于${novel.title}的故事。\n\n${novel.description || '主人公在这个世界中展开了一段奇妙的冒险之旅，经历了种种挑战和考验，最终实现了自己的目标。'}\n\n故事背景设定独特，人物形象鲜明，情节跌宕起伏，值得期待。`;
-    
-    setNovel({ ...novel, intro: generatedIntro });
+
+    setIsGeneratingIntro(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/novels/generate-intro`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: novel.title,
+          genre: novel.genre,
+          style: novel.style,
+          description: novel.description,
+          model_config_id: textModelConfigId || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || error.message || `AI 简介生成失败：HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const generatedIntro = data.intro;
+      if (!generatedIntro) {
+        throw new Error('AI 简介生成接口未返回简介内容');
+      }
+      setNovel({ ...novel, intro: generatedIntro });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'AI 简介生成失败';
+      toast({ title: 'AI 简介生成失败', description: message, type: 'error' });
+    } finally {
+      setIsGeneratingIntro(false);
+    }
+  };
+
+  // AI 生成封面
+  const handleAIGenerateCover = async () => {
+    if (!novel.title || !novel.genre) {
+      toast({ title: '请先填写标题和题材', type: 'info' });
+      return;
+    }
+
+    setIsGeneratingCover(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/novels/generate-cover`, {
+        method: 'POST',
+        body: JSON.stringify({
+          title: novel.title,
+          genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
+          style: novel.style || 'anime',
+          description: novel.intro || novel.description,
+          model_config_id: imageModelConfigId || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || error.message || `AI 封面生成失败：HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data.cover_url) {
+        throw new Error('AI 封面生成接口未返回图片地址');
+      }
+      setNovel({ ...novel, cover: data.cover_url });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'AI 封面生成失败';
+      toast({ title: 'AI 封面生成失败', description: message, type: 'error' });
+    } finally {
+      setIsGeneratingCover(false);
+    }
   };
 
   return (
@@ -111,11 +216,11 @@ export default function NewNovelPage() {
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <Link href="/novels">
-              <Button variant="ghost" size="icon">
+            <Button asChild variant="ghost" size="icon" aria-label="返回小说列表" title="返回">
+              <Link href="/novels">
                 <ArrowLeft className="w-5 h-5" />
-              </Button>
-            </Link>
+              </Link>
+            </Button>
             <div>
               <h1 className="text-3xl font-bold text-white">创建小说</h1>
               <p className="text-white/60 mt-1">开始您的创作之旅</p>
@@ -228,16 +333,27 @@ export default function NewNovelPage() {
                     variant="outline" 
                     size="sm"
                     onClick={handleAIGenerate}
+                    disabled={isGeneratingIntro}
                     className="border-violet-500/50 text-violet-400 hover:bg-violet-600/20"
                   >
-                    <Sparkles className="w-4 h-4 mr-2" />
+                    {isGeneratingIntro ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
                     AI 生成
                   </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent>
+                <ModelCapabilitySelector
+                  capability="text"
+                  configs={modelConfigs}
+                  value={textModelConfigId}
+                  onChange={setTextModelConfigId}
+                  disabled={isGeneratingIntro}
+                  title="简介生成模型"
+                  description="AI 简介会使用文本生成能力，提示词会带入标题、题材、风格和创作说明。"
+                  className="mb-4"
+                />
                 <Textarea
-                  placeholder="输入小说的详细简介、世界观、人物设定等..."
+                  placeholder="输入小说的详细简介、世界观、人物设定等…"
                   value={novel.intro}
                   onChange={(e) => setNovel({ ...novel, intro: e.target.value })}
                   rows={10}
@@ -252,16 +368,38 @@ export default function NewNovelPage() {
             {/* 封面设置 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <ImageIcon className="w-5 h-5 text-pink-400" />
-                  封面设置
+                <CardTitle className="text-white flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-5 h-5 text-pink-400" />
+                    封面设置
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAIGenerateCover}
+                    disabled={isGeneratingCover}
+                    className="border-pink-500/50 text-pink-300 hover:bg-pink-600/20"
+                  >
+                    {isGeneratingCover ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                    AI 生成
+                  </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="border-2 border-dashed border-white/20 rounded-lg p-8 text-center">
+                <ModelCapabilitySelector
+                  capability="image"
+                  configs={modelConfigs}
+                  value={imageModelConfigId}
+                  onChange={setImageModelConfigId}
+                  disabled={isGeneratingCover}
+                  title="封面生成模型"
+                  description="封面会使用图像生成能力，并结合题材、主角线索、关键场景和故事冲突生成。"
+                  className="mb-4"
+                />
+                <div className="border-2 border-dashed border-white/20 rounded-lg p-4 text-center min-h-[220px] flex items-center justify-center">
                   {novel.cover ? (
-                    <div className="relative">
-                      <img src={novel.cover} alt="封面" className="w-full rounded-lg" />
+                    <div className="relative w-full">
+                      <img src={toMediaUrl(novel.cover)} alt="封面" width={300} height={400} loading="lazy" className="w-full aspect-[3/4] object-cover rounded-lg" />
                       <Button
                         variant="destructive"
                         size="sm"
@@ -298,11 +436,11 @@ export default function NewNovelPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-white/60 text-sm mb-4">创建小说后可关联角色</p>
-                <Link href="/characters">
-                  <Button variant="outline" className="w-full border-white/20 text-white">
+                <Button asChild variant="outline" className="w-full border-white/20 text-white">
+                  <Link href="/characters">
                     管理角色库
-                  </Button>
-                </Link>
+                  </Link>
+                </Button>
               </CardContent>
             </Card>
 

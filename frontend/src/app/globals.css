@@ -4,26 +4,50 @@
 
 @layer base {
   :root {
-    --background: 222.2 84% 4.9%;
+    --background: 222 47% 5.5%;
     --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
+    --card: 222 38% 9%;
     --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
+    --popover: 222 38% 11%;
     --popover-foreground: 210 40% 98%;
-    --primary: 263.4 70% 50.4%;
+    --primary: 252 82% 64%;
     --primary-foreground: 210 40% 98%;
-    --secondary: 217.2 32.6% 17.5%;
+    --secondary: 215 27% 18%;
     --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
+    --muted: 215 27% 16%;
+    --muted-foreground: 215 20.2% 68%;
+    --accent: 215 27% 18%;
     --accent-foreground: 210 40% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 263.4 70% 50.4%;
-    --radius: 0.5rem;
+    --border: 215 27% 20%;
+    --input: 215 27% 20%;
+    --ring: 252 82% 64%;
+    --radius: 0.75rem;
+  }
+
+  :root[data-accent='cyan'] {
+    --primary: 190 95% 46%;
+    --ring: 190 95% 46%;
+  }
+
+  :root[data-accent='emerald'] {
+    --primary: 151 65% 45%;
+    --ring: 151 65% 45%;
+  }
+
+  :root[data-accent='amber'] {
+    --primary: 38 92% 50%;
+    --ring: 38 92% 50%;
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  html[data-reduce-motion='true'] {
+    scroll-behavior: auto;
   }
 }
 
@@ -33,7 +57,19 @@
   }
   body {
     @apply bg-background text-foreground;
+    background-image:
+      radial-gradient(circle at top, rgba(109, 40, 217, 0.18), transparent 36%),
+      radial-gradient(circle at right top, rgba(37, 99, 235, 0.12), transparent 30%),
+      linear-gradient(to bottom, rgba(2, 6, 23, 0.98), rgba(2, 6, 23, 0.96));
+    background-attachment: fixed;
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
+}
+
+::selection {
+  background: rgba(124, 58, 237, 0.3);
+  color: #fff;
 }
 
 /* Custom scrollbar for dark theme */
@@ -74,6 +110,39 @@
   @apply bg-clip-text text-transparent bg-gradient-to-r from-violet-400 via-purple-400 to-blue-400;
 }
 
+html[data-accent='cyan'] .gradient-text {
+  @apply from-cyan-300 via-sky-300 to-blue-300;
+}
+
+html[data-accent='emerald'] .gradient-text {
+  @apply from-emerald-300 via-teal-300 to-cyan-300;
+}
+
+html[data-accent='amber'] .gradient-text {
+  @apply from-amber-300 via-orange-300 to-rose-300;
+}
+
+html[data-compact='true'] main {
+  --compact-content-scale: 0.95;
+}
+
+html[data-compact='true'] .space-y-8 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 1.5rem;
+}
+
+html[data-dense-cards='true'] .rounded-2xl {
+  border-radius: 0.875rem;
+}
+
+html[data-reduce-motion='true'] *,
+html[data-reduce-motion='true'] *::before,
+html[data-reduce-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* Animation for skeleton loading */
 @keyframes pulse {
   0%, 100% {
@@ -86,4 +155,15 @@
 
 .animate-pulse {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -36,3 +36,6 @@ npm-debug.log*
 
 # Git worktrees
 .worktrees/
+
+# Local Netlify folder
+.netlify

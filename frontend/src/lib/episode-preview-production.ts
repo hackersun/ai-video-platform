@@ -1,0 +1,314 @@
+import { apiClient } from '@/lib/api-client';
+
+export type EpisodePreviewStageStatus = 'pending' | 'running' | 'done' | 'failed';
+
+export type EpisodePreviewStageKey =
+  | 'workflow'
+  | 'script'
+  | 'storyboard'
+  | 'assistant'
+  | 'contracts'
+  | 'media'
+  | 'concatenate'
+  | 'preflight'
+  | 'render';
+
+export type EpisodePreviewStage = {
+  key: EpisodePreviewStageKey;
+  label: string;
+  status: EpisodePreviewStageStatus;
+  message: string;
+};
+
+export type EpisodePreviewStageUpdate = Partial<EpisodePreviewStage> & {
+  key: EpisodePreviewStageKey;
+};
+
+export type EpisodePreviewProductionResult = {
+  workflowId: string;
+  novelId: string;
+  chapterId: string;
+  scriptId?: string;
+  storyboardId?: string;
+  videoJobIds: string[];
+  ttsJobIds: string[];
+  mediaJobIds: string[];
+  subtitleTrackIds: string[];
+  readyForConcatenate?: boolean;
+  pendingVideoJobIds?: string[];
+  pendingTtsJobIds?: string[];
+  synthesisJobId?: string;
+  outputUrl?: string;
+  manifestUrl?: string;
+  previewUrl?: string;
+  srtUrl?: string;
+  timelineUrl?: string;
+  renderManifestUrl?: string;
+  preflight?: any;
+  render?: any;
+};
+
+export const EPISODE_PREVIEW_STAGE_DEFS: EpisodePreviewStage[] = [
+  { key: 'workflow', label: '工程链路', status: 'pending', message: '确认小说、章节和工作流' },
+  { key: 'script', label: '剧本', status: 'pending', message: '选择或生成章节剧本' },
+  { key: 'storyboard', label: '分镜镜头', status: 'pending', message: '选择或生成分镜和镜头' },
+  { key: 'assistant', label: '制片检查', status: 'pending', message: '补齐安全生产缺口' },
+  { key: 'contracts', label: '资产合约', status: 'pending', message: '锁定角色、场景、道具和字幕' },
+  { key: 'media', label: '音视频草稿', status: 'pending', message: '按镜头批量生成音视频和字幕' },
+  { key: 'concatenate', label: '连续成片', status: 'pending', message: '按镜头顺序生成成片清单' },
+  { key: 'preflight', label: '渲染预检', status: 'pending', message: '检查字幕、时间线和媒体可用性' },
+  { key: 'render', label: '渲染包', status: 'pending', message: '输出预览、SRT 和时间线文件' },
+];
+
+export function createInitialEpisodePreviewStages(): EpisodePreviewStage[] {
+  return EPISODE_PREVIEW_STAGE_DEFS.map((stage) => ({ ...stage }));
+}
+
+function normalizeList<T = any>(data: any): T[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.items)) return data.items;
+  if (Array.isArray(data?.data)) return data.data;
+  return [];
+}
+
+function firstByUpdatedAt<T extends { updated_at?: string; created_at?: string }>(items: T[]): T | undefined {
+  return [...items].sort((a, b) => {
+    const left = new Date(a.updated_at || a.created_at || 0).getTime();
+    const right = new Date(b.updated_at || b.created_at || 0).getTime();
+    return right - left;
+  })[0];
+}
+
+function issueMessage(preflight: any) {
+  const issues = Array.isArray(preflight?.issues) ? preflight.issues : [];
+  return issues
+    .slice(0, 3)
+    .map((issue: any) => issue.message || issue.detail || issue.code)
+    .filter(Boolean)
+    .join('；');
+}
+
+async function mark(
+  onStage: ((stage: EpisodePreviewStageUpdate) => void) | undefined,
+  key: EpisodePreviewStageKey,
+  status: EpisodePreviewStageStatus,
+  message: string
+) {
+  onStage?.({ key, status, message });
+}
+
+export async function runEpisodePreviewProduction(params: {
+  workflowId: string;
+  novelId?: string;
+  chapterId?: string;
+  scriptId?: string;
+  storyboardId?: string;
+  title?: string;
+  textModelConfigId?: string;
+  videoModelConfigId?: string;
+  audioModelConfigId?: string;
+  generationStrategy?: 'separate_video_tts' | 'direct_av_first';
+  onStage?: (stage: EpisodePreviewStageUpdate) => void;
+}): Promise<EpisodePreviewProductionResult> {
+  const { workflowId, onStage } = params;
+  if (!workflowId) throw new Error('缺少工作流，无法生成本集草片');
+
+  await mark(onStage, 'workflow', 'running', '正在读取工作流链路');
+  const status = await apiClient.getWorkflowStatus(workflowId);
+  const novelId = params.novelId || status.novel_id;
+  const chapterId = params.chapterId || status.chapter_id;
+  if (!novelId || !chapterId) {
+    await mark(onStage, 'workflow', 'failed', '请先选择小说和章节');
+    throw new Error('请先选择小说和章节，再生成本集草片');
+  }
+  await mark(onStage, 'workflow', 'done', '已绑定小说、章节和工作流');
+
+  let scriptId = params.scriptId || status.script_id;
+  let storyboardId = params.storyboardId || status.storyboard_id;
+
+  await mark(onStage, 'script', 'running', '正在确认章节剧本');
+  if (!scriptId) {
+    const scripts = normalizeList<any>(await apiClient.getScripts({ novel_id: novelId, chapter_id: chapterId, page_size: 20 }));
+    const existingScript = firstByUpdatedAt(scripts);
+    if (existingScript?.id) {
+      scriptId = existingScript.id;
+      await mark(onStage, 'script', 'done', '已复用当前章节已有剧本');
+    } else {
+      const generated = await apiClient.generateScript({
+        chapter_id: chapterId,
+        style: 'anime',
+        model_config_id: params.textModelConfigId || undefined,
+      });
+      scriptId = generated.id;
+      await mark(onStage, 'script', 'done', '已根据章节内容生成动漫剧本');
+    }
+  } else {
+    await mark(onStage, 'script', 'done', '已绑定工作流剧本');
+  }
+
+  await mark(onStage, 'storyboard', 'running', '正在确认分镜和镜头');
+  if (!storyboardId) {
+    const storyboards = normalizeList<any>(
+      scriptId
+        ? await apiClient.getStoryboards(scriptId)
+        : await apiClient.getStoryboards({ novel_id: novelId, chapter_id: chapterId })
+    ).filter((storyboard: any) => {
+      const boardChapterId = storyboard.chapter_id || storyboard.content?.chapter_id;
+      return !boardChapterId || boardChapterId === chapterId;
+    });
+    const existingStoryboard = firstByUpdatedAt(storyboards);
+    if (existingStoryboard?.id) {
+      storyboardId = existingStoryboard.id;
+      scriptId = existingStoryboard.script_id || scriptId;
+      await mark(onStage, 'storyboard', 'done', '已复用当前章节已有分镜');
+    } else {
+      const generated = await apiClient.generateSmartStoryboard({
+        novel_id: novelId,
+        chapter_id: chapterId,
+        shot_count: 8,
+        style: 'anime',
+        use_ai_refine: true,
+        model_config_id: params.textModelConfigId || undefined,
+      });
+      storyboardId = generated.id;
+      scriptId = generated.script_id || scriptId;
+      await mark(onStage, 'storyboard', 'done', `已生成 ${generated.shot_count || generated.shots?.length || 0} 个分镜镜头`);
+    }
+  } else {
+    await mark(onStage, 'storyboard', 'done', '已绑定工作流分镜');
+  }
+
+  await apiClient.updateWorkflowStep(workflowId, {
+    current_step: 6,
+    completed_steps: [1, 2, 3, 4, 5, 6],
+    novel_id: novelId,
+    chapter_id: chapterId,
+    script_id: scriptId || '',
+    storyboard_id: storyboardId || '',
+  });
+
+  await mark(onStage, 'assistant', 'running', '正在执行 AI 制片安全补齐');
+  await apiClient.runProducerAssistant(workflowId, { auto_fix: true });
+  await mark(onStage, 'assistant', 'done', '制片检查和安全补齐已完成');
+
+  await mark(onStage, 'contracts', 'running', '正在应用资产锁和镜头生产合约');
+  await apiClient.applyWorkflowAssetLocks(workflowId, { create_missing_assets: true, persist: true });
+  await apiClient.refreshWorkflowShortVideoContracts(workflowId);
+  await mark(onStage, 'contracts', 'done', '人物、场景、道具、字幕和模型路线已锁定');
+
+  const strategy = params.generationStrategy || 'separate_video_tts';
+  await mark(
+    onStage,
+    'media',
+    'running',
+    strategy === 'separate_video_tts'
+      ? '正在分别调用视频模型和声音模型生成镜头草稿'
+      : '正在调用直生音视频模型生成镜头草稿'
+  );
+  const mediaBatch = await apiClient.generateWorkflowMediaBatch(workflowId, {
+    strategy,
+    resolution: '720p',
+    subtitle_mode: 'shot_dialogue',
+    audio_mode: 'model_audio',
+    model_config_id: params.videoModelConfigId || undefined,
+    audio_model_config_id: params.audioModelConfigId || undefined,
+  });
+  const videoJobIds = mediaBatch.video_job_ids || [];
+  const ttsJobIds = mediaBatch.tts_job_ids || [];
+  const mediaJobIds = mediaBatch.media_job_ids || [];
+  const subtitleTrackIds = mediaBatch.subtitle_track_ids || [];
+  const pendingVideoJobIds = mediaBatch.pending_video_job_ids || [];
+  const pendingTtsJobIds = mediaBatch.pending_tts_job_ids || [];
+  if (mediaBatch.ready_for_concatenate === false) {
+    const message = `已提交 ${videoJobIds.length} 个视频任务、${ttsJobIds.length} 个声音任务；等待云端生成完成后再合成`;
+    await mark(onStage, 'media', 'done', message);
+    await mark(onStage, 'concatenate', 'failed', '等待视频/声音任务完成后再继续合成');
+    return {
+      workflowId,
+      novelId,
+      chapterId,
+      scriptId,
+      storyboardId,
+      videoJobIds,
+      ttsJobIds,
+      mediaJobIds,
+      subtitleTrackIds,
+      readyForConcatenate: false,
+      pendingVideoJobIds,
+      pendingTtsJobIds,
+    };
+  }
+  await mark(
+    onStage,
+    'media',
+    'done',
+    strategy === 'separate_video_tts'
+      ? `已创建 ${videoJobIds.length} 个视频任务、${ttsJobIds.length} 个声音任务和 ${subtitleTrackIds.length} 条字幕轨`
+      : `已创建 ${mediaJobIds.length} 个直生音视频任务和 ${subtitleTrackIds.length} 条字幕轨`
+  );
+
+  await mark(onStage, 'concatenate', 'running', '正在按分镜顺序编排连续成片清单');
+  const sequence = await apiClient.concatenateVideos(workflowId, {
+    video_job_ids: videoJobIds,
+    media_job_ids: mediaJobIds,
+    tts_job_ids: ttsJobIds,
+    title: params.title || '本集预览草片',
+    transition_style: 'cut',
+    include_subtitles: true,
+    subtitle_mode: 'dialogue',
+    audio_mix_strategy: 'match_by_shot',
+    quality_profile: 'review',
+  });
+  await mark(onStage, 'concatenate', 'done', `已编排 ${sequence.segment_count || 0} 个连续段落`);
+
+  await mark(onStage, 'preflight', 'running', '正在执行渲染预检');
+  const preflight = await apiClient.preflightWorkflowRender(workflowId, sequence.job_id, {
+    use_editable_timeline: true,
+  });
+  if (!preflight.ready) {
+    const message = issueMessage(preflight) || '渲染预检未通过，请先处理阻断项';
+    await mark(onStage, 'preflight', 'failed', message);
+    throw new Error(message);
+  }
+  await mark(onStage, 'preflight', 'done', '渲染预检已通过');
+
+  await mark(onStage, 'render', 'running', '正在生成本地预览、字幕和时间线包');
+  const render = await apiClient.renderWorkflowPackage(workflowId, {
+    synthesis_job_id: sequence.job_id,
+    force: true,
+    quality_profile: 'review',
+    render_backend: 'local_artifact_package',
+    burn_subtitles: false,
+    use_editable_timeline: true,
+  });
+  if (render.status === 'preflight_failed') {
+    const message = issueMessage(render) || render.message || '渲染包生成前预检失败';
+    await mark(onStage, 'render', 'failed', message);
+    throw new Error(message);
+  }
+  await mark(onStage, 'render', 'done', render.message || '本集草片渲染包已生成');
+
+  return {
+    workflowId,
+    novelId,
+    chapterId,
+    scriptId,
+    storyboardId,
+    videoJobIds,
+    ttsJobIds,
+    mediaJobIds,
+    subtitleTrackIds,
+    readyForConcatenate: true,
+    pendingVideoJobIds,
+    pendingTtsJobIds,
+    synthesisJobId: sequence.job_id,
+    outputUrl: sequence.output_url,
+    manifestUrl: sequence.manifest_url,
+    previewUrl: render.preview_url,
+    srtUrl: render.srt_url,
+    timelineUrl: render.timeline_url,
+    renderManifestUrl: render.render_manifest_url,
+    preflight,
+    render,
+  };
+}

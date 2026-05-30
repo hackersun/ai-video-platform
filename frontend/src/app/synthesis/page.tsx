@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/select';
+import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
+import { useToast } from '@/components/ui/toast';
 import { 
   Play, 
   Pause,
@@ -19,10 +20,12 @@ import {
   Settings,
   CheckCircle,
   XCircle,
-  Film
+  Film,
+  Trash2
 } from 'lucide-react';
+import { apiClient } from '@/lib/api-client';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 interface VideoJob {
   id: string;
@@ -37,10 +40,10 @@ interface VideoJob {
 interface TTSJob {
   id: string;
   title?: string;
-  text_content?: string;
+  text?: string;
   status: string;
   audio_url?: string;
-  duration?: number;
+  duration_seconds?: number;
   created_at: string;
 }
 
@@ -50,11 +53,22 @@ interface SynthesisJob {
   status: string;
   progress: number;
   output_url?: string;
-  duration?: number;
+  duration_seconds?: number;
+  created_at: string;
+}
+
+interface Publication {
+  id: string;
+  title: string;
+  status: string;
+  export_url: string;
+  provider: string;
+  synthesis_job_id?: string;
   created_at: string;
 }
 
 export default function SynthesisPage() {
+  const { toast } = useToast();
   const [videos, setVideos] = useState<VideoJob[]>([]);
   const [ttsAudios, setTtsAudios] = useState<TTSJob[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
@@ -69,18 +83,22 @@ export default function SynthesisPage() {
   // 当前合成结果
   const [currentSynthesis, setCurrentSynthesis] = useState<SynthesisJob | null>(null);
   const [history, setHistory] = useState<SynthesisJob[]>([]);
+  const [publications, setPublications] = useState<Publication[]>([]);
+  const [publishingJobId, setPublishingJobId] = useState<string | null>(null);
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
   useEffect(() => {
     loadVideos();
     loadAudios();
     loadHistory();
+    loadPublications();
   }, []);
 
   const loadVideos = async () => {
     setLoadingVideos(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/v1/video/jobs`, {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${API_BASE}/video/jobs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -102,8 +120,8 @@ export default function SynthesisPage() {
   const loadAudios = async () => {
     setLoadingAudios(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/v1/tts/jobs`, {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${API_BASE}/tts/jobs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -111,7 +129,7 @@ export default function SynthesisPage() {
         const data = await response.json();
         // 只显示成功的音频
         const successfulAudios = (Array.isArray(data) ? data : []).filter(
-          (a: TTSJob) => a.status === 'succeeded' && a.audio_url
+          (a: TTSJob) => (a.status === 'succeeded' || a.status === 'completed') && a.audio_url
         );
         setTtsAudios(successfulAudios);
       }
@@ -124,8 +142,8 @@ export default function SynthesisPage() {
 
   const loadHistory = async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`${API_BASE}/api/v1/synthesis/jobs`, {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${API_BASE}/synthesis/jobs`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       
@@ -138,9 +156,18 @@ export default function SynthesisPage() {
     }
   };
 
+  const loadPublications = async () => {
+    try {
+      const data = await apiClient.getPublications();
+      setPublications(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('加载发布记录失败:', err);
+    }
+  };
+
   const handleSynthesize = async () => {
     if (!selectedVideo || !selectedAudio) {
-      alert('请选择视频和音频');
+      toast({ title: '请选择视频和音频', description: '需要同时选择一个视频和一段音频后才能合成。', type: 'info' });
       return;
     }
     
@@ -148,9 +175,9 @@ export default function SynthesisPage() {
     setError(null);
     
     try {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('auth_token');
       
-      const response = await fetch(`${API_BASE}/api/v1/synthesis/create`, {
+      const response = await fetch(`${API_BASE}/synthesis/create`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -181,6 +208,64 @@ export default function SynthesisPage() {
   const downloadResult = () => {
     if (currentSynthesis?.output_url) {
       window.open(currentSynthesis.output_url, '_blank');
+    }
+  };
+
+  const publishJob = async (job: SynthesisJob) => {
+    setPublishingJobId(job.id);
+    setPublishMessage(null);
+    try {
+      await apiClient.publishSynthesis(job.id, { title: job.title, visibility: 'private' });
+      setPublishMessage(`《${job.title}》已发布`);
+      loadPublications();
+    } catch (err: any) {
+      setPublishMessage(err?.message || '发布失败');
+    } finally {
+      setPublishingJobId(null);
+    }
+  };
+
+  const exportJob = async (job: SynthesisJob) => {
+    setPublishingJobId(job.id);
+    setPublishMessage(null);
+    try {
+      const result = await apiClient.exportSynthesis(job.id, { format: 'mp4' });
+      const url = result?.export_url || result?.download_url || result?.output_url || job.output_url;
+      if (url) window.open(url, '_blank');
+      setPublishMessage(`《${job.title}》已创建导出`);
+      loadPublications();
+    } catch (err: any) {
+      setPublishMessage(err?.message || '导出失败');
+    } finally {
+      setPublishingJobId(null);
+    }
+  };
+
+  const revokePublication = async (publication: Publication) => {
+    setPublishingJobId(publication.id);
+    setPublishMessage(null);
+    try {
+      await apiClient.revokePublication(publication.id);
+      setPublishMessage(`《${publication.title}》已撤销`);
+      await loadPublications();
+    } catch (err: any) {
+      setPublishMessage(err?.message || '撤销失败');
+    } finally {
+      setPublishingJobId(null);
+    }
+  };
+
+  const archivePublication = async (publication: Publication) => {
+    setPublishingJobId(publication.id);
+    setPublishMessage(null);
+    try {
+      await apiClient.deletePublication(publication.id);
+      setPublishMessage(`《${publication.title}》已归档`);
+      setPublications(prev => prev.filter(item => item.id !== publication.id));
+    } catch (err: any) {
+      setPublishMessage(err?.message || '归档失败');
+    } finally {
+      setPublishingJobId(null);
     }
   };
 
@@ -215,7 +300,7 @@ export default function SynthesisPage() {
                 {loadingVideos ? (
                   <div className="text-center py-8">
                     <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-white/40" />
-                    <p className="text-white/40">加载中...</p>
+                    <p className="text-white/40">加载中…</p>
                   </div>
                 ) : videos.length === 0 ? (
                   <div className="text-center py-8 text-white/40">
@@ -229,7 +314,7 @@ export default function SynthesisPage() {
                       <div
                         key={video.id}
                         onClick={() => setSelectedVideo(video.id)}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                           selectedVideo === video.id
                             ? 'border-violet-500 bg-violet-500/10'
                             : 'border-white/10 hover:bg-white/5'
@@ -278,7 +363,7 @@ export default function SynthesisPage() {
                 {loadingAudios ? (
                   <div className="text-center py-8">
                     <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-white/40" />
-                    <p className="text-white/40">加载中...</p>
+                    <p className="text-white/40">加载中…</p>
                   </div>
                 ) : ttsAudios.length === 0 ? (
                   <div className="text-center py-8 text-white/40">
@@ -292,7 +377,7 @@ export default function SynthesisPage() {
                       <div
                         key={audio.id}
                         onClick={() => setSelectedAudio(audio.id)}
-                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                        className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                           selectedAudio === audio.id
                             ? 'border-blue-500 bg-blue-500/10'
                             : 'border-white/10 hover:bg-white/5'
@@ -302,10 +387,10 @@ export default function SynthesisPage() {
                           <Volume2 className="w-5 h-5 text-blue-400" />
                           <div className="flex-1 min-w-0">
                             <div className="text-white font-medium truncate">
-                              {audio.title || audio.text_content?.slice(0, 30) || '音频'}
+                              {audio.title || audio.text?.slice(0, 30) || '音频'}
                             </div>
                             <div className="text-white/60 text-sm">
-                              {audio.duration || 0}秒 · {new Date(audio.created_at).toLocaleDateString()}
+                              {audio.duration_seconds || 0}秒 · {new Date(audio.created_at).toLocaleDateString()}
                             </div>
                           </div>
                           {selectedAudio === audio.id && (
@@ -400,6 +485,15 @@ export default function SynthesisPage() {
               </Card>
             )}
 
+            {publishMessage && (
+              <Card className="bg-white/5 border-white/10">
+                <CardContent className="p-3 flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-yellow-400" />
+                  <p className="text-white/70 text-sm">{publishMessage}</p>
+                </CardContent>
+              </Card>
+            )}
+
             {/* 当前合成结果 */}
             {currentSynthesis && (
               <Card className="bg-white/5 border-white/10">
@@ -416,15 +510,25 @@ export default function SynthesisPage() {
                         ) : currentSynthesis.status === 'failed' ? (
                           <span className="text-red-400">合成失败</span>
                         ) : (
-                          <span className="text-yellow-400">处理中...</span>
+                          <span className="text-yellow-400">处理中…</span>
                         )}
                       </div>
                     </div>
                     {currentSynthesis.status === 'succeeded' && (
-                      <Button onClick={downloadResult}>
-                        <Download className="w-4 h-4 mr-2" />
-                        下载
-                      </Button>
+                      <div className="flex gap-2">
+                        <Button variant="outline" onClick={() => publishJob(currentSynthesis)} disabled={publishingJobId === currentSynthesis.id}>
+                          {publishingJobId === currentSynthesis.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
+                          发布
+                        </Button>
+                        <Button variant="outline" onClick={() => exportJob(currentSynthesis)} disabled={publishingJobId === currentSynthesis.id}>
+                          {publishingJobId === currentSynthesis.id ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                          导出
+                        </Button>
+                        <Button onClick={downloadResult}>
+                          <Download className="w-4 h-4 mr-2" />
+                          下载
+                        </Button>
+                      </div>
                     )}
                   </div>
                   
@@ -487,14 +591,69 @@ export default function SynthesisPage() {
                             <Loader2 className="w-5 h-5 text-yellow-400 animate-spin" />
                           )}
                           {job.output_url && (
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => window.open(job.output_url, '_blank')}
-                            >
-                              <Download className="w-4 h-4" />
-                            </Button>
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={publishingJobId === job.id}
+                                onClick={() => publishJob(job)}
+                              >
+                                {publishingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={publishingJobId === job.id}
+                                onClick={() => exportJob(job)}
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            </>
                           )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Download className="w-5 h-5" />
+                  发布记录
+                </CardTitle>
+                <Button variant="ghost" size="sm" onClick={loadPublications}>
+                  <RefreshCw className="w-4 h-4" />
+                </Button>
+              </CardHeader>
+              <CardContent>
+                {publications.length === 0 ? (
+                  <div className="text-center py-8 text-white/40">
+                    <Download className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>暂无发布记录</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-72 overflow-y-auto">
+                    {publications.map((publication) => (
+                      <div key={publication.id} className="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-white font-medium truncate">{publication.title}</div>
+                          <div className="text-white/50 text-sm">
+                            {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(publication.export_url, '_blank')}>
+                            <Download className="w-4 h-4" />
+                          </Button>
+                          <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
+                            <XCircle className="w-4 h-4" />
+                          </Button>
+                          <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
                         </div>
                       </div>
                     ))}

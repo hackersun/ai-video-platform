@@ -2,6 +2,7 @@
 图像生成任务模型
 """
 
+from app.core.time_utils import utc_now
 from datetime import datetime
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, Text, JSON
 from app.core.database import Base
@@ -34,6 +35,6 @@ class ImageJob(Base):
     # Cost tracking
     cost = Column(String(50), nullable=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
     completed_at = Column(DateTime, nullable=True)

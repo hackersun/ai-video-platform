@@ -1,0 +1,136 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e3]:
+      - generic [ref=e4]:
+        - link "AI视频平台" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e7]
+          - generic [ref=e9]: AI视频平台
+        - navigation [ref=e10]:
+          - link "控制台" [ref=e11] [cursor=pointer]:
+            - /url: /dashboard
+            - img [ref=e12]
+            - generic [ref=e15]: 控制台
+          - link "作品" [ref=e16] [cursor=pointer]:
+            - /url: /novels
+            - img [ref=e17]
+            - generic [ref=e20]: 作品
+          - link "剧本" [ref=e21] [cursor=pointer]:
+            - /url: /scripts
+            - img [ref=e22]
+            - generic [ref=e25]: 剧本
+          - link "角色" [ref=e26] [cursor=pointer]:
+            - /url: /characters
+            - img [ref=e27]
+            - generic [ref=e32]: 角色
+          - link "分镜" [ref=e33] [cursor=pointer]:
+            - /url: /storyboards
+            - img [ref=e34]
+            - generic [ref=e39]: 分镜
+          - link "视频生成" [ref=e40] [cursor=pointer]:
+            - /url: /video-generation
+            - img [ref=e41]
+            - generic [ref=e44]: 视频生成
+          - button "工具" [ref=e46] [cursor=pointer]:
+            - img [ref=e47]
+            - generic [ref=e50]: 工具
+            - img [ref=e51]
+          - button "更多" [ref=e54] [cursor=pointer]:
+            - img [ref=e55]
+            - generic [ref=e58]: 更多
+            - img [ref=e59]
+    - main [ref=e61]:
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - link [ref=e65] [cursor=pointer]:
+              - /url: /novels
+              - button [ref=e66]:
+                - img [ref=e67]
+            - generic [ref=e69]:
+              - heading "创建小说" [level=1] [ref=e70]
+              - paragraph [ref=e71]: 开始您的创作之旅
+          - generic [ref=e72]:
+            - button "保存草稿" [ref=e73] [cursor=pointer]:
+              - img [ref=e74]
+              - text: 保存草稿
+            - button "发布小说" [ref=e78] [cursor=pointer]:
+              - img [ref=e79]
+              - text: 发布小说
+        - generic [ref=e82]:
+          - generic [ref=e83]:
+            - generic [ref=e84]:
+              - heading "基本信息" [level=3] [ref=e86]:
+                - img [ref=e87]
+                - text: 基本信息
+              - generic [ref=e90]:
+                - generic [ref=e91]:
+                  - generic [ref=e92]: 小说标题 *
+                  - textbox "输入小说标题" [ref=e93]
+                - generic [ref=e94]:
+                  - generic [ref=e95]: 小说简介
+                  - textbox "简要介绍小说内容" [ref=e96]
+                - generic [ref=e97]:
+                  - generic [ref=e98]:
+                    - generic [ref=e99]: 题材分类 *
+                    - combobox [ref=e100]:
+                      - option "选择题材" [selected]
+                      - option "仙侠"
+                      - option "都市"
+                      - option "科幻"
+                      - option "历史"
+                      - option "言情"
+                      - option "悬疑"
+                      - option "奇幻"
+                  - generic [ref=e101]:
+                    - generic [ref=e102]: 小说风格
+                    - combobox [ref=e103]:
+                      - option "选择风格" [selected]
+                      - option "正剧"
+                      - option "轻松"
+                      - option "虐心"
+                      - option "热血"
+                - generic [ref=e104]:
+                  - generic [ref=e105]: 标签
+                  - textbox "用逗号分隔标签，如：修仙、热血、成长" [ref=e106]
+            - generic [ref=e107]:
+              - heading "详细简介 AI 生成" [level=3] [ref=e109]:
+                - generic [ref=e110]:
+                  - img [ref=e111]
+                  - text: 详细简介
+                - button "AI 生成" [ref=e114] [cursor=pointer]:
+                  - img [ref=e115]
+                  - text: AI 生成
+              - textbox "输入小说的详细简介、世界观、人物设定等..." [ref=e118]
+          - generic [ref=e119]:
+            - generic [ref=e120]:
+              - heading "封面设置" [level=3] [ref=e122]:
+                - img [ref=e123]
+                - text: 封面设置
+              - generic [ref=e127]:
+                - generic [ref=e128]:
+                  - img [ref=e129]
+                  - paragraph [ref=e133]: 点击或拖拽上传封面
+                  - paragraph [ref=e134]: "建议尺寸: 1200x1600"
+                - textbox "或输入图片URL" [ref=e135]
+            - generic [ref=e136]:
+              - heading "角色关联" [level=3] [ref=e138]:
+                - img [ref=e139]
+                - text: 角色关联
+              - generic [ref=e144]:
+                - paragraph [ref=e145]: 创建小说后可关联角色
+                - link "管理角色库" [ref=e146] [cursor=pointer]:
+                  - /url: /characters
+                  - button "管理角色库" [ref=e147]
+            - generic [ref=e149]:
+              - heading "💡 创作提示" [level=4] [ref=e150]
+              - list [ref=e151]:
+                - listitem [ref=e152]: • 好的标题能吸引读者注意
+                - listitem [ref=e153]: • 简介要能概括故事核心
+                - listitem [ref=e154]: • 选择合适的题材和风格
+                - listitem [ref=e155]: • 使用标签帮助读者发现
+  - alert [ref=e156]
+```
