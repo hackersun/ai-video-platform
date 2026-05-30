@@ -194,7 +194,8 @@ class ShotQualityService:
 
         # 4. 台词过长警告 - WARNING
         dialogue = getattr(shot, "dialogue", None) or ""
-        subtitle_text = (((getattr(shot, "extra_data", None) or {}).get("subtitle_text")) if isinstance(getattr(shot, "extra_data", None), dict) else None or dialogue
+        extra_data = getattr(shot, "extra_data", None) or {}
+        subtitle_text = extra_data.get("subtitle_text") if isinstance(extra_data, dict) else dialogue
         if len(dialogue) > MAX_DIALOGUE_CHARS:
             warnings.append(f"对白过长（{len(dialogue)}字），可能影响配音节奏")
             issues.append(QualityIssue(
