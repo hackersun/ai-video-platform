@@ -7,7 +7,7 @@ import uuid
 from typing import List, Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, desc
 from pydantic import BaseModel, Field
@@ -950,7 +950,7 @@ async def get_shot_quality_report(
 @router.post("/{shot_id}/retry", response_model=RetryResponse)
 async def retry_shot_video(
     shot_id: str,
-    max_attempts: Optional[int] = Field(None, description="最大重试次数，默认3"),
+    max_attempts: Optional[int] = Query(None, description="最大重试次数，默认3"),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):

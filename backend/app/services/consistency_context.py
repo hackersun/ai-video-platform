@@ -16,6 +16,7 @@ from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.model_registry import get_task_default
+from app.core.time_utils import utc_now
 from app.models import Character, Project, Script, Shot, StoryBible, StoryEntity, Storyboard
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
 from app.services.prompt_composer import compose_generation_prompt
@@ -101,6 +102,72 @@ def _build_character_name_index(
             indexed[character.name] = character
             ranks[character.name] = rank
     return indexed
+
+
+def match_entities_to_text(
+    entities: List[StoryEntity], text: str
+) -> Dict[str, List[StoryEntity]]:
+    """Match entities against text using name and aliases.
+
+    Returns grouped matches by entity_type.
+    """
+    matched: Dict[str, List[StoryEntity]] = {}
+    if not text:
+        return matched
+
+    haystack = text.lower()
+    for entity in entities:
+        names = [entity.name] + list(entity.aliases or [])
+        if any(name and name.lower() in haystack for name in names if isinstance(name, str)):
+            matched.setdefault(entity.entity_type, []).append(entity)
+    return matched
+
+
+async def auto_fill_shot_entity_refs(
+    db: AsyncSession,
+    shot: Shot,
+    user_id: str,
+    novel_id: str,
+    chapter_id: Optional[str] = None,
+) -> Shot:
+    """Automatically fill shot.extra_data.entity_refs based on shot content.
+
+    Loads or extracts story entities, then matches them against the shot's
+    prompt, dialogue, and visual_description fields.
+    """
+    # 1. Build shot text from all relevant fields
+    shot_text_parts = [shot.prompt or "", shot.dialogue or ""]
+    extra_data = _json_dict(shot.extra_data)
+    if extra_data.get("visual_description"):
+        shot_text_parts.append(extra_data["visual_description"])
+    shot_text = " ".join(part for part in shot_text_parts if part)
+
+    # 2. Load or extract entities for matching
+    entities = await load_or_extract_story_entities(
+        db,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        text=shot_text,
+        persist_missing=False,  # Don't create new entities during auto-fill
+    )
+
+    # 3. Match entities to shot text
+    matched = match_entities_to_text(entities, shot_text)
+
+    # 4. Build entity_refs structure with entity IDs
+    entity_refs = {
+        "characters": [e.id for e in matched.get("character", [])],
+        "scenes": [e.id for e in matched.get("scene", [])],
+        "props": [e.id for e in matched.get("prop", [])],
+        "events": [e.id for e in matched.get("event", [])],
+    }
+
+    # 5. Update shot.extra_data
+    extra_data["entity_refs"] = entity_refs
+    shot.extra_data = extra_data
+
+    return shot
 
 
 async def load_or_extract_story_entities(
@@ -488,3 +555,61 @@ async def build_consistency_prompt(
             "default_model_id": task_default.get("default_model_id") if task_default else None,
         },
     }
+
+
+async def auto_fill_shot_entity_refs(
+    db: AsyncSession,
+    shot: Shot,
+    novel_id: Optional[str],
+    chapter_id: Optional[str],
+) -> Shot:
+    """Fill or refresh entity_refs for a single shot based on its content and context.
+
+    This function updates the shot's extra_data with fresh entity references by
+    re-analyzing the shot's prompt, dialogue, visual_description, and other text fields.
+
+    Args:
+        db: Database session
+        shot: The shot to update
+        novel_id: Novel ID for entity lookup scope
+        chapter_id: Chapter ID for entity lookup scope
+
+    Returns:
+        The updated shot object
+    """
+    shot_text = _shot_text_from_values(
+        shot.prompt,
+        shot.dialogue,
+        shot.visual_description,
+        getattr(shot, "ambient_sound", None),
+        getattr(shot, "sfx_cue", None),
+        getattr(shot, "music_cue", None),
+    )
+
+    entity_context = await build_shot_entity_context(
+        db,
+        shot.user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        source_text=None,  # Don't re-extract, just match existing entities
+        shot_text=shot_text,
+    )
+
+    extra_data = dict(_json_dict(shot.extra_data))
+    extra_data["entity_refs"] = entity_context["entity_refs"]
+    extra_data["scene_refs"] = entity_context["scene_refs"]
+    extra_data["prop_refs"] = entity_context["prop_refs"]
+    extra_data["event_refs"] = entity_context["event_refs"]
+    extra_data["environment_context"] = entity_context["environment_context"]
+    extra_data["entity_refs_filled_at"] = utc_now().isoformat()
+
+    shot.extra_data = extra_data
+    shot.character_refs = entity_context["character_refs"]
+    shot.updated_at = utc_now()
+
+    return shot
+
+
+def _shot_text_from_values(*values: Optional[str]) -> str:
+    """Concatenate non-empty string values into a single text for entity matching."""
+    return " ".join(v for v in values if v)

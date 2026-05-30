@@ -17,7 +17,7 @@ from app.core.database import get_db
 from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config, get_user_volcano_api_key
 from app.core.security import get_current_user_id
 from app.models import Asset, Storyboard, Shot, Novel, Chapter, Script
-from app.services.consistency_context import build_consistency_prompt, build_shot_entity_context
+from app.services.consistency_context import build_consistency_prompt, build_shot_entity_context, auto_fill_shot_entity_refs
 from app.services.novel_continuity import build_novel_continuity_package
 from app.services.story_prompt_context import (
     build_shot_dialogue_context,
@@ -1162,3 +1162,56 @@ async def generate_storyboard_shot_images(
             results.append({"shot_id": shot_id, "status": "error", "reason": str(e)})
 
     return {"storyboard_id": storyboard_id, "results": results}
+
+
+@router.post("/{storyboard_id}/fill-entity-refs")
+async def fill_storyboard_shot_entity_refs(
+    storyboard_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """填充分镜下所有镜头的实体引用。
+
+    遍历分镜的所有镜头，为每个镜头重新匹配并填充 character_refs、
+    entity_refs、scene_refs、prop_refs、event_refs、environment_context。
+    用于分镜生成后批量刷新实体引用，或修复遗漏的实体匹配。
+    """
+    # 验证分镜所有权
+    result = await db.execute(
+        select(Storyboard).where(
+            and_(Storyboard.id == storyboard_id, Storyboard.user_id == user_id)
+        )
+    )
+    storyboard = result.scalar_one_or_none()
+    if not storyboard:
+        raise HTTPException(status_code=404, detail="分镜不存在")
+
+    # 获取 chapter_id
+    content = storyboard.content if isinstance(storyboard.content, dict) else {}
+    chapter_id = content.get("chapter_id")
+
+    # 获取所有镜头
+    shots_result = await db.execute(
+        select(Shot).where(
+            and_(Shot.storyboard_id == storyboard_id, Shot.user_id == user_id)
+        )
+    )
+    shots = list(shots_result.scalars().all())
+
+    updated_count = 0
+    for shot in shots:
+        await auto_fill_shot_entity_refs(
+            db,
+            shot,
+            storyboard.novel_id,
+            chapter_id,
+        )
+        updated_count += 1
+
+    await db.commit()
+    return {
+        "status": "success",
+        "storyboard_id": storyboard_id,
+        "count": updated_count,
+        "message": f"已更新 {updated_count} 个镜头的实体引用",
+    }
