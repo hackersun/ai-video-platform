@@ -25,6 +25,7 @@ from app.core.security import get_current_user_id
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
+from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 
 router = APIRouter(tags=["统一媒体生成"])
@@ -53,6 +54,7 @@ class MediaGenerateRequest(BaseModel):
     subtitle_mode: str = Field("shot_dialogue", description="shot_dialogue/direct_model/off")
     audio_mode: str = Field("model_audio", description="model_audio/tts/none")
     use_consistency_context: bool = True
+    unsafe_skip_consistency_preflight: bool = Field(False, description="仅用于明确的生产降级调试：跳过一致性预检")
     external_config_id: Optional[str] = Field(None, description="外部生产适配配置ID")
     adapter_options: Dict[str, Any] = Field(default_factory=dict, description="供应商/插件适配参数")
     asset_version_locks: List[Dict[str, Any]] = Field(default_factory=list, description="资产版本锁")
@@ -332,6 +334,31 @@ async def generate_media(
     shot = lineage.get("shot")
     shot_extra = _json_dict(getattr(shot, "extra_data", None))
     model = _resolve_model_for_task(request.task_type, request.model_id)
+
+    if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="生产模式不能跳过一致性预检；如需降级调试，请显式开启 unsafe_skip_consistency_preflight 并记录原因。",
+        )
+    if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
+        preflight_package = await build_generation_context_package(
+            db,
+            user_id,
+            task_type="direct_audio_video" if request.task_type == "shot_audio_video" else request.task_type,
+            external_config_id=request.external_config_id,
+            production_mode=True,
+            novel_id=request.novel_id,
+            chapter_id=request.chapter_id,
+            script_id=request.script_id,
+            storyboard_id=request.storyboard_id,
+            shot_id=request.shot_id,
+        )
+        if not preflight_package.get("ready"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=preflight_failure_detail(preflight_package),
+            )
+
     external_config, external_provider = await _get_external_config(
         db,
         user_id,

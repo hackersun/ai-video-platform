@@ -15,14 +15,21 @@ from app.core.database import get_db
 from app.core.api_key_utils import (
     create_image_generation_service,
     get_user_image_model_config,
-    get_user_volcano_api_key,
 )
 from app.core.dev_generation import dev_image_url, is_dev_mode
 from app.core.security import get_current_user_id
 from app.services.consistency_context import build_consistency_prompt
+from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
+from app.services.asset_generation_service import style_keywords_for
+from app.services.image_generation_pipeline import (
+    call_image_generation_provider,
+    missing_image_result_message,
+    provider_task_id,
+)
+from app.services.image_prompt_policy import append_global_image_constraints
+from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
-from app.services.volcano_service import VolcanoService
-from app.models.image_job import ImageJob
+from app.models import Character, ImageJob, Shot
 
 router = APIRouter(tags=["图像生成"])
 
@@ -43,6 +50,7 @@ class ImageGenerateRequest(BaseModel):
     novel_id: Optional[str] = Field(None, description="小说ID，用于自动匹配 Story Bible")
     character_ids: List[str] = Field(default_factory=list, description="需要注入一致性设定的角色ID列表")
     use_consistency_context: bool = Field(True, description="是否自动注入 Story Bible/项目/镜头/角色一致性上下文")
+    unsafe_skip_consistency_preflight: bool = Field(False, description="仅用于明确的生产降级调试：跳过一致性预检")
     model_config_id: Optional[str] = Field(None, description="已保存的图像模型配置ID")
 
 
@@ -84,6 +92,37 @@ class ImageStatusResponse(BaseModel):
     message: str
 
 
+async def _sync_generated_image_links(
+    db: AsyncSession,
+    user_id: str,
+    request: ImageGenerateRequest,
+    image_urls: list[str],
+) -> None:
+    """Write the first generated image back to linked production records."""
+    if not image_urls:
+        return
+
+    primary_url = image_urls[0]
+    if request.shot_id:
+        shot_result = await db.execute(
+            select(Shot).where(Shot.id == request.shot_id, Shot.user_id == user_id)
+        )
+        shot = shot_result.scalar_one_or_none()
+        if shot:
+            shot.image_url = primary_url
+            shot.image_status = "succeeded"
+            shot.updated_at = utc_now()
+
+    if request.character_id:
+        char_result = await db.execute(
+            select(Character).where(Character.id == request.character_id, Character.user_id == user_id)
+        )
+        character = char_result.scalar_one_or_none()
+        if character:
+            character.avatar = primary_url
+            character.updated_at = utc_now()
+
+
 # ============== API 端点 ==============
 
 @router.post("/generate", response_model=ImageGenerateResponse)
@@ -103,7 +142,6 @@ async def generate_image(
     """
     # 验证 shot_id 关联（如果提供）
     if request.shot_id:
-        from app.models import Shot
         shot_result = await db.execute(
             select(Shot).where(Shot.id == request.shot_id, Shot.user_id == user_id)
         )
@@ -116,7 +154,6 @@ async def generate_image(
 
     # 验证 character_id 关联（如果提供）
     if request.character_id:
-        from app.models import Character
         char_result = await db.execute(
             select(Character).where(Character.id == request.character_id, Character.user_id == user_id)
         )
@@ -127,6 +164,13 @@ async def generate_image(
                 detail="角色不存在"
             )
 
+    if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="生产模式不能跳过一致性预检；如需降级调试，请显式开启 unsafe_skip_consistency_preflight 并记录原因。",
+        )
+
+    style_prompt = style_keywords_for(request.style) if request.style else ""
     final_prompt = request.prompt
     consistency_metadata = {}
     if request.use_consistency_context:
@@ -141,10 +185,29 @@ async def generate_image(
             shot_id=request.shot_id,
             character_ids=request.character_ids,
             fallback_character_id=request.character_id,
-            extra_context={"图片风格": request.style, "图片尺寸": request.size},
+            extra_context={"图片风格": style_prompt or request.style, "图片尺寸": request.size},
         )
         final_prompt = context["prompt"]
         consistency_metadata = context["metadata"]
+    if style_prompt and style_prompt not in final_prompt:
+        final_prompt = f"{final_prompt}\n\n画面风格要求：{style_prompt}"
+    final_prompt = append_global_image_constraints(final_prompt)
+
+    if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
+        preflight_package = await build_generation_context_package(
+            db,
+            user_id,
+            task_type="image_generation",
+            model_config_id=request.model_config_id,
+            production_mode=True,
+            novel_id=request.novel_id,
+            shot_id=request.shot_id,
+        )
+        if not preflight_package.get("ready"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=preflight_failure_detail(preflight_package),
+            )
 
     # 先创建 ImageJob 记录（pending状态）
     job_id = str(uuid4())
@@ -165,110 +228,61 @@ async def generate_image(
     await db.commit()
 
     try:
-        provider_name = "volcano"
-        model_id = request.model
-        if request.model_config_id:
+        try:
             api_key, provider_name, model_id, base_url = await get_user_image_model_config(
                 db,
                 user_id,
                 config_id=request.model_config_id,
             )
             service = create_image_generation_service(api_key or "", provider_name or "", base_url)
-        else:
-            try:
-                api_key = await get_user_volcano_api_key(db, user_id)
-            except HTTPException:
-                if not is_dev_mode():
-                    raise
-                image_urls = [dev_image_url(f"{job_id}-{index}", request.style or "anime") for index in range(request.num)]
-                job.status = "succeeded"
-                job.task_id = f"dev-image-{job_id}"
-                job.image_urls = image_urls
-                job.cost = "0"
-                job.error_message = None
-                job.completed_at = utc_now()
+        except HTTPException:
+            if request.model_config_id or not is_dev_mode():
+                raise
+            image_urls = [dev_image_url(f"{job_id}-{index}", request.style or "anime") for index in range(request.num)]
+            job.status = "succeeded"
+            job.task_id = f"dev-image-{job_id}"
+            job.image_urls = image_urls
+            job.cost = "0"
+            job.error_message = None
+            job.completed_at = utc_now()
 
-                if request.shot_id:
-                    from app.models import Shot
+            await _sync_generated_image_links(db, user_id, request, image_urls)
 
-                    shot_result = await db.execute(
-                        select(Shot).where(Shot.id == request.shot_id, Shot.user_id == user_id)
-                    )
-                    shot = shot_result.scalar_one_or_none()
-                    if shot:
-                        shot.image_url = image_urls[0]
-                        shot.image_status = "succeeded"
-
-                await db.commit()
-                return ImageGenerateResponse(
-                    job_id=job_id,
-                    task_id=job.task_id,
-                    image_urls=image_urls,
-                    status="succeeded",
-                    message="DEV_MODE 本地图片任务已完成，未调用云端图像模型"
-                )
-            service = VolcanoService(api_key)
+            await db.commit()
+            return ImageGenerateResponse(
+                job_id=job_id,
+                task_id=job.task_id,
+                image_urls=image_urls,
+                status="succeeded",
+                message="DEV_MODE 本地图片任务已完成，未调用云端图像模型"
+            )
         job.model = model_id
 
-        # 构建提示词
-        prompt = final_prompt
-        if request.style:
-            prompt = f"{request.style} style, {prompt}"
+        result = await call_image_generation_provider(
+            service,
+            provider_name=provider_name,
+            model_id=model_id,
+            prompt=final_prompt,
+            num=request.num,
+            size=request.size,
+            aspect_ratio="1:1",
+            openai_size="1024x1024",
+        )
 
-        if provider_name in ("volcano", "volcano_agent_plan"):
-            result = await service.generate_image(
-                prompt=prompt,
-                model=model_id,
-                size=request.size,
-                num=request.num
-            )
-        elif provider_name == "minimax":
-            result = await service.generate_image(
-                prompt=prompt,
-                model=model_id,
-                aspect_ratio="1:1",
-                n=request.num,
-                response_format="url",
-            )
-        elif provider_name == "openai":
-            result = await service.generate_image(
-                prompt=prompt,
-                model=model_id,
-                size="1024x1024",
-                n=request.num,
-                save_local=False,
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"不支持的图像模型服务商: {provider_name}")
-
-        # 解析返回结果
-        image_urls = []
-        if "data" in result:
-            for item in result["data"]:
-                if isinstance(item, dict) and "url" in item:
-                    image_urls.append(item["url"])
-        if not image_urls:
-            items = result.get("images") or result.get("image_urls") or []
-            if isinstance(items, dict):
-                items = items.get("items") or items.get("images") or items.get("image_urls") or []
-            for item in items:
-                if isinstance(item, dict):
-                    url = item.get("url") or item.get("image_url")
-                    if url:
-                        image_urls.append(url)
-                elif isinstance(item, str):
-                    image_urls.append(item)
-        if not image_urls and result.get("local_urls"):
-            image_urls = result["local_urls"]
+        # 解析返回结果：兼容 data:[{url}]、data:{image_urls:[]}、images/local_urls 等结构
+        job.task_id = provider_task_id(result, provider_name=provider_name)
+        image_urls = extract_image_urls_from_provider_result(result)
 
         if not image_urls:
             # 更新job为失败状态
+            error_message = missing_image_result_message(provider_name, job.task_id)
             job.status = "failed"
-            job.error_message = "未获取到图片URL"
+            job.error_message = error_message
+            job.completed_at = utc_now()
             await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"图像生成失败: 未获取到图片URL"
+                detail=f"图像生成失败: {error_message}"
             )
 
         persisted_urls = []
@@ -291,10 +305,10 @@ async def generate_image(
         # 更新job为成功状态
         job.status = "succeeded"
         job.image_urls = persisted_urls
-        job.task_id = result.get("id") or result.get("task_id")
         if persistence_errors:
             job.error_message = f"图片已生成，但本地持久化失败: {'; '.join(persistence_errors[:2])}"
         job.completed_at = utc_now()
+        await _sync_generated_image_links(db, user_id, request, persisted_urls)
         await db.commit()
 
         return ImageGenerateResponse(

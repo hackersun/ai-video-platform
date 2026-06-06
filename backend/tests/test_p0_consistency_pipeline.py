@@ -9,7 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
 
 from app.core.database import AsyncSessionLocal
-from app.models import Asset, Chapter, LLMConfig, LLMModel, LLMProvider, Novel, Script, Shot, Storyboard
+from app.models import Asset, Chapter, ImageJob, LLMConfig, LLMModel, LLMProvider, Novel, Script, Shot, Storyboard, TTSJob
+from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
+from app.models.media_generation_job import MediaGenerationJob
 from init_db import init_db
 from main import app
 
@@ -424,3 +426,349 @@ def test_consistency_preflight_standard_route_reports_unverified_model_and_local
     assert "reference_image_not_public" in codes
     assert payload["blocking_issue_count"] >= 2
     assert payload["ready"] is False
+
+
+def _signed_auth_headers(user_id: str) -> dict[str, str]:
+    from app.api.v1.endpoints.auth import create_access_token
+
+    return {"Authorization": f"Bearer {create_access_token({'sub': user_id})}"}
+
+
+async def _seed_llm_config(
+    *,
+    user_id: str,
+    model_type: str,
+    capabilities: list[str],
+    provider_name: str,
+    test_status: str = "pending",
+) -> str:
+    async with AsyncSessionLocal() as db:
+        provider_result = await db.execute(
+            select(LLMProvider).where((LLMProvider.name == provider_name) | (LLMProvider.id == provider_name))
+        )
+        provider = provider_result.scalar_one_or_none()
+        if provider is None:
+            provider = LLMProvider(
+                id=provider_name,
+                name=provider_name,
+                name_cn=provider_name,
+                is_active=True,
+            )
+            db.add(provider)
+        model_id = f"{model_type}-model-{uuid4()}"
+        config_id = f"{model_type}-config-{uuid4()}"
+        model = LLMModel(
+            id=model_id,
+            provider_id=provider.id,
+            model_id=f"{model_type}-api-model",
+            model_name=f"{model_type} API Model",
+            model_type=model_type,
+            capabilities=capabilities,
+            is_active=True,
+        )
+        db.add(model)
+        config = LLMConfig(
+            id=config_id,
+            user_id=user_id,
+            model_id=model_id,
+            name=f"{model_type} 未验证配置",
+            test_status=test_status,
+            is_active=True,
+        )
+        config.set_api_key_encrypted(f"sk-{model_type}-test")
+        db.add(config)
+        await db.commit()
+        return config_id
+
+
+async def _seed_external_config(*, user_id: str, test_status: str = "pending") -> str:
+    async with AsyncSessionLocal() as db:
+        provider = ExternalAPIProvider(
+            id=f"external-provider-{uuid4()}",
+            name=f"external-provider-{uuid4()}",
+            name_cn="外部适配测试供应商",
+            api_type="video",
+            base_url="",
+            is_active=True,
+        )
+        db.add(provider)
+        config = ExternalAPIConfig(
+            id=f"external-config-{uuid4()}",
+            user_id=user_id,
+            provider_id=provider.id,
+            name="未验证外部适配",
+            api_key="",
+            test_status=test_status,
+            is_active=True,
+        )
+        config.set_api_key_encrypted("sk-external-test")
+        db.add(config)
+        await db.commit()
+        return config.id
+
+
+def test_non_dev_video_generation_blocks_consistency_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/video/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "prompt": "生成一个孤立镜头",
+                "model": "Doubao-Seedance-1.0-pro-fast",
+                "duration": 4,
+                "use_consistency_context": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "生产模式不能跳过一致性预检" in response.json()["detail"]
+
+
+def test_non_dev_video_generation_blocks_unverified_model_and_local_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+    model_id = f"video-model-{uuid4()}"
+    config_id = f"video-config-{uuid4()}"
+
+    async def _seed_video_config() -> None:
+        async with AsyncSessionLocal() as db:
+            provider = await db.get(LLMProvider, "volcano")
+            if provider is None:
+                provider = LLMProvider(
+                    id="volcano",
+                    name="volcano",
+                    name_cn="火山引擎",
+                    is_active=True,
+                )
+                db.add(provider)
+            model = LLMModel(
+                id=model_id,
+                provider_id=provider.id,
+                model_id="Doubao-Seedance-1.0-pro-fast",
+                model_name="Seedance Test",
+                model_type="video",
+                capabilities=["text_to_video", "image_to_video"],
+                is_active=True,
+            )
+            db.add(model)
+            config = LLMConfig(
+                id=config_id,
+                user_id=user_id,
+                model_id=model_id,
+                name="未验证视频配置",
+                test_status="pending",
+                is_active=True,
+            )
+            config.set_api_key_encrypted("sk-video-test")
+            db.add(config)
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_seed_video_config())
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/video/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "prompt": "沈砚站在旧码头",
+                "model": "Doubao-Seedance-1.0-pro-fast",
+                "model_config_id": config_id,
+                "duration": 4,
+                "image_url": "/static/generated/images/local-reference.png",
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "generation_preflight_failed"
+    codes = {issue["code"] for issue in detail["issues"]}
+    assert "model_unverified" in codes
+    assert "reference_image_not_public" in codes
+
+
+def test_non_dev_image_generation_blocks_consistency_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/images/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "prompt": "生成孤立角色头像",
+                "use_consistency_context": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "生产模式不能跳过一致性预检" in response.json()["detail"]
+
+
+def test_non_dev_image_generation_blocks_unverified_model_before_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    import asyncio
+
+    config_id = asyncio.run(
+        _seed_llm_config(
+            user_id=user_id,
+            model_type="image",
+            capabilities=["text-to-image"],
+            provider_name="volcano",
+        )
+    )
+
+    async def _fake_image_provider(*args, **kwargs):
+        return {"data": [{"url": "https://cdn.example.com/generated.png"}]}
+
+    monkeypatch.setattr("app.api.v1.endpoints.images.call_image_generation_provider", _fake_image_provider)
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/images/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "prompt": "生成角色正面定稿",
+                "model_config_id": config_id,
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "generation_preflight_failed"
+    assert {issue["code"] for issue in detail["issues"]} == {"model_unverified"}
+
+    async def _count_jobs() -> int:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(ImageJob).where(ImageJob.user_id == user_id))
+            return len(result.scalars().all())
+
+    assert asyncio.run(_count_jobs()) == 0
+
+
+def test_non_dev_tts_generation_blocks_consistency_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/tts/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "text": "旁白: 旧码头的风停了。",
+                "use_consistency_context": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "生产模式不能跳过一致性预检" in response.json()["detail"]
+
+
+def test_non_dev_tts_generation_blocks_unverified_model_before_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    import asyncio
+
+    config_id = asyncio.run(
+        _seed_llm_config(
+            user_id=user_id,
+            model_type="tts",
+            capabilities=["tts"],
+            provider_name="minimax",
+        )
+    )
+
+    async def _fake_tts(self, **kwargs):
+        return {"audio_url": "https://cdn.example.com/voice.mp3", "duration": 1.2}
+
+    monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/tts/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "text": "沈砚: 我会查清铜铃的来历。",
+                "model_config_id": config_id,
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "generation_preflight_failed"
+    assert {issue["code"] for issue in detail["issues"]} == {"model_unverified"}
+
+    async def _count_jobs() -> int:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(TTSJob).where(TTSJob.user_id == user_id))
+            return len(result.scalars().all())
+
+    assert asyncio.run(_count_jobs()) == 0
+
+
+def test_non_dev_media_generation_blocks_consistency_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/media/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "task_type": "shot_audio_video",
+                "media_type": "audio_video",
+                "prompt": "生成孤立音视频镜头",
+                "use_consistency_context": False,
+            },
+        )
+
+    assert response.status_code == 422
+    assert "生产模式不能跳过一致性预检" in response.json()["detail"]
+
+
+def test_non_dev_media_generation_blocks_unverified_external_config_before_job(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    import asyncio
+
+    config_id = asyncio.run(_seed_external_config(user_id=user_id))
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/media/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "task_type": "shot_audio_video",
+                "media_type": "audio_video",
+                "prompt": "生成连续动漫镜头",
+                "external_config_id": config_id,
+            },
+        )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "generation_preflight_failed"
+    assert {issue["code"] for issue in detail["issues"]} == {"external_config_unverified"}
+
+    async def _count_jobs() -> int:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(MediaGenerationJob).where(MediaGenerationJob.user_id == user_id))
+            return len(result.scalars().all())
+
+    assert asyncio.run(_count_jobs()) == 0

@@ -64,6 +64,7 @@ class ConsistencySummaryResponse(BaseModel):
 class GenerationPreflightRequest(BaseModel):
     task_type: str
     model_config_id: Optional[str] = None
+    external_config_id: Optional[str] = None
     image_url: Optional[str] = None
     production_mode: bool = True
     require_public_reference_image: bool = False
@@ -122,6 +123,7 @@ async def preflight_generation_context(
         user_id,
         task_type=request.task_type,
         model_config_id=request.model_config_id,
+        external_config_id=request.external_config_id,
         image_url=request.image_url,
         production_mode=request.production_mode,
         require_public_reference_image=request.require_public_reference_image,

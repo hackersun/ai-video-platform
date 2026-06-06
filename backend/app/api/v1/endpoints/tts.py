@@ -8,9 +8,10 @@ import re
 import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, desc, or_, select
 from pydantic import BaseModel, Field
@@ -18,17 +19,42 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.core.api_key_utils import get_user_api_key
-from app.core.dev_generation import dev_audio_url, estimate_tts_duration_seconds, is_dev_mode
+from app.core.dev_generation import dev_audio_url, dev_tts_audio_url, estimate_tts_duration_seconds, is_dev_mode
 from app.services.consistency_context import build_consistency_prompt
+from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.models.tts_job import TTSJob
 from app.models.shot import Shot
 from app.models.character import Character
+from app.models.asset import Asset
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 
 router = APIRouter(tags=["语音合成"])
 
+STATIC_ROOT = Path(__file__).resolve().parents[4] / "static"
+VOICE_CLONE_DIR = STATIC_ROOT / "generated" / "voice-clones"
+
 
 # ============== 辅助函数 ==============
+
+def extract_character_from_text(text: str) -> Optional[str]:
+    """
+    从文本中提取角色名。
+    支持格式: "角色名: 对话" 或 "角色名：对话" 或 "角色名说：" 等模式
+    """
+    if not text:
+        return None
+    patterns = [
+        r"([^\s：:]+)说[：:]",   # "张三说："
+        r"([^\s：:]+)道[：:]",     # "张三道："
+        r"([^\s：:]+)回答[：:]", # "张三回答："
+        r"([^\s：:]+)[：:]",      # "张三："
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip()
+    return None
+
 
 def parse_dialogue(dialogue: str) -> List[Dict[str, str]]:
     """
@@ -96,6 +122,56 @@ async def get_scoped_character_by_name(
     return sorted(characters, key=rank, reverse=True)[0]
 
 
+async def resolve_tts_segment_voice(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    character_name: Optional[str],
+    default_voice: str,
+    default_speed: float,
+    story_bible_id: Optional[str],
+    use_story_bible_voice: bool,
+    novel_id: Optional[str],
+    chapter_id: Optional[str],
+) -> Dict[str, Any]:
+    voice_to_use = default_voice
+    speed_to_use = default_speed
+    voice_source = "request"
+
+    if character_name and story_bible_id and use_story_bible_voice:
+        from app.services.voice_service import get_character_voice_from_story_bible
+
+        voice_config = await get_character_voice_from_story_bible(
+            db, character_name, story_bible_id
+        )
+        if voice_config:
+            story_bible_voice = voice_config.get("voice") or voice_config.get("voice_model")
+            if story_bible_voice:
+                voice_to_use = story_bible_voice
+                voice_source = "story_bible"
+            if voice_config.get("voice_speed") is not None:
+                speed_to_use = voice_config.get("voice_speed")
+
+    if character_name and voice_source != "story_bible":
+        char = await get_scoped_character_by_name(
+            db,
+            user_id,
+            name=character_name,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+        )
+        if char and char.voice:
+            voice_to_use = char.voice
+            voice_source = "character"
+
+    return {
+        "voice": voice_to_use,
+        "speed": speed_to_use,
+        "voice_source": voice_source,
+        "character_name": character_name,
+    }
+
+
 # ============== 请求/响应模型 ==============
 
 class TTSGenerateRequest(BaseModel):
@@ -121,6 +197,8 @@ class TTSGenerateRequest(BaseModel):
     story_bible_id: Optional[str] = Field(None, description="用于一致性约束的 Story Bible ID")
     character_ids: List[str] = Field(default_factory=list, description="需要注入一致性设定的角色ID列表")
     use_consistency_context: bool = Field(True, description="是否记录 Story Bible/项目/镜头/角色一致性上下文")
+    unsafe_skip_consistency_preflight: bool = Field(False, description="仅用于明确的生产降级调试：跳过一致性预检")
+    use_story_bible_voice: bool = Field(True, description="是否使用 Story Bible 音色配置")
 
 
 class TTSSegmentResponse(BaseModel):
@@ -162,6 +240,39 @@ class TTSJobResponse(BaseModel):
     updated_at: datetime
 
 
+class TTSPreviewRequest(BaseModel):
+    text: str = Field("这是一段音色试听。", description="试听文本")
+    voice_model: str = Field("female-shaonv", description="音色ID")
+    speed: float = Field(1.0, ge=0.5, le=2.0, description="语速")
+    api_provider: str = Field("minimax", description="TTS提供商")
+    model_config_id: Optional[str] = Field(None, description="已保存的 TTS 模型配置ID")
+    model_id: Optional[str] = Field(None, description="TTS API 模型ID")
+
+
+class TTSPreviewResponse(BaseModel):
+    status: str
+    audio_url: str
+    voice: str
+    provider: str
+    duration_seconds: Optional[float] = None
+    message: str
+
+
+class VoiceCloneResponse(BaseModel):
+    id: str
+    voice_id: str
+    name: str
+    provider: str
+    description: Optional[str] = None
+    sample_audio_url: Optional[str] = None
+    sample_source: Optional[str] = None
+    character_id: Optional[str] = None
+    novel_id: Optional[str] = None
+    status: str
+    is_custom: bool = True
+    created_at: datetime
+
+
 def build_tts_response(job: TTSJob) -> TTSJobResponse:
     """Build a response that supports both current and legacy callers."""
     extra = job.extra_data if isinstance(job.extra_data, dict) else {}
@@ -193,6 +304,100 @@ def build_tts_response(job: TTSJob) -> TTSJobResponse:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _normalize_builtin_voice(item: dict, provider: str) -> dict:
+    voice_id = item.get("voice_id") or item.get("id")
+    return {
+        "voice_id": voice_id,
+        "id": voice_id,
+        "name": item.get("name") or item.get("label") or voice_id,
+        "label": item.get("label") or item.get("name") or voice_id,
+        "gender": item.get("gender") or "unknown",
+        "lang": item.get("lang") or "中文",
+        "provider": provider,
+        "is_custom": False,
+        "sample_audio_url": item.get("sample_audio_url"),
+        "status": "ready",
+    }
+
+
+def _voice_clone_response(asset: Asset) -> VoiceCloneResponse:
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    return VoiceCloneResponse(
+        id=asset.id,
+        voice_id=params.get("voice_id") or f"clone-{asset.id[:8]}",
+        name=asset.name,
+        provider=params.get("provider") or "custom",
+        description=asset.description,
+        sample_audio_url=asset.url,
+        sample_source=params.get("sample_source") or params.get("clone_source"),
+        character_id=asset.character_id,
+        novel_id=asset.novel_id,
+        status=params.get("clone_status") or "ready",
+        created_at=asset.created_at,
+    )
+
+
+async def _resolve_preview_tts_config(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    provider: str,
+    model_config_id: Optional[str],
+    model_id: Optional[str],
+) -> tuple[Optional[str], str, Optional[str], Optional[str]]:
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    api_model_id = model_id
+    resolved_provider = provider
+
+    if model_config_id:
+        config_result = await db.execute(
+            select(LLMConfig, LLMModel, LLMProvider)
+            .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+            .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+            .where(
+                and_(
+                    LLMConfig.id == model_config_id,
+                    LLMConfig.user_id == user_id,
+                    LLMConfig.is_active == True,
+                    LLMModel.is_active == True,
+                    LLMModel.model_type.in_(["tts", "audio", "speech"]),
+                )
+            )
+        )
+        row = config_result.first()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="所选 TTS 模型配置不可用")
+        config, model, provider_row = row
+        resolved_provider = provider_row.name or provider_row.id
+        api_key = config.get_api_key_decrypted()
+        extra = config.extra_params if isinstance(config.extra_params, dict) else {}
+        base_url = extra.get("base_url") or model.base_url or provider_row.base_url
+        api_model_id = api_model_id or model.model_id
+    else:
+        if resolved_provider in {"minimax", "volcano"}:
+            api_key, base_url = await get_user_api_key(db, user_id, resolved_provider, raise_if_missing=False)
+
+    return api_key, resolved_provider, api_model_id, base_url
+
+
+async def _save_voice_clone_upload(sample_audio: UploadFile, voice_id: str) -> str:
+    filename = sample_audio.filename or "sample.wav"
+    ext = Path(filename).suffix.lower()
+    if ext not in {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".webm"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持 wav/mp3/m4a/aac/ogg/webm 音频样本")
+    VOICE_CLONE_DIR.mkdir(parents=True, exist_ok=True)
+    target = (VOICE_CLONE_DIR / f"{voice_id}{ext}").resolve()
+    target.relative_to(STATIC_ROOT.resolve())
+    data = await sample_audio.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="声音样本不能为空")
+    if len(data) > 30 * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="声音样本不能超过 30MB")
+    target.write_bytes(data)
+    return f"/static/generated/voice-clones/{target.name}"
 
 
 # ============== API 端点 ==============
@@ -261,6 +466,30 @@ async def generate_tts(
     if not request.text_content:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="text_content 不能为空")
 
+    if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="生产模式不能跳过一致性预检；如需降级调试，请显式开启 unsafe_skip_consistency_preflight 并记录原因。",
+        )
+    if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
+        preflight_package = await build_generation_context_package(
+            db,
+            user_id,
+            task_type="tts_dialogue",
+            model_config_id=request.model_config_id,
+            production_mode=True,
+            novel_id=request.novel_id,
+            chapter_id=request.chapter_id,
+            script_id=request.script_id,
+            storyboard_id=request.storyboard_id,
+            shot_id=request.shot_id,
+        )
+        if not preflight_package.get("ready"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=preflight_failure_detail(preflight_package),
+            )
+
     consistency_metadata = {}
     if request.use_consistency_context:
         context = await build_consistency_prompt(
@@ -280,6 +509,9 @@ async def generate_tts(
 
     # 如果指定了 character_id，自动获取角色音色
     voice_to_use = request.voice_model
+    speed_to_use = request.speed
+    voice_source = "request"
+    voice_character_name = None
     if request.character_id:
         char_result = await db.execute(
             select(Character).where(
@@ -290,6 +522,23 @@ async def generate_tts(
         char = char_result.scalar_one_or_none()
         if char and char.voice:
             voice_to_use = char.voice
+            voice_source = "character"
+            voice_character_name = char.name
+
+    # 如果有 story_bible_id，尝试从 Story Bible 获取音色配置
+    if request.story_bible_id and request.use_story_bible_voice:
+        from app.services.voice_service import get_character_voice_from_story_bible
+        # 尝试从对话中提取角色名
+        character_name = extract_character_from_text(request.text_content or "")
+        if character_name:
+            voice_character_name = character_name
+            voice_config = await get_character_voice_from_story_bible(
+                db, character_name, request.story_bible_id
+            )
+            if voice_config and voice_config.get("voice"):
+                voice_to_use = voice_config.get("voice", voice_to_use)
+                speed_to_use = voice_config.get("voice_speed", speed_to_use)
+                voice_source = "story_bible"
 
     # 获取用户 API Key
     api_key: Optional[str] = None
@@ -350,7 +599,7 @@ async def generate_tts(
         title=request.title or f"TTS任务_{job_id[:8]}",
         text=request.text_content or "",
         voice=voice_to_use,
-        speed=request.speed,
+        speed=speed_to_use,
         api_provider=request.api_provider,
         novel_id=request.novel_id,
         chapter_id=request.chapter_id,
@@ -379,24 +628,43 @@ async def generate_tts(
 
     try:
         if use_dev_generation:
+            segment_rows = []
+            for seg in (segments or [{"character": voice_character_name or "", "text": request.text_content or ""}]):
+                resolved_segment = await resolve_tts_segment_voice(
+                    db,
+                    user_id,
+                    character_name=seg.get("character") or voice_character_name,
+                    default_voice=voice_to_use,
+                    default_speed=speed_to_use,
+                    story_bible_id=request.story_bible_id,
+                    use_story_bible_voice=request.use_story_bible_voice,
+                    novel_id=request.novel_id,
+                    chapter_id=request.chapter_id,
+                )
+                segment_rows.append({
+                    "character": seg.get("character", ""),
+                    "text": seg.get("text", ""),
+                    "voice": resolved_segment["voice"],
+                    "voice_source": resolved_segment["voice_source"],
+                    "speed": resolved_segment["speed"],
+                    "audio_url": dev_tts_audio_url(f"{job.id}-{len(segment_rows)}"),
+                    "duration": estimate_tts_duration_seconds(seg.get("text", ""), resolved_segment["speed"]),
+                })
+            if segment_rows:
+                job.voice = segment_rows[0]["voice"]
+                job.speed = segment_rows[0]["speed"]
             job.task_id = f"dev-tts-{job.id}"
-            job.audio_url = dev_audio_url(job.id)
-            job.duration_seconds = estimate_tts_duration_seconds(request.text_content or "", request.speed)
+            job.audio_url = dev_tts_audio_url(job.id)
+            job.duration_seconds = sum(float(seg.get("duration") or 0.0) for seg in segment_rows) or estimate_tts_duration_seconds(request.text_content or "", speed_to_use)
             job.extra_data = {
-                "segments": [
-                    {
-                        "character": seg.get("character", ""),
-                        "text": seg.get("text", ""),
-                        "voice": voice_to_use,
-                        "audio_url": job.audio_url,
-                        "duration": estimate_tts_duration_seconds(seg.get("text", ""), request.speed),
-                    }
-                    for seg in (segments or [{"character": "", "text": request.text_content or ""}])
-                ],
+                "segments": segment_rows,
                 "dev_mode": True,
                 "consistency": consistency_metadata,
                 "model_config_id": selected_model_config_id,
                 "api_model_id": tts_model_id,
+                "voice_source": segment_rows[0]["voice_source"] if segment_rows else voice_source,
+                "voice_character_name": segment_rows[0]["character"] if segment_rows else voice_character_name,
+                "story_bible_id": request.story_bible_id,
             }
             total_duration = job.duration_seconds or 0.0
             all_audio_urls.append(job.audio_url)
@@ -410,25 +678,26 @@ async def generate_tts(
             if is_multi and len(segments) > 1:
                 # 多角色：为每个角色单独生成
                 for i, seg in enumerate(segments):
-                    # 查找角色音色
-                    seg_voice = voice_to_use
-                    if seg['character']:
-                        char = await get_scoped_character_by_name(
-                            db,
-                            user_id,
-                            name=seg['character'],
-                            novel_id=request.novel_id,
-                            chapter_id=request.chapter_id,
-                        )
-                        if char and char.voice:
-                            seg_voice = char.voice
+                    resolved_segment = await resolve_tts_segment_voice(
+                        db,
+                        user_id,
+                        character_name=seg.get("character") or voice_character_name,
+                        default_voice=voice_to_use,
+                        default_speed=speed_to_use,
+                        story_bible_id=request.story_bible_id,
+                        use_story_bible_voice=request.use_story_bible_voice,
+                        novel_id=request.novel_id,
+                        chapter_id=request.chapter_id,
+                    )
+                    seg_voice = resolved_segment["voice"]
+                    seg_speed = resolved_segment["speed"]
 
                     try:
                         result = await svc.text_to_speech(
                             text=seg['text'],
                             model=tts_model_id or "speech-2.6-hd",
                             voice_id=seg_voice,
-                            speed=request.speed
+                            speed=seg_speed
                         )
                         seg_audio_url = result.get('audio_url')
                         seg_duration = result.get('duration', 0.0)
@@ -436,6 +705,8 @@ async def generate_tts(
                             'character': seg['character'],
                             'text': seg['text'],
                             'voice': seg_voice,
+                            'voice_source': resolved_segment["voice_source"],
+                            'speed': seg_speed,
                             'audio_url': seg_audio_url,
                             'duration': seg_duration,
                         })
@@ -447,12 +718,23 @@ async def generate_tts(
                             'character': seg['character'],
                             'text': seg['text'],
                             'voice': seg_voice,
+                            'voice_source': resolved_segment["voice_source"],
+                            'speed': seg_speed,
                             'audio_url': None,
                             'duration': 0.0,
                             'error': str(e),
                         })
 
-                job.extra_data = {'segments': all_segments, "consistency": consistency_metadata}
+                if all_segments:
+                    job.voice = all_segments[0].get("voice", job.voice)
+                    job.speed = all_segments[0].get("speed", job.speed)
+                job.extra_data = {
+                    'segments': all_segments,
+                    "consistency": consistency_metadata,
+                    "voice_source": all_segments[0].get("voice_source") if all_segments else voice_source,
+                    "voice_character_name": all_segments[0].get("character") if all_segments else voice_character_name,
+                    "story_bible_id": request.story_bible_id,
+                }
                 job.progress = 100
                 job.status = "succeeded"
             else:
@@ -462,7 +744,7 @@ async def generate_tts(
                         text=request.text_content,
                         model=tts_model_id or "speech-2.6-hd",
                         voice_id=voice_to_use,
-                        speed=request.speed
+                        speed=speed_to_use
                     )
                     job.audio_url = result.get('audio_url')
                     job.task_id = result.get('task_id')
@@ -486,23 +768,25 @@ async def generate_tts(
 
             if is_multi and len(segments) > 1:
                 for seg in segments:
-                    seg_voice = voice_to_use
-                    if seg['character']:
-                        char = await get_scoped_character_by_name(
-                            db,
-                            user_id,
-                            name=seg['character'],
-                            novel_id=request.novel_id,
-                            chapter_id=request.chapter_id,
-                        )
-                        if char and char.voice:
-                            seg_voice = char.voice
+                    resolved_segment = await resolve_tts_segment_voice(
+                        db,
+                        user_id,
+                        character_name=seg.get("character") or voice_character_name,
+                        default_voice=voice_to_use,
+                        default_speed=speed_to_use,
+                        story_bible_id=request.story_bible_id,
+                        use_story_bible_voice=request.use_story_bible_voice,
+                        novel_id=request.novel_id,
+                        chapter_id=request.chapter_id,
+                    )
+                    seg_voice = resolved_segment["voice"]
+                    seg_speed = resolved_segment["speed"]
                     try:
                         result = await svc.text_to_speech(
                             text=seg['text'],
                             model=tts_model_id or "doubao-tts",
                             voice=seg_voice,
-                            speed=request.speed
+                            speed=seg_speed
                         )
                         seg_audio_url = result.get('audio_url')
                         seg_duration = result.get('duration', 0.0)
@@ -510,6 +794,8 @@ async def generate_tts(
                             'character': seg['character'],
                             'text': seg['text'],
                             'voice': seg_voice,
+                            'voice_source': resolved_segment["voice_source"],
+                            'speed': seg_speed,
                             'audio_url': seg_audio_url,
                             'duration': seg_duration,
                         })
@@ -521,11 +807,22 @@ async def generate_tts(
                             'character': seg['character'],
                             'text': seg['text'],
                             'voice': seg_voice,
+                            'voice_source': resolved_segment["voice_source"],
+                            'speed': seg_speed,
                             'audio_url': None,
                             'duration': 0.0,
                             'error': str(e),
                         })
-                job.extra_data = {'segments': all_segments, "consistency": consistency_metadata}
+                if all_segments:
+                    job.voice = all_segments[0].get("voice", job.voice)
+                    job.speed = all_segments[0].get("speed", job.speed)
+                job.extra_data = {
+                    'segments': all_segments,
+                    "consistency": consistency_metadata,
+                    "voice_source": all_segments[0].get("voice_source") if all_segments else voice_source,
+                    "voice_character_name": all_segments[0].get("character") if all_segments else voice_character_name,
+                    "story_bible_id": request.story_bible_id,
+                }
                 job.progress = 100
                 job.status = "succeeded"
             else:
@@ -533,7 +830,7 @@ async def generate_tts(
                     text=request.text_content,
                     model=tts_model_id or "doubao-tts",
                     voice=voice_to_use,
-                    speed=request.speed
+                    speed=speed_to_use
                 )
                 job.audio_url = result.get('audio_url')
                 job.task_id = result.get('task_id')
@@ -579,12 +876,167 @@ async def generate_tts(
         "model_config_id": selected_model_config_id,
         "api_model_id": tts_model_id,
         "provider_id": request.api_provider,
+        "voice_source": extra.get("voice_source") or voice_source,
+        "voice_character_name": extra.get("voice_character_name") or voice_character_name,
+        "story_bible_id": extra.get("story_bible_id") or request.story_bible_id,
     })
     job.extra_data = extra
     await db.commit()
     await db.refresh(job)
 
     return build_tts_response(job)
+
+
+@router.post("/preview", response_model=TTSPreviewResponse)
+async def preview_tts_voice(
+    request: TTSPreviewRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """生成一段短音频用于试听当前音色，不写入 TTS 历史。"""
+    text = (request.text or "").strip() or "这是一段音色试听。"
+    text = text[:120]
+    api_key, provider, model_id, base_url = await _resolve_preview_tts_config(
+        db,
+        user_id,
+        provider=request.api_provider,
+        model_config_id=request.model_config_id,
+        model_id=request.model_id,
+    )
+
+    if not api_key and is_dev_mode():
+        audio_url = dev_tts_audio_url(f"preview-{user_id}-{request.voice_model}-{request.speed}")
+        return TTSPreviewResponse(
+            status="succeeded",
+            audio_url=audio_url,
+            voice=request.voice_model,
+            provider=provider,
+            duration_seconds=estimate_tts_duration_seconds(text, request.speed),
+            message="DEV_MODE 本地试听音频已生成，未调用云端 TTS 模型",
+        )
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"未配置 {provider} 语音模型 API Key，请在大模型配置页面配置并验证 TTS 模型",
+        )
+
+    try:
+        if provider == "minimax":
+            from app.services.minimax_service import MiniMaxService
+
+            result = await MiniMaxService(api_key, base_url).text_to_speech(
+                text=text,
+                model=model_id or "speech-2.6-hd",
+                voice_id=request.voice_model,
+                speed=request.speed,
+                output_dir="audio/previews",
+            )
+        elif provider == "volcano":
+            from app.services.volcano_service import VolcanoService
+
+            result = await VolcanoService(api_key, base_url).text_to_speech(
+                text=text,
+                model=model_id or "doubao-tts",
+                voice=request.voice_model,
+                speed=request.speed,
+                output_dir="audio/previews",
+            )
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"不支持的 TTS 提供商: {provider}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"音色试听失败: {str(exc)}")
+
+    audio_url = result.get("audio_url")
+    if not audio_url:
+        if is_dev_mode():
+            audio_url = dev_tts_audio_url(f"preview-{user_id}-{request.voice_model}-{request.speed}")
+            return TTSPreviewResponse(
+                status="succeeded",
+                audio_url=audio_url,
+                voice=request.voice_model,
+                provider=provider,
+                duration_seconds=estimate_tts_duration_seconds(text, request.speed),
+                message="云端试听未返回音频，已使用 DEV_MODE 本地试听音频；请检查模型权限、模型ID或音色ID。",
+            )
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="音色试听失败：模型未返回音频地址")
+    return TTSPreviewResponse(
+        status=result.get("status") or "succeeded",
+        audio_url=audio_url,
+        voice=request.voice_model,
+        provider=provider,
+        duration_seconds=result.get("duration"),
+        message=result.get("message") or "音色试听已生成",
+    )
+
+
+@router.post("/voice-clones", response_model=VoiceCloneResponse, status_code=status.HTTP_201_CREATED)
+async def create_voice_clone_profile(
+    name: str = Form(...),
+    provider: str = Form("minimax"),
+    description: Optional[str] = Form(None),
+    sample_audio_url: Optional[str] = Form(None),
+    sample_source: Optional[str] = Form(None),
+    character_id: Optional[str] = Form(None),
+    novel_id: Optional[str] = Form(None),
+    sample_audio: Optional[UploadFile] = File(None),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """创建可复用的克隆音色配置。
+
+    当前平台会持久化声音样本和克隆音色ID；如果服务商已创建云端克隆音色，
+    可直接把该 voice_id 作为样本 URL/描述对应的配置使用。
+    """
+    clean_name = name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="音色名称不能为空")
+
+    if character_id:
+        char_result = await db.execute(
+            select(Character).where(Character.id == character_id, Character.user_id == user_id)
+        )
+        if not char_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="角色不存在")
+
+    asset_id = str(uuid4())
+    voice_id = f"clone-{asset_id[:8]}"
+    stored_sample_url = (sample_audio_url or "").strip() or None
+    clone_source = (sample_source or "").strip() or ("url" if stored_sample_url else "upload")
+    if sample_audio:
+        stored_sample_url = await _save_voice_clone_upload(sample_audio, voice_id)
+        clone_source = "recording" if clone_source == "recording" else "upload"
+    if not stored_sample_url:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="请上传声音样本或填写样本音频 URL")
+
+    asset = Asset(
+        id=asset_id,
+        user_id=user_id,
+        category="voice",
+        name=clean_name,
+        description=description,
+        asset_type="audio",
+        url=stored_sample_url,
+        character_id=character_id,
+        novel_id=novel_id,
+        tags=["voice_clone", provider],
+        style_tags=["custom_voice"],
+        is_public=False,
+        generation_params={
+            "voice_id": voice_id,
+            "provider": provider,
+            "clone_status": "ready" if clone_source == "url" else "sample_uploaded",
+            "sample_audio_url": stored_sample_url,
+            "sample_source": clone_source,
+            "note": "本地已登记克隆音色；云端克隆训练需在对应服务商完成或由生产适配器接入。",
+        },
+    )
+    db.add(asset)
+    await db.commit()
+    await db.refresh(asset)
+    return _voice_clone_response(asset)
 
 
 @router.get("/jobs", response_model=List[TTSJobResponse])
@@ -716,10 +1168,54 @@ async def list_available_voices(
     user_id: str = Depends(get_current_user_id)
 ):
     """获取可用的语音音色列表"""
+    voices: list[dict] = []
     if provider == "minimax":
         try:
             from app.core.minimax_config import TTS_VOICES
-            return {"provider": "minimax", "voices": TTS_VOICES}
+
+            voices = [_normalize_builtin_voice(item, "minimax") for item in TTS_VOICES]
         except ImportError:
             pass
-    return {"provider": provider, "voices": []}
+    elif provider == "volcano":
+        voices = [
+            _normalize_builtin_voice({"voice_id": "female_nvsheng", "name": "女声（nvsheng）", "gender": "female", "lang": "中文"}, "volcano"),
+            _normalize_builtin_voice({"voice_id": "female_tianmei", "name": "甜美女声", "gender": "female", "lang": "中文"}, "volcano"),
+            _normalize_builtin_voice({"voice_id": "male_jiaqi", "name": "男声嘉琪", "gender": "male", "lang": "中文"}, "volcano"),
+            _normalize_builtin_voice({"voice_id": "male_zhichang", "name": "职场男声", "gender": "male", "lang": "中文"}, "volcano"),
+            _normalize_builtin_voice({"voice_id": "male_dashu", "name": "大树（旁白）", "gender": "male", "lang": "中文"}, "volcano"),
+        ]
+
+    clone_result = await db.execute(
+        select(Asset)
+        .where(
+            Asset.user_id == user_id,
+            Asset.category == "voice",
+            Asset.asset_type == "audio",
+            Asset.is_active == True,
+        )
+        .order_by(desc(Asset.created_at))
+    )
+    for asset in clone_result.scalars().all():
+        params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+        asset_provider = params.get("provider") or "custom"
+        if provider and asset_provider not in {provider, "custom"}:
+            continue
+        voice_id = params.get("voice_id") or f"clone-{asset.id[:8]}"
+        voices.append({
+            "voice_id": voice_id,
+            "id": voice_id,
+            "name": asset.name,
+            "label": asset.name,
+            "gender": "custom",
+            "lang": "自定义",
+            "provider": asset_provider,
+            "is_custom": True,
+            "sample_audio_url": asset.url,
+            "sample_source": params.get("sample_source") or params.get("clone_source"),
+            "character_id": asset.character_id,
+            "novel_id": asset.novel_id,
+            "status": params.get("clone_status") or "ready",
+            "description": asset.description,
+        })
+
+    return {"provider": provider, "voices": voices}

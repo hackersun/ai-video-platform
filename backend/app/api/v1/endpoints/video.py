@@ -35,8 +35,10 @@ from app.models.video_job import VideoJob
 from app.services.media_persistence import persist_remote_media_url
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.consistency_context import get_project_for_context, get_story_bible_for_context
+from app.services.consistency_preflight import build_generation_context_package
 from app.services.novel_continuity import build_novel_continuity_package
 from app.services.prompt_composer import compose_generation_prompt
+from app.services.asset_lock_service import AssetLockService
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 from app.api.v1.endpoints.dashboard import log_activity
 
@@ -79,6 +81,7 @@ class VideoGenerateRequest(BaseModel):
     story_bible_id: Optional[str] = Field(None, description="用于一致性约束的 Story Bible ID")
     character_ids: List[str] = Field(default_factory=list, description="需要注入一致性设定的角色ID列表")
     use_consistency_context: bool = Field(True, description="是否自动注入 Story Bible/项目/镜头/角色一致性上下文")
+    unsafe_skip_consistency_preflight: bool = Field(False, description="仅用于明确的生产降级调试：跳过一致性预检")
 
 
 class VideoGenerateResponse(BaseModel):
@@ -87,6 +90,13 @@ class VideoGenerateResponse(BaseModel):
     job_id: str  # 新增：数据库job ID
     status: str
     message: str
+    project_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    storyboard_id: Optional[str] = None
+    shot_id: Optional[str] = None
 
 
 class VideoStatusResponse(BaseModel):
@@ -143,6 +153,7 @@ class VideoJobResponse(BaseModel):
     prop_refs: List[dict] = Field(default_factory=list)
     event_refs: List[dict] = Field(default_factory=list)
     environment_context: Optional[str] = None
+    character_multiview_refs: List[dict] = Field(default_factory=list)
     consistency: dict = Field(default_factory=dict)
     seed: Optional[int] = None
     source_prompt: Optional[str] = None
@@ -745,6 +756,105 @@ def _format_asset_locks(locks: List[dict], *, limit: int = 8) -> str:
     return "；".join(parts)
 
 
+def _collect_character_multiview_refs(
+    assets: List[Any],
+    character_refs: List[dict],
+    *,
+    per_character: int = 8,
+) -> List[dict]:
+    """Normalize locked character multi-view image assets for video prompts."""
+    character_names = {
+        str(ref.get("character_id")): str(ref.get("name") or "")
+        for ref in character_refs
+        if isinstance(ref, dict) and ref.get("character_id")
+    }
+    entity_to_character_id = {
+        str(ref.get("entity_id")): str(ref.get("character_id"))
+        for ref in character_refs
+        if isinstance(ref, dict) and ref.get("entity_id") and ref.get("character_id")
+    }
+    if not character_names:
+        return []
+
+    angle_order = {
+        "front": 0,
+        "three_quarter": 1,
+        "3/4": 1,
+        "side": 2,
+        "back": 3,
+        "closeup": 4,
+        "expression": 5,
+        "costume": 6,
+    }
+    candidates: List[tuple[int, int, int, dict]] = []
+    seen: set[tuple[str, str, str]] = set()
+    counts: dict[str, int] = {}
+    for asset in assets:
+        character_id = str(getattr(asset, "character_id", "") or "")
+        if not character_id:
+            entity_id = str(getattr(asset, "entity_id", "") or "")
+            character_id = entity_to_character_id.get(entity_id, "")
+        if character_id not in character_names:
+            continue
+        if getattr(asset, "category", None) != "character":
+            continue
+        url = getattr(asset, "url", None) or getattr(asset, "thumbnail_url", None)
+        if not url:
+            continue
+        params = getattr(asset, "generation_params", None)
+        params = params if isinstance(params, dict) else {}
+        reference_role = str(params.get("reference_role") or params.get("role") or "").strip()
+        view_angle = str(params.get("view_angle") or params.get("angle") or "reference").strip()
+        if reference_role not in {"character_multiview", "multi_view", "multiview"} and "view" not in reference_role and not params.get("view_angle"):
+            continue
+        if not (getattr(asset, "is_locked", False) or getattr(asset, "is_final", False)):
+            continue
+        key = (character_id, view_angle, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        counts[character_id] = counts.get(character_id, 0) + 1
+        if counts[character_id] > per_character:
+            continue
+        ref = {
+            "asset_id": getattr(asset, "id", None),
+            "character_id": character_id,
+            "character_name": character_names.get(character_id),
+            "name": getattr(asset, "name", None),
+            "view_angle": view_angle,
+            "url": url,
+            "thumbnail_url": getattr(asset, "thumbnail_url", None),
+            "version": getattr(asset, "version", None),
+            "is_locked": bool(getattr(asset, "is_locked", False)),
+            "is_final": bool(getattr(asset, "is_final", False)),
+            "reference_role": reference_role or "character_multiview",
+        }
+        character_rank = list(character_names.keys()).index(character_id)
+        candidates.append(
+            (
+                character_rank,
+                angle_order.get(view_angle, 99),
+                -int(getattr(asset, "version", None) or 0),
+                ref,
+            )
+        )
+    candidates.sort(key=lambda item: item[:3])
+    return [item[3] for item in candidates]
+
+
+def _format_multiview_refs(refs: List[dict], *, limit: int = 12) -> str:
+    parts = []
+    for ref in refs[:limit]:
+        name = ref.get("character_name") or ref.get("name")
+        angle = ref.get("view_angle")
+        url = ref.get("url")
+        if name and angle and url:
+            parts.append(f"{name}-{angle}: {url}")
+        elif name and url:
+            parts.append(f"{name}: {url}")
+    return "；".join(parts)
+
+
 async def _load_video_scope_characters(db: AsyncSession, user_id: str, *, novel_id: Optional[str], chapter_id: Optional[str]) -> List[Any]:
     from app.models import Character
 
@@ -848,6 +958,38 @@ async def _build_video_consistency_package(
 
     production_context = _json_dict(_json_dict(getattr(shot, "extra_data", None)).get("production_context")) if shot else {}
     asset_locks = [item for item in _json_list(production_context.get("asset_version_locks")) if isinstance(item, dict)]
+    character_multiview_refs = [
+        item for item in _json_list(production_context.get("character_multiview_refs")) if isinstance(item, dict)
+    ]
+    if not character_multiview_refs and valid_character_refs:
+        from app.models import Asset
+
+        character_ids = [ref.get("character_id") for ref in valid_character_refs if ref.get("character_id")]
+        entity_ids = [ref.get("entity_id") for ref in valid_character_refs if ref.get("entity_id")]
+        asset_link_filters = []
+        if character_ids:
+            asset_link_filters.append(Asset.character_id.in_(character_ids))
+        if entity_ids:
+            asset_link_filters.append(Asset.entity_id.in_(entity_ids))
+        if asset_link_filters:
+            multiview_result = await db.execute(
+                select(Asset)
+                .where(
+                    and_(
+                        Asset.is_active == True,
+                        or_(Asset.user_id == user_id, Asset.is_public == True),
+                        Asset.category == "character",
+                        or_(*asset_link_filters),
+                        or_(Asset.is_locked == True, Asset.is_final == True),
+                    )
+                )
+                .order_by(desc(Asset.is_final), desc(Asset.is_locked), desc(Asset.version), desc(Asset.updated_at))
+                .limit(200)
+            )
+            character_multiview_refs = _collect_character_multiview_refs(
+                list(multiview_result.scalars().all()),
+                valid_character_refs,
+            )
 
     reference_image = request.image_url
     reference_image_source = "request" if request.image_url else None
@@ -859,6 +1001,12 @@ async def _build_video_consistency_package(
             if lock.get("category") == "character" and (lock.get("url") or lock.get("thumbnail_url")):
                 reference_image = lock.get("url") or lock.get("thumbnail_url")
                 reference_image_source = "asset_lock_character"
+                break
+    if not reference_image:
+        for ref in character_multiview_refs:
+            if ref.get("url"):
+                reference_image = ref["url"]
+                reference_image_source = "character_multiview"
                 break
     if not reference_image:
         for ref in valid_character_refs:
@@ -996,6 +1144,7 @@ async def _build_video_consistency_package(
         "字幕/对白": shot_context["subtitle_text"],
         "小说级风格锁": style_lock["constraint"],
         "资产版本锁": _format_asset_locks(asset_locks),
+        "角色多视图参考": _format_multiview_refs(character_multiview_refs),
         "动漫连续性硬约束": build_video_continuity_constraints(story_prompt_context),
     }
     if storyboard:
@@ -1015,6 +1164,15 @@ async def _build_video_consistency_package(
         if getattr(script, "description", None):
             extra_context.setdefault("剧本说明", script.description)
 
+    # 构建锁定资产列表用于prompt注入
+    locked_assets_prompts = [
+        {
+            "type": lock.get("category") or "资产",
+            "name": lock.get("entity_name") or lock.get("name") or "Unknown",
+        }
+        for lock in asset_locks
+    ]
+
     final_prompt = compose_generation_prompt(
         task="shot_video",
         shot=shot,
@@ -1026,6 +1184,7 @@ async def _build_video_consistency_package(
         ],
         project=project,
         extra_context={"用户提示词": request.prompt, **extra_context},
+        locked_assets=locked_assets_prompts,
     )
     metadata = {
         "task": "shot_video",
@@ -1060,6 +1219,7 @@ async def _build_video_consistency_package(
         "event_timeline_tail": novel_continuity.get("event_timeline_tail") or [],
         "entity_locks": novel_continuity.get("entity_locks") or {},
         "character_visual_locks": valid_character_refs,
+        "character_multiview_refs": character_multiview_refs,
         "reference_image_source": reference_image_source,
         "invalid_entity_ref_count": len(filtered_out_refs) + len(filtered_out_prop_refs),
         "seed": shot_seed,
@@ -1075,6 +1235,7 @@ async def _build_video_consistency_package(
             "environment_context": shot_context["environment_context"],
             "subtitle_text": shot_context["subtitle_text"],
             "asset_version_locks": asset_locks,
+            "character_multiview_refs": character_multiview_refs,
             "style_lock": style_lock,
             "series_seed": novel_series_seed,
             "novel_series_seed": novel_series_seed,
@@ -1155,6 +1316,7 @@ def _build_video_context_metadata(
         "event_timeline_tail": consistency.get("event_timeline_tail") or [],
         "entity_locks": consistency.get("entity_locks") or {},
         "character_visual_locks": consistency.get("character_visual_locks") or shot_context.get("character_refs") or [],
+        "character_multiview_refs": consistency.get("character_multiview_refs") or shot_context.get("character_multiview_refs") or [],
         "reference_image_source": consistency.get("reference_image_source"),
         "invalid_entity_ref_count": consistency.get("invalid_entity_ref_count", 0),
         "consistency": consistency,
@@ -1230,11 +1392,35 @@ def _build_video_job_response(job: VideoJob) -> VideoJobResponse:
         prop_refs=extra.get("prop_refs") or [],
         event_refs=extra.get("event_refs") or [],
         environment_context=extra.get("environment_context"),
+        character_multiview_refs=extra.get("character_multiview_refs") or consistency.get("character_multiview_refs") or [],
         consistency=consistency,
         seed=seed,
         source_prompt=extra.get("source_prompt"),
         created_at=job.created_at,
         updated_at=job.updated_at,
+    )
+
+
+def _build_video_generate_response(
+    *,
+    task_id: str,
+    job: VideoJob,
+    status_value: str,
+    message: str,
+) -> VideoGenerateResponse:
+    extra = _json_dict(job.extra_data)
+    return VideoGenerateResponse(
+        task_id=task_id,
+        job_id=job.id,
+        status=status_value,
+        message=message,
+        project_id=job.project_id or extra.get("project_id"),
+        workflow_id=job.workflow_id or extra.get("workflow_id"),
+        novel_id=extra.get("novel_id"),
+        chapter_id=extra.get("chapter_id"),
+        script_id=extra.get("script_id"),
+        storyboard_id=extra.get("storyboard_id"),
+        shot_id=extra.get("shot_id"),
     )
 
 
@@ -1287,12 +1473,18 @@ async def generate_video(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="静音视频生成当前只支持火山普通视频模型或火山方舟 Agent Plan 视频模型。Sora/Veo/ComfyUI 等生产适配请在本页切换到「直生音视频」，或在 workflow 中使用批量直生/云渲染。",
             )
+        if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="生产模式不能跳过一致性预检；如需降级调试，请显式开启 unsafe_skip_consistency_preflight 并记录原因。",
+            )
 
         final_prompt = request.prompt
         consistency_metadata = {}
         shot_context = _extract_shot_generation_context(lineage.get("shot"))
         effective_image_url = request.image_url
         reference_image_source = "request" if request.image_url else None
+        preflight_package = None
         if request.use_consistency_context:
             package = await _build_video_consistency_package(
                 db,
@@ -1305,6 +1497,32 @@ async def generate_video(
             shot_context = package["context"]
             effective_image_url = package["reference_image"]
             reference_image_source = package["reference_image_source"]
+        if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
+            preflight_package = await build_generation_context_package(
+                db,
+                user_id,
+                task_type="shot_video",
+                model_config_id=request.model_config_id,
+                image_url=effective_image_url,
+                production_mode=True,
+                require_public_reference_image=bool(effective_image_url),
+                novel_id=request.novel_id,
+                chapter_id=request.chapter_id,
+                script_id=request.script_id,
+                storyboard_id=request.storyboard_id,
+                shot_id=request.shot_id,
+            )
+            if not preflight_package.get("ready"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail={
+                        "code": "generation_preflight_failed",
+                        "message": "生成预检未通过，请先处理阻断项或明确选择降级策略。",
+                        "issues": preflight_package.get("issues") or [],
+                        "blocking_issue_count": preflight_package.get("blocking_issue_count") or 0,
+                        "autofix_actions": preflight_package.get("autofix_actions") or [],
+                    },
+                )
         video_seed = _resolve_video_seed(request, lineage, consistency_metadata)
         image_delivery = await _resolve_provider_image_delivery(db, user_id, effective_image_url)
         provider_image_url = image_delivery["provider_image_url"]
@@ -1312,6 +1530,12 @@ async def generate_video(
         if image_url_omitted_reason:
             final_prompt = _append_provider_image_note(final_prompt, image_url_omitted_reason)
         context_metadata = _build_video_context_metadata(lineage, consistency_metadata, video_seed, shot_context)
+        if preflight_package is not None:
+            context_metadata["generation_preflight"] = {
+                "ready": preflight_package.get("ready"),
+                "issues": preflight_package.get("issues") or [],
+                "blocking_issue_count": preflight_package.get("blocking_issue_count") or 0,
+            }
         prompt_parameters = _video_prompt_parameters(
             request.model_copy(update={"image_url": effective_image_url}),
             video_seed,
@@ -1387,11 +1611,11 @@ async def generate_video(
             )
             await db.commit()
 
-            return VideoGenerateResponse(
+            return _build_video_generate_response(
                 task_id=task_id,
-                job_id=job.id,
-                status="succeeded",
-                message="DEV_MODE 本地视频任务已完成，未调用云端视频模型"
+                job=job,
+                status_value="succeeded",
+                message="DEV_MODE 本地视频任务已完成，未调用云端视频模型",
             )
 
         if not resolved_api_key:
@@ -1485,11 +1709,11 @@ async def generate_video(
         )
         await db.commit()
 
-        return VideoGenerateResponse(
+        return _build_video_generate_response(
             task_id=create_result.id,
-            job_id=job.id,
-            status="pending",
-            message="视频生成任务已提交，请使用task_id查询状态"
+            job=job,
+            status_value="pending",
+            message="视频生成任务已提交，请使用task_id查询状态",
         )
 
     except HTTPException:

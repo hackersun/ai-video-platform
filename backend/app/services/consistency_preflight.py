@@ -10,6 +10,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import LLMConfig, LLMModel, LLMProvider, Shot, Storyboard
+from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.services.consistency_context import _locked_asset_refs_from_extra
 from app.services.entity_ref_normalizer import normalize_entity_refs
 
@@ -92,6 +93,78 @@ async def _resolve_model_route(
                 field="model_config_id",
             )
         )
+    try:
+        api_key = config.get_api_key_decrypted()
+    except Exception:
+        api_key = ""
+    if not api_key:
+        issues.append(
+            _issue(
+                "model_api_key_missing",
+                f"模型配置“{config.name}”API Key 为空或无法解密，请重新保存并验证",
+                field="model_config_id",
+            )
+        )
+    return route, issues
+
+
+async def _resolve_external_config_route(
+    db: AsyncSession,
+    user_id: str,
+    external_config_id: Optional[str],
+) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    if not external_config_id:
+        return {}, []
+
+    result = await db.execute(
+        select(ExternalAPIConfig, ExternalAPIProvider)
+        .join(ExternalAPIProvider, ExternalAPIConfig.provider_id == ExternalAPIProvider.id)
+        .where(
+            and_(
+                ExternalAPIConfig.id == external_config_id,
+                ExternalAPIConfig.user_id == user_id,
+                ExternalAPIConfig.is_active == True,
+            )
+        )
+        .limit(1)
+    )
+    row = result.first()
+    if not row:
+        return {"external_config_id": external_config_id}, [
+            _issue("external_config_missing", "外部生产适配配置不存在或已停用", field="external_config_id")
+        ]
+
+    config, provider = row
+    route = {
+        "external_config_id": config.id,
+        "external_provider_id": provider.id,
+        "external_provider_name": provider.name,
+        "external_provider_name_cn": provider.name_cn or provider.name,
+        "api_type": provider.api_type,
+        "test_status": config.test_status,
+        "is_default": config.is_default,
+    }
+    issues: List[Dict[str, Any]] = []
+    if config.test_status != "success":
+        issues.append(
+            _issue(
+                "external_config_unverified",
+                f"外部生产适配“{config.name}”尚未验证通过，生产任务提交前需要先测试通过",
+                field="external_config_id",
+            )
+        )
+    try:
+        api_key = config.get_api_key_decrypted()
+    except Exception:
+        api_key = ""
+    if not api_key and provider.auth_type != "none":
+        issues.append(
+            _issue(
+                "external_config_api_key_missing",
+                f"外部生产适配“{config.name}”API Key 为空或无法解密",
+                field="external_config_id",
+            )
+        )
     return route, issues
 
 
@@ -140,6 +213,7 @@ async def build_generation_context_package(
     *,
     task_type: str,
     model_config_id: Optional[str] = None,
+    external_config_id: Optional[str] = None,
     image_url: Optional[str] = None,
     production_mode: bool = True,
     require_public_reference_image: bool = False,
@@ -166,6 +240,10 @@ async def build_generation_context_package(
 
     model_route, model_issues = await _resolve_model_route(db, user_id, model_config_id)
     issues.extend(model_issues)
+    external_route, external_issues = await _resolve_external_config_route(db, user_id, external_config_id)
+    issues.extend(external_issues)
+    if external_route:
+        model_route = {**model_route, "external_config": external_route}
 
     if require_public_reference_image or image_url:
         is_public, reason = _is_public_http_url(image_url)
@@ -206,3 +284,13 @@ async def build_generation_context_package(
         ],
     }
     return package
+
+
+def preflight_failure_detail(package: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "code": "generation_preflight_failed",
+        "message": "生成预检未通过，请先处理阻断项或明确选择降级策略。",
+        "issues": package.get("issues") or [],
+        "blocking_issue_count": package.get("blocking_issue_count") or 0,
+        "autofix_actions": package.get("autofix_actions") or [],
+    }

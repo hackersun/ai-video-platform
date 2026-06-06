@@ -1066,7 +1066,7 @@
 - [x] Phase 247: 复盘现有全部阶段、规划文件、核心后端服务、前端生产页面和测试覆盖，确认当前主要风险从“缺模块”转为“能力分散且可绕过”。
 - [x] Phase 248: 并行只读审计后端一致性/生成链路、前端工作流/交互可见性、测试与生产风险，并将关键发现写入 `findings.md`。
 - [x] Phase 249: 输出生产级优化实施计划 `docs/superpowers/plans/2026-06-06-production-grade-platform-optimization.md`，覆盖架构分析、全模块 AI 赋能、一致性中枢、工作流、前端、测试、排期和部署。
-- [ ] Phase 250: P0 落地：新增统一生产预检服务，统一 `entity_refs` 结构，修复资产锁服务，并让视频/TTS/媒体/图片生成生产模式不可绕过一致性门禁。
+- [x] Phase 250: P0 落地：新增统一生产预检服务，统一 `entity_refs` 结构，修复资产锁服务，并让视频/TTS/媒体/图片生成生产模式不可绕过一致性门禁。
 - [ ] Phase 251: P0 落地：前端新增全局生产状态与一键下一步，workflow 不再无参数静默创建，镜头和资产编辑默认隐藏 JSON 专家字段。
 - [ ] Phase 252: P0 落地：统一 synthesis 与 workflow render/timeline/subtitle 管线，历史播放/下载/筛选和最终 artifact 验收稳定可用。
 - [ ] Phase 253: P0 验证：运行紧凑后端一致性套件、前端类型/构建、核心 Playwright 链路，并新增非 DEV 预检门禁测试。
@@ -1085,4 +1085,5 @@
 - [x] 资产锁服务修复：兼容 dict refs，按实体类型/分类查锁定资产，解锁只解除镜头绑定，不修改共享资产。
 - [x] `build_consistency_prompt` 已接入镜头锁定资产，并在 metadata 中透出 `locked_assets`。
 - [x] 验证通过：`python3 -m compileall app`；后端关联专项 64 passed；`git diff --check` 通过。
-- [ ] 待继续：把视频/TTS/媒体/图片生产入口全部强制接入 preflight 门禁。
+- [x] 视频/TTS/媒体/图片生产入口已强制接入 preflight 门禁：生产模式不能关闭一致性上下文，未验证模型/外部适配配置、非公网参考图会在任务创建前返回结构化 422。
+- [x] 验证通过：`python3 -m compileall app`；`pytest -q tests/test_p0_consistency_pipeline.py ... test_workflow_routes.py`，152 passed。

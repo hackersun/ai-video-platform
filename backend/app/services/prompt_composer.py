@@ -18,12 +18,14 @@ def _stringify_rule(rule: Any) -> str:
     return str(rule)
 
 
-def _limited_lines(title: str, values: Optional[Iterable[Any]], limit: int = 8) -> List[str]:
+def _limited_lines(title: str, values: Optional[Iterable[Any]], limit: int = 24) -> List[str]:
     items = [_stringify_rule(item) for item in (values or []) if item]
     if not items:
         return []
     lines = [f"{title}:"]
     lines.extend(f"- {item}" for item in items[:limit])
+    if len(items) > limit:
+        lines.append(f"- 其余{len(items) - limit}条已进入结构化资产/实体锁，生成时不得与已锁定设定矛盾。")
     return lines
 
 
@@ -35,6 +37,7 @@ def compose_generation_prompt(
     characters: Optional[Iterable[Any]] = None,
     project: Optional[Any] = None,
     extra_context: Optional[Dict[str, Any]] = None,
+    locked_assets: Optional[List[Dict]] = None,
 ) -> str:
     """Compose a deterministic prompt from consistency sources."""
     sections: List[str] = [f"任务: {task}"]
@@ -131,5 +134,14 @@ def compose_generation_prompt(
             "视频一致性约束: 严格保持以上人物身份、外貌、服装、场景环境、道具状态、事件关系和整体画风；"
             "同一角色不要更换发型、年龄、脸型或服饰，同一场景不要更换时代、天气、空间结构或光影基调。"
         )
+
+    # 在视频任务中添加锁定资产约束
+    if task == "shot_video" and locked_assets:
+        sections.append("【锁定资产一致性约束】")
+        for asset in locked_assets:
+            sections.append(
+                f"- {asset.get('type', '资产')}: {asset.get('name', 'Unknown')}, "
+                f"严格保持外观与锁定资产一致"
+            )
 
     return "\n".join(sections)

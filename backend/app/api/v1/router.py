@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     chapters, storyboards, shots, synthesis, tts,
     workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
     media, subtitles, short_video, production_control, graph, batch, templates, versions,
+    consistency,
 )
 
 api_router = APIRouter()
@@ -96,7 +97,7 @@ api_router.include_router(short_video.router, prefix="/short-video", tags=["短�
 api_router.include_router(production_control.router, prefix="/production-control", tags=["生产控制"])
 
 # 角色关系图API
-api_router.include_router(graph.router, prefix="/graph", tags=["角色关系图"])
+api_router.include_router(graph.router, prefix="", tags=["角色关系图"])
 
 # 批量任务API
 api_router.include_router(batch.router, prefix="/batch", tags=["批量任务"])
@@ -105,4 +106,7 @@ api_router.include_router(batch.router, prefix="/batch", tags=["批量任务"])
 api_router.include_router(templates.router, prefix="/templates", tags=["模板市场"])
 
 # 版本管理API
-api_router.include_router(versions.router, prefix="/versions", tags=["版本管理"])
+api_router.include_router(versions.router, prefix="", tags=["版本管理"])
+
+# 一致性检查API
+api_router.include_router(consistency.router, prefix="/consistency", tags=["一致性检查"])

@@ -847,3 +847,11 @@
 - 已新增统一生产预检服务 `consistency_preflight.py` 和标准接口 `POST /api/v1/consistency/preflight`，返回 `ready/issues/blocking_issue_count/model_route/entity_refs/asset_version_locks`。
 - TDD 验证：先运行 `DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py -q`，4 个新增断言按预期失败；实现后同命令 12 passed。
 - 回归验证通过：`python3 -m compileall app`；`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py test_asset_lock_service.py test_prompt_composer_locked_assets.py test_shots_rebuild_prompts.py test_fill_entity_refs.py test_consistency_checker.py`，64 passed；`git diff --check` 通过。
+
+## 2026-06-06 Phase 250 生产门禁收口
+
+- 视频、图片、TTS、直生音视频入口已接入统一 `build_generation_context_package()`：生产模式下不能关闭一致性上下文，除非显式 unsafe 降级。
+- 生产提交前会阻断未验证 LLM 模型配置、缺失或无法解密 API Key、未验证外部生产适配配置、本地 `/static` 参考图参与云端图生视频等问题。
+- 失败返回统一结构：`generation_preflight_failed`、issues、blocking count 和 autofix actions；图片/TTS/媒体在预检失败时不会创建历史任务。
+- 预检接口支持 `external_config_id`，便于前端在 ComfyUI/云渲染/直生音视频配置上展示相同问题提示。
+- 验证通过：`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py -q` 20 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && pytest -q tests/test_p0_consistency_pipeline.py test_asset_lock_service.py test_prompt_composer_locked_assets.py test_shots_rebuild_prompts.py test_fill_entity_refs.py test_consistency_checker.py test_media_subtitles.py test_tts_story_bible.py test_image_generation_links.py test_workflow_routes.py` 152 passed。
