@@ -1067,7 +1067,7 @@
 - [x] Phase 248: 并行只读审计后端一致性/生成链路、前端工作流/交互可见性、测试与生产风险，并将关键发现写入 `findings.md`。
 - [x] Phase 249: 输出生产级优化实施计划 `docs/superpowers/plans/2026-06-06-production-grade-platform-optimization.md`，覆盖架构分析、全模块 AI 赋能、一致性中枢、工作流、前端、测试、排期和部署。
 - [x] Phase 250: P0 落地：新增统一生产预检服务，统一 `entity_refs` 结构，修复资产锁服务，并让视频/TTS/媒体/图片生成生产模式不可绕过一致性门禁。
-- [ ] Phase 251: P0 落地：前端新增全局生产状态与一键下一步，workflow 不再无参数静默创建，镜头和资产编辑默认隐藏 JSON 专家字段。
+- [x] Phase 251: P0 落地：前端新增全局生产状态与一键下一步，workflow 不再无参数静默创建，镜头和资产编辑默认隐藏 JSON 专家字段。
 - [ ] Phase 252: P0 落地：统一 synthesis 与 workflow render/timeline/subtitle 管线，历史播放/下载/筛选和最终 artifact 验收稳定可用。
 - [ ] Phase 253: P0 验证：运行紧凑后端一致性套件、前端类型/构建、核心 Playwright 链路，并新增非 DEV 预检门禁测试。
 

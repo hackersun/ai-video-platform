@@ -855,3 +855,12 @@
 - 失败返回统一结构：`generation_preflight_failed`、issues、blocking count 和 autofix actions；图片/TTS/媒体在预检失败时不会创建历史任务。
 - 预检接口支持 `external_config_id`，便于前端在 ComfyUI/云渲染/直生音视频配置上展示相同问题提示。
 - 验证通过：`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py -q` 20 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && pytest -q tests/test_p0_consistency_pipeline.py test_asset_lock_service.py test_prompt_composer_locked_assets.py test_shots_rebuild_prompts.py test_fill_entity_refs.py test_consistency_checker.py test_media_subtitles.py test_tts_story_bible.py test_image_generation_links.py test_workflow_routes.py` 152 passed。
+
+## 2026-06-06 Phase 251 前端生产状态与工作流入口
+
+- 新增 `ProductionStatusRail` 和 `PreflightIssueList` 组件，用统一卡片展示链路、镜头、音频、字幕、合成和渲染包状态，以及阻断/提醒问题。
+- `apiClient` 新增 `preflightGeneration()`，前端后续所有生成页可直接调用 `/consistency/preflight` 展示同一套模型、参考图和资产锁问题。
+- `/workflow` 移除无 `workflow_id` 时自动创建“新工作流”的副作用；改为展示“选择或创建本集工程”空态，用户显式进入 AI 制片中心或手动创建空白工程。
+- `/workflow` 与 `/producer` 均展示本集生产状态；AI 制片助手的“下一步”提示增加“执行下一步”按钮，直接触发安全补齐。
+- 新增 E2E `workflow-production-guidance.spec.ts`，先红后绿验证 workflow 页面不会静默调用 `/workflow/start`。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/workflow-production-guidance.spec.ts --project=chromium` 1 passed；`npx tsc --noEmit` 通过；`npm run build` 通过；构建后再次 `npx tsc --noEmit` 通过。

@@ -28,6 +28,7 @@ type TTSJob = {
   audio_url?: string;
   duration_seconds?: number;
   error_message?: string;
+  extra_data?: any;
   created_at: string;
   updated_at: string;
 };
@@ -104,6 +105,39 @@ type SynthesisExecuteResponse = {
   cover_url?: string;
   duration_seconds?: number;
   error?: string;
+};
+
+type StoryboardMergeVideosParams = {
+  shot_ids?: string[];
+  title?: string;
+  transition_style?: string;
+  transition_duration_seconds?: number;
+  include_subtitles?: boolean;
+  subtitle_mode?: string;
+  audio_mix_strategy?: string;
+  quality_profile?: string;
+  render_strategy?: 'auto' | 'ffmpeg' | 'manifest_only';
+  parent_job_id?: string;
+};
+
+type StoryboardMergeVideosResponse = {
+  job_id: string;
+  storyboard_id: string;
+  message: string;
+  output_url?: string;
+  manifest_url: string;
+  srt_url?: string;
+  segment_count: number;
+  duration_seconds: number;
+  segments: any[];
+  selected_shot_ids: string[];
+  selected_shot_numbers: number[];
+  skipped_shot_numbers: number[];
+  version_number: number;
+  parent_job_id?: string;
+  render_backend: string;
+  is_real_merged: boolean;
+  render_message?: string;
 };
 
 type NovelImportChapter = {
@@ -495,6 +529,21 @@ class ApiClient {
     return this.request<any>(`/scripts/${scriptId}/check-consistency`);
   }
 
+  async assistScriptEdit(data: {
+    title: string;
+    description?: string;
+    content?: string;
+    genre?: string;
+    style?: string;
+    mode: 'polish_description' | 'polish_content' | 'short_drama';
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/scripts/ai-assist', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getScriptVersions(scriptId: string) {
     return this.request<any[]>(`/scripts/${scriptId}/versions`);
   }
@@ -643,16 +692,24 @@ class ApiClient {
     });
   }
 
-  async generateShotImage(shotId: string) {
+  async generateShotImage(shotId: string, params: { style?: string; model_config_id?: string } = {}) {
     return this.request<any>(`/shots/${shotId}/generate-image`, {
       method: 'POST',
+      body: JSON.stringify({
+        style: params.style || 'anime',
+        model_config_id: params.model_config_id,
+      }),
     });
   }
 
-  async generateShotsImages(storyboardId: string, shotIds: string[]) {
+  async generateShotsImages(storyboardId: string, shotIds: string[], params: { style?: string; model_config_id?: string } = {}) {
     return this.request<any>(`/storyboards/${storyboardId}/shots/generate-images`, {
       method: 'POST',
-      body: JSON.stringify(shotIds),
+      body: JSON.stringify({
+        shot_ids: shotIds,
+        style: params.style || 'anime',
+        model_config_id: params.model_config_id,
+      }),
     });
   }
 
@@ -906,6 +963,25 @@ class ApiClient {
     return this.request<any>(`/workflow/status/${workflowId}${qs ? `?${qs}` : ''}`);
   }
 
+  async preflightGeneration(params: {
+    task_type: string;
+    model_config_id?: string;
+    external_config_id?: string;
+    image_url?: string;
+    production_mode?: boolean;
+    require_public_reference_image?: boolean;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    storyboard_id?: string;
+    shot_id?: string;
+  }) {
+    return this.request<any>('/consistency/preflight', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
   async concatenateVideos(
     workflowId: string,
     params: {
@@ -922,6 +998,16 @@ class ApiClient {
     }
   ) {
     return this.request<any>(`/workflow/concatenate/${workflowId}`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  async mergeStoryboardVideos(
+    storyboardId: string,
+    params: StoryboardMergeVideosParams = {}
+  ) {
+    return this.request<StoryboardMergeVideosResponse>(`/storyboards/${storyboardId}/merge-videos`, {
       method: 'POST',
       body: JSON.stringify(params),
     });
@@ -1053,6 +1139,8 @@ class ApiClient {
     audio_model_config_id?: string;
     voice_model?: string;
     speed?: number;
+    story_bible_id?: string;
+    use_story_bible_voice?: boolean;
   } = {}) {
     return this.request<any>(`/workflow/${workflowId}/generate-media-batch`, {
       method: 'POST',
@@ -1084,12 +1172,14 @@ class ApiClient {
   async getWorkflowShortVideoReadiness(workflowId: string, params: {
     target_duration_seconds?: number;
     aspect_ratio?: string;
+    style_asset_id?: string;
   } = {}) {
     const searchParams = new URLSearchParams();
     if (params.target_duration_seconds) {
       searchParams.set('target_duration_seconds', String(params.target_duration_seconds));
     }
     if (params.aspect_ratio) searchParams.set('aspect_ratio', params.aspect_ratio);
+    if (params.style_asset_id) searchParams.set('style_asset_id', params.style_asset_id);
     const qs = searchParams.toString();
     return this.request<any>(`/short-video/workflow/${workflowId}/readiness${qs ? `?${qs}` : ''}`);
   }
@@ -1414,6 +1504,65 @@ class ApiClient {
   async updateAsset(assetId: string, data: any) {
     return this.request<any>(`/assets/${assetId}`, {
       method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async uploadAssetFile(file: File, params: { asset_type?: string; kind?: 'resource' | 'thumbnail' } = {}) {
+    const searchParams = new URLSearchParams();
+    searchParams.set('asset_type', params.asset_type || 'image');
+    searchParams.set('kind', params.kind || 'resource');
+    const formData = new FormData();
+    formData.append('file', file);
+    return this.request<any>(`/assets/upload?${searchParams.toString()}`, {
+      method: 'POST',
+      body: formData,
+      headers: {},
+    });
+  }
+
+  async getAssetViewPresets() {
+    return this.request<any>('/assets/view-presets');
+  }
+
+  async getAssetStyleTemplates() {
+    return this.request<any>('/assets/style-templates');
+  }
+
+  async generateEntityViewAssets(data: {
+    entity_id: string;
+    view_keys?: string[];
+    style?: string;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/assets/generate-entity-views', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async retryAssetGeneration(assetId: string) {
+    return this.request<any>(`/assets/${assetId}/retry-generation`, {
+      method: 'POST',
+    });
+  }
+
+  async regenerateAsset(assetId: string, data: { style?: string; model_config_id?: string } = {}) {
+    return this.request<any>(`/assets/${assetId}/regenerate`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async recordAssetVisualConsistency(assetId: string, data: {
+    score: number;
+    model?: string;
+    reference_asset_ids?: string[];
+    issues?: string[];
+    notes?: string;
+  }) {
+    return this.request<any>(`/assets/${assetId}/visual-consistency`, {
+      method: 'POST',
       body: JSON.stringify(data),
     });
   }
@@ -2000,6 +2149,7 @@ class ApiClient {
   async generateSmartStoryboard(data: {
     novel_id: string;
     chapter_id?: string;
+    script_id?: string;
     template_id?: string;
     shot_count?: number;
     style?: string;
@@ -2027,8 +2177,16 @@ class ApiClient {
   async generateDialogue(data: {
     scene_description: string;
     chapter_content?: string;
+    script_content?: string;
+    current_dialogue?: string;
+    speaker_name?: string;
+    dialogue_mode?: 'extract' | 'polish' | 'rewrite' | 'suggest';
     characters?: any[];
     style?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    storyboard_id?: string;
     shot_id?: string;
   }) {
     return this.request<any>('/storyboard-ai/generate-dialogue', {
@@ -2046,6 +2204,7 @@ class ApiClient {
     shot_count?: number;
     style?: string;
     chapter_content?: string;
+    script_content?: string;
     characters?: any[];
   }) {
     return this.request<any>('/storyboard-ai/generate-shots', {
@@ -2056,6 +2215,7 @@ class ApiClient {
         shot_count: data.shot_count || 5,
         style: data.style || 'anime',
         chapter_content: data.chapter_content,
+        script_content: data.script_content,
         characters: data.characters,
       }),
     });

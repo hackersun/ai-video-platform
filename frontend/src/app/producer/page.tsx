@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { ProductionStatusRail } from '@/components/production/production-status-rail';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -193,11 +194,15 @@ function ProducerCenterContent() {
   const [audioModelConfigId, setAudioModelConfigId] = useState('');
   const [previewStages, setPreviewStages] = useState<EpisodePreviewStage[]>(() => createInitialEpisodePreviewStages());
   const [previewResult, setPreviewResult] = useState<EpisodePreviewProductionResult | null>(null);
+  const [shortVideoReadiness, setShortVideoReadiness] = useState<any>(null);
+  const [publicationResult, setPublicationResult] = useState<any>(null);
   const [loadingAction, setLoadingAction] = useState('');
   const [loadingNovels, setLoadingNovels] = useState(false);
   const [loadingChapters, setLoadingChapters] = useState(false);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
   const [loadingStoryBibles, setLoadingStoryBibles] = useState(false);
+  const [loadingReadiness, setLoadingReadiness] = useState(false);
+  const [publishingPreview, setPublishingPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [productionStatus, setProductionStatus] = useState<any>(null);
   const [generationMode, setGenerationMode] = useState<'script' | 'storyboard' | 'all' | null>(null);
@@ -241,6 +246,28 @@ function ProducerCenterContent() {
     const data = await apiClient.getWorkflowStatus(id);
     setWorkflowStatus(data);
     return data;
+  }, []);
+
+  const loadShortVideoReadiness = useCallback(async (id: string) => {
+    if (!id) {
+      setShortVideoReadiness(null);
+      return null;
+    }
+    setLoadingReadiness(true);
+    try {
+      const data = await apiClient.getWorkflowShortVideoReadiness(id, {
+        target_duration_seconds: 60,
+        aspect_ratio: '9:16',
+      });
+      setShortVideoReadiness(data);
+      return data;
+    } catch (err: any) {
+      setShortVideoReadiness(null);
+      setError(err.message || '加载短视频就绪度失败');
+      return null;
+    } finally {
+      setLoadingReadiness(false);
+    }
   }, []);
 
   const loadNovels = useCallback(async () => {
@@ -338,6 +365,25 @@ function ProducerCenterContent() {
     }
   }, []);
 
+  const createWorkflowRecord = async (links: { scriptId?: string; storyboardId?: string } = {}) => {
+    if (!selectedNovelId || !selectedChapterId) {
+      toast({ title: '请先选择小说和章节', description: 'AI 制片工程必须绑定到具体小说章节。', type: 'info' });
+      return '';
+    }
+    const result = await apiClient.startWorkflow({
+      title: `${selectedNovel?.title || '小说'} · ${selectedChapter?.title || '章节'} 制片工程`,
+      novel_id: selectedNovelId,
+      chapter_id: selectedChapterId,
+      script_id: links.scriptId,
+      storyboard_id: links.storyboardId,
+    });
+    setWorkflowId(result.workflow_id);
+    await loadWorkflows();
+    await refreshWorkflowStatus(result.workflow_id);
+    await loadShortVideoReadiness(result.workflow_id);
+    return result.workflow_id;
+  };
+
   const runOneClickProduction = async (mode: 'script' | 'storyboard' | 'all') => {
     if (!selectedChapterId) {
       toast({ title: '请先选择章节', description: '需要选择具体章节才能一键生成。', type: 'info' });
@@ -381,9 +427,27 @@ function ProducerCenterContent() {
       }
       // 更新生产状态
       await loadChapterProductionStatus(selectedChapterId);
-      // 如果生成了分镜，刷新工作流
-      if (result.storyboard_id && workflowId) {
+      if (!workflowId && (result.script_id || result.storyboard_id)) {
+        const createdWorkflowId = await createWorkflowRecord({
+          scriptId: result.script_id,
+          storyboardId: result.storyboard_id,
+        });
+        if (createdWorkflowId) {
+          setGenerationProgress('生成完成，本集工程已自动创建');
+        }
+      } else if (workflowId) {
+        if (result.script_id || result.storyboard_id) {
+          await apiClient.updateWorkflowStep(workflowId, {
+            current_step: result.storyboard_id ? 6 : 4,
+            completed_steps: result.storyboard_id ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4],
+            novel_id: selectedNovelId,
+            chapter_id: selectedChapterId,
+            script_id: result.script_id || workflowStatus?.script_id || '',
+            storyboard_id: result.storyboard_id || workflowStatus?.storyboard_id || '',
+          });
+        }
         await refreshWorkflowStatus(workflowId);
+        await loadShortVideoReadiness(workflowId);
       }
     } catch (err: any) {
       const message = err.message || '生成失败';
@@ -423,10 +487,12 @@ function ProducerCenterContent() {
   useEffect(() => {
     if (workflowId) {
       refreshWorkflowStatus(workflowId).catch((err) => setError(err.message || '加载工作流状态失败'));
+      loadShortVideoReadiness(workflowId).catch((err) => setError(err.message || '加载短视频就绪度失败'));
     } else {
       setWorkflowStatus(null);
+      setShortVideoReadiness(null);
     }
-  }, [workflowId, refreshWorkflowStatus]);
+  }, [workflowId, refreshWorkflowStatus, loadShortVideoReadiness]);
 
   useEffect(() => {
     const novelId = workflowStatus?.novel_id || selectedWorkflow?.novel_id || selectedNovelId || '';
@@ -487,6 +553,7 @@ function ProducerCenterContent() {
       toast({ title: successMessage, type: 'success' });
       if (workflowId) {
         await refreshWorkflowStatus(workflowId);
+        await loadShortVideoReadiness(workflowId);
       }
     } catch (err: any) {
       const message = err.message || '执行失败';
@@ -511,14 +578,7 @@ function ProducerCenterContent() {
     setLoadingAction('create-workflow');
     setError(null);
     try {
-      const result = await apiClient.startWorkflow({
-        title: `${selectedNovel?.title || '小说'} · ${selectedChapter?.title || '章节'} 制片工程`,
-        novel_id: selectedNovelId,
-        chapter_id: selectedChapterId,
-      });
-      setWorkflowId(result.workflow_id);
-      await loadWorkflows();
-      await refreshWorkflowStatus(result.workflow_id);
+      await createWorkflowRecord();
       toast({ title: '本集制片工程已创建', type: 'success' });
     } catch (err: any) {
       const message = err.message || '创建工作流失败';
@@ -530,17 +590,19 @@ function ProducerCenterContent() {
   };
 
   const runPreviewProduction = async () => {
-    if (!workflowId) {
-      toast({ title: '请先选择或创建工作流', description: '草片生成需要一个绑定小说章节的制片工程。', type: 'info' });
-      return;
-    }
     setLoadingAction('preview-production');
     setPreviewResult(null);
+    setPublicationResult(null);
     setPreviewStages(createInitialEpisodePreviewStages());
     setError(null);
     try {
+      const activeWorkflowId = workflowId || await createWorkflowRecord({
+        scriptId: productionStatus?.script_id,
+        storyboardId: productionStatus?.storyboard_id,
+      });
+      if (!activeWorkflowId) return;
       const result = await runEpisodePreviewProduction({
-        workflowId,
+        workflowId: activeWorkflowId,
         novelId: selectedNovelId,
         chapterId: selectedChapterId,
         title: `${selectedNovel?.title || '本集'} · ${selectedChapter?.title || '预览草片'}`,
@@ -565,7 +627,8 @@ function ProducerCenterContent() {
         },
       }));
       await loadWorkflows();
-      await refreshWorkflowStatus(workflowId);
+      await refreshWorkflowStatus(activeWorkflowId);
+      await loadShortVideoReadiness(activeWorkflowId);
       toast({
         title: result.readyForConcatenate === false ? '视频/声音任务已提交' : '本集草片已生成',
         description: result.readyForConcatenate === false ? '等待云端任务完成后再合成。' : '已输出预览、字幕和时间线包。',
@@ -577,6 +640,29 @@ function ProducerCenterContent() {
       toast({ title: '生成失败', description: message, type: 'error' });
     } finally {
       setLoadingAction('');
+    }
+  };
+
+  const publishPreviewResult = async () => {
+    if (!previewResult?.synthesisJobId) {
+      toast({ title: '请先生成本集草片', description: '发布需要可追踪的合成任务。', type: 'info' });
+      return;
+    }
+    setPublishingPreview(true);
+    setError(null);
+    try {
+      const publication = await apiClient.publishSynthesis(previewResult.synthesisJobId, {
+        title: `${selectedNovel?.title || '本集'} · ${selectedChapter?.title || '草片'}`,
+        visibility: 'private',
+      });
+      setPublicationResult(publication);
+      toast({ title: '本集草片已生成发布记录', description: '可在合成/发布页继续下载、撤销或归档。', type: 'success' });
+    } catch (err: any) {
+      const message = err.message || '发布草片失败';
+      setError(message);
+      toast({ title: '发布失败', description: message, type: 'error' });
+    } finally {
+      setPublishingPreview(false);
     }
   };
 
@@ -773,6 +859,56 @@ function ProducerCenterContent() {
   const nextAction = producerResult?.summary?.next_action;
   const actions = Array.isArray(producerResult?.actions) ? producerResult.actions : [];
   const executed = Array.isArray(producerResult?.executed) ? producerResult.executed : [];
+  const readinessSummary = shortVideoReadiness?.summary || {};
+  const readinessBlockers = Array.isArray(shortVideoReadiness?.blocking_issues) ? shortVideoReadiness.blocking_issues : [];
+  const readinessWarnings = Array.isArray(shortVideoReadiness?.warnings) ? shortVideoReadiness.warnings : [];
+  const readinessRecommendations = Array.isArray(shortVideoReadiness?.recommendations) ? shortVideoReadiness.recommendations : [];
+  const producerStatusItems = [
+    {
+      label: '小说章节',
+      ok: Boolean(selectedNovelId && selectedChapterId),
+      detail: selectedNovelId && selectedChapterId ? '已选择当前制作章节' : '先选择小说和章节，避免后续生成失去上下文',
+    },
+    {
+      label: '制片工程',
+      ok: Boolean(workflowId),
+      detail: workflowId ? '已有本集工程承接剧本、分镜、镜头和成片' : '需要创建或选择本集工程',
+    },
+    {
+      label: '剧本分镜',
+      ok: Boolean(productionStatus?.has_script && productionStatus?.has_storyboard),
+      detail: productionStatus?.has_storyboard ? '剧本和分镜已准备' : '可用一键生成补齐剧本和分镜',
+    },
+    {
+      label: '镜头资产',
+      ok: Boolean((readinessSummary.shot_count || 0) > 0 && (packSummary.lock_count || 0) > 0),
+      detail: (readinessSummary.shot_count || 0) > 0
+        ? `镜头 ${readinessSummary.shot_count || 0}，资产锁 ${packSummary.lock_count || 0}`
+        : '需要先生成镜头并锁定关键角色/场景/道具资产',
+    },
+    {
+      label: '音视频草片',
+      ok: Boolean(readinessSummary.ready || previewResult?.previewUrl),
+      detail: previewResult?.previewUrl ? '已生成本集草片预览' : readinessSummary.ready ? '短视频链路可生成' : '仍有阻断项需要处理',
+    },
+    {
+      label: '发布交付',
+      ok: Boolean(publicationResult?.id || previewResult?.srtUrl),
+      detail: publicationResult?.id ? '已有发布记录' : previewResult?.srtUrl ? '已有字幕和预览，可继续发布' : '生成草片后再发布',
+    },
+  ];
+  const producerIssues = [
+    ...readinessBlockers.map((message: any) => ({
+      code: 'readiness_blocker',
+      message: String(message),
+      severity: 'blocking',
+    })),
+    ...readinessWarnings.map((message: any) => ({
+      code: 'readiness_warning',
+      message: String(message),
+      severity: 'warning',
+    })),
+  ];
 
   return (
     <MainLayout>
@@ -810,7 +946,7 @@ function ProducerCenterContent() {
           </div>
         )}
 
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-5">
           {statusCards.map((item) => {
             const Icon = item.icon;
             return (
@@ -825,7 +961,26 @@ function ProducerCenterContent() {
               </Card>
             );
           })}
+          <Card className="border-white/10 bg-white/5">
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <ShieldCheck className="h-5 w-5 text-white/40" />
+                <div className={readinessSummary.ready ? 'text-2xl font-bold text-emerald-300' : 'text-2xl font-bold text-amber-300'}>
+                  {workflowId ? (readinessSummary.ready ? '可生成' : '待补齐') : '-'}
+                </div>
+              </div>
+              <div className="mt-3 text-sm text-white/60">出片就绪度</div>
+            </CardContent>
+          </Card>
         </div>
+
+        <ProductionStatusRail
+          workflowId={workflowId || null}
+          items={producerStatusItems}
+          issues={producerIssues}
+          title="本集生产状态"
+          subtitle="按小说章节、工程、剧本分镜、资产、草片和发布六个节点检查，缺什么就从本页补什么。"
+        />
 
         <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
           <Card className="border-white/10 bg-white/5">
@@ -959,7 +1114,7 @@ function ProducerCenterContent() {
                   <Button
                     className="flex-1 bg-violet-600 hover:bg-violet-700"
                     onClick={runPreviewProduction}
-                    disabled={!workflowId || Boolean(loadingAction)}
+                    disabled={(!workflowId && (!selectedNovelId || !selectedChapterId)) || Boolean(loadingAction)}
                   >
                     {loadingAction === 'preview-production' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
                     一键生成本集草片
@@ -1000,7 +1155,7 @@ function ProducerCenterContent() {
                 />
               </div>
 
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-3 lg:grid-cols-3">
                 <div className="rounded-lg border border-white/10 bg-black/20 p-4">
                   <div className="text-xs text-white/40">当前工程</div>
                   <div className="mt-1 text-base font-medium text-white">
@@ -1047,7 +1202,7 @@ function ProducerCenterContent() {
                       )}
                       {productionStatus.storyboard_id && (
                         <Button asChild size="sm" variant="ghost" className="h-5 text-xs text-cyan-400 hover:text-cyan-300">
-                          <Link href={`/storyboards/${productionStatus.storyboard_id}`}>
+                          <Link href={`/storyboards?storyboard_id=${productionStatus.storyboard_id}`}>
                             <Clapperboard className="mr-1 h-3 w-3" />
                             查看分镜
                           </Link>
@@ -1059,6 +1214,81 @@ function ProducerCenterContent() {
                     <div className="mt-3 flex items-center gap-2 border-t border-amber-500/25 pt-2">
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
                       <span className="text-xs text-amber-300">{generationProgress}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-white/40">短视频出片就绪度</div>
+                    {loadingReadiness ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-white/50" />
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={readinessSummary.ready ? 'border-emerald-500/25 text-emerald-300' : 'border-amber-500/25 text-amber-300'}
+                      >
+                        {workflowId ? (readinessSummary.ready ? '可生成' : '待补齐') : '未选择'}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div className="rounded bg-white/5 p-2">
+                      <div className="text-base font-semibold text-white">{readinessSummary.shot_count ?? '-'}</div>
+                      <div className="text-white/45">镜头</div>
+                    </div>
+                    <div className="rounded bg-white/5 p-2">
+                      <div className="text-base font-semibold text-white">{readinessSummary.estimated_duration_seconds ?? '-'}</div>
+                      <div className="text-white/45">秒</div>
+                    </div>
+                    <div className="rounded bg-white/5 p-2">
+                      <div className="text-base font-semibold text-white">{readinessSummary.blocking_issue_count ?? '-'}</div>
+                      <div className="text-white/45">阻断</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 space-y-2 text-xs leading-5 text-white/60">
+                    {readinessRecommendations.slice(0, 2).map((item, index) => (
+                      <div key={`${item}-${index}`} className="rounded border border-white/10 bg-white/5 px-2 py-1.5">
+                        {item}
+                      </div>
+                    ))}
+                    {!workflowId && <div>选择或创建本集工程后会自动检查。</div>}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-white/20"
+                      disabled={!workflowId || loadingReadiness}
+                      onClick={() => workflowId && loadShortVideoReadiness(workflowId)}
+                    >
+                      <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                      复查
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-white/20"
+                      disabled={!workflowId || Boolean(loadingAction)}
+                      onClick={() =>
+                        runAction('contracts-refresh', () => apiClient.refreshWorkflowShortVideoContracts(workflowId), '生产合约已刷新')
+                      }
+                    >
+                      <ShieldCheck className="mr-1 h-3.5 w-3.5" />
+                      刷新合约
+                    </Button>
+                  </div>
+                  {(readinessBlockers.length > 0 || readinessWarnings.length > 0) && (
+                    <div className="mt-3 border-t border-white/10 pt-2 text-xs leading-5 text-white/55">
+                      {readinessBlockers.slice(0, 2).map((issue: any) => (
+                        <div key={`blocker-${issue.code || issue.message}`} className="text-red-200">
+                          阻断：{issue.message || issue.code}
+                        </div>
+                      ))}
+                      {readinessWarnings.slice(0, 2).map((issue: any) => (
+                        <div key={`warning-${issue.code || issue.message}`} className="text-amber-200">
+                          提醒：{issue.message || issue.code}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
@@ -1101,6 +1331,28 @@ function ProducerCenterContent() {
                     {previewResult.srtUrl && (
                       <Button asChild size="sm" variant="outline" className="border-white/20">
                         <a href={toMediaUrl(previewResult.srtUrl)} target="_blank" rel="noreferrer">查看字幕</a>
+                      </Button>
+                    )}
+                    {previewResult.synthesisJobId && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-white/20"
+                        onClick={publishPreviewResult}
+                        disabled={publishingPreview}
+                      >
+                        {publishingPreview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-4 w-4" />}
+                        发布草片
+                      </Button>
+                    )}
+                    {publicationResult?.export_url && (
+                      <Button asChild size="sm" variant="outline" className="border-emerald-500/25 text-emerald-300">
+                        <a href={toMediaUrl(publicationResult.export_url)} target="_blank" rel="noreferrer">打开发布文件</a>
+                      </Button>
+                    )}
+                    {publicationResult && (
+                      <Button asChild size="sm" variant="ghost" className="text-white/70 hover:text-white">
+                        <Link href="/synthesis">发布记录</Link>
                       </Button>
                     )}
                   </div>
@@ -1297,8 +1549,23 @@ function ProducerCenterContent() {
 
               {nextAction ? (
                 <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-50">
-                  <div className="font-medium">下一步：{nextAction.label}</div>
-                  <div className="text-white/70">{nextAction.detail}</div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="font-medium">下一步：{nextAction.label}</div>
+                      <div className="text-white/70">{nextAction.detail}</div>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="bg-cyan-600 hover:bg-cyan-700"
+                      disabled={!workflowId || Boolean(loadingAction)}
+                      onClick={() =>
+                        runAction('assistant-auto', () => apiClient.runProducerAssistant(workflowId, { auto_fix: true }), '下一步已执行')
+                      }
+                    >
+                      {loadingAction === 'assistant-auto' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                      执行下一步
+                    </Button>
+                  </div>
                 </div>
               ) : (
                 <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-50">

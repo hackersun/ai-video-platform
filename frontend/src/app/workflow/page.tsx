@@ -7,8 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Select } from '@/components/ui/select';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { ProductionStatusRail } from '@/components/production/production-status-rail';
 import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api-client';
 import {
@@ -56,6 +59,15 @@ const WORKFLOW_STEPS = [
   { id: 'tts', name: '语音', icon: Mic, description: '生成TTS' },
   { id: 'synthesis', name: '合成', icon: Merge, description: '音视频合成' },
   { id: 'export', name: '导出', icon: Download, description: '导出最终视频' },
+];
+
+const SHORT_VIDEO_ASPECT_RATIO_OPTIONS = [
+  { value: '9:16', label: '9:16 竖屏短剧' },
+  { value: '16:9', label: '16:9 横屏预告' },
+  { value: '1:1', label: '1:1 方形参考' },
+  { value: '21:9', label: '21:9 影院宽屏' },
+  { value: '4:3', label: '4:3 经典横幅' },
+  { value: '3:4', label: '3:4 竖版设定' },
 ];
 
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(/\/api\/v1\/?$/, '');
@@ -137,6 +149,7 @@ interface WorkflowData {
   shotIds: string[];
   videoJobIds: string[];
   ttsJobIds: string[];
+  ttsJobs?: any[];
   mediaJobIds: string[];
   subtitleTrackIds: string[];
   synthesisJobIds: string[];
@@ -186,6 +199,7 @@ function WorkflowPageContent() {
     shotIds: [],
     videoJobIds: [],
     ttsJobIds: [],
+    ttsJobs: [],
     mediaJobIds: [],
     subtitleTrackIds: [],
     synthesisJobIds: [],
@@ -326,6 +340,7 @@ function WorkflowPageContent() {
         setWorkflowData(prev => ({
           ...prev,
           ttsJobIds: filtered.map((t: any) => t.id),
+          ttsJobs: filtered,
         }));
       }
       if (status.media_jobs) {
@@ -382,10 +397,6 @@ function WorkflowPageContent() {
     const urlWorkflowId = searchParams.get('workflow_id');
     if (urlWorkflowId && workflowId !== urlWorkflowId) {
       setWorkflowId(urlWorkflowId);
-      return;
-    }
-    if (!workflowId) {
-      createWorkflow('新工作流');
     }
   }, [searchParams, workflowId]);
 
@@ -526,6 +537,17 @@ function WorkflowPageContent() {
 
   const step = WORKFLOW_STEPS[currentStep];
   const Icon = step.icon;
+  const readinessItems = buildReadinessItems(workflowData);
+  const productionIssues = [
+    ...(workflowData.renderIssues || []),
+    ...readinessItems
+      .filter((item) => !item.ok)
+      .map((item) => ({
+        code: `workflow_${item.label}`,
+        message: item.detail,
+        severity: item.label === '渲染包' || item.label === '连续成片' ? 'warning' : 'blocking',
+      })),
+  ];
 
   return (
     <MainLayout>
@@ -584,6 +606,55 @@ function WorkflowPageContent() {
               关闭
             </button>
           </div>
+        )}
+
+        {!workflowId && (
+          <Card className="border-cyan-500/20 bg-cyan-500/10">
+            <CardContent className="p-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-base font-semibold text-cyan-50">
+                    <WorkflowIcon className="h-5 w-5" />
+                    选择或创建本集工程
+                  </div>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-white/65">
+                    工作流需要绑定小说、章节、剧本和分镜后再继续生成。系统不会再自动创建空工程，避免流程回到起点或产生无关联任务。
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    <Badge variant="outline" className="border-white/10 text-white/70">推荐：从 AI 制片中心选择小说章节</Badge>
+                    <Badge variant="outline" className="border-white/10 text-white/70">可选：创建空白工程后手动绑定</Badge>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+                  <Button asChild className="bg-cyan-600 hover:bg-cyan-700">
+                    <Link href="/producer">
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      去 AI 制片中心
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="border-white/20"
+                    disabled={isLoading}
+                    onClick={() => createWorkflow('空白制片工程')}
+                  >
+                    {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <WorkflowIcon className="mr-2 h-4 w-4" />}
+                    创建空白工程
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {workflowId && (
+          <ProductionStatusRail
+            workflowId={workflowId}
+            items={readinessItems}
+            issues={productionIssues}
+            title="本集生产状态"
+            subtitle="生成前先确认小说链路、镜头、音频、字幕、连续成片和渲染包；缺项可回到 AI 制片中心补齐。"
+          />
         )}
 
         <Card className="border-violet-500/20 bg-violet-500/10">
@@ -1180,11 +1251,37 @@ function ShortVideoProductionPanel({
   workflowData: WorkflowData;
 }) {
   const [targetDuration, setTargetDuration] = useState(60);
+  const [aspectRatio, setAspectRatio] = useState('9:16');
+  const [selectedStyleAssetId, setSelectedStyleAssetId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [readiness, setReadiness] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
 
   const canCheck = Boolean(workflowId && workflowData.novelId);
+  const presets = readiness?.production_presets || {};
+  const styleReferences = Array.isArray(presets.style_references) ? presets.style_references : [];
+  const aspectPresetOptions = Array.isArray(presets.aspect_ratios) && presets.aspect_ratios.length > 0
+    ? presets.aspect_ratios.map((item: any) => ({
+        value: item.ratio,
+        label: `${item.ratio} ${item.label || ''}`.trim(),
+      }))
+    : SHORT_VIDEO_ASPECT_RATIO_OPTIONS;
+  const styleOptions = [
+    { value: '', label: styleReferences.length ? '默认风格' : '检查后加载风格图' },
+    ...styleReferences.map((item: any) => ({
+      value: item.id,
+      label: item.name,
+    })),
+  ];
+  const selectedAspectPreset = Array.isArray(presets.aspect_ratios)
+    ? presets.aspect_ratios.find((item: any) => item.ratio === aspectRatio || item.selected)
+    : null;
+  const selectedStyle = styleReferences.find((item: any) => item.id === selectedStyleAssetId)
+    || styleReferences.find((item: any) => item.selected);
+  const consistencyTemplates = presets.consistency_templates || {};
+  const characterTemplate = consistencyTemplates.character_three_view;
+  const sceneTemplate = consistencyTemplates.scene_multi_view;
+  const propTemplate = consistencyTemplates.prop_multi_view;
 
   const loadReadiness = useCallback(async () => {
     if (!workflowId) {
@@ -1200,7 +1297,8 @@ function ShortVideoProductionPanel({
     try {
       const data = await apiClient.getWorkflowShortVideoReadiness(workflowId, {
         target_duration_seconds: targetDuration,
-        aspect_ratio: '9:16',
+        aspect_ratio: aspectRatio,
+        style_asset_id: selectedStyleAssetId || undefined,
       });
       setReadiness(data);
     } catch (err: any) {
@@ -1208,7 +1306,7 @@ function ShortVideoProductionPanel({
     } finally {
       setIsLoading(false);
     }
-  }, [workflowId, workflowData.novelId, targetDuration]);
+  }, [workflowId, workflowData.novelId, targetDuration, aspectRatio, selectedStyleAssetId]);
 
   const refreshContracts = async () => {
     if (!workflowId) {
@@ -1221,7 +1319,8 @@ function ShortVideoProductionPanel({
       await apiClient.refreshWorkflowShortVideoContracts(workflowId);
       const data = await apiClient.getWorkflowShortVideoReadiness(workflowId, {
         target_duration_seconds: targetDuration,
-        aspect_ratio: '9:16',
+        aspect_ratio: aspectRatio,
+        style_asset_id: selectedStyleAssetId || undefined,
       });
       setReadiness(data);
     } catch (err: any) {
@@ -1246,18 +1345,35 @@ function ShortVideoProductionPanel({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Input
-            type="number"
-            min={30}
-            max={90}
-            value={targetDuration}
-            onChange={(event) => setTargetDuration(Number(event.target.value) || 60)}
+        <div className="grid grid-cols-1 sm:grid-cols-[1fr_170px] gap-2">
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={30}
+              max={90}
+              value={targetDuration}
+              onChange={(event) => setTargetDuration(Number(event.target.value) || 60)}
+              className="h-8 bg-white/10 border-white/10 text-white"
+              aria-label="目标时长"
+            />
+            <span className="text-xs text-white/50 whitespace-nowrap">秒</span>
+          </div>
+          <Select
+            value={aspectRatio}
+            onChange={(event) => setAspectRatio(event.target.value)}
+            options={aspectPresetOptions}
+            aria-label="画面比例"
             className="h-8 bg-white/10 border-white/10 text-white"
-            aria-label="目标时长"
           />
-          <span className="text-xs text-white/50 whitespace-nowrap">秒 · 9:16</span>
         </div>
+        <Select
+          value={selectedStyleAssetId}
+          onChange={(event) => setSelectedStyleAssetId(event.target.value)}
+          options={styleOptions}
+          disabled={!readiness || styleReferences.length === 0}
+          aria-label="整集画面风格"
+          className="h-8 bg-white/10 border-white/10 text-white"
+        />
         <div className="grid grid-cols-2 gap-2">
           <Button
             size="sm"
@@ -1288,7 +1404,28 @@ function ShortVideoProductionPanel({
 
         {!readiness && !error && (
           <div className="rounded border border-white/10 bg-white/5 p-2 text-xs text-white/45 leading-5">
-            选择小说、章节和分镜后，可检查开场钩子、镜头节奏、Production Contract、字幕和模型路线。
+            选择小说、章节和分镜后，可检查开场钩子、镜头节奏、角色三视图、场景/道具参考、字幕和模型路线。
+          </div>
+        )}
+
+        {readiness && (
+          <div className="rounded border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs leading-5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-cyan-100 font-medium">制作规格</span>
+              <span className="text-cyan-100/70">{aspectRatio}</span>
+            </div>
+            <div className="mt-1 text-white/60">
+              {selectedAspectPreset?.label || '当前画幅'}：{selectedAspectPreset?.use_case || '按当前发布渠道构图'}
+            </div>
+            <div className="mt-1 text-white/45 line-clamp-2">
+              风格：{selectedStyle?.name || '默认跟随小说/分镜风格'}
+              {selectedStyle?.prompt_summary ? ` · ${selectedStyle.prompt_summary}` : ''}
+            </div>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-1 text-white/50">
+              <div>角色：{characterTemplate?.name || '待加载三视图模板'}</div>
+              <div>场景：{sceneTemplate?.name || '待加载多视图模板'}</div>
+              <div>道具：{propTemplate?.name || '待加载视觉 DNA 模板'}</div>
+            </div>
           </div>
         )}
 
@@ -1976,6 +2113,7 @@ function StoryboardStep({
       const storyboard = await apiClient.generateSmartStoryboard({
         novel_id: workflowData.novelId,
         chapter_id: workflowData.chapterId,
+        script_id: workflowData.scriptId || undefined,
         shot_count: 8,
         style: 'anime',
         use_ai_refine: true,
@@ -2217,6 +2355,48 @@ function VideoStep({
   const router = useRouter();
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false);
   const [batchResult, setBatchResult] = useState<any>(null);
+  const [storyBibles, setStoryBibles] = useState<any[]>([]);
+  const [selectedStoryBibleId, setSelectedStoryBibleId] = useState('');
+  const [useStoryBibleVoice, setUseStoryBibleVoice] = useState(true);
+
+  useEffect(() => {
+    if (!workflowData.novelId) {
+      setStoryBibles([]);
+      setSelectedStoryBibleId('');
+      return;
+    }
+
+    let isMounted = true;
+    apiClient.getStoryBibles({ novel_id: workflowData.novelId })
+      .then((list) => {
+        if (!isMounted) return;
+        const items = Array.isArray(list) ? list : [];
+        setStoryBibles(items);
+        setSelectedStoryBibleId((current) => (
+          current && items.some((item) => item.id === current)
+            ? current
+            : items[0]?.id || ''
+        ));
+      })
+      .catch(() => {
+        if (!isMounted) return;
+        setStoryBibles([]);
+        setSelectedStoryBibleId('');
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [workflowData.novelId]);
+
+  const selectedStoryBible = storyBibles.find((item) => item.id === selectedStoryBibleId);
+  const storyBibleOptions = storyBibles.map((item) => ({
+    value: item.id,
+    label: `${item.title || '未命名 Story Bible'}${item.character_rules?.length ? ` · ${item.character_rules.length} 角色` : ''}`,
+  }));
+  const ttsVoiceLockCount = (workflowData.ttsJobs || []).filter(
+    (job: any) => job.extra_data?.voice_source === 'story_bible'
+  ).length;
 
   const handleGenerateMediaBatch = async () => {
     if (!workflowData.storyboardId) {
@@ -2236,6 +2416,8 @@ function VideoStep({
         audio_mode: 'model_audio',
         model_config_id: videoModelConfigId || undefined,
         audio_model_config_id: audioModelConfigId || undefined,
+        story_bible_id: selectedStoryBibleId || undefined,
+        use_story_bible_voice: useStoryBibleVoice,
       });
       setBatchResult(result);
       setWorkflowData((prev: WorkflowData) => ({
@@ -2321,11 +2503,54 @@ function VideoStep({
         />
       </div>
 
+      <div className="rounded border border-white/10 bg-white/5 p-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-white">角色音色锁</span>
+              <Badge className={useStoryBibleVoice ? 'bg-green-500/20 text-green-200 border-green-500/30' : 'bg-white/10 text-white/60 border-white/10'}>
+                {useStoryBibleVoice ? '启用' : '关闭'}
+              </Badge>
+              {selectedStoryBible && (
+                <Badge className="bg-violet-500/20 text-violet-100 border-violet-500/30">
+                  {selectedStoryBible.character_rules?.length || 0} 个角色设定
+                </Badge>
+              )}
+              {(batchResult?.tts_voice_lock_count || ttsVoiceLockCount) > 0 && (
+                <Badge className="bg-cyan-500/20 text-cyan-100 border-cyan-500/30">
+                  已命中 {batchResult?.tts_voice_lock_count || ttsVoiceLockCount} 个配音
+                </Badge>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-white/50">
+              批量配音优先读取 Story Bible 中的角色 voice/voice_speed，再回退到默认音色。
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-white/70">
+            <Checkbox
+              checked={useStoryBibleVoice}
+              onCheckedChange={(checked) => setUseStoryBibleVoice(Boolean(checked))}
+              disabled={isGeneratingBatch}
+            />
+            使用角色音色
+          </label>
+        </div>
+        <div className="mt-3">
+          <Select
+            value={selectedStoryBibleId}
+            onValueChange={setSelectedStoryBibleId}
+            disabled={isGeneratingBatch || storyBibles.length === 0}
+            placeholder={storyBibles.length ? '选择 Story Bible' : '当前小说暂无 Story Bible'}
+            options={storyBibleOptions}
+          />
+        </div>
+      </div>
+
       {batchResult && (
         <div className="rounded border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-100">
           已创建 {batchResult.video_job_ids?.length || 0} 个视频任务、{batchResult.tts_job_ids?.length || 0} 个声音任务，并生成 {batchResult.subtitle_track_ids?.length || 0} 条字幕轨。
           <div className="mt-1 text-xs text-green-100/70">
-            已消费当前 workflow 的小说/章节/分镜/镜头链路；每个任务会保存镜头对白、字幕轨和一致性上下文。
+            已消费当前 workflow 的小说/章节/分镜/镜头链路；本次 {batchResult.tts_voice_lock_count || 0} 个配音命中角色音色锁。
             {batchResult.ready_for_concatenate === false ? ' 当前仍有云端任务未完成，完成后再合成。' : ''}
           </div>
         </div>
