@@ -882,3 +882,12 @@
 - 验证过程：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q test_workflow_routes.py::test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs -q` 通过；workflow 批量媒体专项 5 passed；后端紧凑一致性套件 154 passed。
 - 前端验证：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`npm run build` 通过；构建后再次 `npx tsc --noEmit` 通过；Playwright `e2e/synthesis-history.spec.ts e2e/workflow-production-guidance.spec.ts` 2 passed。
 - 环境备注：第一次重跑 synthesis E2E 失败是旧 3000 dev server 复用 stale `.next`，清理 `.next` 并以 `npm run dev -- -p 3000` 重启后通过；后续 Playwright 前如遇同类症状先重启前端。
+
+## 2026-06-06 Phase 254 P1 AI 制片下一步单项执行
+
+- AI 制片助手新增 `action_code` 请求字段；后端 `build_ai_producer_assistant()` 保留 `auto_fix=true` 全量安全补齐，同时支持只执行当前推荐动作。
+- 单项执行时不会因为质量报告持久化或后续 ready 动作把其他状态一并写入，避免新手点击“下一步”后状态跳太多、难以回溯。
+- `/producer` 的“执行下一步”按钮改为发送当前 `next_action.code`；独立“安全补齐”按钮继续 broad `auto_fix=true`，保留自动化批量修复入口。
+- 新增后端回归 `test_ai_producer_assistant_executes_only_requested_safe_next_action`，覆盖只生成资产定稿包、不顺带写入 production contract。
+- 新增前端 E2E `producer-next-action.spec.ts`，通过 mock API 断言页面提交的第二次制片助手请求为 `{ auto_fix: true, action_code: 'build_production_pack' }`。
+- 验证通过：`DEV_MODE=true PYTHONPATH=. pytest -q test_production_control.py::test_ai_producer_assistant_executes_only_requested_safe_next_action -q` 1 passed；`DEV_MODE=true PYTHONPATH=. pytest -q test_production_control.py -q` 3 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && DEV_MODE=true PYTHONPATH=. pytest -q test_production_control.py test_workflow_routes.py` 43 passed；前端 `PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit && npm run build && npx tsc --noEmit` 通过；Playwright `e2e/producer-next-action.spec.ts e2e/workflow-production-guidance.spec.ts e2e/synthesis-history.spec.ts` 3 passed。

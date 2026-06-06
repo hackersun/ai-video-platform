@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -42,6 +42,7 @@ class QualityCheckRequest(BaseModel):
 
 class ProducerAssistantRequest(BaseModel):
     auto_fix: bool = Field(False, description="是否自动执行安全的补齐动作")
+    action_code: Optional[str] = Field(None, description="只执行指定安全动作；不传时按原逻辑执行全部安全补齐")
 
 
 @router.get("/novels/{novel_id}/production-pack", response_model=Dict[str, Any])
@@ -142,4 +143,5 @@ async def create_producer_assistant(
         user_id,
         workflow_id,
         auto_fix=request.auto_fix,
+        action_code=request.action_code,
     )

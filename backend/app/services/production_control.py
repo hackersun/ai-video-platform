@@ -571,10 +571,14 @@ async def build_ai_producer_assistant(
     workflow_id: str,
     *,
     auto_fix: bool = False,
+    action_code: Optional[str] = None,
 ) -> Dict[str, Any]:
     workflow = await _load_workflow(db, user_id, workflow_id)
     actions: List[Dict[str, Any]] = []
     executed: List[Dict[str, Any]] = []
+
+    def should_execute(code: str) -> bool:
+        return auto_fix and (not action_code or action_code == code)
 
     if not workflow.novel_id:
         actions.append({"code": "select_novel", "label": "选择小说", "priority": "P0", "status": "blocked", "detail": "工作流缺少小说，无法串联整部动漫生产。"})
@@ -590,12 +594,12 @@ async def build_ai_producer_assistant(
         actions.append({"code": "create_chapter", "label": "补章节", "priority": "P0", "status": "blocked", "detail": "小说还没有章节，无法生成剧本、分镜和镜头。"})
     if not pack:
         actions.append({"code": "build_production_pack", "label": "生成资产定稿包", "priority": "P0", "status": "ready", "detail": "锁定角色、场景、道具参考资产，避免多集生成漂移。"})
-        if auto_fix:
+        if should_execute("build_production_pack"):
             result = await apply_asset_locks_to_workflow(db, user_id, workflow.id, persist=True)
             executed.append({"code": "build_production_pack", "result": result.get("production_pack", {}).get("summary")})
     elif workflow.storyboard_id and any(not _json_list(_json_dict(_json_dict(shot.extra_data).get("production_context")).get("asset_version_locks")) for shot in shots):
         actions.append({"code": "apply_asset_locks", "label": "应用资产锁到镜头", "priority": "P0", "status": "ready", "detail": "部分镜头缺少资产锁，需要从小说定稿包同步。"})
-        if auto_fix:
+        if should_execute("apply_asset_locks"):
             result = await apply_asset_locks_to_workflow(db, user_id, workflow.id, persist=True)
             executed.append({"code": "apply_asset_locks", "result": {"applied_shot_count": len(result.get("applied_shots") or [])}})
 
@@ -605,7 +609,7 @@ async def build_ai_producer_assistant(
     ]
     if workflow.storyboard_id and missing_contracts:
         actions.append({"code": "refresh_contracts", "label": "刷新镜头生产合约", "priority": "P0", "status": "ready", "detail": f"{len(missing_contracts)} 个镜头缺少 Production Contract。"})
-        if auto_fix:
+        if should_execute("refresh_contracts"):
             for shot in missing_contracts:
                 contract = await build_shot_production_contract(db, user_id, shot.id)
                 persist_contract_to_shot(shot, contract)
@@ -617,11 +621,11 @@ async def build_ai_producer_assistant(
         actions.append({"code": "regenerate_missing_media", "label": "重生成缺失媒体", "priority": "P0", "status": "manual", "detail": f"{media_audit['summary']['missing_count']} 个媒体链接缺失，需要重新生成或恢复文件。"})
     elif media_audit["summary"]["remote_count"]:
         actions.append({"code": "persist_remote_media", "label": "转存远端临时媒体", "priority": "P0", "status": "ready", "detail": f"{media_audit['summary']['remote_count']} 个远端媒体建议转存。"})
-        if auto_fix:
+        if should_execute("persist_remote_media"):
             result = await audit_and_persist_workflow_media(db, user_id, workflow.id, persist_remote=True, dry_run=False)
             executed.append({"code": "persist_remote_media", "result": result.get("summary")})
 
-    quality = await build_workflow_quality_report(db, user_id, workflow.id, persist=auto_fix)
+    quality = await build_workflow_quality_report(db, user_id, workflow.id, persist=auto_fix and not action_code)
     if quality["summary"]["blocked_count"]:
         actions.append({"code": "fix_shot_blockers", "label": "修复镜头阻断项", "priority": "P0", "status": "manual", "detail": "存在缺少提示词、视觉描述或字幕的镜头。"})
     elif quality["summary"]["warning_count"]:
@@ -634,6 +638,7 @@ async def build_ai_producer_assistant(
         "summary": {
             "ready": not actions,
             "next_action": next_action,
+            "requested_action_code": action_code,
             "action_count": len(actions),
             "executed_count": len(executed),
             "media_missing_count": media_audit["summary"]["missing_count"],

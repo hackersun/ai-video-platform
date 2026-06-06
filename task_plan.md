@@ -1103,3 +1103,18 @@
 - [x] 合成历史筛选修复快速输入后按钮读取旧 state 的问题，使用同步 ref 保证点击“筛选历史”时发送当前小说/章节/剧本/分镜/镜头/状态参数。
 - [x] 验证通过：新增测试先红后绿；批量媒体专项 5 passed；后端紧凑一致性套件 154 passed；前端 `tsc -> build -> tsc` 通过；Playwright `synthesis-history.spec.ts` 与 `workflow-production-guidance.spec.ts` 2 passed。
 - [x] 验证环境记录：旧 3000 dev server 可能复用 stale `.next` 导致 synthesis E2E 假失败，清理 `.next` 并重启前端后通过。
+
+## 2026-06-06 Phase 254 P1 AI 制片下一步单项执行
+
+- [x] AI 制片助手接口新增 `action_code`，保留不传时“安全补齐全部可自动动作”的旧行为。
+- [x] 后端自动补齐改为按 `action_code` 精确执行，点击下一步只执行当前推荐动作，不再顺带刷新合约、转存媒体或持久化质量检查。
+- [x] `/producer` 的“执行下一步”按钮传入当前 `next_action.code`；“安全补齐”按钮继续执行全部安全动作，保证轻量自动化与精确下一步并存。
+- [x] 新增后端回归 `test_ai_producer_assistant_executes_only_requested_safe_next_action`，确认单项执行不会写入非目标动作的 production contract。
+- [x] 新增前端 E2E `producer-next-action.spec.ts`，确认页面点击“执行下一步”提交 `{ auto_fix: true, action_code: ... }`。
+- [x] 验证通过：`python3 -m compileall app`；`pytest -q test_production_control.py test_workflow_routes.py` 43 passed；前端 `tsc -> build -> tsc` 通过；Playwright `producer-next-action.spec.ts`、`workflow-production-guidance.spec.ts`、`synthesis-history.spec.ts` 3 passed。
+
+## Phase 254 成功标准
+
+- AI 制片中心的新手路径能明确“下一步只做这一件事”，不会因为一次点击把多个安全动作全部执行导致用户难以理解状态变化。
+- 需要批量补齐时仍可使用独立“安全补齐/AI 补齐”入口，避免削弱自动化。
+- 该能力必须同时有后端行为测试和前端请求 payload 测试，防止以后按钮回退成 broad `auto_fix=true`。

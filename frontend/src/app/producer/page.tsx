@@ -1559,10 +1559,17 @@ function ProducerCenterContent() {
                       className="bg-cyan-600 hover:bg-cyan-700"
                       disabled={!workflowId || Boolean(loadingAction)}
                       onClick={() =>
-                        runAction('assistant-auto', () => apiClient.runProducerAssistant(workflowId, { auto_fix: true }), '下一步已执行')
+                        runAction(
+                          'assistant-next',
+                          () => apiClient.runProducerAssistant(workflowId, {
+                            auto_fix: true,
+                            ...(typeof nextAction.code === 'string' ? { action_code: nextAction.code } : {}),
+                          }),
+                          '下一步已执行'
+                        )
                       }
                     >
-                      {loadingAction === 'assistant-auto' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+                      {loadingAction === 'assistant-next' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
                       执行下一步
                     </Button>
                   </div>

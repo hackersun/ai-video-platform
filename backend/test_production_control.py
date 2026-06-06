@@ -117,3 +117,23 @@ def test_ai_producer_assistant_reports_and_auto_fixes_safe_items(client: TestCli
     production_context = first_shot.json()["extra_data"]["production_context"]
     assert production_context["asset_version_locks"]
     assert production_context["production_contract"]["contract_version"] == "short-video-v1"
+
+
+def test_ai_producer_assistant_executes_only_requested_safe_next_action(client: TestClient) -> None:
+    user_id = f"producer-next-action-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+
+    fix_resp = client.post(
+        f"/api/v1/production-control/workflow/{fixture['workflow_id']}/producer-assistant",
+        json={"auto_fix": True, "action_code": "build_production_pack"},
+        headers=_auth_headers(user_id),
+    )
+    assert fix_resp.status_code == 200
+    payload = fix_resp.json()
+    assert [item["code"] for item in payload["executed"]] == ["build_production_pack"]
+
+    first_shot = client.get(f"/api/v1/shots/{fixture['shot_ids'][0]}", headers=_auth_headers(user_id))
+    assert first_shot.status_code == 200
+    production_context = first_shot.json()["extra_data"]["production_context"]
+    assert production_context["asset_version_locks"]
+    assert "production_contract" not in production_context

@@ -1452,6 +1452,7 @@ class ApiClient {
 
   async runProducerAssistant(workflowId: string, data: {
     auto_fix?: boolean;
+    action_code?: string;
   } = {}) {
     return this.request<any>(`/production-control/workflow/${workflowId}/producer-assistant`, {
       method: 'POST',
