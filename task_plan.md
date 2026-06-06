@@ -1069,7 +1069,7 @@
 - [x] Phase 250: P0 落地：新增统一生产预检服务，统一 `entity_refs` 结构，修复资产锁服务，并让视频/TTS/媒体/图片生成生产模式不可绕过一致性门禁。
 - [x] Phase 251: P0 落地：前端新增全局生产状态与一键下一步，workflow 不再无参数静默创建，镜头和资产编辑默认隐藏 JSON 专家字段。
 - [x] Phase 252: P0 落地：统一 synthesis 与 workflow render/timeline/subtitle 管线，历史播放/下载/筛选和最终 artifact 验收稳定可用。
-- [ ] Phase 253: P0 验证：运行紧凑后端一致性套件、前端类型/构建、核心 Playwright 链路，并新增非 DEV 预检门禁测试。
+- [x] Phase 253: P0 验证：运行紧凑后端一致性套件、前端类型/构建、核心 Playwright 链路，并新增非 DEV 预检门禁测试。
 
 ## Phase 250-253 成功标准
 
@@ -1095,3 +1095,11 @@
 - [x] `/synthesis` 页面保留快速视频+音频合成功能，同时新增“合成历史筛选”、历史就地预览、字幕 SRT、时间线和渲染清单入口；历史播放不再复用页面上方当前合成结果区域。
 - [x] 新增 Playwright 回归 `frontend/e2e/synthesis-history.spec.ts`，覆盖筛选请求、历史结果展示、就地预览和三类 artifact 链接。
 - [x] 验证通过：`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && DEV_MODE=true PYTHONPATH=. pytest -q ... test_workflow_routes.py` 153 passed；前端 `npx tsc --noEmit`、`npm run build`、构建后再次 `npx tsc --noEmit` 通过；Playwright `synthesis-history.spec.ts` 与 `workflow-production-guidance.spec.ts` 2 passed；内置浏览器确认 `/synthesis` 可见“合成历史筛选”。
+
+## 2026-06-06 Phase 253 落地结果
+
+- [x] 新增非 DEV workflow 批量生成门禁回归：`test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs`，确认未验证视频模型会在供应商调用和 VideoJob 创建前返回统一 `generation_preflight_failed`。
+- [x] workflow 批量“视频+配音”生成在生产模式下逐镜头执行统一 `build_generation_context_package()` 预检，覆盖模型验证、参考图公网、lineage、实体引用和资产锁阻断。
+- [x] 合成历史筛选修复快速输入后按钮读取旧 state 的问题，使用同步 ref 保证点击“筛选历史”时发送当前小说/章节/剧本/分镜/镜头/状态参数。
+- [x] 验证通过：新增测试先红后绿；批量媒体专项 5 passed；后端紧凑一致性套件 154 passed；前端 `tsc -> build -> tsc` 通过；Playwright `synthesis-history.spec.ts` 与 `workflow-production-guidance.spec.ts` 2 passed。
+- [x] 验证环境记录：旧 3000 dev server 可能复用 stale `.next` 导致 synthesis E2E 假失败，清理 `.next` 并重启前端后通过。

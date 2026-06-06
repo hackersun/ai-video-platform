@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -36,6 +36,16 @@ const toMediaUrl = (url?: string) => {
   if (!url) return '';
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
 };
+
+const createEmptyHistoryFilters = () => ({
+  novel_id: '',
+  chapter_id: '',
+  script_id: '',
+  storyboard_id: '',
+  shot_id: '',
+  status: '',
+  render_status: '',
+});
 
 interface VideoJob {
   id: string;
@@ -110,15 +120,8 @@ export default function SynthesisPage() {
   const [history, setHistory] = useState<SynthesisJob[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistoryJob, setSelectedHistoryJob] = useState<SynthesisJob | null>(null);
-  const [historyFilters, setHistoryFilters] = useState({
-    novel_id: '',
-    chapter_id: '',
-    script_id: '',
-    storyboard_id: '',
-    shot_id: '',
-    status: '',
-    render_status: '',
-  });
+  const [historyFilters, setHistoryFilters] = useState(createEmptyHistoryFilters);
+  const historyFiltersRef = useRef(historyFilters);
   const [publications, setPublications] = useState<Publication[]>([]);
   const [publishingJobId, setPublishingJobId] = useState<string | null>(null);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
@@ -176,11 +179,12 @@ export default function SynthesisPage() {
     }
   };
 
-  const loadHistory = async (filters = historyFilters) => {
+  const loadHistory = async (filters = historyFiltersRef.current) => {
     setHistoryLoading(true);
     try {
+      const activeFilters = filters || historyFiltersRef.current;
       const params = Object.fromEntries(
-        Object.entries(filters).filter(([, value]) => String(value || '').trim())
+        Object.entries(activeFilters).filter(([, value]) => String(value || '').trim())
       );
       const data = await apiClient.getSynthesisJobs({ ...params, limit: 100 });
       const jobs = Array.isArray(data) ? data : [];
@@ -312,19 +316,14 @@ export default function SynthesisPage() {
   const getAudioUrl = (id: string) => ttsAudios.find(a => a.id === id)?.audio_url;
 
   const updateHistoryFilter = (key: keyof typeof historyFilters, value: string) => {
-    setHistoryFilters(prev => ({ ...prev, [key]: value }));
+    const nextFilters = { ...historyFiltersRef.current, [key]: value };
+    historyFiltersRef.current = nextFilters;
+    setHistoryFilters(nextFilters);
   };
 
   const resetHistoryFilters = () => {
-    const emptyFilters = {
-      novel_id: '',
-      chapter_id: '',
-      script_id: '',
-      storyboard_id: '',
-      shot_id: '',
-      status: '',
-      render_status: '',
-    };
+    const emptyFilters = createEmptyHistoryFilters();
+    historyFiltersRef.current = emptyFilters;
     setHistoryFilters(emptyFilters);
     loadHistory(emptyFilters);
   };
@@ -721,7 +720,7 @@ export default function SynthesisPage() {
                     </label>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => loadHistory(historyFilters)} disabled={historyLoading}>
+                    <Button size="sm" onClick={() => loadHistory(historyFiltersRef.current)} disabled={historyLoading}>
                       {historyLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Filter className="w-4 h-4 mr-2" />}
                       筛选历史
                     </Button>

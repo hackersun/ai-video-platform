@@ -21,10 +21,11 @@ from app.core.dev_generation import dev_audio_url, dev_synthesis_url, dev_video_
 from app.core.model_registry import get_task_default
 from app.core.security import get_current_user_id
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
-from app.models import Clip, Project, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot
+from app.models import Clip, Project, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot, StoryBible, Storyboard
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
+from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 
 router = APIRouter(tags=["工作流"])
 
@@ -235,6 +236,161 @@ def _shot_audio_text(shot: Shot) -> str:
     if len(fallback) > 80:
         fallback = f"{fallback[:80].rstrip()}..."
     return f"（旁白）{fallback}"
+
+
+def _clean_character_label(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    value = str(name).strip().strip("「」『』“”\"' ")
+    for suffix in ("回答", "低声说", "轻声说", "说道", "说", "道", "问", "喊"):
+        if len(value) > len(suffix) and value.endswith(suffix):
+            value = value[: -len(suffix)].strip()
+            break
+    return value or None
+
+
+def _primary_tts_character_name(shot: Shot, subtitle_text: str) -> Optional[str]:
+    from app.api.v1.endpoints.tts import extract_character_from_text, parse_dialogue
+
+    character_name = _clean_character_label(extract_character_from_text(subtitle_text))
+    if character_name:
+        return character_name
+
+    for segment in parse_dialogue(subtitle_text):
+        character_name = _clean_character_label(segment.get("character"))
+        if character_name and character_name != "旁白":
+            return character_name
+
+    character_refs = shot.character_refs if isinstance(shot.character_refs, list) else []
+    for ref in character_refs:
+        if isinstance(ref, dict):
+            character_name = _clean_character_label(
+                ref.get("name") or ref.get("canonical_name") or ref.get("character_name")
+            )
+        else:
+            character_name = _clean_character_label(ref)
+        if character_name:
+            return character_name
+
+    shot_extra = _extra(shot)
+    entity_refs = shot_extra.get("entity_refs") if isinstance(shot_extra.get("entity_refs"), dict) else {}
+    for ref in entity_refs.get("characters") or []:
+        if isinstance(ref, dict):
+            character_name = _clean_character_label(
+                ref.get("name") or ref.get("canonical_name") or ref.get("character_name")
+            )
+        else:
+            character_name = _clean_character_label(ref)
+        if character_name:
+            return character_name
+
+    return None
+
+
+def _story_bible_candidate_ids(workflow: Workflow, shot: Shot, requested_story_bible_id: Optional[str]) -> List[str]:
+    candidates: List[str] = []
+
+    def add(value: Optional[str]) -> None:
+        if value and value not in candidates:
+            candidates.append(str(value))
+
+    add(requested_story_bible_id)
+    shot_extra = _extra(shot)
+    add(shot_extra.get("story_bible_id"))
+    lineage = shot_extra.get("lineage") if isinstance(shot_extra.get("lineage"), dict) else {}
+    add(lineage.get("story_bible_id"))
+    production_context = _production_context_for_shot(shot)
+    add(production_context.get("story_bible_id"))
+    workflow_meta = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+    add(workflow_meta.get("story_bible_id"))
+    return candidates
+
+
+async def _resolve_story_bible_id_for_workflow_shot(
+    db: AsyncSession,
+    user_id: str,
+    workflow: Workflow,
+    shot: Shot,
+    requested_story_bible_id: Optional[str] = None,
+) -> Optional[str]:
+    candidates = _story_bible_candidate_ids(workflow, shot, requested_story_bible_id)
+
+    storyboard_id = workflow.storyboard_id or shot.storyboard_id
+    if storyboard_id:
+        storyboard_result = await db.execute(
+            select(Storyboard).where(Storyboard.id == storyboard_id, Storyboard.user_id == user_id)
+        )
+        storyboard = storyboard_result.scalar_one_or_none()
+        storyboard_content = storyboard.content if storyboard and isinstance(storyboard.content, dict) else {}
+        story_bible_id = storyboard_content.get("story_bible_id")
+        if story_bible_id and story_bible_id not in candidates:
+            candidates.append(str(story_bible_id))
+
+    for story_bible_id in candidates:
+        result = await db.execute(
+            select(StoryBible.id).where(StoryBible.id == story_bible_id, StoryBible.user_id == user_id).limit(1)
+        )
+        if result.scalar_one_or_none():
+            return story_bible_id
+
+    if workflow.novel_id:
+        result = await db.execute(
+            select(StoryBible.id)
+            .where(StoryBible.user_id == user_id, StoryBible.novel_id == workflow.novel_id)
+            .order_by(desc(StoryBible.updated_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    return None
+
+
+async def _resolve_tts_voice_for_workflow_shot(
+    db: AsyncSession,
+    user_id: str,
+    workflow: Workflow,
+    shot: Shot,
+    subtitle_text: str,
+    default_voice: str,
+    default_speed: float,
+    requested_story_bible_id: Optional[str] = None,
+    use_story_bible_voice: bool = True,
+) -> Dict[str, Any]:
+    resolved = {
+        "voice": default_voice,
+        "speed": default_speed,
+        "voice_source": "request",
+        "character_name": None,
+        "story_bible_id": None,
+    }
+    if not use_story_bible_voice:
+        return resolved
+
+    story_bible_id = await _resolve_story_bible_id_for_workflow_shot(
+        db,
+        user_id,
+        workflow,
+        shot,
+        requested_story_bible_id=requested_story_bible_id,
+    )
+    resolved["story_bible_id"] = story_bible_id
+    character_name = _primary_tts_character_name(shot, subtitle_text)
+    resolved["character_name"] = character_name
+    if not story_bible_id or not character_name:
+        return resolved
+
+    from app.services.voice_service import get_character_voice_from_story_bible
+
+    voice_config = await get_character_voice_from_story_bible(db, character_name, story_bible_id)
+    if not voice_config:
+        return resolved
+
+    story_bible_voice = voice_config.get("voice") or voice_config.get("voice_model")
+    if story_bible_voice:
+        resolved["voice"] = story_bible_voice
+        resolved["voice_source"] = "story_bible"
+    if voice_config.get("voice_speed") is not None:
+        resolved["speed"] = voice_config.get("voice_speed")
+    return resolved
 
 
 def _shot_generation_prompt(shot: Shot) -> str:
@@ -1219,6 +1375,8 @@ class WorkflowMediaBatchRequest(BaseModel):
     audio_model_config_id: Optional[str] = Field(None, description="已保存的声音/TTS 模型配置ID")
     voice_model: str = Field("female-shaonj", description="默认 TTS 音色ID")
     speed: float = Field(1.0, ge=0.5, le=2.0, description="TTS 语速")
+    story_bible_id: Optional[str] = Field(None, description="用于解析角色音色的一致性 Story Bible ID")
+    use_story_bible_voice: bool = Field(True, description="是否优先使用 Story Bible 中的角色音色")
 
 
 class WorkflowMediaBatchResponse(BaseModel):
@@ -1227,6 +1385,7 @@ class WorkflowMediaBatchResponse(BaseModel):
     created_count: int
     video_job_ids: List[str] = Field(default_factory=list)
     tts_job_ids: List[str] = Field(default_factory=list)
+    tts_voice_lock_count: int = 0
     media_job_ids: List[str]
     subtitle_track_ids: List[str]
     pending_video_job_ids: List[str] = Field(default_factory=list)
@@ -1368,12 +1527,7 @@ async def generate_workflow_media_batch(
                 detail=f"所选声音模型 {selected_audio_model.get('model_name') if selected_audio_model else '默认 TTS'} 未配置可用 API Key，请在模型配置中验证后再生成",
             )
 
-        video_job_ids: List[str] = []
-        tts_job_ids: List[str] = []
-        subtitle_track_ids: List[str] = []
-        pending_video_job_ids: List[str] = []
-        pending_tts_job_ids: List[str] = []
-
+        prepared_shots: Dict[str, Dict[str, Any]] = {}
         for shot in shots:
             duration = float(request.duration_seconds or shot.duration or 4)
             video_request = VideoGenerateRequest(
@@ -1393,9 +1547,78 @@ async def generate_workflow_media_batch(
             )
             lineage = await _resolve_video_lineage(db, user_id, video_request)
             package = await _build_video_consistency_package(db, user_id, video_request, lineage)
-            final_video_prompt = package["final_prompt"]
             effective_image_url = package["reference_image"]
             video_seed = _resolve_video_seed(video_request, lineage, package["metadata"])
+            subtitle_text = _shot_audio_text(shot)
+            video_preflight_package = None
+            tts_preflight_package = None
+            if not is_dev_mode():
+                video_preflight_package = await build_generation_context_package(
+                    db,
+                    user_id,
+                    task_type="shot_video",
+                    model_config_id=request.model_config_id,
+                    image_url=effective_image_url,
+                    production_mode=True,
+                    require_public_reference_image=bool(effective_image_url),
+                    novel_id=workflow.novel_id,
+                    chapter_id=workflow.chapter_id,
+                    script_id=workflow.script_id,
+                    storyboard_id=workflow.storyboard_id or shot.storyboard_id,
+                    shot_id=shot.id,
+                )
+                if not video_preflight_package.get("ready"):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                        detail=preflight_failure_detail(video_preflight_package),
+                    )
+                if request.audio_mode != "none" and subtitle_text:
+                    tts_preflight_package = await build_generation_context_package(
+                        db,
+                        user_id,
+                        task_type="tts_dialogue",
+                        model_config_id=request.audio_model_config_id,
+                        production_mode=True,
+                        novel_id=workflow.novel_id,
+                        chapter_id=workflow.chapter_id,
+                        script_id=workflow.script_id,
+                        storyboard_id=workflow.storyboard_id or shot.storyboard_id,
+                        shot_id=shot.id,
+                    )
+                    if not tts_preflight_package.get("ready"):
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                            detail=preflight_failure_detail(tts_preflight_package),
+                        )
+            prepared_shots[shot.id] = {
+                "duration": duration,
+                "video_request": video_request,
+                "lineage": lineage,
+                "package": package,
+                "final_video_prompt": package["final_prompt"],
+                "effective_image_url": effective_image_url,
+                "video_seed": video_seed,
+                "subtitle_text": subtitle_text,
+                "video_preflight_package": video_preflight_package,
+                "tts_preflight_package": tts_preflight_package,
+            }
+
+        video_job_ids: List[str] = []
+        tts_job_ids: List[str] = []
+        tts_voice_lock_count = 0
+        subtitle_track_ids: List[str] = []
+        pending_video_job_ids: List[str] = []
+        pending_tts_job_ids: List[str] = []
+
+        for shot in shots:
+            prepared = prepared_shots[shot.id]
+            duration = prepared["duration"]
+            video_request = prepared["video_request"]
+            lineage = prepared["lineage"]
+            package = prepared["package"]
+            final_video_prompt = prepared["final_video_prompt"]
+            effective_image_url = prepared["effective_image_url"]
+            video_seed = prepared["video_seed"]
             image_delivery = await _resolve_provider_image_delivery(db, user_id, effective_image_url)
             provider_image_url = image_delivery["provider_image_url"]
             image_url_omitted_reason = image_delivery["image_url_omitted_reason"]
@@ -1416,6 +1639,13 @@ async def generate_workflow_media_batch(
             extra_data["source_prompt"] = video_request.prompt
             extra_data["generation_strategy"] = request.strategy
             extra_data["audio_model_config_id"] = request.audio_model_config_id
+            if prepared.get("video_preflight_package") is not None:
+                video_preflight_package = prepared["video_preflight_package"]
+                extra_data["generation_preflight"] = {
+                    "ready": video_preflight_package.get("ready"),
+                    "issues": video_preflight_package.get("issues") or [],
+                    "blocking_issue_count": video_preflight_package.get("blocking_issue_count") or 0,
+                }
 
             video_job_id = str(uuid4())
             provider_task_id = f"dev-video-{video_job_id}" if use_dev_video else None
@@ -1484,11 +1714,26 @@ async def generate_workflow_media_batch(
                     cover_url=effective_image_url,
                 )
 
-            subtitle_text = _shot_audio_text(shot)
+            subtitle_text = prepared["subtitle_text"]
             tts_job_id: Optional[str] = None
             if request.audio_mode != "none" and subtitle_text:
+                resolved_voice = await _resolve_tts_voice_for_workflow_shot(
+                    db=db,
+                    user_id=user_id,
+                    workflow=workflow,
+                    shot=shot,
+                    subtitle_text=subtitle_text,
+                    default_voice=request.voice_model,
+                    default_speed=request.speed,
+                    requested_story_bible_id=request.story_bible_id,
+                    use_story_bible_voice=request.use_story_bible_voice,
+                )
+                if resolved_voice.get("voice_source") == "story_bible":
+                    tts_voice_lock_count += 1
+                tts_voice = str(resolved_voice.get("voice") or request.voice_model)
+                tts_speed = float(resolved_voice.get("speed") or request.speed)
                 tts_job_id = str(uuid4())
-                tts_duration = max(1.0, min(duration, len(subtitle_text) / 4.0 / max(request.speed, 0.1)))
+                tts_duration = max(1.0, min(duration, len(subtitle_text) / 4.0 / max(tts_speed, 0.1)))
                 use_dev_tts = is_dev_mode() and not audio_api_key
                 tts_task_id = f"dev-tts-{tts_job_id}" if use_dev_tts else None
                 tts_audio_url = dev_audio_url(tts_job_id) if use_dev_tts else None
@@ -1501,8 +1746,8 @@ async def generate_workflow_media_batch(
                         result = await MiniMaxService(audio_api_key, selected_audio_model.get("base_url")).text_to_speech(
                             text=subtitle_text,
                             model=selected_audio_model.get("model_id") or "speech-2.6-hd",
-                            voice_id=request.voice_model,
-                            speed=request.speed,
+                            voice_id=tts_voice,
+                            speed=tts_speed,
                         )
                     elif selected_audio_model.get("provider_id") == "volcano":
                         from app.services.volcano_service import VolcanoService
@@ -1510,8 +1755,8 @@ async def generate_workflow_media_batch(
                         result = await VolcanoService(audio_api_key, selected_audio_model.get("base_url")).text_to_speech(
                             text=subtitle_text,
                             model=selected_audio_model.get("model_id") or "doubao-tts",
-                            voice=request.voice_model,
-                            speed=request.speed,
+                            voice=tts_voice,
+                            speed=tts_speed,
                         )
                     else:
                         raise HTTPException(
@@ -1533,8 +1778,8 @@ async def generate_workflow_media_batch(
                     text=subtitle_text,
                     model_id=selected_audio_model.get("model_id") if selected_audio_model else None,
                     model_name=(selected_audio_model.get("model_name") if selected_audio_model else None),
-                    voice=request.voice_model,
-                    speed=request.speed,
+                    voice=tts_voice,
+                    speed=tts_speed,
                     api_provider=selected_audio_model.get("provider_id") if selected_audio_model else None,
                     novel_id=workflow.novel_id,
                     chapter_id=workflow.chapter_id,
@@ -1551,7 +1796,18 @@ async def generate_workflow_media_batch(
                         "provider_id": selected_audio_model.get("provider_id") if selected_audio_model else None,
                         "model_test_status": selected_audio_model.get("test_status") if selected_audio_model else None,
                         "generation_strategy": request.strategy,
-                        "lineage": _lineage_for_workflow_shot(workflow, shot),
+                        "generation_preflight": {
+                            "ready": prepared["tts_preflight_package"].get("ready"),
+                            "issues": prepared["tts_preflight_package"].get("issues") or [],
+                            "blocking_issue_count": prepared["tts_preflight_package"].get("blocking_issue_count") or 0,
+                        } if prepared.get("tts_preflight_package") is not None else None,
+                        "voice_source": resolved_voice.get("voice_source"),
+                        "voice_character_name": resolved_voice.get("character_name"),
+                        "story_bible_id": resolved_voice.get("story_bible_id"),
+                        "lineage": {
+                            **_lineage_for_workflow_shot(workflow, shot),
+                            "story_bible_id": resolved_voice.get("story_bible_id"),
+                        },
                     },
                 )
                 db.add(tts_job)
@@ -1608,6 +1864,7 @@ async def generate_workflow_media_batch(
             created_count=len(video_job_ids),
             video_job_ids=video_job_ids,
             tts_job_ids=tts_job_ids,
+            tts_voice_lock_count=tts_voice_lock_count,
             media_job_ids=[],
             subtitle_track_ids=subtitle_track_ids,
             pending_video_job_ids=pending_video_job_ids,
@@ -1765,6 +2022,7 @@ async def generate_workflow_media_batch(
         created_count=len(media_job_ids),
         video_job_ids=[],
         tts_job_ids=[],
+        tts_voice_lock_count=0,
         media_job_ids=media_job_ids,
         subtitle_track_ids=subtitle_track_ids,
         pending_video_job_ids=[],
@@ -1842,6 +2100,7 @@ async def get_workflow_status(
             "title": job.title,
             "text": job.text,
             "voice": job.voice,
+            "speed": job.speed,
             "status": job.status,
             "progress": job.progress,
             "audio_url": job.audio_url,
@@ -1854,6 +2113,7 @@ async def get_workflow_status(
             "storyboard_id": job.storyboard_id,
             "shot_id": job.shot_id,
             "character_id": job.character_id,
+            "extra_data": _extra(job),
         }
         for job in raw_tts_jobs
     ]

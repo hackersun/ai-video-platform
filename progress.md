@@ -873,3 +873,12 @@
 - `/synthesis` 页面新增“合成历史筛选”、历史卡片 lineage 摘要、就地预览面板、字幕 SRT/时间线/渲染清单链接；历史播放不再把用户带回顶部当前合成结果区域。
 - 排查并处理验证环境问题：现有 3000 dev server 复用旧 `.next` 导致客户端 JS chunk 404，清理 `.next` 并重启前端后专项 Playwright 通过。
 - 验证通过：`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py test_asset_lock_service.py test_prompt_composer_locked_assets.py test_shots_rebuild_prompts.py test_fill_entity_refs.py test_consistency_checker.py test_media_subtitles.py test_tts_story_bible.py test_image_generation_links.py test_workflow_routes.py` 153 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；构建后再次 `npx tsc --noEmit` 通过；Playwright `e2e/synthesis-history.spec.ts e2e/workflow-production-guidance.spec.ts` 2 passed；内置浏览器检查 `/synthesis` 标题和历史筛选可见。
+
+## 2026-06-06 Phase 253 P0 验证与批量门禁收口
+
+- 新增非 DEV workflow 批量生成红灯测试 `test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs`：旧代码返回 200 并可能创建供应商任务；修复后返回 422，`detail.code=generation_preflight_failed`，且未创建 VideoJob。
+- workflow 批量“视频+配音”在供应商调用前预先为每个镜头构建一致性 package，并调用统一 `build_generation_context_package()`；生产模式会阻断未验证模型、非公网参考图、lineage 不匹配、缺实体引用和缺资产锁。
+- 合成历史筛选补同步 ref，修复快速填写小说/章节/渲染状态后点击“筛选历史”仍发旧参数的问题。
+- 验证过程：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q test_workflow_routes.py::test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs -q` 通过；workflow 批量媒体专项 5 passed；后端紧凑一致性套件 154 passed。
+- 前端验证：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`npm run build` 通过；构建后再次 `npx tsc --noEmit` 通过；Playwright `e2e/synthesis-history.spec.ts e2e/workflow-production-guidance.spec.ts` 2 passed。
+- 环境备注：第一次重跑 synthesis E2E 失败是旧 3000 dev server 复用 stale `.next`，清理 `.next` 并以 `npm run dev -- -p 3000` 重启后通过；后续 Playwright 前如遇同类症状先重启前端。

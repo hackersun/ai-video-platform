@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
@@ -67,6 +68,12 @@ def fake_synthesis_service(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
+
+
+def _signed_auth_headers(user_id: str) -> dict[str, str]:
+    from app.api.v1.endpoints.auth import create_access_token
+
+    return {"Authorization": f"Bearer {create_access_token({'sub': user_id})}"}
 
 
 def _create_novel(client: TestClient, user_id: str) -> str:
@@ -168,6 +175,7 @@ def _insert_model_config(
     model_type: str,
     capabilities: list[str],
     api_key: str,
+    test_status: str = "success",
 ) -> str:
     config_id = f"{model_id}-config-{uuid4()}"
 
@@ -203,7 +211,7 @@ def _insert_model_config(
                 name=f"{model_id} config",
                 is_active=True,
                 is_default=True,
-                test_status="success",
+                test_status=test_status,
             )
             config.set_api_key_encrypted(api_key)
             session.add(config)
@@ -1614,6 +1622,125 @@ def test_video_consistency_uses_same_novel_seed_across_chapters(
     assert "孙剑" in jobs[1]["prompt"]
     assert "断剑" in jobs[1]["prompt"]
     assert jobs[1]["prompt_parameters"]["reference_image_source"] == "character_avatar"
+
+
+def test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            class _CreateResult:
+                id = "should-not-create-provider-task"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    headers = _signed_auth_headers(user_id)
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-workflow-unverified-video-{uuid4()}",
+        api_model_id="doubao-seedance-unverified-test",
+        model_type="video",
+        capabilities=["text-to-video"],
+        api_key="sk-video",
+        test_status="pending",
+    )
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "非 DEV 批量门禁", "description": "测试生产预检不能被工作流绕过"},
+        headers=headers,
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第一章 旧码头",
+            "chapter_number": 1,
+            "content": "沈砚在旧码头追查铜铃。",
+        },
+        headers=headers,
+    )
+    assert chapter_resp.status_code == 201
+    chapter_id = chapter_resp.json()["id"]
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={"novel_id": novel_id, "title": "第一章剧本", "content": "沈砚追查铜铃。"},
+        headers=headers,
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "novel_id": novel_id,
+            "title": "旧码头分镜",
+            "content": {"chapter_id": chapter_id},
+        },
+        headers=headers,
+    )
+    assert storyboard_resp.status_code == 201
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_resp.json()["id"],
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "沈砚站在旧码头，手持铜铃。",
+            "dialogue": "沈砚：这里一定留下了线索。",
+        },
+        headers=headers,
+    )
+    assert shot_resp.status_code == 201
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "非 DEV 批量门禁工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_resp.json()["id"],
+        },
+        headers=headers,
+    )
+    assert workflow_resp.status_code == 201
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+        },
+        headers=headers,
+    )
+
+    assert batch_resp.status_code == 422
+    detail = batch_resp.json()["detail"]
+    assert detail["code"] == "generation_preflight_failed"
+    codes = {issue["code"] for issue in detail["issues"]}
+    assert "model_unverified" in codes
+
+    async def _count_video_jobs() -> int:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(VideoJob).where(VideoJob.user_id == user_id))
+            return len(result.scalars().all())
+
+    assert asyncio.run(_count_video_jobs()) == 0
 
 
 def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
