@@ -3,10 +3,11 @@
 """
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Asset, Shot
+from app.services.entity_ref_normalizer import ENTITY_REF_KEYS, entity_ref_ids
 
 
 class AssetLockService:
@@ -31,30 +32,43 @@ class AssetLockService:
         """
         locked_assets: Dict[str, Any] = {}
 
-        # 获取镜头引用的实体
-        entity_refs = shot.extra_data.get("entity_refs", {}) if shot.extra_data else {}
+        # 获取镜头引用的实体，兼容旧 ID 列表和新 dict refs
+        extra_data = dict(shot.extra_data or {})
+        entity_refs = extra_data.get("entity_refs", {})
         if not entity_refs:
             return {"locked_assets": {}, "count": 0}
 
-        for entity_type in ["characters", "scenes", "props"]:
-            for entity_id in entity_refs.get(entity_type, []):
+        novel_id = extra_data.get("novel_id")
+        for entity_key in ["characters", "scenes", "props"]:
+            entity_type = ENTITY_REF_KEYS[entity_key]
+            for entity_id in entity_ref_ids(entity_refs, entity_key):
                 # 获取该实体最新锁定的资产
                 asset = await self._get_entity_locked_asset(
-                    db, entity_type.rstrip('s'), entity_id
+                    db,
+                    entity_type,
+                    entity_id,
+                    user_id=getattr(shot, "user_id", None),
+                    novel_id=novel_id,
                 )
                 if asset:
-                    key = f"{entity_type.rstrip('s')}_{entity_id}"
+                    key = f"{entity_type}_{entity_id}"
                     locked_assets[key] = {
                         "asset_id": asset.id,
-                        "entity_type": entity_type.rstrip('s'),
+                        "entity_type": entity_type,
                         "entity_id": entity_id,
+                        "category": asset.category,
+                        "name": asset.name,
                         "asset_name": asset.name,
                         "asset_url": asset.url,
+                        "url": asset.url,
+                        "thumbnail_url": asset.thumbnail_url,
                         "description": asset.description,
+                        "version": asset.version,
+                        "is_final": asset.is_final,
+                        "is_locked": asset.is_locked,
                     }
 
         # 保存到shot.extra_data.locked_assets
-        extra_data = shot.extra_data or {}
         extra_data["locked_assets"] = locked_assets
         shot.extra_data = extra_data
 
@@ -64,7 +78,10 @@ class AssetLockService:
         self,
         db: AsyncSession,
         entity_type: str,
-        entity_id: str
+        entity_id: str,
+        *,
+        user_id: Optional[str] = None,
+        novel_id: Optional[str] = None,
     ) -> Optional[Asset]:
         """
         获取实体的锁定资产
@@ -77,15 +94,23 @@ class AssetLockService:
         Returns:
             锁定的资产对象，若无则返回None
         """
+        filters = [
+            Asset.entity_id == entity_id,
+            Asset.is_locked == True,
+            Asset.is_final == True,
+            Asset.is_active == True,
+            or_(Asset.entity_type == entity_type, Asset.category == entity_type),
+        ]
+        if user_id:
+            filters.append(or_(Asset.user_id == user_id, Asset.is_public == True))
+        if novel_id:
+            filters.append(or_(Asset.novel_id == novel_id, Asset.novel_id.is_(None)))
+
         # 查找该实体最新锁定的资产
         result = await db.execute(
             select(Asset)
-            .where(
-                Asset.entity_id == entity_id,
-                Asset.is_locked == True,
-                Asset.is_final == True
-            )
-            .order_by(Asset.locked_at.desc())
+            .where(and_(*filters))
+            .order_by(desc(Asset.locked_at), desc(Asset.updated_at), desc(Asset.version))
             .limit(1)
         )
         return result.scalar_one_or_none()
@@ -109,9 +134,10 @@ class AssetLockService:
         prompts: List[str] = []
 
         for key, info in locked.items():
-            asset = await db.execute(
+            result = await db.execute(
                 select(Asset).where(Asset.id == info["asset_id"])
-            ).scalar_one_or_none()
+            )
+            asset = result.scalar_one_or_none()
 
             if asset:
                 entity_type = info.get("entity_type", "entity")
@@ -140,17 +166,7 @@ class AssetLockService:
         extra_data = shot.extra_data or {}
         locked_assets = extra_data.get("locked_assets", {})
 
-        unlocked_count = 0
-        for key, info in locked_assets.items():
-            asset = await db.execute(
-                select(Asset).where(Asset.id == info["asset_id"])
-            ).scalar_one_or_none()
-
-            if asset and asset.is_locked:
-                asset.is_locked = False
-                asset.locked_at = None
-                asset.locked_by = None
-                unlocked_count += 1
+        unlocked_count = len(locked_assets) if isinstance(locked_assets, dict) else 0
 
         # 清除shot中的锁定资产记录
         if "locked_assets" in extra_data:

@@ -218,6 +218,24 @@
 
 ## 2026-05-13 直生音视频与字幕一等公民落地
 
+## 2026-06-02 全流程回归验收
+
+- 本轮目标：围绕小说/章节、角色/实体/资产、剧本、分镜/镜头、TTS、视频、合成/workflow、模型配置、任务/发布等核心子功能做一次本地回归验证。
+- 验收边界：不真实消耗外部 AI/视频额度，优先验证 DEV_MODE、本地服务、自动化测试、关键页面渲染和核心接口链路。
+- 待执行：服务健康检查、后端 pytest、前端 tsc/build、关键 Playwright/E2E、模块完备度和优化点汇总。
+- 服务健康检查：前端 `http://127.0.0.1:3000/login` 返回 200，后端 `http://127.0.0.1:8000/health` 返回 healthy；3000 和 8000 端口均有监听进程。
+- 后端全量 pytest 第一轮：收集阶段失败，原因是根目录和 `backend/tests/` 下存在同名 `test_consistency_checker.py`，pytest 导入模块名冲突；已新增 `backend/tests/__init__.py` 让子目录按包名收集。
+- 后端全量 pytest 第二轮：`367 passed, 1 skipped, 18 warnings`；warning 为开发环境 `FERNET_KEY` 未配置和测试代码 `datetime.utcnow()` 过时提示。
+- 前端 `npm run build` 通过。`npx tsc --noEmit` 与 build 并行运行时因 `.next/types` 被构建过程重写产生 TS6053 竞态缺文件，需在 build 完成后单独重跑。
+- 前端 `npx tsc --noEmit` 单独重跑通过。
+
+## 2026-06-06 生产级全链路深度分析
+
+- 本轮目标：基于现有代码和已落地阶段，重新梳理小说到动漫视频生产链路，输出面向个人/小团队的生产级一致性、AI 赋能、工作流、界面和测试优化方案。
+- 已复盘 `task_plan.md`、`findings.md`、`progress.md`，确认当前已有大量 P0/P1 能力落地，但主风险从“有没有接口”转为“能力是否强制贯穿、是否前端可见、是否形成低门槛生产链路”。
+- CodeGraph 未初始化，已改用 `rg`、关键文件审计和子 agent 只读审计推进。
+- 已并行派发 3 个只读 explorer：后端一致性/生成链路、前端工作流/交互可见性、测试与生产风险；主线程继续负责最终架构方案与计划文档。
+
 ## 2026-05-27 参考图公网交付能力
 
 - 已新增对象存储/CDN生产适配 provider：`object_storage`，能力包含公开静态媒体出口、CDN交付、后续 S3/MinIO/OSS 预留。
@@ -717,3 +735,115 @@
 - 前端通用模型能力筛选和视频生成页模型列表增加兜底过滤，避免旧缓存或其他页面传入测试配置时继续展示。
 - 已清理本地 SQLite 中 37 条测试模型和 37 条测试配置；接口复核火山视频模型列表不再包含 `test-video-*`。
 - 验证通过：`python3 -m compileall app`；专项后端测试 5 passed；前端 `npx tsc --noEmit`；`git diff --check`；服务重启后 `/video-generation` 200。
+
+## 2026-05-30 智能剧本到视频链路修复
+
+- 针对“智能生成剧本报错，重新检查小说到视频链路”完成根因排查：剧本生成专项前半段可过，但后续智能分镜/镜头链路会在读取 Asset 模板时触发 `sqlite3.OperationalError: no such column: assets.entity_type`。
+- 根因 1：`Asset` ORM 已新增 `entity_type/version/is_locked/is_final/source_job_id/source_prompt` 等生产字段，服务层也使用 `source_url/generation_params` 做预置资产去重，但 `init_db.py` 对旧 SQLite 的迁移只补到 `entity_id`，导致老库和测试库结构不完整。
+- 修复：`backend/app/models/asset.py` 补齐 `source_url/generation_params` 字段；`backend/init_db.py` 同步/异步迁移补齐 Asset 当前读写字段，老库启动后可自动迁移。
+- 根因 2：没有先生成 Story Bible/StoryEntity 时，`load_story_prompt_context()` 已能从小说/章节文本抽取角色、场景、道具、事件，但 `scripts.py` 的 `summary/generation_context` 只读持久化 StoryEntity，导致智能剧本生成元数据为空，后续分镜/视频一致性锚点变弱。
+- 修复：`build_script_generation_context()` 合并文本抽取出的 story context 到 production pack，保证非专业用户只导入小说和章节时，也能把人物、场景、道具、事件传入剧本生成、上下文预览和后续链路。
+- 补强：`VideoGenerateResponse` 现在直接返回 `project_id/workflow_id/novel_id/chapter_id/script_id/storyboard_id/shot_id`，前端点击生成后即可确认绑定关系，不必等历史列表二次查询。
+- 新增/更新回归：`test_script_generation_uses_text_extracted_entities_without_story_bible` 覆盖无 Story Bible 的文本实体承接；`test_video_job_infers_full_lineage_from_chapter_shot` 覆盖视频即时响应 lineage。
+- 验证通过：`python3 -m compileall app init_db.py`；`DEV_MODE=true pytest -q test_asset_templates.py` 4 passed；`DEV_MODE=true pytest -q test_story_prompt_context.py` 8 passed；`DEV_MODE=true pytest -q test_story_prompt_context.py test_asset_templates.py test_workflow_routes.py test_storyboard_templates.py` 58 passed、1 warning；前端 `npx tsc --noEmit` 通过；`npm run build` 通过；`git diff --check` 通过。
+- API smoke 通过：创建小说、章节，调用 `/scripts/generate`、`/scripts/generate-context/{chapter_id}`、`/storyboards/generate-smart`、`/video/generate`，再按 `novel_id/chapter_id/storyboard_id/shot_id` 查询视频历史，链路全部返回成功并保持 lineage 一致。
+- 服务已收敛重启：清理旧 8000/3000 监听进程后，用固定 tmux 会话启动 `ai-video-backend` 与 `ai-video-frontend`；后端 `/health` 200，前端 `/scripts` 200，启动日志无报错。
+- 剩余提示：测试环境仍有既有 `FERNET_KEY` warning，生产环境需要设置稳定密钥，否则加密存储的模型 Key 重启后可能无法解密。
+
+## 2026-05-30 章节生产链路重复剧本修复
+
+- 用户前端 toast `生成失败: Multiple rows were found when one or none was required` 已定位到 `/api/v1/chapters/{chapter_id}/production-status` 与 `/generate-all` 假设同一章节只有一份剧本。
+- 新增章节生产链路 helper：同一章节多份剧本时按 `updated_at/created_at` 取最新剧本，同一剧本多份分镜时按最新分镜返回生产状态，不再使用 `scalar_one_or_none()` 读取可版本化记录。
+- `generate-storyboard` 与 `generate-all` 现在复用最新剧本继续生成；智能分镜新增可选 `script_id`，一键生成时分镜绑定同一份剧本，不再隐式创建另一份自动改编脚本导致返回 `script_id` 和实际分镜脚本不一致。
+- 新增回归 `test_chapter_generation_reuses_latest_script_when_multiple_scripts_exist`：同一章节连续生成两份剧本后，生产状态和一键生成都应返回最新剧本，并让新分镜绑定该剧本。
+- 验证通过：先确认新增测试红在 `MultipleResultsFound`；修复后 `DEV_MODE=true pytest -q test_workflow_routes.py::test_chapter_generation_reuses_latest_script_when_multiple_scripts_exist` 1 passed；`python3 -m compileall app init_db.py` 通过；`DEV_MODE=true pytest -q test_story_prompt_context.py test_asset_templates.py test_workflow_routes.py test_storyboard_templates.py` 59 passed、1 warning。
+
+## 2026-05-30 角色智能提取 500 修复
+
+- 用户反馈角色智能提取报 500。后端日志定位到 `/api/v1/characters/extract` 自动生成头像阶段：某个角色头像生成失败并 `rollback()` 后，同批次后续角色 ORM 对象被过期，继续访问 `char.avatar` 触发 SQLAlchemy `MissingGreenlet`。
+- 修复：角色提取入库提交后只保留角色 ID；头像生成循环每次按 ID 重新查询角色，失败回滚后不再复用已过期 ORM 对象；最终返回前也按 ID 重新查询，保证响应数据来自当前会话的已加载对象。
+- 新增回归：单角色自动头像成功路径；两名角色中第一名头像生成失败后，接口仍返回 201 并继续处理第二名，避免再次出现 `MissingGreenlet`。
+- 验证通过：先确认 `test_extract_characters_continues_after_one_avatar_generation_failure` 红在 `char.avatar` 的 `MissingGreenlet`；修复后该测试 1 passed；`python3 -m compileall app init_db.py` 通过；`DEV_MODE=true pytest -q test_character_scope.py` 7 passed。
+
+## 2026-05-31 P1 Story Bible 角色音色锁落地
+
+- 工作流批量“视频+配音分步生成”现在会为每个镜头解析 Story Bible：显式请求、Shot.extra_data、Storyboard.content、Workflow metadata 和小说最新 Story Bible 都可作为候选来源。
+- 批量 TTS 会从镜头对白、character_refs、entity_refs 中识别主说话角色，并优先使用 Story Bible `character_rules.voice/voice_model/voice_speed`；回退顺序为角色库音色、界面默认音色。
+- `/workflow/{workflow_id}/generate-media-batch` 返回 `tts_voice_lock_count`，TTSJob.extra_data 写入 `voice_source/voice_character_name/story_bible_id`，工作流状态接口也返回 TTS extra_data，前端可以解释真实命中情况。
+- 独立 `/tts/generate` 多角色对白修复为按段解析 Story Bible 音色和语速，不再把第一个角色音色套到所有角色；DEV_MODE 生成也写入每段 `voice_source/speed`。
+- 前端 `/workflow` 视频步骤新增 Story Bible 角色音色锁选择、开关和命中数量提示；`/tts` 页面新增角色音色锁选择，并修复成功状态只识别 `completed` 导致 `succeeded` 音频不显示的问题。
+- 同步收敛全量测试阻断项：修复 Graph/Versions 路由双 prefix 导致的 404，补齐旧 SQLite `publications` 表当前 ORM 字段迁移，并更新 Shot Quality 测试样例以匹配生产级“场景/道具/事件/审核状态”检查规则。
+- 验证通过：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q --import-mode=importlib .`（backend 目录）341 passed、1 skipped；`DEV_MODE=true pytest -q backend/test_tts_story_bible.py ...` 29 passed；`python3 -m compileall backend/app` 通过；前端 `npx tsc --noEmit` 和 `npm run build` 通过；服务已重启，后端 `/docs` 200，前端 `/workflow` 与 `/tts` 200，浏览器确认 `/tts` 角色音色锁渲染且无前端错误日志。
+
+## 2026-05-31 轻量生产闭环补强
+
+- 并行启动前端/后端只读审计，结论收敛到小团队最容易卡住的闭环问题：AI 制片入口不够显性、继续制作路由契约不一致、剧本页生成分镜只创建空壳、合成/发布没有保存可播放视频 URL。
+- 后端短视频就绪度新增空分镜阻断：当工作流已绑定分镜但没有镜头时返回 `missing_shots`，推荐先生成或创建镜头，不再在 `ready=false` 时提示“链路已就绪”。
+- 前端 `/producer` 新增“出片就绪度”状态卡和详细面板，自动加载镜头数、预计时长、阻断项、提醒和建议；支持一键刷新生产合约。
+- `/producer` 一键草片生成支持自动创建本集工程；章节一键生成剧本/分镜后会自动挂载到工作流并刷新短视频就绪度。
+- 修复前端路由契约：章节/小说不再跳不存在的 `/scripts/new`；剧本和分镜到视频统一使用 `script_id/storyboard_id`；视频页兼容旧 `script/storyboard` 参数；分镜页兼容旧 `sb` 参数。
+- 剧本列表和剧本详情的“生成分镜”改调用 `/storyboards/generate`，生成真实镜头后进入分镜上下文，不再只创建空分镜壳。
+- `/synthesis/execute` 写入源视频/音频 URL，避免 `synthesis_jobs.video_url` 非空约束失败；`/synthesis/publish` 从合成任务写入 `Publication.video_url/cover_url/duration_seconds/visibility`，本地 artifact 同步记录可播放视频。
+- 合成页打开当前合成结果、导出结果和发布 artifact 时，会把 `/static/...` 解析到后端 origin，避免前端端口访问不到静态媒体。
+- 已完成针对性验证：短视频就绪度新增测试先红后绿；`test_project_permissions_publication.py` 新增发布视频 URL 与 `/synthesis/execute` 落库回归先红后绿；前端 `npx tsc --noEmit` 通过；后端专项 `test_project_permissions_publication.py test_short_video_production.py` 10 passed。
+
+## 2026-06-05 Quick Start 整书计划入口收口
+
+- 复盘计划后确认最新阶段已完成到 Phase 230，剩余明确用户可见缺口之一是：Quick Start 仍偏首集工程，完成后没有直接进入整部小说/多集生产计划。
+- Quick Start 成功结果区新增“进入整书计划”按钮，跳转到 `/novels/{novelId}?tab=series-plan`，让用户从首集工程继续规划整部漫剧。
+- 小说详情页新增 URL 标签参数支持：`?tab=series-plan` 直接打开“整书计划”，`?tab=series` 兼容为同一标签。
+- 新增 `frontend/e2e/quick-start-series-plan.spec.ts`，覆盖 Quick Start 结果入口和小说详情 URL 参数激活整书计划。
+- 验证通过：先红后绿；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/quick-start-series-plan.spec.ts --project=chromium` 2 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；`git diff --check -- frontend/src/app/quick-start/page.tsx frontend/src/app/novels/[id]/page.tsx frontend/e2e/quick-start-series-plan.spec.ts` 通过。
+- 验证环境说明：本机 nvm/Codex 自带 Node 加载 `@next/swc-darwin-arm64` 会被 macOS Team ID 校验拦截；Homebrew Node 22 可以正常加载 SWC，因此前端构建、Playwright 和后续 dev server 均显式使用 `/opt/homebrew/opt/node@22/bin`。
+
+## 2026-06-05 多视图资产制片向导收口
+
+- 后端新增创作者向多视图预设：角色三视图、场景四视图、道具多视图，接口为 `/api/v1/assets/view-presets`。
+- 后端新增 `/api/v1/assets/generate-entity-views`，可按小说 StoryEntity 生成指定视图或缺失视图；生成资产会绑定 `novel_id/chapter_id/script_id/entity_id/entity_type`，并保存 `generation_params.view_key/view_label/style/aspect_ratio`。
+- 资产锁定逻辑改为同一实体同一视图互斥，正面、侧面、背面或场景多个视图可以同时定稿。
+- 资产页新增“AI 资产制片向导”：先选小说，再选角色/场景/道具和画面风格，展示必备视图、生成状态、预览、编辑和锁定入口。
+- 资产编辑表单改为低门槛默认视图：资源/缩略图支持上传和预览，普通路径不再直接暴露 JSON；变量配置、视图配置、原始提示词和生成参数移入“高级设置”。
+- 资产列表和实体筛选中文化展示，减少 `image/character/prop/anime` 等内部值外露。
+- 新增后端测试 `backend/test_asset_multiview_generation.py` 和前端资产页 E2E，覆盖预设接口、实体多视图生成、视图锁定、资产创建/编辑/归档、AI 向导选择和高级字段默认隐藏。
+- 验证通过：`pytest -q backend/test_asset_multiview_generation.py` 2 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/assets.spec.ts --project=chromium` 2 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`git diff --check -- frontend/src/app/assets/page.tsx frontend/e2e/assets.spec.ts frontend/src/lib/api-client.ts backend/app/services/asset_generation_service.py backend/app/api/v1/endpoints/assets.py backend/test_asset_multiview_generation.py` 通过。
+
+## 2026-06-05 Phase 241 实体页多视图可见性
+
+- 实体审阅台已从裸 `fetch('/api/v1/...')` 切换为统一 `apiClient`，避免前端同源没有 API 代理时实体列表、统计、编辑、删除、批量确认和合并失效。
+- 角色/场景/道具实体卡片新增“多视图定稿包”，按预设视图展示 `已定稿/已生成/待补齐`，让创作者在实体库就能判断参考资产是否完整。
+- 实体卡片新增“补齐多视图”入口，跳转到 `/assets?novel_id=...&entity_type=...&entity_id=...`；资产库会读取 URL 参数并自动预选向导小说、对象类型和小说对象。
+- 资产手工创建/更新 payload 补齐 `entity_type`，后端 Asset 创建/更新模型同步支持该字段，手工补图和 AI 生成图都能进入同一套实体多视图链路。
+- 新增 `frontend/e2e/entities-multiview.spec.ts`，覆盖创建小说实体、创建并锁定视图资产、实体页状态展示和跳转资产向导。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/entities-multiview.spec.ts --project=chromium` 1 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/assets.spec.ts --project=chromium` 2 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`python3 -m compileall backend/app` 通过；`pytest -q backend/test_asset_multiview_generation.py` 2 passed。
+
+## 2026-06-05 Phase 242 分镜与镜头多视图提醒
+
+- 分镜管理页的镜头详情新增“参考资产完整度”，会根据镜头 `character_refs` 和 `extra_data.entity_refs` 拉取实体资产包，展示多视图定稿数、缺失项和补齐入口。
+- 镜头管理页编辑弹窗新增同样的多视图完整度提醒，非专业用户不需要打开高级 JSON，就能判断当前镜头的角色、场景、道具参考图是否足够稳定。
+- “补齐参考图”统一跳转资产制片向导，并携带 `novel_id/chapter_id/entity_type/entity_id`，方便从镜头直接补角色三视图、场景四视图或道具多视图。
+- 新增 `frontend/e2e/storyboard-shot-multiview.spec.ts` 和 `frontend/e2e/shots-multiview.spec.ts`，覆盖分镜页和镜头页从出镜实体到资产向导的前端可见链路。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/storyboard-shot-multiview.spec.ts e2e/shots-multiview.spec.ts --project=chromium` 2 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`python3 -m compileall backend/app` 通过；`pytest -q backend/test_asset_multiview_generation.py` 2 passed；相关文件 `git diff --check` 通过。
+
+## 2026-06-05 Phase 243 视频生成前参考资产预检
+
+- 视频生成页选择具体镜头后新增“生成前参考资产预检”，按当前镜头出镜角色、场景、道具展示多视图定稿数和缺失项。
+- 缺失角色正/侧/背、场景全景/布局/光影、道具主视图等必备视图时，页面提示“建议补齐”，并提供跳转资产制片向导的入口；当前不硬阻断 DEV_MODE 或轻量草片生成。
+- 新增 `frontend/e2e/video-preflight-multiview.spec.ts`，覆盖视频生成页从镜头引用实体到缺失视图提醒、补齐入口的生成前可见链路。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/entities-multiview.spec.ts e2e/storyboard-shot-multiview.spec.ts e2e/shots-multiview.spec.ts e2e/video-preflight-multiview.spec.ts --project=chromium` 4 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`python3 -m compileall backend/app` 通过；`pytest -q backend/test_asset_multiview_generation.py` 2 passed。
+
+## 2026-06-05 Phase 244-246 多视图生产化收口
+
+- 资产视图预设扩展推荐比例、题材模板示例、示例图路径和提示词样例；资产页向导直接展示“推荐比例：9:16...”和“题材模板示例”，让用户少填提示词。
+- 多视图生成改为逐视图容错：某个视图生图失败时，保存 `asset_type=text` 的失败记录，写入 `generation_params.status=failed/error_message/retryable/view_key`，接口返回 `failures` 而不是整体 500。
+- 新增 `/assets/{asset_id}/retry-generation` 和 `/assets/{asset_id}/visual-consistency`；前端资产卡片展示失败原因、重试生成按钮和“一致性 N”。
+- 前端 `apiClient` 补齐失败重试和一致性写回方法，资产页补稳定 `data-testid`，避免中文文案重复导致 E2E 误匹配。
+- 验证通过：`pytest -q backend/test_asset_multiview_generation.py` 4 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/assets.spec.ts --project=chromium` 3 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`python3 -m compileall backend/app` 通过；多视图回归 E2E 4 passed。
+
+## 2026-06-06 Phase 250 后端一致性预检底座
+
+- 已新增 `entity_ref_normalizer`，统一兼容旧 ID 列表和新 dict refs，后续新写入按 dict refs 输出。
+- 已修复 `AssetLockService`：支持 dict refs，按实体类型/分类和用户/小说范围查锁定资产；`unlock_shot_assets` 只解除镜头绑定，不再修改共享资产锁。
+- 已移除 `consistency_context.py` 中重复覆盖的 `auto_fill_shot_entity_refs` 旧定义，并让 `build_consistency_prompt` 注入镜头锁定资产到最终 prompt 和 metadata。
+- 已新增统一生产预检服务 `consistency_preflight.py` 和标准接口 `POST /api/v1/consistency/preflight`，返回 `ready/issues/blocking_issue_count/model_route/entity_refs/asset_version_locks`。
+- TDD 验证：先运行 `DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py -q`，4 个新增断言按预期失败；实现后同命令 12 passed。
+- 回归验证通过：`python3 -m compileall app`；`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py test_asset_lock_service.py test_prompt_composer_locked_assets.py test_shots_rebuild_prompts.py test_fill_entity_refs.py test_consistency_checker.py`，64 passed；`git diff --check` 通过。

@@ -19,6 +19,7 @@ from app.core.model_registry import get_task_default
 from app.core.time_utils import utc_now
 from app.models import Character, Project, Script, Shot, StoryBible, StoryEntity, Storyboard
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
+from app.services.entity_ref_normalizer import normalize_entity_refs
 from app.services.prompt_composer import compose_generation_prompt
 
 
@@ -123,51 +124,42 @@ def match_entities_to_text(
     return matched
 
 
-async def auto_fill_shot_entity_refs(
-    db: AsyncSession,
-    shot: Shot,
-    user_id: str,
-    novel_id: str,
-    chapter_id: Optional[str] = None,
-) -> Shot:
-    """Automatically fill shot.extra_data.entity_refs based on shot content.
+def _select_fallback_entities_for_generation(
+    entities: List[StoryEntity],
+    grouped: Dict[str, List[StoryEntity]],
+    *,
+    max_total: int = 36,
+) -> Dict[str, List[StoryEntity]]:
+    """Fill missing entity groups without the old tiny 2/1/1/1 caps.
 
-    Loads or extracts story entities, then matches them against the shot's
-    prompt, dialogue, and visual_description fields.
+    Matched groups are left intact. Only missing groups receive high-confidence
+    fallback entities, bounded by an overall prompt budget instead of fixed
+    per-type counts.
     """
-    # 1. Build shot text from all relevant fields
-    shot_text_parts = [shot.prompt or "", shot.dialogue or ""]
-    extra_data = _json_dict(shot.extra_data)
-    if extra_data.get("visual_description"):
-        shot_text_parts.append(extra_data["visual_description"])
-    shot_text = " ".join(part for part in shot_text_parts if part)
-
-    # 2. Load or extract entities for matching
-    entities = await load_or_extract_story_entities(
-        db,
-        user_id,
-        novel_id=novel_id,
-        chapter_id=chapter_id,
-        text=shot_text,
-        persist_missing=False,  # Don't create new entities during auto-fill
-    )
-
-    # 3. Match entities to shot text
-    matched = match_entities_to_text(entities, shot_text)
-
-    # 4. Build entity_refs structure with entity IDs
-    entity_refs = {
-        "characters": [e.id for e in matched.get("character", [])],
-        "scenes": [e.id for e in matched.get("scene", [])],
-        "props": [e.id for e in matched.get("prop", [])],
-        "events": [e.id for e in matched.get("event", [])],
+    result: Dict[str, List[StoryEntity]] = {
+        entity_type: list(grouped.get(entity_type) or [])
+        for entity_type in ENTITY_TYPES
     }
+    remaining = max(0, max_total - sum(len(items) for items in result.values()))
+    if remaining <= 0:
+        return result
 
-    # 5. Update shot.extra_data
-    extra_data["entity_refs"] = entity_refs
-    shot.extra_data = extra_data
-
-    return shot
+    for entity_type in ("character", "scene", "prop", "event"):
+        if result.get(entity_type):
+            continue
+        fallback = sorted(
+            [entity for entity in entities if entity.entity_type == entity_type],
+            key=lambda entity: (entity.confidence or 0, len(entity.name or "")),
+            reverse=True,
+        )
+        if not fallback:
+            continue
+        selected = fallback[:remaining]
+        result[entity_type] = selected
+        remaining -= len(selected)
+        if remaining <= 0:
+            break
+    return result
 
 
 async def load_or_extract_story_entities(
@@ -277,15 +269,7 @@ async def build_shot_entity_context(
         if matched:
             grouped.setdefault(entity.entity_type, []).append(entity)
 
-    for entity_type, limit in (("character", 2), ("scene", 1), ("prop", 1), ("event", 1)):
-        if grouped.get(entity_type):
-            continue
-        fallback = sorted(
-            [entity for entity in entities if entity.entity_type == entity_type],
-            key=lambda entity: (len(entity.name or ""), entity.confidence or 0),
-            reverse=True,
-        )
-        grouped[entity_type] = fallback[:limit]
+    grouped = _select_fallback_entities_for_generation(entities, grouped)
 
     character_refs = [
         _entity_ref(entity, character_by_name.get(entity.name))
@@ -451,6 +435,61 @@ async def get_characters_for_context(
     return characters
 
 
+def _locked_asset_refs_from_extra(extra_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    locked_assets = extra_data.get("locked_assets")
+    if isinstance(locked_assets, dict):
+        iterable = locked_assets.values()
+    elif isinstance(locked_assets, list):
+        iterable = locked_assets
+    else:
+        iterable = []
+
+    for item in iterable:
+        if not isinstance(item, dict):
+            continue
+        refs.append(
+            {
+                "type": item.get("category") or item.get("entity_type") or item.get("type") or "资产",
+                "name": item.get("asset_name") or item.get("entity_name") or item.get("name") or "Unknown",
+                "description": item.get("description"),
+                "asset_id": item.get("asset_id"),
+                "entity_id": item.get("entity_id"),
+                "url": item.get("asset_url") or item.get("url") or item.get("thumbnail_url"),
+                "version": item.get("version"),
+            }
+        )
+
+    production_context = _json_dict(extra_data.get("production_context"))
+    asset_version_locks = production_context.get("asset_version_locks")
+    if isinstance(asset_version_locks, list):
+        for item in asset_version_locks:
+            if not isinstance(item, dict):
+                continue
+            refs.append(
+                {
+                    "type": item.get("category") or item.get("entity_type") or item.get("type") or "资产",
+                    "name": item.get("entity_name") or item.get("asset_name") or item.get("name") or "Unknown",
+                    "description": item.get("description"),
+                    "asset_id": item.get("asset_id"),
+                    "entity_id": item.get("entity_id"),
+                    "url": item.get("url") or item.get("thumbnail_url"),
+                    "version": item.get("version"),
+                }
+            )
+
+    deduped: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for ref in refs:
+        key = str(ref.get("asset_id") or ref.get("entity_id") or ref.get("name") or "")
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        deduped.append(ref)
+    return deduped
+
+
 async def build_consistency_prompt(
     db: AsyncSession,
     user_id: str,
@@ -508,7 +547,7 @@ async def build_consistency_prompt(
     if shot:
         shot_extra = _json_dict(shot.extra_data)
         context.setdefault("镜头编号", shot.shot_number)
-        entity_refs = _json_dict(shot_extra.get("entity_refs"))
+        entity_refs = normalize_entity_refs(shot_extra.get("entity_refs"))
         for key, label in (
             ("characters", "本镜头人物实体"),
             ("scenes", "本镜头场景实体"),
@@ -523,6 +562,7 @@ async def build_consistency_prompt(
         subtitle_text = shot_extra.get("subtitle_text") or shot.dialogue
         if subtitle_text:
             context.setdefault("字幕/对白文本", subtitle_text)
+    locked_assets = _locked_asset_refs_from_extra(_json_dict(getattr(shot, "extra_data", None))) if shot else []
 
     prompt = compose_generation_prompt(
         task=task,
@@ -531,6 +571,7 @@ async def build_consistency_prompt(
         characters=characters,
         project=project,
         extra_context=context,
+        locked_assets=locked_assets,
     )
 
     task_default = get_task_default(task)
@@ -550,7 +591,8 @@ async def build_consistency_prompt(
             "novel_id": inferred_novel_id,
             "shot_id": shot.id if shot else shot_id,
             "character_ids": [character.id for character in characters],
-            "entity_refs": _json_dict(getattr(shot, "extra_data", None)).get("entity_refs") if shot else {},
+            "entity_refs": normalize_entity_refs(_json_dict(getattr(shot, "extra_data", None)).get("entity_refs")) if shot else {},
+            "locked_assets": locked_assets,
             "subtitle_text": (_json_dict(getattr(shot, "extra_data", None)).get("subtitle_text") or getattr(shot, "dialogue", None)) if shot else None,
             "default_model_id": task_default.get("default_model_id") if task_default else None,
         },
@@ -596,7 +638,7 @@ async def auto_fill_shot_entity_refs(
     )
 
     extra_data = dict(_json_dict(shot.extra_data))
-    extra_data["entity_refs"] = entity_context["entity_refs"]
+    extra_data["entity_refs"] = normalize_entity_refs(entity_context["entity_refs"])
     extra_data["scene_refs"] = entity_context["scene_refs"]
     extra_data["prop_refs"] = entity_context["prop_refs"]
     extra_data["event_refs"] = entity_context["event_refs"]
