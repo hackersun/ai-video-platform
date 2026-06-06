@@ -1068,7 +1068,7 @@
 - [x] Phase 249: 输出生产级优化实施计划 `docs/superpowers/plans/2026-06-06-production-grade-platform-optimization.md`，覆盖架构分析、全模块 AI 赋能、一致性中枢、工作流、前端、测试、排期和部署。
 - [x] Phase 250: P0 落地：新增统一生产预检服务，统一 `entity_refs` 结构，修复资产锁服务，并让视频/TTS/媒体/图片生成生产模式不可绕过一致性门禁。
 - [x] Phase 251: P0 落地：前端新增全局生产状态与一键下一步，workflow 不再无参数静默创建，镜头和资产编辑默认隐藏 JSON 专家字段。
-- [ ] Phase 252: P0 落地：统一 synthesis 与 workflow render/timeline/subtitle 管线，历史播放/下载/筛选和最终 artifact 验收稳定可用。
+- [x] Phase 252: P0 落地：统一 synthesis 与 workflow render/timeline/subtitle 管线，历史播放/下载/筛选和最终 artifact 验收稳定可用。
 - [ ] Phase 253: P0 验证：运行紧凑后端一致性套件、前端类型/构建、核心 Playwright 链路，并新增非 DEV 预检门禁测试。
 
 ## Phase 250-253 成功标准
@@ -1087,3 +1087,11 @@
 - [x] 验证通过：`python3 -m compileall app`；后端关联专项 64 passed；`git diff --check` 通过。
 - [x] 视频/TTS/媒体/图片生产入口已强制接入 preflight 门禁：生产模式不能关闭一致性上下文，未验证模型/外部适配配置、非公网参考图会在任务创建前返回结构化 422。
 - [x] 验证通过：`python3 -m compileall app`；`pytest -q tests/test_p0_consistency_pipeline.py ... test_workflow_routes.py`，152 passed。
+
+## 2026-06-06 Phase 252 落地结果
+
+- [x] `/api/v1/synthesis/jobs` 支持按 `project_id/workflow_id/status/render_status/novel_id/chapter_id/script_id/storyboard_id/shot_id` 查询合成历史；小说、章节、剧本、分镜、镜头可从 `extra_data`、`lineage` 或多段 `segments[].lineage` 中兼容读取。
+- [x] 合成任务响应新增一等字段：`novel_id/chapter_id/script_id/storyboard_id/shot_id/manifest_url/preview_url/srt_url/timeline_url/render_manifest_url/render_status/render_backend/segment_count`，前端不再需要打开 JSON 才能播放或下载 render artifact。
+- [x] `/synthesis` 页面保留快速视频+音频合成功能，同时新增“合成历史筛选”、历史就地预览、字幕 SRT、时间线和渲染清单入口；历史播放不再复用页面上方当前合成结果区域。
+- [x] 新增 Playwright 回归 `frontend/e2e/synthesis-history.spec.ts`，覆盖筛选请求、历史结果展示、就地预览和三类 artifact 链接。
+- [x] 验证通过：`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && DEV_MODE=true PYTHONPATH=. pytest -q ... test_workflow_routes.py` 153 passed；前端 `npx tsc --noEmit`、`npm run build`、构建后再次 `npx tsc --noEmit` 通过；Playwright `synthesis-history.spec.ts` 与 `workflow-production-guidance.spec.ts` 2 passed；内置浏览器确认 `/synthesis` 可见“合成历史筛选”。

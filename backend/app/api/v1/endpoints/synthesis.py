@@ -57,6 +57,11 @@ class SynthesisJobResponse(BaseModel):
     task_id: Optional[str] = None
     project_id: Optional[str] = None
     workflow_id: Optional[str] = None
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    storyboard_id: Optional[str] = None
+    shot_id: Optional[str] = None
     video_job_id: Optional[str] = None
     tts_job_id: Optional[str] = None
     title: Optional[str] = None
@@ -69,6 +74,14 @@ class SynthesisJobResponse(BaseModel):
     output_url: Optional[str] = None
     cover_url: Optional[str] = None
     duration_seconds: Optional[float] = None
+    manifest_url: Optional[str] = None
+    preview_url: Optional[str] = None
+    srt_url: Optional[str] = None
+    timeline_url: Optional[str] = None
+    render_manifest_url: Optional[str] = None
+    render_status: Optional[str] = None
+    render_backend: Optional[str] = None
+    segment_count: Optional[int] = None
     cost: Optional[int] = 0
     error_message: Optional[str] = None
     extra_data: Optional[Dict[str, Any]] = None
@@ -164,6 +177,7 @@ async def get_publication_or_404(db: AsyncSession, publication_id: str, user_id:
 def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
     """Build a stable API response from the current SynthesisJob schema."""
     extra_data = job.extra_data or {}
+    render_artifacts = extra_data.get("render_artifacts") if isinstance(extra_data.get("render_artifacts"), dict) else {}
     return SynthesisJobResponse(
         id=job.id,
         job_id=job.id,
@@ -171,6 +185,11 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
         task_id=job.task_id,
         project_id=job.project_id or extra_data.get("project_id"),
         workflow_id=job.workflow_id or extra_data.get("workflow_id"),
+        novel_id=_first_lineage_value(extra_data, "novel_id"),
+        chapter_id=_first_lineage_value(extra_data, "chapter_id"),
+        script_id=_first_lineage_value(extra_data, "script_id"),
+        storyboard_id=_first_lineage_value(extra_data, "storyboard_id"),
+        shot_id=_first_lineage_value(extra_data, "shot_id"),
         video_job_id=extra_data.get("video_job_id"),
         tts_job_id=extra_data.get("tts_job_id"),
         title=job.title,
@@ -183,6 +202,14 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
         output_url=job.output_url,
         cover_url=job.cover_url,
         duration_seconds=job.duration_seconds,
+        manifest_url=extra_data.get("manifest_url") or render_artifacts.get("source_manifest_url"),
+        preview_url=render_artifacts.get("preview_url"),
+        srt_url=render_artifacts.get("srt_url"),
+        timeline_url=render_artifacts.get("timeline_url"),
+        render_manifest_url=render_artifacts.get("render_manifest_url"),
+        render_status=extra_data.get("render_status"),
+        render_backend=extra_data.get("render_backend"),
+        segment_count=extra_data.get("segment_count"),
         cost=job.cost or 0,
         error_message=job.error_message,
         extra_data=extra_data,
@@ -190,6 +217,57 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
         created_at=job.created_at,
         updated_at=job.updated_at,
     )
+
+
+def _lineage_values(extra_data: Dict[str, Any], key: str) -> set[str]:
+    """Return lineage values stored at top level, lineage, or segment lineage."""
+    values: set[str] = set()
+    top_value = extra_data.get(key)
+    if top_value:
+        values.add(str(top_value))
+
+    lineage = extra_data.get("lineage")
+    if isinstance(lineage, dict) and lineage.get(key):
+        values.add(str(lineage[key]))
+
+    segments = extra_data.get("segments")
+    if isinstance(segments, list):
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            if segment.get(key):
+                values.add(str(segment[key]))
+            segment_lineage = segment.get("lineage")
+            if isinstance(segment_lineage, dict) and segment_lineage.get(key):
+                values.add(str(segment_lineage[key]))
+
+    return values
+
+
+def _first_lineage_value(extra_data: Dict[str, Any], key: str) -> Optional[str]:
+    values = _lineage_values(extra_data, key)
+    return sorted(values)[0] if values else None
+
+
+def _synthesis_job_matches_filters(
+    job: SynthesisJob,
+    *,
+    status_filter: Optional[str],
+    render_status: Optional[str],
+    lineage_filters: Dict[str, Optional[str]],
+) -> bool:
+    if status_filter and job.status != status_filter:
+        return False
+
+    extra_data = job.extra_data or {}
+    if render_status and extra_data.get("render_status") != render_status:
+        return False
+
+    for key, expected in lineage_filters.items():
+        if expected and str(expected) not in _lineage_values(extra_data, key):
+            return False
+
+    return True
 
 
 def build_publication_response(publication: Publication) -> PublicationResponse:
@@ -432,13 +510,22 @@ async def publish_export(
     export_id = str(uuid4())
     title = request.title or (synthesis_job.title if synthesis_job else None) or "本地导出"
     metadata = dict(request.metadata or {})
+    playback_video_url = synthesis_job.output_url if synthesis_job else metadata.get("source_output_url")
+    if not playback_video_url and synthesis_job:
+        playback_video_url = synthesis_job.video_url
+    visibility = str(metadata.get("visibility") or "private")
+    if visibility not in {"private", "project", "public"}:
+        visibility = "private"
     artifact_payload = {
         "id": export_id,
         "title": title,
         "provider": "local",
         "project_id": project_id,
         "synthesis_job_id": synthesis_job.id if synthesis_job else None,
-        "source_output_url": synthesis_job.output_url if synthesis_job else metadata.get("source_output_url"),
+        "source_output_url": playback_video_url,
+        "video_url": playback_video_url,
+        "cover_url": synthesis_job.cover_url if synthesis_job else metadata.get("cover_url"),
+        "duration_seconds": synthesis_job.duration_seconds if synthesis_job else metadata.get("duration_seconds"),
         "metadata": metadata,
         "created_at": utc_now().isoformat(),
     }
@@ -451,6 +538,12 @@ async def publish_export(
         synthesis_job_id=synthesis_job.id if synthesis_job else None,
         title=title,
         status="succeeded",
+        visibility=visibility,
+        video_url=playback_video_url,
+        cover_url=synthesis_job.cover_url if synthesis_job else metadata.get("cover_url"),
+        duration_seconds=synthesis_job.duration_seconds if synthesis_job else metadata.get("duration_seconds"),
+        format=metadata.get("format") or "mp4",
+        resolution=metadata.get("resolution") or "1080p",
         export_url=export_url,
         artifact_path=str(artifact_path),
         provider="local",
@@ -606,6 +699,8 @@ async def execute_synthesis(
         title=request.title or "FFmpeg合成",
         model_id="ffmpeg-synthesis",
         model_name="FFmpeg本地合成",
+        video_url=request.video_urls[0],
+        audio_url=request.audio_urls[0] if request.audio_urls else None,
         status=result["status"],
         progress=100 if result["status"] == "succeeded" else 0,
         output_url=result.get("video_url"),
@@ -614,6 +709,8 @@ async def execute_synthesis(
         extra_data={
             "output_format": request.output_format,
             "quality": request.quality,
+            "source_video_urls": request.video_urls,
+            "source_audio_urls": request.audio_urls or [],
         }
     )
     db.add(synthesis_job)
@@ -744,9 +841,16 @@ async def download_publication(
 
 @router.get("/jobs", response_model=List[SynthesisJobResponse])
 async def list_synthesis_jobs(
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     project_id: Optional[str] = None,
     workflow_id: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    render_status: Optional[str] = None,
+    novel_id: Optional[str] = None,
+    chapter_id: Optional[str] = None,
+    script_id: Optional[str] = None,
+    storyboard_id: Optional[str] = None,
+    shot_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
@@ -756,11 +860,34 @@ async def list_synthesis_jobs(
         query = query.where(SynthesisJob.project_id == project_id)
     if workflow_id:
         query = query.where(SynthesisJob.workflow_id == workflow_id)
-    query = query.order_by(desc(SynthesisJob.created_at)).limit(limit)
+    if status_filter:
+        query = query.where(SynthesisJob.status == status_filter)
+    query = query.order_by(desc(SynthesisJob.created_at))
+    has_extra_filters = any([render_status, novel_id, chapter_id, script_id, storyboard_id, shot_id])
+    if not has_extra_filters:
+        query = query.limit(limit)
     
     result = await db.execute(query)
     jobs = result.scalars().all()
-    
+    if has_extra_filters:
+        lineage_filters = {
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+            "shot_id": shot_id,
+        }
+        jobs = [
+            job
+            for job in jobs
+            if _synthesis_job_matches_filters(
+                job,
+                status_filter=None,
+                render_status=render_status,
+                lineage_filters=lineage_filters,
+            )
+        ][:limit]
+
     return [build_synthesis_response(job) for job in jobs]
 
 

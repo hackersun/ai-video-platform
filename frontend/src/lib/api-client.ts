@@ -60,9 +60,19 @@ type TTSGenerateResponse = TTSJob;
 
 type SynthesisJob = {
   id: string;
+  job_id?: string;
   task_id?: string;
   title?: string;
   model_name?: string;
+  project_id?: string;
+  workflow_id?: string;
+  novel_id?: string;
+  chapter_id?: string;
+  script_id?: string;
+  storyboard_id?: string;
+  shot_id?: string;
+  video_job_id?: string;
+  tts_job_id?: string;
   video_url?: string;
   audio_url?: string;
   status: string;
@@ -70,7 +80,16 @@ type SynthesisJob = {
   output_url?: string;
   cover_url?: string;
   duration_seconds?: number;
+  manifest_url?: string;
+  preview_url?: string;
+  srt_url?: string;
+  timeline_url?: string;
+  render_manifest_url?: string;
+  render_status?: string;
+  render_backend?: string;
+  segment_count?: number;
   error_message?: string;
+  extra_data?: any;
   created_at: string;
   updated_at: string;
 };
@@ -774,8 +793,24 @@ class ApiClient {
 
   // ========== 音视频合成相关 ==========
 
-  async getSynthesisJobs() {
-    return this.request<SynthesisJob[]>('/synthesis/jobs');
+  async getSynthesisJobs(params: {
+    project_id?: string;
+    workflow_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    storyboard_id?: string;
+    shot_id?: string;
+    status?: string;
+    render_status?: string;
+    limit?: number;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value) searchParams.set(key, String(value));
+    });
+    const qs = searchParams.toString();
+    return this.request<SynthesisJob[]>(`/synthesis/jobs${qs ? `?${qs}` : ''}`);
   }
 
   async generateSynthesis(params: SynthesisGenerateParams) {

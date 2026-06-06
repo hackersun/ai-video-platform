@@ -864,3 +864,12 @@
 - `/workflow` 与 `/producer` 均展示本集生产状态；AI 制片助手的“下一步”提示增加“执行下一步”按钮，直接触发安全补齐。
 - 新增 E2E `workflow-production-guidance.spec.ts`，先红后绿验证 workflow 页面不会静默调用 `/workflow/start`。
 - 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/workflow-production-guidance.spec.ts --project=chromium` 1 passed；`npx tsc --noEmit` 通过；`npm run build` 通过；构建后再次 `npx tsc --noEmit` 通过。
+
+## 2026-06-06 Phase 252 合成历史与渲染产物收口
+
+- 先新增后端红灯测试 `test_synthesis_jobs_filter_lineage_and_expose_render_artifacts`，确认旧 `/synthesis/jobs` 会忽略小说/章节/剧本/分镜/镜头和 render 状态筛选。
+- 后端 `SynthesisJobResponse` 新增 lineage 与 render artifact 一等字段；`/synthesis/jobs` 支持 `status/render_status/novel_id/chapter_id/script_id/storyboard_id/shot_id` 过滤，并兼容 `extra_data` 顶层、`lineage` 和 `segments[].lineage` 三种历史结构。
+- 新增前端红灯 E2E `synthesis-history.spec.ts`，确认旧页面没有合成历史筛选和历史就地预览。
+- `/synthesis` 页面新增“合成历史筛选”、历史卡片 lineage 摘要、就地预览面板、字幕 SRT/时间线/渲染清单链接；历史播放不再把用户带回顶部当前合成结果区域。
+- 排查并处理验证环境问题：现有 3000 dev server 复用旧 `.next` 导致客户端 JS chunk 404，清理 `.next` 并重启前端后专项 Playwright 通过。
+- 验证通过：`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py test_asset_lock_service.py test_prompt_composer_locked_assets.py test_shots_rebuild_prompts.py test_fill_entity_refs.py test_consistency_checker.py test_media_subtitles.py test_tts_story_bible.py test_image_generation_links.py test_workflow_routes.py` 153 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；构建后再次 `npx tsc --noEmit` 通过；Playwright `e2e/synthesis-history.spec.ts e2e/workflow-production-guidance.spec.ts` 2 passed；内置浏览器检查 `/synthesis` 标题和历史筛选可见。

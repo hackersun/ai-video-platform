@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.core.database import AsyncSessionLocal
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
+from app.models.synthesis_job import SynthesisJob
 from app.models.video_job import VideoJob
 from init_db import init_db
 from main import app
@@ -141,6 +142,15 @@ def _create_shot(client: TestClient, user_id: str) -> tuple[str, str, str]:
 
 
 def _insert_video_job(job: VideoJob) -> None:
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(job)
+            await session.commit()
+
+    asyncio.run(_insert())
+
+
+def _insert_synthesis_job(job: SynthesisJob) -> None:
     async def _insert() -> None:
         async with AsyncSessionLocal() as session:
             session.add(job)
@@ -635,7 +645,13 @@ def test_video_job_infers_full_lineage_from_chapter_shot(client: TestClient, mon
         headers=_auth_headers(user_id),
     )
     assert create_resp.status_code == 200
-    job_id = create_resp.json()["job_id"]
+    create_payload = create_resp.json()
+    job_id = create_payload["job_id"]
+    assert create_payload["novel_id"] == novel_id
+    assert create_payload["chapter_id"] == chapter_id
+    assert create_payload["script_id"] == script_id
+    assert create_payload["storyboard_id"] == storyboard_id
+    assert create_payload["shot_id"] == shot_id
 
     jobs_resp = client.get(
         f"/api/v1/video/jobs?novel_id={novel_id}&chapter_id={chapter_id}&script_id={script_id}&storyboard_id={storyboard_id}&shot_id={shot_id}",
@@ -662,6 +678,46 @@ def test_video_job_infers_full_lineage_from_chapter_shot(client: TestClient, mon
         headers=_auth_headers(user_id),
     )
     assert mismatch_resp.status_code == 422
+
+
+def test_chapter_generation_reuses_latest_script_when_multiple_scripts_exist(client: TestClient) -> None:
+    user_id = f"chapter-production-duplicates-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 重复生成")
+
+    first_script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_id, "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+    assert first_script_resp.status_code == 201, first_script_resp.text
+
+    second_script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_id, "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+    assert second_script_resp.status_code == 201, second_script_resp.text
+    latest_script_id = second_script_resp.json()["id"]
+    assert latest_script_id != first_script_resp.json()["id"]
+
+    status_resp = client.get(f"/api/v1/chapters/{chapter_id}/production-status", headers=_auth_headers(user_id))
+    assert status_resp.status_code == 200, status_resp.text
+    assert status_resp.json()["script_id"] == latest_script_id
+
+    generate_resp = client.post(
+        f"/api/v1/chapters/{chapter_id}/generate-all",
+        json={"style": "anime", "shot_count": 2},
+        headers=_auth_headers(user_id),
+    )
+    assert generate_resp.status_code == 200, generate_resp.text
+    payload = generate_resp.json()
+    assert payload["script_id"] == latest_script_id
+    assert payload["shot_count"] == 2
+
+    storyboard_resp = client.get(f"/api/v1/storyboards/{payload['storyboard_id']}", headers=_auth_headers(user_id))
+    assert storyboard_resp.status_code == 200, storyboard_resp.text
+    assert storyboard_resp.json()["script_id"] == latest_script_id
 
 
 def test_video_job_update_cancel_and_archive_management(client: TestClient) -> None:
@@ -1095,6 +1151,158 @@ def test_workflow_media_batch_separate_video_tts_uses_selected_models(
     selected_tts = next(item for item in tts_jobs if item["id"] == payload["tts_job_ids"][0])
     assert selected_tts["extra_data"]["model_config_id"] == audio_config_id
     assert selected_tts["extra_data"]["api_model_id"] == "speech-test"
+
+
+def test_workflow_media_batch_tts_uses_story_bible_character_voice(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_tts: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            class _CreateResult:
+                id = "video-task-story-bible-voice"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    async def _fake_tts(self, *args, **kwargs):
+        captured_tts.append(kwargs)
+        return {
+            "task_id": "tts-task-story-bible-voice",
+            "audio_url": "https://example.com/story-bible-voice.mp3",
+            "duration": 2.8,
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
+
+    user_id = uuid4().hex
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-video-story-bible-voice-{uuid4()}",
+        api_model_id="doubao-seedance-story-bible-voice",
+        model_type="video",
+        capabilities=["text-to-video"],
+        api_key="sk-video",
+    )
+    audio_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="minimax",
+        model_id=f"test-audio-story-bible-voice-{uuid4()}",
+        api_model_id="speech-story-bible-voice",
+        model_type="tts",
+        capabilities=["text-to-speech"],
+        api_key="sk-audio",
+    )
+
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 音色一致性")
+    bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "novel_id": novel_id,
+            "title": "音色一致性 Story Bible",
+            "style": "国风修仙赛璐璐动漫",
+            "character_rules": [
+                {
+                    "name": "孙剑",
+                    "appearance": "黑发束起，外门灰白短袍，眼神锐利沉稳",
+                    "voice": "story-bible-sunjian",
+                    "voice_speed": 1.25,
+                }
+            ],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert bible_resp.status_code == 201
+    story_bible_id = bible_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "第一章剧本",
+            "content": "孙剑醒来，确认自己重生。",
+            "genre": "修仙",
+            "style": "国风修仙",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "title": "醒来镜头",
+            "content": {"chapter_id": chapter_id, "story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_resp.json()["id"],
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "孙剑从木榻上惊醒",
+            "dialogue": "孙剑：这一世，我不会再输。",
+            "character_refs": [{"name": "孙剑"}],
+            "extra_data": {"story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "Story Bible 音色工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_resp.json()["id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "audio_model_config_id": audio_config_id,
+            "audio_mode": "model_audio",
+            "voice_model": "fallback-voice",
+            "speed": 1.0,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert batch_resp.status_code == 200, batch_resp.text
+    payload = batch_resp.json()
+    assert payload["tts_voice_lock_count"] == 1
+    assert captured_tts[0]["voice_id"] == "story-bible-sunjian"
+    assert captured_tts[0]["speed"] == 1.25
+
+    tts_jobs = client.get(f"/api/v1/tts/jobs?workflow_id={workflow_id}", headers=_auth_headers(user_id)).json()
+    selected_tts = next(item for item in tts_jobs if item["id"] == payload["tts_job_ids"][0])
+    assert selected_tts["voice"] == "story-bible-sunjian"
+    assert selected_tts["extra_data"]["voice_source"] == "story_bible"
+    assert selected_tts["extra_data"]["voice_character_name"] == "孙剑"
+    assert selected_tts["extra_data"]["story_bible_id"] == story_bible_id
 
 
 def test_video_consistency_package_uses_real_novel_character_and_shared_style_seed(
@@ -1775,6 +1983,116 @@ def test_synthesis_job_includes_video_tts_sources(client: TestClient, fake_synth
     job = next(job for job in jobs if job["id"] == payload["job_id"])
     assert job["video_job_id"] == "video-job-123"
     assert job["tts_job_id"] == "tts-job-456"
+
+
+def test_synthesis_jobs_filter_lineage_and_expose_render_artifacts(client: TestClient) -> None:
+    user_id = "synthesis-filter-user"
+    matched_job_id = f"synthesis-filter-match-{uuid4()}"
+    other_job_id = f"synthesis-filter-other-{uuid4()}"
+    novel_id = f"novel-{uuid4()}"
+    chapter_id = f"chapter-{uuid4()}"
+    script_id = f"script-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    shot_id = f"shot-{uuid4()}"
+
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=matched_job_id,
+            user_id=user_id,
+            workflow_id="workflow-filter-1",
+            title="第一章可播放渲染包",
+            model_id="local-render",
+            model_name="本地渲染包",
+            video_url="/static/dev/source-a.mp4",
+            audio_url="/static/dev/audio-a.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/render-a-preview.html",
+            duration_seconds=8,
+            extra_data={
+                "novel_id": novel_id,
+                "chapter_id": chapter_id,
+                "script_id": script_id,
+                "storyboard_id": storyboard_id,
+                "shot_id": shot_id,
+                "render_status": "rendered",
+                "manifest_url": "/static/exports/sequence-a.json",
+                "segment_count": 1,
+                "render_artifacts": {
+                    "preview_url": "/static/exports/render-a-preview.html",
+                    "srt_url": "/static/exports/render-a.srt",
+                    "timeline_url": "/static/exports/render-a-timeline.json",
+                    "render_manifest_url": "/static/exports/render-a.json",
+                },
+                "segments": [
+                    {
+                        "lineage": {
+                            "novel_id": novel_id,
+                            "chapter_id": chapter_id,
+                            "script_id": script_id,
+                            "storyboard_id": storyboard_id,
+                            "shot_id": shot_id,
+                        }
+                    }
+                ],
+            },
+        )
+    )
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=other_job_id,
+            user_id=user_id,
+            workflow_id="workflow-filter-2",
+            title="第二章草稿",
+            model_id="local-render",
+            model_name="本地渲染包",
+            video_url="/static/dev/source-b.mp4",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/render-b-preview.html",
+            extra_data={
+                "novel_id": novel_id,
+                "chapter_id": f"chapter-other-{uuid4()}",
+                "script_id": f"script-other-{uuid4()}",
+                "storyboard_id": f"storyboard-other-{uuid4()}",
+                "shot_id": f"shot-other-{uuid4()}",
+                "render_status": "ready",
+                "manifest_url": "/static/exports/sequence-b.json",
+                "segment_count": 1,
+            },
+        )
+    )
+
+    jobs_response = client.get(
+        "/api/v1/synthesis/jobs",
+        params={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+            "shot_id": shot_id,
+            "status": "succeeded",
+            "render_status": "rendered",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert jobs_response.status_code == 200
+    jobs = jobs_response.json()
+    assert [job["id"] for job in jobs] == [matched_job_id]
+    job = jobs[0]
+    assert job["novel_id"] == novel_id
+    assert job["chapter_id"] == chapter_id
+    assert job["script_id"] == script_id
+    assert job["storyboard_id"] == storyboard_id
+    assert job["shot_id"] == shot_id
+    assert job["render_status"] == "rendered"
+    assert job["manifest_url"] == "/static/exports/sequence-a.json"
+    assert job["segment_count"] == 1
+    assert job["preview_url"] == "/static/exports/render-a-preview.html"
+    assert job["srt_url"] == "/static/exports/render-a.srt"
+    assert job["timeline_url"] == "/static/exports/render-a-timeline.json"
+    assert job["render_manifest_url"] == "/static/exports/render-a.json"
 
 
 def test_tts_requires_api_key_outside_dev_mode(
