@@ -1164,6 +1164,15 @@
 
 ## 2026-06-06 Phase 258 P1 候选：视频历史回填镜头成片
 
-- [ ] 在 `/video-generation` 历史成功视频中增加“设为镜头视频”入口。
-- [ ] 成功历史任务可通过 `PUT /shots/{shot_id}` 回填 `video_url/video_status`，支撑旧任务迁移和人工挑选版本。
-- [ ] 新增 Playwright 回归，断言点击历史回填按钮会更新当前镜头。
+- [x] 在 `/video-generation` 历史成功视频中增加“设为镜头视频”入口。
+- [x] 成功历史任务可通过 `PUT /shots/{shot_id}` 回填 `video_url/video_status`，支撑旧任务迁移和人工挑选版本。
+- [x] 新增 Playwright 回归，断言点击历史回填按钮会更新当前镜头。
+
+## 2026-06-06 Phase 258 落地结果
+
+- [x] `/video-generation` 的“生成历史”和“音视频直生历史”均支持把成功产物回填为镜头成片视频。
+- [x] 回填按钮仅在任务成功、存在视频 URL、且能确定目标 `shot_id` 时展示，避免失败/生成中任务误写镜头。
+- [x] 回填写入保持原始视频 URL，播放预览仍按后端静态媒体 origin 解析，避免把浏览器 origin 误写入数据库。
+- [x] 回填成功后刷新镜头详情和历史列表，并把当前预览切换为回填的视频。
+- [x] 新增 Playwright 回归 `frontend/e2e/video-generation-history-backfill.spec.ts`，覆盖视频历史和音视频直生历史两类产物回填请求。
+- [x] 验证通过：Playwright `video-generation-history-backfill.spec.ts` 1 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

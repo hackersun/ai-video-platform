@@ -1049,6 +1049,47 @@ function VideoGenerationPageInner() {
     setStatus('completed');
   };
 
+  const canAttachHistoryVideo = (status?: string, sourceUrl?: string | null, targetShotId?: string | null) => (
+    ['succeeded', 'completed'].includes(status || '') && Boolean(sourceUrl && (targetShotId || currentShotId))
+  );
+
+  const handleAttachHistoryVideoToShot = async (
+    sourceUrl?: string | null,
+    targetShotId?: string | null,
+    title?: string | null,
+  ) => {
+    const shotId = targetShotId || currentShotId;
+    const rawUrl = sourceUrl?.trim();
+    if (!shotId) {
+      toast({ title: '缺少镜头关联', description: '该历史视频没有绑定镜头，无法回填为镜头成片。', type: 'error' });
+      return;
+    }
+    if (!rawUrl) {
+      toast({ title: '缺少视频地址', description: '该历史任务还没有可用的视频产物。', type: 'error' });
+      return;
+    }
+
+    try {
+      await apiClient.updateShot(shotId, {
+        video_url: rawUrl,
+        video_status: 'succeeded',
+      });
+      setCurrentShotId(shotId);
+      setSelectedShotId(shotId);
+      await loadShotDetail(shotId);
+      await loadHistory();
+      setVideoUrl(resolveMediaUrl(rawUrl));
+      setStatus('completed');
+      toast({
+        title: '已设为镜头视频',
+        description: title ? `已将「${title}」回填为当前镜头成片。` : '历史产物已回填到镜头。',
+        type: 'success',
+      });
+    } catch (err: any) {
+      toast({ title: '回填失败', description: err.message || '请稍后重试。', type: 'error' });
+    }
+  };
+
   // 格式化时间
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -2073,6 +2114,18 @@ function VideoGenerationPageInner() {
                               <Download className="w-4 h-4" />
                             </Button>
                           )}
+                          {canAttachHistoryVideo(job.status, job.video_url, job.shot_id) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="设为镜头视频"
+                              aria-label={`设为镜头视频：${job.title || job.prompt || job.task_id || '视频生成'}`}
+                              onClick={() => handleAttachHistoryVideoToShot(job.video_url, job.shot_id, job.title || job.prompt || '视频生成')}
+                              className="text-green-300 hover:text-green-200"
+                            >
+                              <ShieldCheck className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -2127,6 +2180,18 @@ function VideoGenerationPageInner() {
                           {job.output_video_url && (
                             <Button variant="ghost" size="sm" title="播放音视频" onClick={() => handlePlayVideo(job.output_video_url)}>
                               <Play className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canAttachHistoryVideo(job.status, job.output_video_url, job.shot_id) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="设为镜头视频"
+                              aria-label={`设为镜头视频：${job.title || job.prompt || job.task_id || '音视频直生'}`}
+                              onClick={() => handleAttachHistoryVideoToShot(job.output_video_url, job.shot_id, job.title || job.prompt || '音视频直生')}
+                              className="text-green-300 hover:text-green-200"
+                            >
+                              <ShieldCheck className="w-4 h-4" />
                             </Button>
                           )}
                           {job.subtitle_track_id && (

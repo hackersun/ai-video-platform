@@ -916,3 +916,11 @@
 - 自定义描述保存剧本时继承当前筛选/弹窗上下文中的 `novel_id/chapter_id`，并保留题材、风格和生成正文。
 - 修复模型能力识别兼容性：`model_type=text` 和 `capabilities=["text"]` 现在会被识别为文本模型，默认已验证文本配置能被选择并随剧本 AI 请求提交。
 - 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/scripts-ai-generation.spec.ts --project=chromium` 1 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build && PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 258 P1 视频历史回填镜头成片
+
+- 新增前端红灯回归 `frontend/e2e/video-generation-history-backfill.spec.ts`：旧页面能展示历史项，但找不到“设为镜头视频”按钮。
+- `/video-generation` 的视频生成历史和音视频直生历史新增“设为镜头视频”图标按钮；仅成功任务、存在视频 URL、且能确定 `shot_id` 时展示。
+- 点击回填会调用 `apiClient.updateShot(shotId, { video_url, video_status: 'succeeded' })`，保留历史任务的原始视频 URL，随后刷新镜头详情和历史列表，并把当前预览切换到回填视频。
+- 回归覆盖两类来源：普通视频历史使用 `video_url`，音视频直生历史使用 `output_video_url`；失败/生成中任务不会展示回填按钮。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/video-generation-history-backfill.spec.ts --project=chromium` 1 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
