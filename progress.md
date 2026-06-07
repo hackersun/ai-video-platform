@@ -973,3 +973,9 @@
 - 新增 `HistoryPreflightEvidence` 组件，统一以“预检通过 / 预检未通过 / 阻断项摘要”的方式展示历史生成证据，避免用户查看 JSON 或猜测失败原因。
 - `/video-generation` 的视频历史与音视频直生历史、`/tts` 的语音历史均展示持久化预检摘要，便于按失败原因回查。
 - 验证通过：`history-preflight-evidence.spec.ts` 2 passed；视频/TTS 相关 Playwright 回归 6 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过。
+
+## 2026-06-06 Phase 266 P2 直生音视频预检摘要持久化
+
+- 新增后端红灯回归：生产模式 `/media/generate` 直生音视频成功保存外部适配任务后，旧 `MediaGenerationJob.extra_data` 不包含 `generation_preflight`，前端历史证据卡没有真实数据。
+- `/media/generate` 现在在生产预检通过后把 `ready/issues/blocking_issue_count` 写入 `extra_data.generation_preflight`；DEV_MODE 和显式跳过预检的调试路径不额外伪造证据。
+- 验证通过：新增单测红绿通过；`test_p0_consistency_pipeline.py`、`test_media_subtitles.py`、`test_production_adapters.py::test_comfyui_media_job_preserves_adapter_payload_and_production_context` 共 27 passed；后端 `python3 -m compileall app` 通过。

@@ -899,3 +899,44 @@ def test_non_dev_media_generation_blocks_unverified_external_config_before_job(
             return len(result.scalars().all())
 
     assert asyncio.run(_count_jobs()) == 0
+
+
+def test_non_dev_media_generation_persists_preflight_summary_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    import asyncio
+
+    config_id = asyncio.run(_seed_external_config(user_id=user_id, test_status="success"))
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/media/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "task_type": "shot_audio_video",
+                "media_type": "audio_video",
+                "prompt": "生成连续动漫镜头，保持人物、场景和对白一致。",
+                "external_config_id": config_id,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "adapter_ready"
+    preflight = payload["extra_data"].get("generation_preflight")
+    assert preflight["ready"] is True
+    assert preflight["blocking_issue_count"] == 0
+    assert preflight["issues"] == []
+
+    async def _load_job_preflight() -> dict:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(MediaGenerationJob).where(MediaGenerationJob.id == payload["id"]))
+            job = result.scalar_one()
+            return job.extra_data.get("generation_preflight")
+
+    persisted = asyncio.run(_load_job_preflight())
+    assert persisted["ready"] is True
+    assert persisted["blocking_issue_count"] == 0

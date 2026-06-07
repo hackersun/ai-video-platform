@@ -340,6 +340,7 @@ async def generate_media(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="生产模式不能跳过一致性预检；如需降级调试，请显式开启 unsafe_skip_consistency_preflight 并记录原因。",
         )
+    preflight_package = None
     if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
         preflight_package = await build_generation_context_package(
             db,
@@ -497,6 +498,17 @@ async def generate_media(
                 "has_audio": bool(audio_url),
                 "source": "direct_av_model" if audio_url else ("external_adapter" if not is_dev_mode() else "none"),
             },
+            **(
+                {
+                    "generation_preflight": {
+                        "ready": preflight_package.get("ready"),
+                        "issues": preflight_package.get("issues") or [],
+                        "blocking_issue_count": preflight_package.get("blocking_issue_count") or 0,
+                    }
+                }
+                if preflight_package is not None
+                else {}
+            ),
         },
     )
     db.add(job)

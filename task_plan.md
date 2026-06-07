@@ -1230,3 +1230,10 @@
 - [x] 新增统一组件 `HistoryPreflightEvidence`，避免多个页面重复写预检文案和样式。
 - [x] 新增 Playwright 回归 `history-preflight-evidence.spec.ts`，覆盖视频、音视频直生和 TTS 历史证据展示。
 - [x] 验证通过：前端类型检查、生产构建、视频/TTS 相关 Playwright 回归 6 passed。
+
+## 2026-06-06 Phase 266 P2 直生音视频预检摘要持久化
+
+- [x] `/media/generate` 成功创建生产适配任务后保存 `extra_data.generation_preflight`。
+- [x] 新增后端回归，覆盖已验证外部适配配置、生产模式预检通过、任务保存为 `adapter_ready` 后返回并持久化预检摘要。
+- [x] 保持未验证外部配置和跳过一致性上下文的阻断逻辑不变。
+- [x] 验证通过：后端一致性/媒体字幕/外部适配专项 27 passed；后端 `compileall app` 通过。
