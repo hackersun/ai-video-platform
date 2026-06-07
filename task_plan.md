@@ -1283,3 +1283,4 @@
 - [x] `list_providers` 输出层补齐空字段兜底，历史 provider 不再导致响应模型校验失败。
 - [x] 验证通过：后端全量 `pytest -q` 451 passed、1 skipped；后端 `compileall app` 通过。
 - [x] 验证通过：前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
+- [x] 验证通过：关键前端 E2E `history-preflight-evidence`、`workflow-step-generation-evidence`、`workflow-media-preflight` 共 6 passed。

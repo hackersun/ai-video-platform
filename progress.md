@@ -1022,3 +1022,4 @@
 - `list_providers` 现在显式构造 `LLMProviderResponse`，对 `name_cn/name_en/provider_type/base_url` 做输出兜底，不改历史数据、不影响默认 provider 回填。
 - 验证通过：失败单测先红后绿；后端全量 `DEV_MODE=true PYTHONPATH=. pytest -q` 451 passed、1 skipped；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
 - 验证通过：前端使用 bundled Node 执行 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
+- 验证通过：关键前端 E2E `history-preflight-evidence.spec.ts`、`workflow-step-generation-evidence.spec.ts`、`workflow-media-preflight.spec.ts` 共 6 passed。
