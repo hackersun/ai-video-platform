@@ -966,3 +966,10 @@
 - 新增后端红灯回归：生产模式 TTS 成功生成后，旧 `TTSJob.extra_data` 不保存 `generation_preflight`，历史任务无法追溯当次模型与链路预检证据。
 - TTS 生成成功收尾时写入 `extra_data.generation_preflight`，包含 `ready/issues/blocking_issue_count`；同时改为复制 JSON dict 后赋值，保证 SQLAlchemy 能持久化 JSON 变更。
 - 验证通过：`pytest -q tests/test_p0_consistency_pipeline.py test_tts_story_bible.py -q` 47 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 265 P2 生成历史预检证据可见
+
+- 新增前端红灯回归 `frontend/e2e/history-preflight-evidence.spec.ts`：旧视频历史、音视频直生历史和 TTS 历史即使返回 `extra_data.generation_preflight`，页面也不会展示预检结果和阻断原因。
+- 新增 `HistoryPreflightEvidence` 组件，统一以“预检通过 / 预检未通过 / 阻断项摘要”的方式展示历史生成证据，避免用户查看 JSON 或猜测失败原因。
+- `/video-generation` 的视频历史与音视频直生历史、`/tts` 的语音历史均展示持久化预检摘要，便于按失败原因回查。
+- 验证通过：`history-preflight-evidence.spec.ts` 2 passed；视频/TTS 相关 Playwright 回归 6 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过。

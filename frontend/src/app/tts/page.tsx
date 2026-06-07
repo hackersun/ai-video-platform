@@ -15,6 +15,7 @@ import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
 import { PreflightIssueList } from '@/components/production/preflight-issue-list';
+import { HistoryPreflightEvidence } from '@/components/production/history-preflight-evidence';
 import {
   getConfigsByCapability,
   getDefaultConfigForCapability,
@@ -666,6 +667,10 @@ export default function TTSPage() {
                             {job.error_message && (
                               <div className="text-red-400 text-xs mt-0.5">{job.error_message}</div>
                             )}
+                            <HistoryPreflightEvidence
+                              preflight={job.extra_data?.generation_preflight}
+                              testId={`history-preflight-${job.id}`}
+                            />
                             {/* 多角色片段 */}
                             {job.extra_data?.segments?.length > 0 && (
                               <div className="mt-1 space-y-1">

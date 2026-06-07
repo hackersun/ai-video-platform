@@ -39,6 +39,7 @@ import { CAMERA_ANGLE_LABELS, getShotAttributeLabel } from '@/lib/shot-labels';
 import { isInternalTestModelConfig, modelStatusClass, modelStatusLabel } from '@/lib/model-configs';
 import { useToast } from '@/components/ui/toast';
 import { PreflightIssueList } from '@/components/production/preflight-issue-list';
+import { HistoryPreflightEvidence } from '@/components/production/history-preflight-evidence';
 
 // 视频生成状态
 type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
@@ -2145,6 +2146,10 @@ function VideoGenerationPageInner() {
                                 {job.subtitle_text && <div className="text-green-200/70">字幕：{job.subtitle_text}</div>}
                               </div>
                             )}
+                            <HistoryPreflightEvidence
+                              preflight={job.extra_data?.generation_preflight || job.consistency?.generation_preflight}
+                              testId={`history-preflight-${job.id}`}
+                            />
                           </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
@@ -2239,6 +2244,10 @@ function VideoGenerationPageInner() {
                           {job.extra_data?.subtitle_text && (
                             <div className="text-green-200/70 text-xs mt-1">字幕：{job.extra_data.subtitle_text}</div>
                           )}
+                          <HistoryPreflightEvidence
+                            preflight={job.extra_data?.generation_preflight}
+                            testId={`history-preflight-${job.id}`}
+                          />
                         </div>
                         <div className="flex gap-2">
                           {job.output_video_url && (

@@ -1221,3 +1221,12 @@
 - [x] 修复 TTS JSON extra 原地修改可能不被 SQLAlchemy 持久化的问题，改为复制 dict 后重新赋值。
 - [x] 新增后端回归，覆盖生产模式、已验证 TTS 配置、生成成功后返回预检摘要。
 - [x] 验证通过：后端一致性与 TTS Story Bible 套件 47 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 265 P2 生成历史预检证据可见
+
+- [x] 视频生成历史展示 `extra_data.generation_preflight`，用户能看到本次生成是否通过一致性预检。
+- [x] 音视频直生历史展示预检阻断项，失败历史能直接说明是参考图、模型、资产锁还是链路问题。
+- [x] TTS 历史展示预检摘要，配音产物可追溯音色、链路和一致性检查结果。
+- [x] 新增统一组件 `HistoryPreflightEvidence`，避免多个页面重复写预检文案和样式。
+- [x] 新增 Playwright 回归 `history-preflight-evidence.spec.ts`，覆盖视频、音视频直生和 TTS 历史证据展示。
+- [x] 验证通过：前端类型检查、生产构建、视频/TTS 相关 Playwright 回归 6 passed。
