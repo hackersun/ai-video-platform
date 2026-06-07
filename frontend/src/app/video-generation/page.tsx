@@ -38,6 +38,7 @@ import apiClient from '@/lib/api-client';
 import { CAMERA_ANGLE_LABELS, getShotAttributeLabel } from '@/lib/shot-labels';
 import { isInternalTestModelConfig, modelStatusClass, modelStatusLabel } from '@/lib/model-configs';
 import { useToast } from '@/components/ui/toast';
+import { PreflightIssueList } from '@/components/production/preflight-issue-list';
 
 // 视频生成状态
 type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
@@ -295,6 +296,7 @@ function VideoGenerationPageInner() {
   const [shotProductionContext, setShotProductionContext] = useState<any>({});
   const [lipSyncMode, setLipSyncMode] = useState('off');
   const [reviewRequired, setReviewRequired] = useState(false);
+  const [generationPreflight, setGenerationPreflight] = useState<any>(null);
 
   // 关联数据
   const [novels, setNovels] = useState<Novel[]>([]);
@@ -847,6 +849,7 @@ function VideoGenerationPageInner() {
     setProgress(0);
     setError(null);
     setVideoUrl(null);
+    setGenerationPreflight(null);
 
     try {
       const params: VideoGenerateParams = {
@@ -880,6 +883,28 @@ function VideoGenerationPageInner() {
         .filter(Boolean);
       const selectedCharacterIds = selectedCharacterId ? [selectedCharacterId] : [];
       params.character_ids = Array.from(new Set([...shotCharacterIds, ...selectedCharacterIds]));
+
+      const referenceImageUrl = imageUrl?.trim();
+      const preflight = await apiClient.preflightGeneration({
+        task_type: 'shot_video',
+        model_config_id: selectedVideoModel?.config_id || selectedModel || undefined,
+        image_url: referenceImageUrl || undefined,
+        production_mode: !devModeEnabled,
+        require_public_reference_image: Boolean(referenceImageUrl),
+        novel_id: selectedNovel || undefined,
+        chapter_id: selectedChapter || undefined,
+        script_id: scriptId || undefined,
+        storyboard_id: storyboardId || undefined,
+        shot_id: currentShotId || undefined,
+      });
+      setGenerationPreflight(preflight);
+      if (preflight?.ready === false) {
+        const blockingCount = preflight.blocking_issue_count || preflight.issues?.length || 0;
+        setStatus('idle');
+        setError(`生成前预检未通过：发现 ${blockingCount} 个阻断项。`);
+        toast({ title: '生成前预检未通过', description: '请先处理下方阻断项，再提交生成。', type: 'error' });
+        return;
+      }
 
       // 发送前验证图片 URL（跳过私有地址，公网地址预检可访问性）
       if (imageUrl && !isPrivateImageUrl(imageUrl)) {
@@ -1760,6 +1785,22 @@ function VideoGenerationPageInner() {
               <Card className="bg-red-500/10 border-red-500/30">
                 <CardContent className="p-3">
                   <p className="text-red-400 text-sm">{error}</p>
+                </CardContent>
+              </Card>
+            )}
+            {generationPreflight && (
+              <Card
+                data-testid="video-generation-preflight"
+                className={generationPreflight.ready ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}
+              >
+                <CardContent className="p-3 space-y-2">
+                  <div className={generationPreflight.ready ? 'text-emerald-100 text-sm font-medium' : 'text-red-100 text-sm font-medium'}>
+                    {generationPreflight.ready ? '生成前预检通过' : '生成前预检未通过'}
+                  </div>
+                  <PreflightIssueList
+                    issues={generationPreflight.issues || []}
+                    emptyText="预检通过，可以提交生成。"
+                  />
                 </CardContent>
               </Card>
             )}
