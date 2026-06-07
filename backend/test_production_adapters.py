@@ -4,7 +4,10 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 
+from app.core.database import SyncSessionLocal
+from app.models.external_api import ExternalAPIProvider
 from init_db import init_db
 from main import app
 
@@ -22,6 +25,35 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
+
+
+def test_external_providers_hide_internal_test_rows(client: TestClient) -> None:
+    provider_ids = [f"external-provider-test-{uuid4()}" for _ in range(2)]
+    with SyncSessionLocal() as db:
+        for provider_id in provider_ids:
+            db.add(
+                ExternalAPIProvider(
+                    id=provider_id,
+                    name=f"external-provider-test-{uuid4()}",
+                    name_cn="外部适配测试供应商",
+                    api_type="video",
+                    base_url="",
+                    is_active=True,
+                )
+            )
+        db.commit()
+
+    try:
+        response = client.get("/api/v1/external/providers")
+        assert response.status_code == 200
+        providers = response.json()
+        assert "外部适配测试供应商" not in {provider["name_cn"] for provider in providers}
+        assert not any(str(provider["name"]).startswith("external-provider-test-") for provider in providers)
+        assert "text" not in {provider["api_type"] for provider in providers}
+    finally:
+        with SyncSessionLocal() as db:
+            db.execute(delete(ExternalAPIProvider).where(ExternalAPIProvider.id.in_(provider_ids)))
+            db.commit()
 
 
 def _create_shot_with_lineage(client: TestClient, user_id: str) -> tuple[str, str, str, str, str]:
