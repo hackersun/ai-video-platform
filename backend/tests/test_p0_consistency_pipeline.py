@@ -804,6 +804,48 @@ def test_non_dev_tts_generation_blocks_unverified_model_before_job(
     assert asyncio.run(_count_jobs()) == 0
 
 
+def test_non_dev_tts_generation_persists_preflight_summary_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    user_id = str(uuid4())
+
+    import asyncio
+
+    config_id = asyncio.run(
+        _seed_llm_config(
+            user_id=user_id,
+            model_type="tts",
+            capabilities=["tts"],
+            provider_name="minimax",
+            test_status="success",
+        )
+    )
+
+    async def _fake_tts(self, **kwargs):
+        return {"audio_url": "https://cdn.example.com/voice.mp3", "duration": 1.2}
+
+    monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/v1/tts/generate",
+            headers=_signed_auth_headers(user_id),
+            json={
+                "text_content": "沈砚: 我会查清铜铃的来历。",
+                "model_config_id": config_id,
+                "voice_model": "female-shaonv",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    preflight = payload["extra_data"].get("generation_preflight")
+    assert preflight["ready"] is True
+    assert preflight["blocking_issue_count"] == 0
+    assert preflight["issues"] == []
+
+
 def test_non_dev_media_generation_blocks_consistency_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEV_MODE", "false")
     user_id = str(uuid4())

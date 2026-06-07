@@ -960,3 +960,9 @@
 - `consistency_preflight` 新增显式链路校验：校验小说、章节、剧本是否存在且属于当前用户，并检查章节归属小说、剧本归属小说/章节、以及它们与 storyboard/shot 反推链路是否一致。
 - 链路错位时返回 `lineage_mismatch`、`*_missing` 等阻断项，`ready=false`，避免批量 TTS、视频或 workflow 生成拿错章节/剧本上下文。
 - 验证通过：`pytest -q tests/test_p0_consistency_pipeline.py test_workflow_routes.py::test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs -q` 22 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 264 P2 TTS 预检摘要持久化
+
+- 新增后端红灯回归：生产模式 TTS 成功生成后，旧 `TTSJob.extra_data` 不保存 `generation_preflight`，历史任务无法追溯当次模型与链路预检证据。
+- TTS 生成成功收尾时写入 `extra_data.generation_preflight`，包含 `ready/issues/blocking_issue_count`；同时改为复制 JSON dict 后赋值，保证 SQLAlchemy 能持久化 JSON 变更。
+- 验证通过：`pytest -q tests/test_p0_consistency_pipeline.py test_tts_story_bible.py -q` 47 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

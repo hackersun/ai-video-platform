@@ -1214,3 +1214,10 @@
 - [x] 章节不属于小说、剧本不属于章节/小说、显式 ID 与 shot/storyboard 反推链路不一致时返回 `lineage_mismatch`。
 - [x] 新增后端回归，覆盖无 storyboard/shot 的小说、章节、剧本错位场景。
 - [x] 验证通过：后端一致性与 workflow 门禁专项 22 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 264 P2 TTS 预检摘要持久化
+
+- [x] TTS 任务成功生成后保存 `extra_data.generation_preflight`，便于历史追溯模型、链路和阻断证据。
+- [x] 修复 TTS JSON extra 原地修改可能不被 SQLAlchemy 持久化的问题，改为复制 dict 后重新赋值。
+- [x] 新增后端回归，覆盖生产模式、已验证 TTS 配置、生成成功后返回预检摘要。
+- [x] 验证通过：后端一致性与 TTS Story Bible 套件 47 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

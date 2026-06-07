@@ -275,7 +275,7 @@ class VoiceCloneResponse(BaseModel):
 
 def build_tts_response(job: TTSJob) -> TTSJobResponse:
     """Build a response that supports both current and legacy callers."""
-    extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+    extra = dict(job.extra_data) if isinstance(job.extra_data, dict) else {}
     return TTSJobResponse(
         id=job.id,
         job_id=job.id,
@@ -471,6 +471,7 @@ async def generate_tts(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="生产模式不能跳过一致性预检；如需降级调试，请显式开启 unsafe_skip_consistency_preflight 并记录原因。",
         )
+    preflight_package = None
     if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
         preflight_package = await build_generation_context_package(
             db,
@@ -871,7 +872,13 @@ async def generate_tts(
         if shot:
             shot.audio_url = job.audio_url
             shot.audio_status = "succeeded" if job.audio_url else job.status
-    extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+    extra = dict(job.extra_data) if isinstance(job.extra_data, dict) else {}
+    if preflight_package is not None:
+        extra["generation_preflight"] = {
+            "ready": preflight_package.get("ready"),
+            "issues": preflight_package.get("issues") or [],
+            "blocking_issue_count": preflight_package.get("blocking_issue_count") or 0,
+        }
     extra.update({
         "model_config_id": selected_model_config_id,
         "api_model_id": tts_model_id,
