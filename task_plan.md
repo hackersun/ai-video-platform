@@ -1261,3 +1261,10 @@
 - [x] 剧本/分镜成功后即使自动跳转下一步，父级页面仍保留最近生成证据，避免证据随步骤组件卸载消失。
 - [x] 新增 Playwright 回归 `frontend/e2e/workflow-step-generation-evidence.spec.ts`，覆盖剧本成功、分镜失败和连续成片成功。
 - [x] 验证通过：Workflow/Producer 相关 Playwright 回归 7 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
+
+## 2026-06-06 Phase 270 P2 TTS 失败任务预检证据
+
+- [x] 生产模式 TTS 已通过预检但供应商调用失败时，失败任务仍保存 `extra_data.generation_preflight`。
+- [x] TTS 任务创建后、供应商调用前先写入模型配置、API 模型、供应商、音色来源和 Story Bible 证据，成功路径继续合并更新。
+- [x] 新增后端回归，覆盖已验证 TTS 配置、预检通过、MiniMax 供应商异常后失败任务仍可追溯预检摘要。
+- [x] 验证通过：新增测试先红后绿；`tests/test_p0_consistency_pipeline.py` 与 `test_tts_story_bible.py` 共 49 passed；后端 `compileall app` 通过。

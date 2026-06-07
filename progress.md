@@ -1001,3 +1001,10 @@
 - 新增 `WorkflowGenerationEvidenceCard`，统一展示生成状态、文本/辅助模型、验证状态、生成结果和失败原因。
 - 角色提取、剧本生成、分镜生成、连续成片、时间线同步均接入证据卡；剧本/分镜成功后会把证据提升到父页面，避免自动进入下一步时丢失。
 - 验证通过：新增测试先红后绿；`workflow-step-generation-evidence.spec.ts`、`workflow-media-preflight.spec.ts`、`workflow-production-guidance.spec.ts`、`producer-one-click-evidence.spec.ts` 共 7 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
+
+## 2026-06-06 Phase 270 P2 TTS 失败任务预检证据
+
+- 新增后端红灯回归：生产模式、已验证 MiniMax TTS 配置、预检通过后，供应商异常会创建失败任务，但旧逻辑不保存 `generation_preflight`。
+- `/tts/generate` 现在在创建 `TTSJob` 后、调用供应商前写入初始 `extra_data`，包含预检摘要、模型配置、API 模型、供应商、音色来源和 Story Bible 信息。
+- 成功路径继续在收尾阶段合并预检摘要；失败路径提交失败任务时不会丢失生成前证据，历史页面可以解释“链路预检通过但供应商失败”。
+- 验证通过：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py test_tts_story_bible.py -q` 49 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

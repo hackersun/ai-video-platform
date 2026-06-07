@@ -92,6 +92,16 @@ def is_multi_character(segments: List[Dict]) -> bool:
     return len(chars) > 1
 
 
+def _preflight_summary(preflight_package: Optional[dict]) -> Optional[dict]:
+    if preflight_package is None:
+        return None
+    return {
+        "ready": preflight_package.get("ready"),
+        "issues": preflight_package.get("issues") or [],
+        "blocking_issue_count": preflight_package.get("blocking_issue_count") or 0,
+    }
+
+
 async def get_scoped_character_by_name(
     db: AsyncSession,
     user_id: str,
@@ -622,6 +632,18 @@ async def generate_tts(
         if workflow:
             workflow.tts_job_ids = list(dict.fromkeys((workflow.tts_job_ids or []) + [job.id]))
     await db.flush()  # 获取 job.id
+    initial_extra = {
+        "model_config_id": selected_model_config_id,
+        "api_model_id": tts_model_id,
+        "provider_id": request.api_provider,
+        "voice_source": voice_source,
+        "voice_character_name": voice_character_name,
+        "story_bible_id": request.story_bible_id,
+    }
+    initial_preflight = _preflight_summary(preflight_package)
+    if initial_preflight is not None:
+        initial_extra["generation_preflight"] = initial_preflight
+    job.extra_data = initial_extra
 
     all_segments = []
     all_audio_urls = []
@@ -873,12 +895,9 @@ async def generate_tts(
             shot.audio_url = job.audio_url
             shot.audio_status = "succeeded" if job.audio_url else job.status
     extra = dict(job.extra_data) if isinstance(job.extra_data, dict) else {}
-    if preflight_package is not None:
-        extra["generation_preflight"] = {
-            "ready": preflight_package.get("ready"),
-            "issues": preflight_package.get("issues") or [],
-            "blocking_issue_count": preflight_package.get("blocking_issue_count") or 0,
-        }
+    preflight_summary = _preflight_summary(preflight_package)
+    if preflight_summary is not None:
+        extra["generation_preflight"] = preflight_summary
     extra.update({
         "model_config_id": selected_model_config_id,
         "api_model_id": tts_model_id,
