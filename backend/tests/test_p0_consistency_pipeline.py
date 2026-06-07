@@ -428,6 +428,91 @@ def test_consistency_preflight_standard_route_reports_unverified_model_and_local
     assert payload["ready"] is False
 
 
+def test_consistency_preflight_reports_supplied_lineage_mismatch_without_storyboard(client: TestClient) -> None:
+    user_id = str(uuid4())
+    novel_id = f"novel-{uuid4()}"
+    other_novel_id = f"novel-{uuid4()}"
+    chapter_id = f"chapter-{uuid4()}"
+    script_chapter_id = f"chapter-{uuid4()}"
+    script_id = f"script-{uuid4()}"
+
+    async def _seed_lineage() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(
+                Novel(
+                    id=novel_id,
+                    user_id=user_id,
+                    title="主线小说",
+                    description="主线剧情",
+                    status="writing",
+                )
+            )
+            db.add(
+                Novel(
+                    id=other_novel_id,
+                    user_id=user_id,
+                    title="另一部小说",
+                    description="另一条世界线",
+                    status="writing",
+                )
+            )
+            db.add(
+                Chapter(
+                    id=chapter_id,
+                    novel_id=other_novel_id,
+                    user_id=user_id,
+                    title="错位章节",
+                    content="这里属于另一部小说。",
+                    chapter_number=1,
+                )
+            )
+            db.add(
+                Chapter(
+                    id=script_chapter_id,
+                    novel_id=novel_id,
+                    user_id=user_id,
+                    title="主线章节",
+                    content="这里属于主线小说。",
+                    chapter_number=1,
+                )
+            )
+            db.add(
+                Script(
+                    id=script_id,
+                    user_id=user_id,
+                    novel_id=novel_id,
+                    chapter_id=script_chapter_id,
+                    title="主线剧本",
+                    content="主线剧本内容",
+                    status="draft",
+                )
+            )
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_seed_lineage())
+
+    response = client.post(
+        "/api/v1/consistency/preflight",
+        headers=_auth_headers(user_id),
+        json={
+            "task_type": "tts_dialogue",
+            "production_mode": True,
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_id,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is False
+    issues = payload["issues"]
+    assert any(issue["code"] == "lineage_mismatch" and issue.get("field") == "chapter_id" for issue in issues)
+    assert any(issue["code"] == "lineage_mismatch" and issue.get("field") == "script_id" for issue in issues)
+
+
 def _signed_auth_headers(user_id: str) -> dict[str, str]:
     from app.api.v1.endpoints.auth import create_access_token
 

@@ -953,3 +953,10 @@
 - `apiClient` 保留非 2xx 响应中的结构化 `detail`，同时维持原有 `err.message` 可读文本。
 - `/workflow` 批量生成视频和配音失败时，如果后端返回预检失败 detail，页面展示“生成前预检未通过”和具体阻断项，不再让用户猜是模型、资产锁、参考图还是链路问题。
 - 验证通过：Playwright `workflow-media-preflight.spec.ts`、`workflow-production-guidance.spec.ts`、`producer-next-action.spec.ts`、`tts-preflight.spec.ts`、`video-generation-preflight.spec.ts`、`video-generation-history-backfill.spec.ts` 共 8 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 263 P1 预检显式链路校验补强
+
+- 新增后端红灯回归：仅传 `novel_id/chapter_id/script_id`、不传 storyboard/shot 时，旧 `/consistency/preflight` 不会校验章节和剧本是否同属一条小说章节链路。
+- `consistency_preflight` 新增显式链路校验：校验小说、章节、剧本是否存在且属于当前用户，并检查章节归属小说、剧本归属小说/章节、以及它们与 storyboard/shot 反推链路是否一致。
+- 链路错位时返回 `lineage_mismatch`、`*_missing` 等阻断项，`ready=false`，避免批量 TTS、视频或 workflow 生成拿错章节/剧本上下文。
+- 验证通过：`pytest -q tests/test_p0_consistency_pipeline.py test_workflow_routes.py::test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs -q` 22 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

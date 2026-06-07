@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import LLMConfig, LLMModel, LLMProvider, Shot, Storyboard
+from app.models import Chapter, LLMConfig, LLMModel, LLMProvider, Novel, Script, Shot, Storyboard
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.services.consistency_context import _locked_asset_refs_from_extra
 from app.services.entity_ref_normalizer import normalize_entity_refs
@@ -207,6 +207,73 @@ async def _resolve_lineage(
     return lineage, issues, shot
 
 
+async def _validate_supplied_lineage(
+    db: AsyncSession,
+    user_id: str,
+    lineage: Dict[str, Any],
+    *,
+    novel_id: Optional[str],
+    chapter_id: Optional[str],
+    script_id: Optional[str],
+) -> List[Dict[str, Any]]:
+    issues: List[Dict[str, Any]] = []
+
+    if novel_id:
+        result = await db.execute(select(Novel).where(Novel.id == novel_id, Novel.user_id == user_id))
+        novel = result.scalar_one_or_none()
+        if not novel:
+            issues.append(_issue("novel_missing", "小说不存在或无权限访问", field="novel_id"))
+        elif lineage.get("novel_id") and lineage["novel_id"] != novel_id:
+            issues.append(_issue("lineage_mismatch", "novel_id 与已解析链路不匹配", field="novel_id"))
+        else:
+            lineage["novel_id"] = novel_id
+
+    chapter = None
+    if chapter_id:
+        result = await db.execute(select(Chapter).where(Chapter.id == chapter_id, Chapter.user_id == user_id))
+        chapter = result.scalar_one_or_none()
+        if not chapter:
+            issues.append(_issue("chapter_missing", "章节不存在或无权限访问", field="chapter_id"))
+        else:
+            if lineage.get("chapter_id") and lineage["chapter_id"] != chapter_id:
+                issues.append(_issue("lineage_mismatch", "chapter_id 与已解析链路不匹配", field="chapter_id"))
+            else:
+                lineage["chapter_id"] = chapter_id
+            if novel_id and chapter.novel_id != novel_id:
+                issues.append(_issue("lineage_mismatch", "chapter_id 不属于所选 novel_id", field="chapter_id"))
+            elif lineage.get("novel_id") and chapter.novel_id != lineage["novel_id"]:
+                issues.append(_issue("lineage_mismatch", "chapter_id 与已解析小说链路不匹配", field="chapter_id"))
+            elif not lineage.get("novel_id"):
+                lineage["novel_id"] = chapter.novel_id
+
+    if script_id:
+        result = await db.execute(select(Script).where(Script.id == script_id, Script.user_id == user_id))
+        script = result.scalar_one_or_none()
+        if not script:
+            issues.append(_issue("script_missing", "剧本不存在或无权限访问", field="script_id"))
+        else:
+            if lineage.get("script_id") and lineage["script_id"] != script_id:
+                issues.append(_issue("lineage_mismatch", "script_id 与已解析链路不匹配", field="script_id"))
+            else:
+                lineage["script_id"] = script_id
+            if script.novel_id:
+                if novel_id and script.novel_id != novel_id:
+                    issues.append(_issue("lineage_mismatch", "script_id 不属于所选 novel_id", field="script_id"))
+                elif lineage.get("novel_id") and script.novel_id != lineage["novel_id"]:
+                    issues.append(_issue("lineage_mismatch", "script_id 与已解析小说链路不匹配", field="script_id"))
+                elif not lineage.get("novel_id"):
+                    lineage["novel_id"] = script.novel_id
+            if script.chapter_id:
+                if chapter_id and script.chapter_id != chapter_id:
+                    issues.append(_issue("lineage_mismatch", "script_id 不属于所选 chapter_id", field="script_id"))
+                elif lineage.get("chapter_id") and script.chapter_id != lineage["chapter_id"]:
+                    issues.append(_issue("lineage_mismatch", "script_id 与已解析章节链路不匹配", field="script_id"))
+                elif not lineage.get("chapter_id"):
+                    lineage["chapter_id"] = script.chapter_id
+
+    return issues
+
+
 async def build_generation_context_package(
     db: AsyncSession,
     user_id: str,
@@ -232,11 +299,16 @@ async def build_generation_context_package(
         storyboard_id=storyboard_id,
     )
     issues.extend(lineage_issues)
-    for key, value in (("novel_id", novel_id), ("chapter_id", chapter_id), ("script_id", script_id)):
-        if value and lineage.get(key) and lineage[key] != value:
-            issues.append(_issue("lineage_mismatch", f"{key} 与已解析链路不匹配", field=key))
-        elif value:
-            lineage[key] = value
+    issues.extend(
+        await _validate_supplied_lineage(
+            db,
+            user_id,
+            lineage,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            script_id=script_id,
+        )
+    )
 
     model_route, model_issues = await _resolve_model_route(db, user_id, model_config_id)
     issues.extend(model_issues)

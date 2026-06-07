@@ -1207,3 +1207,10 @@
 - [x] `apiClient` 保留响应 `detail`，让页面能读取后端返回的 `issues/blocking_issue_count/autofix_actions`。
 - [x] 新增 Playwright 回归 `frontend/e2e/workflow-media-preflight.spec.ts`，覆盖后端 422 预检失败、问题展示和不显示成功状态。
 - [x] 验证通过：Playwright 相关 8 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 263 P1 预检显式链路校验补强
+
+- [x] `/consistency/preflight` 在只传 `novel_id/chapter_id/script_id` 时也校验存在性和归属关系。
+- [x] 章节不属于小说、剧本不属于章节/小说、显式 ID 与 shot/storyboard 反推链路不一致时返回 `lineage_mismatch`。
+- [x] 新增后端回归，覆盖无 storyboard/shot 的小说、章节、剧本错位场景。
+- [x] 验证通过：后端一致性与 workflow 门禁专项 22 passed；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
