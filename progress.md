@@ -1015,3 +1015,10 @@
 - `/synthesis/create` 现在即使请求已带媒体 URL，也会在 job id 存在时读取源任务预检摘要；若 job id 查不到但 URL 已提供，继续兼容旧的直接合成路径。
 - workflow 连续成片现在在每个 segment 的 `video/audio` 子对象写入来源预检摘要，并在 manifest 与 SynthesisJob `extra_data.generation_preflight.sources` 中汇总。
 - 验证通过：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q test_workflow_routes.py -q` 41 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 272 P2 全量回归与模型配置接口稳定
+
+- 后端全量 `pytest -q` 首轮发现 `test_llm_model_catalog_backfills_volcano_agent_plan_models` 失败，根因为 `/api/v1/llm/providers` 直接返回历史/测试 provider ORM 对象，其中部分 `name_en/base_url` 为空，触发响应模型校验错误。
+- `list_providers` 现在显式构造 `LLMProviderResponse`，对 `name_cn/name_en/provider_type/base_url` 做输出兜底，不改历史数据、不影响默认 provider 回填。
+- 验证通过：失败单测先红后绿；后端全量 `DEV_MODE=true PYTHONPATH=. pytest -q` 451 passed、1 skipped；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+- 验证通过：前端使用 bundled Node 执行 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。

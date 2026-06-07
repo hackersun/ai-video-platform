@@ -1691,7 +1691,21 @@ async def list_providers(
     result = await db.execute(
         select(LLMProvider).where(LLMProvider.is_active == True)
     )
-    return result.scalars().all()
+    providers = result.scalars().all()
+    return [
+        LLMProviderResponse(
+            id=provider.id,
+            name=provider.name,
+            name_cn=provider.name_cn or provider.name,
+            name_en=provider.name_en or provider.name,
+            provider_type=provider.provider_type or "cloud",
+            base_url=provider.base_url or "",
+            is_active=bool(provider.is_active),
+            description=provider.description,
+            icon_url=provider.icon_url,
+        )
+        for provider in providers
+    ]
 
 
 @router.get("/models", response_model=List[LLMModelResponse])

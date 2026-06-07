@@ -1276,3 +1276,10 @@
 - [x] 兼容旧接口：直接传 URL 且 job id 不存在时仍可合成，只在必须靠 job id 解析媒体 URL 时返回 404。
 - [x] 新增后端回归，覆盖普通合成和 workflow 连续成片的来源预检证据传播。
 - [x] 验证通过：新增测试先红后绿；`test_workflow_routes.py` 41 passed；后端 `compileall app` 通过。
+
+## 2026-06-06 Phase 272 P2 全量回归与模型配置接口稳定
+
+- [x] 后端全量回归发现 `/llm/providers` 对历史/测试 provider 的 `name_en/base_url=None` 响应校验失败。
+- [x] `list_providers` 输出层补齐空字段兜底，历史 provider 不再导致响应模型校验失败。
+- [x] 验证通过：后端全量 `pytest -q` 451 passed、1 skipped；后端 `compileall app` 通过。
+- [x] 验证通过：前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
