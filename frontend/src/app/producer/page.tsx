@@ -13,7 +13,7 @@ import { Select } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api-client';
-import { getDefaultConfigForCapability, SavedModelConfig } from '@/lib/model-configs';
+import { getDefaultConfigForCapability, modelStatusLabel, SavedModelConfig } from '@/lib/model-configs';
 import {
   createInitialEpisodePreviewStages,
   EpisodePreviewProductionResult,
@@ -131,6 +131,33 @@ type WorkflowRecordResult = {
   reused: boolean;
 };
 
+type OneClickGenerationMode = 'script' | 'storyboard' | 'all';
+
+type OneClickGenerationEvidence = {
+  mode: OneClickGenerationMode;
+  status: 'running' | 'succeeded' | 'failed';
+  progress?: string;
+  model?: {
+    id?: string;
+    name?: string;
+    provider?: string;
+    modelName?: string;
+    testStatus?: string | null;
+    keyAvailable?: boolean;
+    isDefault?: boolean;
+  } | null;
+  scriptId?: string;
+  scriptTitle?: string;
+  storyboardId?: string;
+  storyboardTitle?: string;
+  shotCount?: number;
+  workflowId?: string;
+  workflowReused?: boolean;
+  message?: string;
+  error?: string;
+  updatedAt: string;
+};
+
 const statusLabels: Record<string, string> = {
   draft: '草稿',
   active: '进行中',
@@ -158,6 +185,11 @@ const stepLabel = (step?: number) => {
 };
 
 const countLabel = (value?: number) => (typeof value === 'number' ? String(value) : '-');
+const oneClickModeLabel: Record<OneClickGenerationMode, string> = {
+  script: '剧本',
+  storyboard: '分镜',
+  all: '全部',
+};
 
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(/\/api\/v1\/?$/, '');
 
@@ -210,8 +242,9 @@ function ProducerCenterContent() {
   const [publishingPreview, setPublishingPreview] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [productionStatus, setProductionStatus] = useState<any>(null);
-  const [generationMode, setGenerationMode] = useState<'script' | 'storyboard' | 'all' | null>(null);
+  const [generationMode, setGenerationMode] = useState<OneClickGenerationMode | null>(null);
   const [generationProgress, setGenerationProgress] = useState<string>('');
+  const [oneClickEvidence, setOneClickEvidence] = useState<OneClickGenerationEvidence | null>(null);
 
   // Batch operations state
   const [shots, setShots] = useState<any[]>([]);
@@ -245,6 +278,10 @@ function ProducerCenterContent() {
       return true;
     }),
     [workflows, selectedNovelId, selectedChapterId]
+  );
+  const selectedTextModelConfig = useMemo(
+    () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
+    [modelConfigs, textModelConfigId]
   );
 
   const refreshWorkflowStatus = useCallback(async (id: string) => {
@@ -414,22 +451,40 @@ function ProducerCenterContent() {
     return { workflowId: result.workflow_id, reused: false };
   };
 
-  const runOneClickProduction = async (mode: 'script' | 'storyboard' | 'all') => {
+  const runOneClickProduction = async (mode: OneClickGenerationMode) => {
     if (!selectedChapterId) {
       toast({ title: '请先选择章节', description: '需要选择具体章节才能一键生成。', type: 'info' });
       return;
     }
+    const modelSnapshot = selectedTextModelConfig ? {
+      id: selectedTextModelConfig.id,
+      name: selectedTextModelConfig.name,
+      provider: selectedTextModelConfig.provider_name || selectedTextModelConfig.provider_id,
+      modelName: selectedTextModelConfig.model_name || selectedTextModelConfig.model_id,
+      testStatus: selectedTextModelConfig.test_status,
+      keyAvailable: selectedTextModelConfig.key_available,
+      isDefault: selectedTextModelConfig.is_default,
+    } : null;
     setGenerationMode(mode);
     setError(null);
     setGenerationProgress('正在准备生成...');
+    setOneClickEvidence({
+      mode,
+      status: 'running',
+      progress: '正在准备生成...',
+      model: modelSnapshot,
+      updatedAt: new Date().toISOString(),
+    });
     try {
       let result: any;
+      let completedProgress = '生成完成';
       if (mode === 'script') {
         setGenerationProgress('正在生成剧本...');
         result = await apiClient.generateChapterScript(selectedChapterId, {
           style: 'anime',
           model_config_id: textModelConfigId || undefined,
         });
+        completedProgress = '剧本生成完成';
         setGenerationProgress('剧本生成完成');
         toast({ title: '剧本生成完成', description: result.message, type: 'success' });
       } else if (mode === 'storyboard') {
@@ -439,6 +494,7 @@ function ProducerCenterContent() {
           model_config_id: textModelConfigId || undefined,
           shot_count: 5,
         });
+        completedProgress = '剧本和分镜生成完成';
         setGenerationProgress('剧本和分镜生成完成');
         toast({ title: '剧本和分镜生成完成', description: result.message, type: 'success' });
       } else {
@@ -448,7 +504,8 @@ function ProducerCenterContent() {
           model_config_id: textModelConfigId || undefined,
           shot_count: 5,
         });
-        setGenerationProgress(`生成完成！共 ${result.shot_count} 个镜头`);
+        completedProgress = `生成完成！共 ${result.shot_count} 个镜头`;
+        setGenerationProgress(completedProgress);
         toast({
           title: '一键生成完成',
           description: `已生成 ${result.shot_count} 个镜头，脚本：${result.script_title}`,
@@ -457,8 +514,9 @@ function ProducerCenterContent() {
       }
       // 更新生产状态
       await loadChapterProductionStatus(selectedChapterId);
+      let workflowRecord: WorkflowRecordResult | null = null;
       if (!workflowId && (result.script_id || result.storyboard_id)) {
-        const workflowRecord = await createWorkflowRecord({
+        workflowRecord = await createWorkflowRecord({
           scriptId: result.script_id,
           storyboardId: result.storyboard_id,
         });
@@ -479,10 +537,34 @@ function ProducerCenterContent() {
         await refreshWorkflowStatus(workflowId);
         await loadShortVideoReadiness(workflowId);
       }
+      setOneClickEvidence({
+        mode,
+        status: 'succeeded',
+        progress: workflowRecord?.workflowId
+          ? (workflowRecord.reused ? '生成完成，已挂载到已有本集工程' : '生成完成，本集工程已自动创建')
+          : completedProgress,
+        model: modelSnapshot,
+        scriptId: result.script_id,
+        scriptTitle: result.script_title,
+        storyboardId: result.storyboard_id,
+        storyboardTitle: result.storyboard_title,
+        shotCount: typeof result.shot_count === 'number' ? result.shot_count : undefined,
+        workflowId: workflowRecord?.workflowId || workflowId || undefined,
+        workflowReused: workflowRecord?.reused,
+        message: result.message,
+        updatedAt: new Date().toISOString(),
+      });
     } catch (err: any) {
       const message = err.message || '生成失败';
       setError(message);
       setGenerationProgress('');
+      setOneClickEvidence({
+        mode,
+        status: 'failed',
+        model: modelSnapshot,
+        error: message,
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: '生成失败', description: message, type: 'error' });
     } finally {
       setGenerationMode(null);
@@ -1268,6 +1350,59 @@ function ProducerCenterContent() {
                     <div className="mt-3 flex items-center gap-2 border-t border-amber-500/25 pt-2">
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
                       <span className="text-xs text-amber-300">{generationProgress}</span>
+                    </div>
+                  )}
+                  {oneClickEvidence && (
+                    <div
+                      data-testid="producer-one-click-evidence"
+                      className={`mt-3 rounded-lg border p-3 text-xs leading-5 ${
+                        oneClickEvidence.status === 'failed'
+                          ? 'border-red-500/25 bg-red-500/10 text-red-50'
+                          : oneClickEvidence.status === 'succeeded'
+                            ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-50'
+                            : 'border-amber-500/25 bg-amber-500/10 text-amber-50'
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-medium text-white">一键生成证据</div>
+                        <Badge
+                          variant="outline"
+                          className={
+                            oneClickEvidence.status === 'failed'
+                              ? 'border-red-400/30 text-red-100'
+                              : oneClickEvidence.status === 'succeeded'
+                                ? 'border-emerald-400/30 text-emerald-100'
+                                : 'border-amber-400/30 text-amber-100'
+                          }
+                        >
+                          {oneClickEvidence.status === 'failed' ? '生成失败' : oneClickEvidence.status === 'succeeded' ? '生成完成' : '生成中'}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 grid gap-1 text-white/70 sm:grid-cols-2">
+                        <div>模式：{oneClickModeLabel[oneClickEvidence.mode]}</div>
+                        <div>
+                          文本模型：{oneClickEvidence.model?.name || '未选择'}
+                          {oneClickEvidence.model?.isDefault ? '（默认）' : ''}
+                        </div>
+                        <div>验证状态：{modelStatusLabel(oneClickEvidence.model?.testStatus)}</div>
+                        {oneClickEvidence.model?.provider && (
+                          <div>提供者：{oneClickEvidence.model.provider}</div>
+                        )}
+                        {oneClickEvidence.scriptId && <div className="truncate">剧本：{oneClickEvidence.scriptId}</div>}
+                        {oneClickEvidence.storyboardId && <div className="truncate">分镜：{oneClickEvidence.storyboardId}</div>}
+                        {typeof oneClickEvidence.shotCount === 'number' && <div>镜头 {oneClickEvidence.shotCount}</div>}
+                        {oneClickEvidence.workflowId && (
+                          <div className="truncate">
+                            工程：{oneClickEvidence.workflowId}
+                            {oneClickEvidence.workflowReused === true ? ' · 已复用本集工程' : oneClickEvidence.workflowReused === false ? ' · 已自动创建本集工程' : ''}
+                          </div>
+                        )}
+                      </div>
+                      {(oneClickEvidence.message || oneClickEvidence.progress || oneClickEvidence.error) && (
+                        <div className={oneClickEvidence.status === 'failed' ? 'mt-2 text-red-100/90' : 'mt-2 text-white/65'}>
+                          {oneClickEvidence.error || oneClickEvidence.message || oneClickEvidence.progress}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

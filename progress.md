@@ -986,3 +986,11 @@
 - `/producer` 的 `loadBatchJobProgress()` 现在同步加载批量任务明细；创建、暂停、恢复、重试后也刷新明细，避免状态和 item 列表脱节。
 - 批量任务进度卡新增“任务明细”列表，展示镜头、状态、产物任务 ID、产物地址和失败原因，方便个人/小团队直接定位要修的镜头。
 - 验证通过：`producer-batch-evidence.spec.ts` 1 passed；Producer/Workflow 相关 Playwright 回归 4 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过。
+
+## 2026-06-06 Phase 268 P1 Producer 一键生成证据
+
+- 新增前端红灯回归 `frontend/e2e/producer-one-click-evidence.spec.ts`：旧 `/producer` 一键生成成功或失败后没有持久证据卡，只能看 toast 或临时进度。
+- `/producer` 一键生成现在会保存本次执行证据，包含生成模式、文本模型、验证状态、剧本 ID、分镜 ID、镜头数量、工程创建/复用状态和接口返回信息。
+- 失败路径同样保留证据卡，展示当次文本模型和失败原因，用户不用再猜是模型额度、配置验证还是后端接口问题。
+- 验证通过：新增测试先红后绿；`producer-one-click-evidence.spec.ts`、`producer-batch-evidence.spec.ts`、`producer-next-action.spec.ts` 共 5 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
+- 环境备注：本机 nvm Node v18.20.8 会触发 Next SWC 签名加载失败；本阶段前端验证均使用 bundled Node `/Users/sunqinyue/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin`，构建和测试正常。

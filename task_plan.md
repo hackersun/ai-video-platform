@@ -1245,3 +1245,11 @@
 - [x] 创建、暂停、恢复、重试批量任务后同步刷新 item 明细。
 - [x] 新增 Playwright 回归，覆盖失败镜头原因和成功镜头产物任务可见。
 - [x] 验证通过：前端类型检查、生产构建、Producer/Workflow 相关 Playwright 回归 4 passed。
+
+## 2026-06-06 Phase 268 P1 Producer 一键生成证据
+
+- [x] `/producer` 一键生成“剧本/分镜/全部”时记录本次执行证据，不再只依赖短暂 toast。
+- [x] 证据卡展示生成模式、文本模型、验证状态、剧本 ID、分镜 ID、镜头数量和工程创建/复用状态。
+- [x] 生成失败时保留可见失败卡，展示当次模型和失败原因，方便用户定位额度、模型或接口问题。
+- [x] 新增 Playwright 回归 `frontend/e2e/producer-one-click-evidence.spec.ts`，覆盖成功和失败两条链路。
+- [x] 验证通过：Producer 相关 Playwright 回归 5 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
