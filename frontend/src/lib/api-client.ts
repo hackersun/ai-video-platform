@@ -10,7 +10,7 @@ const TOKEN_KEY = 'auth_token';
 // ========== 类型定义 ==========
 
 type ApiError = {
-  detail?: string;
+  detail?: any;
   message?: string;
 };
 
@@ -236,8 +236,14 @@ class ApiClient {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({})) as ApiError;
-        const message = error?.detail || error?.message || `HTTP ${response.status}`;
-        throw new Error(message);
+        const detail = error?.detail;
+        const message = typeof detail === 'string'
+          ? detail
+          : detail?.message || error?.message || `HTTP ${response.status}`;
+        const apiError = new Error(message) as Error & { detail?: any; status?: number };
+        apiError.detail = detail;
+        apiError.status = response.status;
+        throw apiError;
       }
 
       // 204 No Content

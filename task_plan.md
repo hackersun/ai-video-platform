@@ -1200,3 +1200,10 @@
 - [x] 预检阻断时展示同一套“生成前预检未通过”问题清单，不创建 TTS 任务。
 - [x] 新增 Playwright 回归 `frontend/e2e/tts-preflight.spec.ts`，覆盖阻断项展示、请求参数和不调用 `/tts/generate`。
 - [x] 验证通过：Playwright 相关 5 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 262 P1 Workflow 批量预检失败可见
+
+- [x] `/workflow` 批量生成视频和配音遇到 `generation_preflight_failed` 时展示结构化预检问题。
+- [x] `apiClient` 保留响应 `detail`，让页面能读取后端返回的 `issues/blocking_issue_count/autofix_actions`。
+- [x] 新增 Playwright 回归 `frontend/e2e/workflow-media-preflight.spec.ts`，覆盖后端 422 预检失败、问题展示和不显示成功状态。
+- [x] 验证通过：Playwright 相关 8 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

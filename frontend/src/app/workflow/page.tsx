@@ -12,6 +12,7 @@ import { Select } from '@/components/ui/select';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import { ProductionStatusRail } from '@/components/production/production-status-rail';
+import { PreflightIssueList } from '@/components/production/preflight-issue-list';
 import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api-client';
 import {
@@ -2355,6 +2356,7 @@ function VideoStep({
   const router = useRouter();
   const [isGeneratingBatch, setIsGeneratingBatch] = useState(false);
   const [batchResult, setBatchResult] = useState<any>(null);
+  const [batchPreflightFailure, setBatchPreflightFailure] = useState<any>(null);
   const [storyBibles, setStoryBibles] = useState<any[]>([]);
   const [selectedStoryBibleId, setSelectedStoryBibleId] = useState('');
   const [useStoryBibleVoice, setUseStoryBibleVoice] = useState(true);
@@ -2408,6 +2410,7 @@ function VideoStep({
       return;
     }
     setIsGeneratingBatch(true);
+    setBatchPreflightFailure(null);
     try {
       const result = await apiClient.generateWorkflowMediaBatch(workflowId, {
         strategy: 'separate_video_tts',
@@ -2420,6 +2423,7 @@ function VideoStep({
         use_story_bible_voice: useStoryBibleVoice,
       });
       setBatchResult(result);
+      setBatchPreflightFailure(null);
       setWorkflowData((prev: WorkflowData) => ({
         ...prev,
         mediaJobIds: Array.from(new Set<string>([...(prev.mediaJobIds || []), ...(result.media_job_ids || [])])),
@@ -2436,7 +2440,12 @@ function VideoStep({
         type: 'success',
       });
     } catch (err: any) {
-      toast({ title: '批量直生音视频失败', description: err.message || '请稍后重试。', type: 'error' });
+      const detail = err?.detail;
+      if (detail?.code === 'generation_preflight_failed') {
+        setBatchPreflightFailure(detail);
+        setBatchResult(null);
+      }
+      toast({ title: '批量直生音视频失败', description: detail?.message || err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsGeneratingBatch(false);
     }
@@ -2479,6 +2488,27 @@ function VideoStep({
           </Button>
         </div>
       </div>
+
+      {batchPreflightFailure && (
+        <div
+          data-testid="workflow-media-preflight"
+          className="rounded border border-red-500/30 bg-red-500/10 p-3"
+        >
+          <div className="flex items-center gap-2 text-sm font-medium text-red-100">
+            <AlertCircle className="h-4 w-4" />
+            生成前预检未通过
+          </div>
+          <p className="mt-1 text-xs leading-5 text-red-100/70">
+            {batchPreflightFailure.message || `发现 ${batchPreflightFailure.blocking_issue_count || 0} 个阻断项，请处理后再批量生成。`}
+          </p>
+          <div className="mt-3">
+            <PreflightIssueList
+              issues={batchPreflightFailure.issues || []}
+              emptyText="未返回具体阻断项，请检查模型配置和镜头资产。"
+            />
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         <ModelCapabilitySelector

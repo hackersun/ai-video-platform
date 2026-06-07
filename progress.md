@@ -946,3 +946,10 @@
 - `/tts` 生成语音现在先调用 `apiClient.preflightGeneration()`，传入 `task_type=tts_dialogue`、音频模型配置和小说/章节/剧本/分镜/镜头链路。
 - 如果预检返回 `ready=false`，页面展示“生成前预检未通过”和具体阻断项，不再请求 `/tts/generate`，避免配音绕过模型验证与链路一致性规则。
 - 验证通过：Playwright `tts-preflight.spec.ts`、`tts-script-filter.spec.ts`、`video-generation-preflight.spec.ts`、`video-generation-history-backfill.spec.ts` 共 5 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 262 P1 Workflow 批量预检失败可见
+
+- 新增前端红灯回归 `frontend/e2e/workflow-media-preflight.spec.ts`：旧 `/workflow` 批量生成遇到后端 `generation_preflight_failed` 只 toast 模糊错误，页面不展示阻断详情。
+- `apiClient` 保留非 2xx 响应中的结构化 `detail`，同时维持原有 `err.message` 可读文本。
+- `/workflow` 批量生成视频和配音失败时，如果后端返回预检失败 detail，页面展示“生成前预检未通过”和具体阻断项，不再让用户猜是模型、资产锁、参考图还是链路问题。
+- 验证通过：Playwright `workflow-media-preflight.spec.ts`、`workflow-production-guidance.spec.ts`、`producer-next-action.spec.ts`、`tts-preflight.spec.ts`、`video-generation-preflight.spec.ts`、`video-generation-history-backfill.spec.ts` 共 8 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
