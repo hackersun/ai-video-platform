@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.synthesis_job import SynthesisJob
+from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
 from init_db import init_db
 from main import app
@@ -155,6 +156,49 @@ def _insert_video_job(job: VideoJob) -> None:
             await session.commit()
 
     asyncio.run(_insert())
+
+
+def _insert_tts_job(job: TTSJob) -> None:
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(job)
+            await session.commit()
+
+    asyncio.run(_insert())
+
+
+def _attach_source_preflight(
+    *,
+    video_job_ids: list[str],
+    tts_job_ids: list[str],
+) -> None:
+    async def _update() -> None:
+        async with AsyncSessionLocal() as session:
+            for index, job_id in enumerate(video_job_ids, start=1):
+                job = await session.get(VideoJob, job_id)
+                assert job is not None
+                extra = dict(job.extra_data or {})
+                extra["generation_preflight"] = {
+                    "ready": True,
+                    "blocking_issue_count": 0,
+                    "issues": [],
+                    "marker": f"video-preflight-{index}",
+                }
+                job.extra_data = extra
+            for index, job_id in enumerate(tts_job_ids, start=1):
+                job = await session.get(TTSJob, job_id)
+                assert job is not None
+                extra = dict(job.extra_data or {})
+                extra["generation_preflight"] = {
+                    "ready": index > 1,
+                    "blocking_issue_count": 0 if index > 1 else 1,
+                    "issues": [] if index > 1 else [{"code": "voice_not_locked", "message": "音色尚未锁定"}],
+                    "marker": f"tts-preflight-{index}",
+                }
+                job.extra_data = extra
+            await session.commit()
+
+    asyncio.run(_update())
 
 
 def _insert_synthesis_job(job: SynthesisJob) -> None:
@@ -872,6 +916,8 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
         assert tts_resp.status_code == 200
         tts_job_ids.append(tts_resp.json()["job_id"])
 
+    _attach_source_preflight(video_job_ids=video_job_ids, tts_job_ids=tts_job_ids)
+
     concat_resp = client.post(
         f"/api/v1/workflow/concatenate/{workflow_id}",
         json={
@@ -907,12 +953,18 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert extra["segments"][0]["lineage"]["chapter_id"] == chapter_id
     assert extra["segments"][0]["subtitle"]["enabled"] is True
     assert extra["segments"][1]["transition"]["style"] == "fade"
+    source_preflight = extra["generation_preflight"]
+    assert {source["job_id"] for source in source_preflight["sources"]} == set(video_job_ids + tts_job_ids)
+    assert extra["segments"][0]["video"]["generation_preflight"]["marker"] == "video-preflight-1"
+    assert extra["segments"][0]["audio"]["generation_preflight"]["issues"][0]["code"] == "voice_not_locked"
 
     manifest_resp = client.get(concat_payload["manifest_url"])
     assert manifest_resp.status_code == 200
     manifest = manifest_resp.json()
     assert manifest["segment_count"] == 2
     assert manifest["tracks"]["subtitle"][0]["text"] == "第 1 个镜头台词"
+    assert manifest["generation_preflight"]["sources"][0]["preflight"]["marker"] == "video-preflight-1"
+    assert manifest["segments"][0]["audio"]["generation_preflight"]["marker"] == "tts-preflight-1"
 
     workflow_status = client.get(
         f"/api/v1/workflow/status/{workflow_id}",
@@ -2110,6 +2162,73 @@ def test_synthesis_job_includes_video_tts_sources(client: TestClient, fake_synth
     job = next(job for job in jobs if job["id"] == payload["job_id"])
     assert job["video_job_id"] == "video-job-123"
     assert job["tts_job_id"] == "tts-job-456"
+
+
+def test_synthesis_create_propagates_source_generation_preflight(client: TestClient) -> None:
+    user_id = str(uuid4())
+    video_job_id = f"video-source-preflight-{uuid4()}"
+    tts_job_id = f"tts-source-preflight-{uuid4()}"
+    video_preflight = {
+        "ready": True,
+        "blocking_issue_count": 0,
+        "issues": [],
+        "marker": "source-video-preflight",
+    }
+    tts_preflight = {
+        "ready": False,
+        "blocking_issue_count": 1,
+        "issues": [{"code": "voice_not_locked", "message": "音色尚未锁定"}],
+        "marker": "source-tts-preflight",
+    }
+    _insert_video_job(
+        VideoJob(
+            id=video_job_id,
+            user_id=user_id,
+            task_id="video-task-source-preflight",
+            title="源视频",
+            prompt="源视频 prompt",
+            model_id="video-model",
+            model_name="视频模型",
+            status="succeeded",
+            progress=100,
+            video_url="https://example.com/source-video.mp4",
+            extra_data={"generation_preflight": video_preflight},
+        )
+    )
+    _insert_tts_job(
+        TTSJob(
+            id=tts_job_id,
+            user_id=user_id,
+            task_id="tts-task-source-preflight",
+            title="源配音",
+            text="沈砚: 我会查清铜铃的来历。",
+            voice="female-shaonv",
+            status="succeeded",
+            progress=100,
+            audio_url="https://example.com/source-audio.mp3",
+            extra_data={"generation_preflight": tts_preflight},
+        )
+    )
+
+    response = client.post(
+        "/api/v1/synthesis/create",
+        json={
+            "video_job_id": video_job_id,
+            "tts_job_id": tts_job_id,
+            "title": "来源证据合成",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["video_url"] == "https://example.com/source-video.mp4"
+    assert payload["audio_url"] == "https://example.com/source-audio.mp3"
+    source_preflight = payload["extra_data"]["generation_preflight"]
+    assert source_preflight["blocking_issue_count"] == 1
+    assert {source["job_id"] for source in source_preflight["sources"]} == {video_job_id, tts_job_id}
+    assert source_preflight["sources"][0]["preflight"]["marker"] == "source-video-preflight"
+    assert source_preflight["sources"][1]["preflight"]["issues"][0]["code"] == "voice_not_locked"
 
 
 def test_synthesis_jobs_filter_lineage_and_expose_render_artifacts(client: TestClient) -> None:

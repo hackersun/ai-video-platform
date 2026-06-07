@@ -1268,3 +1268,11 @@
 - [x] TTS 任务创建后、供应商调用前先写入模型配置、API 模型、供应商、音色来源和 Story Bible 证据，成功路径继续合并更新。
 - [x] 新增后端回归，覆盖已验证 TTS 配置、预检通过、MiniMax 供应商异常后失败任务仍可追溯预检摘要。
 - [x] 验证通过：新增测试先红后绿；`tests/test_p0_consistency_pipeline.py` 与 `test_tts_story_bible.py` 共 49 passed；后端 `compileall app` 通过。
+
+## 2026-06-06 Phase 271 P2 合成来源预检证据贯穿
+
+- [x] `/synthesis/create` 从 `video_job_id/tts_job_id` 解析媒体时同步读取来源任务的 `extra_data.generation_preflight`。
+- [x] `/workflow/concatenate/{workflow_id}` 多镜头成片的 segment、manifest 和 SynthesisJob 均写入来源视频/TTS 预检证据。
+- [x] 兼容旧接口：直接传 URL 且 job id 不存在时仍可合成，只在必须靠 job id 解析媒体 URL 时返回 404。
+- [x] 新增后端回归，覆盖普通合成和 workflow 连续成片的来源预检证据传播。
+- [x] 验证通过：新增测试先红后绿；`test_workflow_routes.py` 41 passed；后端 `compileall app` 通过。

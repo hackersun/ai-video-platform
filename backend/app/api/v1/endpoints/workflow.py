@@ -38,6 +38,51 @@ def _extra(job) -> dict:
     return job.extra_data if isinstance(job.extra_data, dict) else {}
 
 
+def _job_generation_preflight(job: Any) -> Optional[Dict[str, Any]]:
+    preflight = _extra(job).get("generation_preflight")
+    return dict(preflight) if isinstance(preflight, dict) else None
+
+
+def _source_preflight_entry(source_type: str, job: Any) -> Optional[Dict[str, Any]]:
+    preflight = _job_generation_preflight(job)
+    if preflight is None:
+        return None
+    return {
+        "source_type": source_type,
+        "job_id": job.id,
+        "task_id": getattr(job, "task_id", None),
+        "preflight": preflight,
+    }
+
+
+def _aggregate_source_preflight(sources: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not sources:
+        return None
+    issues: List[Dict[str, Any]] = []
+    blocking_issue_count = 0
+    ready = True
+    for source in sources:
+        preflight = source.get("preflight") if isinstance(source, dict) else None
+        if not isinstance(preflight, dict):
+            continue
+        if preflight.get("ready") is not True:
+            ready = False
+        blocking_issue_count += int(preflight.get("blocking_issue_count") or 0)
+        for issue in preflight.get("issues") or []:
+            if isinstance(issue, dict):
+                issues.append({
+                    **issue,
+                    "source_type": source.get("source_type"),
+                    "job_id": source.get("job_id"),
+                })
+    return {
+        "ready": ready and blocking_issue_count == 0,
+        "blocking_issue_count": blocking_issue_count,
+        "issues": issues,
+        "sources": sources,
+    }
+
+
 def _write_sequence_manifest(manifest_id: str, payload: Dict[str, Any]) -> str:
     export_dir = Path(__file__).resolve().parents[4] / "static" / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -2913,6 +2958,7 @@ async def concatenate_videos(
             tts_by_shot[tts_job.shot_id] = tts_job
 
     segments: List[Dict[str, Any]] = []
+    source_preflight_sources: List[Dict[str, Any]] = []
     current_time = 0.0
     first_project_id = ordered_video_jobs[0].project_id or _extra(ordered_video_jobs[0]).get("project_id")
     first_audio_url: Optional[str] = None
@@ -2926,6 +2972,7 @@ async def concatenate_videos(
 
     for index, video_job in enumerate(ordered_video_jobs):
         video_extra = _extra(video_job)
+        video_preflight = _job_generation_preflight(video_job)
         shot_id = _lineage_value(video_job, "shot_id")
         shot = shot_map.get(shot_id) if shot_id else None
         tts_job = tts_by_shot.get(shot_id) if shot_id else None
@@ -3030,11 +3077,27 @@ async def concatenate_videos(
             },
             "consistency": video_extra.get("consistency") or {},
         }
+        if video_preflight:
+            segment["video"]["generation_preflight"] = video_preflight
+            source_entry = _source_preflight_entry(
+                "direct_audio_video" if isinstance(video_job, MediaGenerationJob) else "video",
+                video_job,
+            )
+            if source_entry:
+                source_preflight_sources.append(source_entry)
+        if tts_job:
+            tts_preflight = _job_generation_preflight(tts_job)
+            if tts_preflight:
+                segment["audio"]["generation_preflight"] = tts_preflight
+                source_entry = _source_preflight_entry("tts", tts_job)
+                if source_entry:
+                    source_preflight_sources.append(source_entry)
         segments.append(segment)
         current_time += segment_duration
 
     total_duration = round(current_time, 3)
     synthesis_job_id = str(uuid4())
+    source_generation_preflight = _aggregate_source_preflight(source_preflight_sources)
     manifest_payload = {
         "id": synthesis_job_id,
         "type": "multi_shot_final_video_manifest",
@@ -3062,9 +3125,33 @@ async def concatenate_videos(
         "segments": segments,
         "created_at": utc_now().isoformat(),
     }
+    if source_generation_preflight:
+        manifest_payload["generation_preflight"] = source_generation_preflight
     manifest_url = _write_sequence_manifest(synthesis_job_id, manifest_payload)
     output_url = dev_synthesis_url(synthesis_job_id) if is_dev_mode() else None
     dev_complete = is_dev_mode()
+
+    synthesis_extra_data = {
+        "workflow_id": workflow_id,
+        "project_id": first_project_id,
+        **primary_lineage,
+        "video_job_ids": video_job_ids,
+        "media_job_ids": media_job_ids,
+        "tts_job_ids": request.tts_job_ids or [],
+        "segment_count": len(segments),
+        "duration_seconds": total_duration,
+        "manifest_url": manifest_url,
+        "output_url": output_url,
+        "render_backend": "local_manifest",
+        "render_status": "ready" if dev_complete else "pending_renderer",
+        "quality_profile": request.quality_profile,
+        "audio_mix_strategy": request.audio_mix_strategy,
+        "subtitle_mode": request.subtitle_mode,
+        "transition_style": request.transition_style,
+        "segments": segments,
+    }
+    if source_generation_preflight:
+        synthesis_extra_data["generation_preflight"] = source_generation_preflight
 
     synthesis_job = SynthesisJob(
         id=synthesis_job_id,
@@ -3082,25 +3169,7 @@ async def concatenate_videos(
         output_url=output_url,
         duration_seconds=total_duration,
         cost=0,
-        extra_data={
-            "workflow_id": workflow_id,
-            "project_id": first_project_id,
-            **primary_lineage,
-            "video_job_ids": video_job_ids,
-            "media_job_ids": media_job_ids,
-            "tts_job_ids": request.tts_job_ids or [],
-            "segment_count": len(segments),
-            "duration_seconds": total_duration,
-            "manifest_url": manifest_url,
-            "output_url": output_url,
-            "render_backend": "local_manifest",
-            "render_status": "ready" if dev_complete else "pending_renderer",
-            "quality_profile": request.quality_profile,
-            "audio_mix_strategy": request.audio_mix_strategy,
-            "subtitle_mode": request.subtitle_mode,
-            "transition_style": request.transition_style,
-            "segments": segments,
-        },
+        extra_data=synthesis_extra_data,
     )
     db.add(synthesis_job)
 

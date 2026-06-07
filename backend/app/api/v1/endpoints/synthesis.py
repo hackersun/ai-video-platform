@@ -249,6 +249,52 @@ def _first_lineage_value(extra_data: Dict[str, Any], key: str) -> Optional[str]:
     return sorted(values)[0] if values else None
 
 
+def _job_generation_preflight(job: Any) -> Optional[Dict[str, Any]]:
+    extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+    preflight = extra.get("generation_preflight")
+    return dict(preflight) if isinstance(preflight, dict) else None
+
+
+def _source_preflight_entry(source_type: str, job: Any) -> Optional[Dict[str, Any]]:
+    preflight = _job_generation_preflight(job)
+    if preflight is None:
+        return None
+    return {
+        "source_type": source_type,
+        "job_id": job.id,
+        "task_id": getattr(job, "task_id", None),
+        "preflight": preflight,
+    }
+
+
+def _aggregate_source_preflight(sources: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not sources:
+        return None
+    issues: List[Dict[str, Any]] = []
+    blocking_issue_count = 0
+    ready = True
+    for source in sources:
+        preflight = source.get("preflight") if isinstance(source, dict) else None
+        if not isinstance(preflight, dict):
+            continue
+        if preflight.get("ready") is not True:
+            ready = False
+        blocking_issue_count += int(preflight.get("blocking_issue_count") or 0)
+        for issue in preflight.get("issues") or []:
+            if isinstance(issue, dict):
+                issues.append({
+                    **issue,
+                    "source_type": source.get("source_type"),
+                    "job_id": source.get("job_id"),
+                })
+    return {
+        "ready": ready and blocking_issue_count == 0,
+        "blocking_issue_count": blocking_issue_count,
+        "issues": issues,
+        "sources": sources,
+    }
+
+
 def _synthesis_job_matches_filters(
     job: SynthesisJob,
     *,
@@ -313,39 +359,53 @@ async def resolve_media_urls(
     video_url = request.video_url
     audio_url = request.audio_url
     extra_data: Dict[str, Any] = {}
+    source_preflights: List[Dict[str, Any]] = []
 
     if request.video_job_id:
         extra_data["video_job_id"] = request.video_job_id
-        if not video_url:
-            result = await db.execute(
-                select(VideoJob).where(VideoJob.id == request.video_job_id, VideoJob.user_id == user_id)
-            )
-            video_job = result.scalar_one_or_none()
-            if not video_job:
+        result = await db.execute(
+            select(VideoJob).where(VideoJob.id == request.video_job_id, VideoJob.user_id == user_id)
+        )
+        video_job = result.scalar_one_or_none()
+        if not video_job:
+            if not video_url:
                 raise HTTPException(status_code=404, detail="视频任务不存在")
-            video_url = video_job.video_url
+        else:
+            if not video_url:
+                video_url = video_job.video_url
             extra_data["project_id"] = video_job.project_id
             extra_data["workflow_id"] = video_job.workflow_id
             extra_data["video_task_id"] = video_job.task_id
+            source_entry = _source_preflight_entry("video", video_job)
+            if source_entry:
+                source_preflights.append(source_entry)
 
     if request.tts_job_id:
         extra_data["tts_job_id"] = request.tts_job_id
-        if not audio_url:
-            result = await db.execute(
-                select(TTSJob).where(TTSJob.id == request.tts_job_id, TTSJob.user_id == user_id)
-            )
-            tts_job = result.scalar_one_or_none()
-            if not tts_job:
+        result = await db.execute(
+            select(TTSJob).where(TTSJob.id == request.tts_job_id, TTSJob.user_id == user_id)
+        )
+        tts_job = result.scalar_one_or_none()
+        if not tts_job:
+            if not audio_url:
                 raise HTTPException(status_code=404, detail="TTS任务不存在")
-            audio_url = tts_job.audio_url
+        else:
+            if not audio_url:
+                audio_url = tts_job.audio_url
             extra_data["project_id"] = extra_data.get("project_id") or tts_job.project_id
             extra_data["workflow_id"] = extra_data.get("workflow_id") or tts_job.workflow_id
             extra_data["tts_task_id"] = tts_job.task_id
+            source_entry = _source_preflight_entry("tts", tts_job)
+            if source_entry:
+                source_preflights.append(source_entry)
 
     if request.project_id:
         extra_data["project_id"] = request.project_id
     if request.workflow_id:
         extra_data["workflow_id"] = request.workflow_id
+    source_preflight = _aggregate_source_preflight(source_preflights)
+    if source_preflight:
+        extra_data["generation_preflight"] = source_preflight
 
     if not video_url:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="请选择已有视频任务或提供 video_url")

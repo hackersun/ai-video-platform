@@ -1008,3 +1008,10 @@
 - `/tts/generate` 现在在创建 `TTSJob` 后、调用供应商前写入初始 `extra_data`，包含预检摘要、模型配置、API 模型、供应商、音色来源和 Story Bible 信息。
 - 成功路径继续在收尾阶段合并预检摘要；失败路径提交失败任务时不会丢失生成前证据，历史页面可以解释“链路预检通过但供应商失败”。
 - 验证通过：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_p0_consistency_pipeline.py test_tts_story_bible.py -q` 49 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 271 P2 合成来源预检证据贯穿
+
+- 新增后端红灯回归：`/synthesis/create` 和 `/workflow/concatenate/{workflow_id}` 旧逻辑只保留源任务 ID，不传播源视频/TTS 的 `generation_preflight`。
+- `/synthesis/create` 现在即使请求已带媒体 URL，也会在 job id 存在时读取源任务预检摘要；若 job id 查不到但 URL 已提供，继续兼容旧的直接合成路径。
+- workflow 连续成片现在在每个 segment 的 `video/audio` 子对象写入来源预检摘要，并在 manifest 与 SynthesisJob `extra_data.generation_preflight.sources` 中汇总。
+- 验证通过：新增测试先红后绿；`DEV_MODE=true PYTHONPATH=. pytest -q test_workflow_routes.py -q` 41 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
