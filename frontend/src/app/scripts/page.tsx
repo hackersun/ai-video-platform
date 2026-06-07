@@ -64,6 +64,7 @@ interface Novel {
   id: string;
   title: string;
   description?: string;
+  genre?: string;
 }
 
 interface Chapter {
@@ -71,6 +72,16 @@ interface Chapter {
   novel_id?: string;
   title: string;
   chapter_number?: number;
+}
+
+interface GeneratedScriptDraft {
+  title: string;
+  description: string;
+  content: string;
+  genre?: string;
+  style?: string;
+  novel_id?: string;
+  chapter_id?: string;
 }
 
 const STATUS_LABELS = {
@@ -114,6 +125,7 @@ export default function ScriptsPage() {
   const [selectedChapterId, setSelectedChapterId] = useState('');
   const [customPrompt, setCustomPrompt] = useState('');
   const [generationResult, setGenerationResult] = useState<string | null>(null);
+  const [generatedScriptDraft, setGeneratedScriptDraft] = useState<GeneratedScriptDraft | null>(null);
   const [generationContext, setGenerationContext] = useState<any | null>(null);
   const [loadingGenerationContext, setLoadingGenerationContext] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Script | null>(null);
@@ -261,6 +273,7 @@ export default function ScriptsPage() {
     }
     setCustomPrompt('');
     setGenerationResult(null);
+    setGeneratedScriptDraft(null);
     setGenerationContext(null);
     setShowAIGenerateModal(true);
   };
@@ -303,6 +316,7 @@ export default function ScriptsPage() {
 
     setIsGenerating(true);
     setGenerationResult(null);
+    setGeneratedScriptDraft(null);
 
     try {
       if (aiGenerateType === 'from_novel') {
@@ -334,20 +348,38 @@ export default function ScriptsPage() {
         return;
       }
 
-      const response = await fetchWithAuth(`${API_BASE}/coding-plan/storyboard`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scene_description: customPrompt,
-          model_config_id: textModelConfigId || undefined,
-        }),
+      const contextNovelId = selectedFilterNovelId || selectedNovelId || undefined;
+      const contextChapterId = selectedFilterChapterId || selectedChapterId || undefined;
+      const contextNovel = novels.find((item) => item.id === contextNovelId);
+      const contextChapter = [...aiChapters, ...chapters].find((item) => item.id === contextChapterId);
+      const chapterTitle = contextChapter?.title?.trim();
+      const draftTitle = chapterTitle ? `${chapterTitle} 剧本` : '自定义剧本';
+      const draftGenre = formData.genre || contextNovel?.genre || '';
+      const draftStyle = formData.style || 'anime';
+
+      const result = await apiClient.assistScriptEdit({
+        title: draftTitle,
+        description: customPrompt.trim(),
+        content: customPrompt.trim(),
+        genre: draftGenre || undefined,
+        style: draftStyle,
+        mode: 'short_drama',
+        model_config_id: textModelConfigId || undefined,
       });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.detail || error.message || `AI 生成失败：HTTP ${response.status}`);
-      }
-      const result = await response.json();
-      setGenerationResult(result.storyboard || result.result || '生成成功');
+
+      const content = (result.content || customPrompt.trim()).trim();
+      const title = (result.title || draftTitle).trim();
+      const description = (result.description || customPrompt.trim()).trim().slice(0, 500);
+      setGenerationResult(content || `${title}\n${description}`);
+      setGeneratedScriptDraft({
+        title,
+        description,
+        content: content || description,
+        genre: draftGenre || undefined,
+        style: draftStyle,
+        novel_id: contextNovelId,
+        chapter_id: contextChapterId,
+      });
     } catch (err) {
       console.error('AI生成失败:', err);
       const message = err instanceof Error ? err.message : 'AI 生成失败';
@@ -366,8 +398,8 @@ export default function ScriptsPage() {
     }
 
     // 解析生成的剧本内容，创建新剧本
-    const title = generationResult.match(/^#\s+(.+)$/m)?.[1] || 'AI生成剧本';
-    const description = generationResult.split('---')[0].replace(/^#.*$/mg, '').trim().slice(0, 200);
+    const title = generatedScriptDraft?.title || generationResult.match(/^#\s+(.+)$/m)?.[1] || 'AI生成剧本';
+    const description = generatedScriptDraft?.description || generationResult.split('---')[0].replace(/^#.*$/mg, '').trim().slice(0, 200);
 
     setIsSaving(true);
     try {
@@ -375,11 +407,13 @@ export default function ScriptsPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: title,
-          description: description,
-          content: generationResult,
-          genre: '',
-          style: ''
+          novel_id: generatedScriptDraft?.novel_id,
+          chapter_id: generatedScriptDraft?.chapter_id,
+          title,
+          description,
+          content: generatedScriptDraft?.content || generationResult,
+          genre: generatedScriptDraft?.genre || undefined,
+          style: generatedScriptDraft?.style || undefined
         })
       });
 
@@ -969,7 +1003,7 @@ export default function ScriptsPage() {
                 onChange={setTextModelConfigId}
                 disabled={isGenerating}
                 title="剧本生成模型"
-                description="从章节改编剧本或自定义描述生成技术分镜时，都会使用这里选择的文本模型配置。"
+                description="从章节改编剧本或根据自定义描述生成剧本草稿时，都会使用这里选择的文本模型配置。"
               />
 
               {/* 选择小说 */}

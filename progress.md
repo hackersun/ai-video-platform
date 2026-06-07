@@ -908,3 +908,11 @@
 - 章节清空或切换时同步清空剧本、分镜、镜头，避免旧章节的下游选择残留。
 - 新增前端红绿回归 `tts-script-filter.spec.ts`：旧逻辑不带 `chapter_id` 导致红灯，修复后选择第二章只显示第二章剧本。
 - 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build && npx tsc --noEmit` 通过；Playwright `e2e/tts-script-filter.spec.ts` 1 passed。
+
+## 2026-06-06 Phase 257 P1 剧本 AI 自定义生成链路修复
+
+- 新增前端红灯回归 `frontend/e2e/scripts-ai-generation.spec.ts`：旧代码点击“AI生成剧本 / 自定义描述 / 开始生成”不会调用 `/scripts/ai-assist`，而是走技术分镜接口。
+- `/scripts` 自定义描述生成改走 `apiClient.assistScriptEdit(..., mode: 'short_drama')`，生成结果保存为剧本草稿，不再调用 `/coding-plan/storyboard`。
+- 自定义描述保存剧本时继承当前筛选/弹窗上下文中的 `novel_id/chapter_id`，并保留题材、风格和生成正文。
+- 修复模型能力识别兼容性：`model_type=text` 和 `capabilities=["text"]` 现在会被识别为文本模型，默认已验证文本配置能被选择并随剧本 AI 请求提交。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/scripts-ai-generation.spec.ts --project=chromium` 1 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build && PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

@@ -1147,3 +1147,23 @@
 - TTS 配音不能把同一本小说其他章节的剧本混入当前章节，避免角色台词、音色锁和字幕上下文错位。
 - 切换章节后所有下游创作对象必须重选，保证小说、章节、剧本、分镜、镜头链路一致。
 - 后端已支持 `chapter_id` 过滤，本阶段只补齐前端调用和回归测试，不扩展新接口。
+
+## 2026-06-06 Phase 257 P1 剧本 AI 自定义生成链路修复
+
+- [x] 修复 `/scripts` 的“AI生成剧本 / 自定义描述”误调用 `/coding-plan/storyboard` 的问题；自定义描述改走剧本 AI 辅助能力，不再生成技术分镜文本。
+- [x] 自定义生成后的“创建剧本”保留当前筛选小说、章节、题材和风格上下文，避免孤立剧本丢失章节链路。
+- [x] 文本模型能力识别兼容 `model_type=text` 与 `capabilities=["text"]`，已验证默认文本模型能在剧本生成请求中带出 `model_config_id`。
+- [x] 新增 Playwright 回归 `scripts-ai-generation.spec.ts`，覆盖自定义描述不访问技术分镜接口、走剧本 AI 辅助、保存时带 `novel_id/chapter_id`。
+- [x] 验证通过：前端 `tsc -> build -> tsc` 通过；后端 `compileall app` 通过；Playwright `scripts-ai-generation.spec.ts` 1 passed。
+
+## Phase 257 成功标准
+
+- “AI生成剧本”弹窗中的任何生成方式都不能访问技术分镜接口。
+- 自定义描述可以用于生成剧本草稿，并在保存时继承当前小说/章节上下文。
+- 前端模型能力选择必须能识别已配置、已验证的文本模型，并把默认模型配置传入 AI 请求。
+
+## 2026-06-06 Phase 258 P1 候选：视频历史回填镜头成片
+
+- [ ] 在 `/video-generation` 历史成功视频中增加“设为镜头视频”入口。
+- [ ] 成功历史任务可通过 `PUT /shots/{shot_id}` 回填 `video_url/video_status`，支撑旧任务迁移和人工挑选版本。
+- [ ] 新增 Playwright 回归，断言点击历史回填按钮会更新当前镜头。

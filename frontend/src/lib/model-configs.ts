@@ -68,7 +68,7 @@ export function isInternalTestModelConfig(config: Partial<SavedModelConfig> & Re
 
 export function getModelCapability(configOrModel: { model_type?: string; model_capabilities?: string[]; capabilities?: string[] }): ModelCapability {
   const modelType = (configOrModel.model_type || '').toLowerCase();
-  if (['chat', 'completion', 'text-generation', 'text_generation', 'llm', 'vision'].includes(modelType)) return 'text';
+  if (['chat', 'completion', 'text', 'text-generation', 'text_generation', 'llm', 'vision'].includes(modelType)) return 'text';
   if (['image', 'image-generation', 'image_generation'].includes(modelType)) return 'image';
   if (['tts', 'audio', 'speech'].includes(modelType)) return 'audio';
   if (['video', 'video-generation', 'video_generation'].includes(modelType)) return 'video';
@@ -79,7 +79,7 @@ export function getModelCapability(configOrModel: { model_type?: string; model_c
   if (capabilities.some(item => item.includes('text-to-video') || item.includes('video'))) return 'video';
   if (capabilities.some(item => item.includes('text-to-image') || item.includes('image'))) return 'image';
   if (capabilities.some(item => item.includes('embedding'))) return 'embedding';
-  if (capabilities.some(item => item.includes('chat') || item.includes('completion'))) return 'text';
+  if (capabilities.some(item => item === 'text' || item.includes('chat') || item.includes('completion'))) return 'text';
   return 'other';
 }
 
