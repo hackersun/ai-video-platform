@@ -133,5 +133,9 @@ test('workflow media batch shows preflight blockers returned by backend', async 
   await expect(page.getByTestId('workflow-media-preflight')).toContainText('生成前预检未通过');
   await expect(page.getByText('所选视频模型尚未验证通过')).toBeVisible();
   await expect(page.getByText('镜头缺少角色/场景/道具定稿资产锁')).toBeVisible();
+  await expect(page.getByTestId('workflow-media-preflight')).toContainText('处理位置：AI模型配置');
+  await expect(page.getByTestId('workflow-media-preflight').locator('a[href="/llm-config"]')).toContainText('去验证模型');
+  await expect(page.getByTestId('workflow-media-preflight')).toContainText('处理位置：资产库');
+  await expect(page.getByTestId('workflow-media-preflight').locator('a[href="/assets"]')).toContainText('去锁定资产');
   await expect(page.getByText('批量视频和配音已生成')).toHaveCount(0);
 });

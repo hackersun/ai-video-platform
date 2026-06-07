@@ -215,6 +215,8 @@ test('video generation shows consistency preflight blockers before submitting', 
   expect(videoGenerateCalls).toBe(0);
   await expect(page.getByTestId('video-generation-preflight')).toContainText('生成前预检未通过');
   await expect(page.getByText('角色参考图不是公网地址')).toBeVisible();
+  await expect(page.getByTestId('video-generation-preflight')).toContainText('处理位置：生产适配');
+  await expect(page.getByTestId('video-generation-preflight').locator('a[href="/production-adapters"]')).toContainText('去处理');
 });
 
 test('direct audio-video generation shows consistency preflight blockers before submitting', async ({ page }) => {
@@ -412,4 +414,6 @@ test('direct audio-video generation shows consistency preflight blockers before 
   expect(mediaGenerateCalls).toBe(0);
   await expect(page.getByTestId('video-generation-preflight')).toContainText('生成前预检未通过');
   await expect(page.getByText('镜头缺少角色/场景/道具定稿资产锁')).toBeVisible();
+  await expect(page.getByTestId('video-generation-preflight')).toContainText('处理位置：资产库');
+  await expect(page.getByTestId('video-generation-preflight').locator('a[href="/assets"]')).toContainText('去锁定资产');
 });
