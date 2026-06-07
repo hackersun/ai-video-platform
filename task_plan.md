@@ -1253,3 +1253,11 @@
 - [x] 生成失败时保留可见失败卡，展示当次模型和失败原因，方便用户定位额度、模型或接口问题。
 - [x] 新增 Playwright 回归 `frontend/e2e/producer-one-click-evidence.spec.ts`，覆盖成功和失败两条链路。
 - [x] 验证通过：Producer 相关 Playwright 回归 5 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
+
+## 2026-06-06 Phase 269 P1 Workflow 分步生成证据
+
+- [x] `/workflow` 的角色提取、剧本生成、分镜生成、连续成片、时间线同步新增页面内证据卡，不再只靠 toast。
+- [x] 证据卡展示所用文本/辅助模型、验证状态、生成 ID、镜头/片段数量、成片时长和失败原因。
+- [x] 剧本/分镜成功后即使自动跳转下一步，父级页面仍保留最近生成证据，避免证据随步骤组件卸载消失。
+- [x] 新增 Playwright 回归 `frontend/e2e/workflow-step-generation-evidence.spec.ts`，覆盖剧本成功、分镜失败和连续成片成功。
+- [x] 验证通过：Workflow/Producer 相关 Playwright 回归 7 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。

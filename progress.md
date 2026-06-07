@@ -994,3 +994,10 @@
 - 失败路径同样保留证据卡，展示当次文本模型和失败原因，用户不用再猜是模型额度、配置验证还是后端接口问题。
 - 验证通过：新增测试先红后绿；`producer-one-click-evidence.spec.ts`、`producer-batch-evidence.spec.ts`、`producer-next-action.spec.ts` 共 5 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
 - 环境备注：本机 nvm Node v18.20.8 会触发 Next SWC 签名加载失败；本阶段前端验证均使用 bundled Node `/Users/sunqinyue/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin`，构建和测试正常。
+
+## 2026-06-06 Phase 269 P1 Workflow 分步生成证据
+
+- 新增前端红灯回归 `frontend/e2e/workflow-step-generation-evidence.spec.ts`：旧 `/workflow` 的剧本生成、分镜生成失败和连续成片生成后没有稳定证据卡。
+- 新增 `WorkflowGenerationEvidenceCard`，统一展示生成状态、文本/辅助模型、验证状态、生成结果和失败原因。
+- 角色提取、剧本生成、分镜生成、连续成片、时间线同步均接入证据卡；剧本/分镜成功后会把证据提升到父页面，避免自动进入下一步时丢失。
+- 验证通过：新增测试先红后绿；`workflow-step-generation-evidence.spec.ts`、`workflow-media-preflight.spec.ts`、`workflow-production-guidance.spec.ts`、`producer-one-click-evidence.spec.ts` 共 7 passed；前端 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。

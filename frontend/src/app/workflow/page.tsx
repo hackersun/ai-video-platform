@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState, useEffect, useCallback, useRef } from 'react';
+import { Suspense, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,7 @@ import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api-client';
 import {
   getDefaultConfigForCapability,
+  modelStatusLabel,
   SavedModelConfig,
 } from '@/lib/model-configs';
 import {
@@ -178,6 +179,104 @@ type ReadinessItem = {
 
 type WorkflowPatchHandler = (patch: Partial<WorkflowData>, stepIndex?: number) => Promise<void>;
 
+type WorkflowModelSnapshot = {
+  name?: string;
+  provider?: string;
+  modelName?: string;
+  testStatus?: string | null;
+  isDefault?: boolean;
+};
+
+type WorkflowStepEvidence = {
+  status: 'running' | 'succeeded' | 'failed';
+  model?: WorkflowModelSnapshot | null;
+  secondaryModel?: WorkflowModelSnapshot | null;
+  message?: string;
+  error?: string;
+  resultLines?: string[];
+  updatedAt: string;
+};
+
+const snapshotModelConfig = (config?: SavedModelConfig | null): WorkflowModelSnapshot | null => {
+  if (!config) return null;
+  return {
+    name: config.name,
+    provider: config.provider_name || config.provider_id,
+    modelName: config.model_name || config.model_id,
+    testStatus: config.test_status,
+    isDefault: config.is_default,
+  };
+};
+
+function WorkflowGenerationEvidenceCard({
+  testId,
+  title,
+  evidence,
+}: {
+  testId: string;
+  title: string;
+  evidence: WorkflowStepEvidence | null;
+}) {
+  if (!evidence) return null;
+  return (
+    <div
+      data-testid={testId}
+      className={`rounded-lg border p-3 text-xs leading-5 ${
+        evidence.status === 'failed'
+          ? 'border-red-500/25 bg-red-500/10 text-red-50'
+          : evidence.status === 'succeeded'
+            ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-50'
+            : 'border-amber-500/25 bg-amber-500/10 text-amber-50'
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="font-medium text-white">{title}</div>
+        <Badge
+          variant="outline"
+          className={
+            evidence.status === 'failed'
+              ? 'border-red-400/30 text-red-100'
+              : evidence.status === 'succeeded'
+                ? 'border-emerald-400/30 text-emerald-100'
+                : 'border-amber-400/30 text-amber-100'
+          }
+        >
+          {evidence.status === 'failed' ? '生成失败' : evidence.status === 'succeeded' ? '生成完成' : '生成中'}
+        </Badge>
+      </div>
+      <div className="mt-2 grid gap-1 text-white/70 sm:grid-cols-2">
+        {evidence.model && (
+          <>
+            <div>
+              文本模型：{evidence.model.name || '未选择'}
+              {evidence.model.isDefault ? '（默认）' : ''}
+            </div>
+            <div>验证状态：{modelStatusLabel(evidence.model.testStatus)}</div>
+            {evidence.model.provider && <div>提供者：{evidence.model.provider}</div>}
+          </>
+        )}
+        {evidence.secondaryModel && (
+          <>
+            <div>
+              辅助模型：{evidence.secondaryModel.name || '未选择'}
+              {evidence.secondaryModel.isDefault ? '（默认）' : ''}
+            </div>
+            <div>辅助验证：{modelStatusLabel(evidence.secondaryModel.testStatus)}</div>
+          </>
+        )}
+        {evidence.resultLines?.map((line) => (
+          <div key={line} className="truncate">{line}</div>
+        ))}
+      </div>
+      {(evidence.error || evidence.message) && (
+        <div className={evidence.status === 'failed' ? 'mt-2 text-red-100/90' : 'mt-2 text-white/65'}>
+          {evidence.error || evidence.message}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function WorkflowPage() {
   return (
     <Suspense fallback={
@@ -216,6 +315,7 @@ function WorkflowPageContent() {
   const [previewStages, setPreviewStages] = useState<EpisodePreviewStage[]>(() => createInitialEpisodePreviewStages());
   const [previewResult, setPreviewResult] = useState<EpisodePreviewProductionResult | null>(null);
   const [isPreviewProducing, setIsPreviewProducing] = useState(false);
+  const [persistedStepEvidence, setPersistedStepEvidence] = useState<Record<string, WorkflowStepEvidence | null>>({});
   const maxAccessibleStep = getMaxAccessibleStep(workflowData, currentStep);
   const workflowDataRef = useRef(workflowData);
   const currentStepRef = useRef(currentStep);
@@ -274,6 +374,10 @@ function WorkflowPageContent() {
       console.error('保存工作流链路失败:', err);
     }
   }, [workflowId]);
+
+  const persistStepEvidence = useCallback((key: string, evidence: WorkflowStepEvidence | null) => {
+    setPersistedStepEvidence((prev) => ({ ...prev, [key]: evidence }));
+  }, []);
 
   // 创建新工作流
   const createWorkflow = async (title: string) => {
@@ -658,6 +762,21 @@ function WorkflowPageContent() {
           />
         )}
 
+        {(persistedStepEvidence.script || persistedStepEvidence.storyboard) && (
+          <div className="grid gap-3 md:grid-cols-2">
+            <WorkflowGenerationEvidenceCard
+              testId="workflow-step-evidence-script"
+              title="剧本生成证据"
+              evidence={persistedStepEvidence.script || null}
+            />
+            <WorkflowGenerationEvidenceCard
+              testId="workflow-step-evidence-storyboard"
+              title="分镜生成证据"
+              evidence={persistedStepEvidence.storyboard || null}
+            />
+          </div>
+        )}
+
         <Card className="border-violet-500/20 bg-violet-500/10">
           <CardContent className="p-4">
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
@@ -915,23 +1034,25 @@ function WorkflowPageContent() {
                       onTextModelConfigChange={setTextModelConfigId}
                       onImageModelConfigChange={setImageModelConfigId}
                     />
-                  )}
-                  {currentStep === 3 && (
+	                  )}
+	                  {currentStep === 3 && (
                     <ScriptStep
                       workflowData={workflowData}
                       onPatchWorkflow={persistWorkflowPatch}
                       modelConfigs={modelConfigs}
                       textModelConfigId={textModelConfigId}
                       onTextModelConfigChange={setTextModelConfigId}
+                      onPersistEvidence={(evidence) => persistStepEvidence('script', evidence)}
                     />
                   )}
-                  {currentStep === 4 && (
-                    <StoryboardStep
-                      workflowData={workflowData}
-                      onPatchWorkflow={persistWorkflowPatch}
+	                  {currentStep === 4 && (
+	                    <StoryboardStep
+	                      workflowData={workflowData}
+	                      onPatchWorkflow={persistWorkflowPatch}
                       modelConfigs={modelConfigs}
                       textModelConfigId={textModelConfigId}
                       onTextModelConfigChange={setTextModelConfigId}
+                      onPersistEvidence={(evidence) => persistStepEvidence('storyboard', evidence)}
                     />
                   )}
                   {currentStep === 5 && (
@@ -1742,6 +1863,15 @@ function CharacterStep({
   const [characters, setCharacters] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
+  const [extractEvidence, setExtractEvidence] = useState<WorkflowStepEvidence | null>(null);
+  const selectedTextModel = useMemo(
+    () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
+    [modelConfigs, textModelConfigId]
+  );
+  const selectedImageModel = useMemo(
+    () => modelConfigs.find((config) => config.id === imageModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'image') || null,
+    [modelConfigs, imageModelConfigId]
+  );
 
   const loadCharacters = useCallback(async () => {
     if (!workflowData.novelId) {
@@ -1774,8 +1904,17 @@ function CharacterStep({
       return;
     }
     setIsExtracting(true);
+    const model = snapshotModelConfig(selectedTextModel);
+    const imageModel = snapshotModelConfig(selectedImageModel);
+    setExtractEvidence({
+      status: 'running',
+      model,
+      secondaryModel: imageModel,
+      message: '正在从当前小说和章节提取角色，并按作用域绑定。',
+      updatedAt: new Date().toISOString(),
+    });
     try {
-      await apiClient.extractCharacters({
+      const result = await apiClient.extractCharacters({
         novel_id: workflowData.novelId,
         chapter_id: workflowData.chapterId,
         character_count: 12,
@@ -1784,8 +1923,27 @@ function CharacterStep({
         image_model_config_id: imageModelConfigId || undefined,
       });
       await loadCharacters();
+      const extractedCount = Array.isArray(result?.characters) ? result.characters.length : undefined;
+      setExtractEvidence({
+        status: 'succeeded',
+        model,
+        secondaryModel: imageModel,
+        resultLines: [
+          extractedCount !== undefined ? `角色 ${extractedCount}` : '角色已提取',
+          workflowData.chapterId ? `章节：${workflowData.chapterId}` : '',
+        ].filter(Boolean),
+        message: result?.message || '角色提取完成，已按当前小说/章节作用域加载。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: '角色提取完成', type: 'success' });
     } catch (err: any) {
+      setExtractEvidence({
+        status: 'failed',
+        model,
+        secondaryModel: imageModel,
+        error: err.message || '请稍后重试。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: 'AI 提取角色失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsExtracting(false);
@@ -1851,6 +2009,11 @@ function CharacterStep({
         description="开启自动头像时，角色外观图会使用该图像模型生成。"
         compact
       />
+      <WorkflowGenerationEvidenceCard
+        testId="workflow-step-evidence-character"
+        title="角色提取证据"
+        evidence={extractEvidence}
+      />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -1906,18 +2069,25 @@ function ScriptStep({
   modelConfigs,
   textModelConfigId,
   onTextModelConfigChange,
+  onPersistEvidence,
 }: {
   workflowData: WorkflowData;
   onPatchWorkflow: WorkflowPatchHandler;
   modelConfigs: SavedModelConfig[];
   textModelConfigId: string;
   onTextModelConfigChange: (configId: string) => void;
+  onPersistEvidence?: (evidence: WorkflowStepEvidence | null) => void;
 }) {
   const { toast } = useToast();
   const router = useRouter();
   const [scripts, setScripts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [scriptEvidence, setScriptEvidence] = useState<WorkflowStepEvidence | null>(null);
+  const selectedTextModel = useMemo(
+    () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
+    [modelConfigs, textModelConfigId]
+  );
 
   const loadScripts = useCallback(async () => {
     if (!workflowData.novelId && !workflowData.chapterId) {
@@ -1952,6 +2122,13 @@ function ScriptStep({
       return;
     }
     setIsGenerating(true);
+    const model = snapshotModelConfig(selectedTextModel);
+    setScriptEvidence({
+      status: 'running',
+      model,
+      message: '正在结合小说、章节、角色、事件和环境上下文生成剧本。',
+      updatedAt: new Date().toISOString(),
+    });
     try {
       const script = await apiClient.generateScript({
         chapter_id: workflowData.chapterId,
@@ -1960,8 +2137,26 @@ function ScriptStep({
       });
       setScripts(prev => [script, ...prev.filter(item => item.id !== script.id)]);
       await onPatchWorkflow({ scriptId: script.id, storyboardId: undefined, shotIds: [] }, 4);
+      const evidence: WorkflowStepEvidence = {
+        status: 'succeeded',
+        model,
+        resultLines: [
+          `剧本：${script.id}`,
+          script.title ? `标题：${script.title}` : '',
+        ].filter(Boolean),
+        message: script.message || '剧本已生成并绑定到当前工作流。',
+        updatedAt: new Date().toISOString(),
+      };
+      setScriptEvidence(evidence);
+      onPersistEvidence?.(evidence);
       toast({ title: '剧本已生成', type: 'success' });
     } catch (err: any) {
+      setScriptEvidence({
+        status: 'failed',
+        model,
+        error: err.message || '请稍后重试。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: 'AI 生成剧本失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsGenerating(false);
@@ -2019,6 +2214,11 @@ function ScriptStep({
         description="剧本生成会把章节正文、小说设定、角色、事件和环境上下文写进提示词。"
         compact
       />
+      <WorkflowGenerationEvidenceCard
+        testId="workflow-step-evidence-script"
+        title="剧本生成证据"
+        evidence={scriptEvidence}
+      />
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
@@ -2063,18 +2263,25 @@ function StoryboardStep({
   modelConfigs,
   textModelConfigId,
   onTextModelConfigChange,
+  onPersistEvidence,
 }: {
   workflowData: WorkflowData;
   onPatchWorkflow: WorkflowPatchHandler;
   modelConfigs: SavedModelConfig[];
   textModelConfigId: string;
   onTextModelConfigChange: (configId: string) => void;
+  onPersistEvidence?: (evidence: WorkflowStepEvidence | null) => void;
 }) {
   const { toast } = useToast();
   const router = useRouter();
   const [storyboards, setStoryboards] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [storyboardEvidence, setStoryboardEvidence] = useState<WorkflowStepEvidence | null>(null);
+  const selectedTextModel = useMemo(
+    () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
+    [modelConfigs, textModelConfigId]
+  );
 
   const loadStoryboards = useCallback(async () => {
     if (!workflowData.scriptId) {
@@ -2110,6 +2317,13 @@ function StoryboardStep({
       return;
     }
     setIsGenerating(true);
+    const model = snapshotModelConfig(selectedTextModel);
+    setStoryboardEvidence({
+      status: 'running',
+      model,
+      message: '正在把剧本拆成分镜、镜头、画面、对白和字幕信息。',
+      updatedAt: new Date().toISOString(),
+    });
     try {
       const storyboard = await apiClient.generateSmartStoryboard({
         novel_id: workflowData.novelId,
@@ -2126,8 +2340,28 @@ function StoryboardStep({
         storyboardId: storyboard.id,
         shotIds: (storyboard.shots || []).map((shot: any) => shot.id),
       }, 5);
+      const shotCount = storyboard.shot_count || storyboard.shots?.length || 0;
+      const evidence: WorkflowStepEvidence = {
+        status: 'succeeded',
+        model,
+        resultLines: [
+          `分镜：${storyboard.id}`,
+          storyboard.title ? `标题：${storyboard.title}` : '',
+          `镜头 ${shotCount}`,
+        ].filter(Boolean),
+        message: storyboard.message || '分镜已生成并绑定到当前工作流。',
+        updatedAt: new Date().toISOString(),
+      };
+      setStoryboardEvidence(evidence);
+      onPersistEvidence?.(evidence);
       toast({ title: '分镜已生成', type: 'success' });
     } catch (err: any) {
+      setStoryboardEvidence({
+        status: 'failed',
+        model,
+        error: err.message || '请稍后重试。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: 'AI 生成分镜失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsGenerating(false);
@@ -2190,6 +2424,11 @@ function StoryboardStep({
         title="分镜细化模型"
         description="智能分镜会先匹配模板，再用该文本模型细化画面、对白、镜头运动和字幕信息。"
         compact
+      />
+      <WorkflowGenerationEvidenceCard
+        testId="workflow-step-evidence-storyboard"
+        title="分镜生成证据"
+        evidence={storyboardEvidence}
       />
 
       {isLoading ? (
@@ -2679,6 +2918,8 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
   const [timelineResult, setTimelineResult] = useState<any>(null);
   const [timelineTracks, setTimelineTracks] = useState<any[]>([]);
   const [timelineClips, setTimelineClips] = useState<any[]>([]);
+  const [synthesisEvidence, setSynthesisEvidence] = useState<WorkflowStepEvidence | null>(null);
+  const [timelineEvidence, setTimelineEvidence] = useState<WorkflowStepEvidence | null>(null);
 
   useEffect(() => {
     apiClient.getExternalConfigs()
@@ -2707,6 +2948,11 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
     }
 
     setIsSynthesizing(true);
+    setSynthesisEvidence({
+      status: 'running',
+      message: '正在按镜头顺序编排视频、配音、字幕、转场和成片清单。',
+      updatedAt: new Date().toISOString(),
+    });
     try {
       const result = await apiClient.concatenateVideos(workflowId, {
         video_job_ids: workflowData.videoJobIds,
@@ -2720,9 +2966,24 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
         quality_profile: 'review',
       });
       setLastResult(result);
+      setSynthesisEvidence({
+        status: 'succeeded',
+        resultLines: [
+          `合成任务：${result.job_id}`,
+          `片段 ${result.segment_count || 0}`,
+          result.duration_seconds ? `${Math.round(result.duration_seconds)} 秒` : '',
+        ].filter(Boolean),
+        message: result.manifest_url ? `成片清单：${result.manifest_url}` : '连续成片清单已生成。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: '连续成片编排已完成', type: 'success' });
       onSynthesisComplete?.(result);
     } catch (err: any) {
+      setSynthesisEvidence({
+        status: 'failed',
+        error: err.message || '请稍后重试。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: '视频拼接失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsSynthesizing(false);
@@ -2810,6 +3071,11 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
       return;
     }
     setIsSyncingTimeline(true);
+    setTimelineEvidence({
+      status: 'running',
+      message: '正在把连续成片清单转换为可编辑视频轨、对白轨和字幕轨。',
+      updatedAt: new Date().toISOString(),
+    });
     try {
       const result = await apiClient.syncWorkflowTimeline(workflowId, {
         synthesis_job_id: synthesisJobId,
@@ -2819,8 +3085,22 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
       setTimelineResult(result);
       await loadEditableTimeline(result.timeline_id);
       onSynthesisComplete?.({ timeline_id: result.timeline_id, timeline_clip_count: result.clip_count });
+      setTimelineEvidence({
+        status: 'succeeded',
+        resultLines: [
+          `时间线：${result.timeline_id}`,
+          `片段 ${result.clip_count || 0}`,
+        ],
+        message: '时间线已同步，可继续精修片段、字幕和对白。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: '时间线已同步', description: `已生成 ${result.clip_count || 0} 个可编辑片段。`, type: 'success' });
     } catch (err: any) {
+      setTimelineEvidence({
+        status: 'failed',
+        error: err.message || '请稍后重试。',
+        updatedAt: new Date().toISOString(),
+      });
       toast({ title: '同步时间线失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsSyncingTimeline(false);
@@ -2867,6 +3147,12 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
           </Button>
         </div>
       </div>
+
+      <WorkflowGenerationEvidenceCard
+        testId="workflow-synthesis-evidence"
+        title="连续成片证据"
+        evidence={synthesisEvidence}
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div className="p-4 bg-white/5 border border-white/10 rounded-lg">
@@ -2949,6 +3235,12 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                 </Button>
               </div>
             </div>
+
+            <WorkflowGenerationEvidenceCard
+              testId="workflow-timeline-evidence"
+              title="时间线同步证据"
+              evidence={timelineEvidence}
+            />
 
             {timelineTracks.length > 0 && (
               <div className="mt-4 space-y-2">
