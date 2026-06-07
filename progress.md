@@ -979,3 +979,10 @@
 - 新增后端红灯回归：生产模式 `/media/generate` 直生音视频成功保存外部适配任务后，旧 `MediaGenerationJob.extra_data` 不包含 `generation_preflight`，前端历史证据卡没有真实数据。
 - `/media/generate` 现在在生产预检通过后把 `ready/issues/blocking_issue_count` 写入 `extra_data.generation_preflight`；DEV_MODE 和显式跳过预检的调试路径不额外伪造证据。
 - 验证通过：新增单测红绿通过；`test_p0_consistency_pipeline.py`、`test_media_subtitles.py`、`test_production_adapters.py::test_comfyui_media_job_preserves_adapter_payload_and_production_context` 共 27 passed；后端 `python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 267 P1 Producer 批量任务明细证据
+
+- 新增前端红灯回归 `frontend/e2e/producer-batch-evidence.spec.ts`：旧 `/producer` 点击最近批量任务只加载总进度，不请求 `/batch/{job_id}/items`，用户看不到哪个镜头失败、失败原因和产物任务。
+- `/producer` 的 `loadBatchJobProgress()` 现在同步加载批量任务明细；创建、暂停、恢复、重试后也刷新明细，避免状态和 item 列表脱节。
+- 批量任务进度卡新增“任务明细”列表，展示镜头、状态、产物任务 ID、产物地址和失败原因，方便个人/小团队直接定位要修的镜头。
+- 验证通过：`producer-batch-evidence.spec.ts` 1 passed；Producer/Workflow 相关 Playwright 回归 4 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过。

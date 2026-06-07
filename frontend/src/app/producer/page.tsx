@@ -739,9 +739,17 @@ function ProducerCenterContent() {
     try {
       const progress = await apiClient.getBatchJobProgress(jobId);
       setActiveBatchJob(progress);
+      try {
+        const itemsData = await apiClient.getBatchJobItems(jobId);
+        setBatchJobItems(Array.isArray(itemsData?.items) ? itemsData.items : []);
+      } catch (itemsErr: any) {
+        console.error('加载批量任务明细失败:', itemsErr);
+        setBatchJobItems([]);
+      }
       return progress;
     } catch (err: any) {
       console.error('加载批量任务进度失败:', err);
+      setBatchJobItems([]);
       return null;
     }
   }, []);
@@ -767,6 +775,11 @@ function ProducerCenterContent() {
         workflow_id: workflowId || undefined,
       });
       setActiveBatchJob(result);
+      if (result?.id) {
+        await loadBatchJobProgress(result.id);
+      } else {
+        setBatchJobItems([]);
+      }
       await loadBatchJobs();
       toast({
         title: '批量任务已创建',
@@ -784,10 +797,12 @@ function ProducerCenterContent() {
 
   const pauseBatchJob = async () => {
     if (!activeBatchJob) return;
+    const batchJobId = activeBatchJob.job_id || activeBatchJob.id;
+    if (!batchJobId) return;
     setLoadingAction('pause-batch');
     try {
-      await apiClient.pauseBatchJob(activeBatchJob.job_id);
-      await loadBatchJobProgress(activeBatchJob.job_id);
+      await apiClient.pauseBatchJob(batchJobId);
+      await loadBatchJobProgress(batchJobId);
       toast({ title: '已暂停批量任务', type: 'success' });
     } catch (err: any) {
       toast({ title: '暂停失败', description: err.message, type: 'error' });
@@ -798,10 +813,12 @@ function ProducerCenterContent() {
 
   const resumeBatchJob = async () => {
     if (!activeBatchJob) return;
+    const batchJobId = activeBatchJob.job_id || activeBatchJob.id;
+    if (!batchJobId) return;
     setLoadingAction('resume-batch');
     try {
-      await apiClient.resumeBatchJob(activeBatchJob.job_id);
-      await loadBatchJobProgress(activeBatchJob.job_id);
+      await apiClient.resumeBatchJob(batchJobId);
+      await loadBatchJobProgress(batchJobId);
       toast({ title: '已恢复批量任务', type: 'success' });
     } catch (err: any) {
       toast({ title: '恢复失败', description: err.message, type: 'error' });
@@ -812,10 +829,12 @@ function ProducerCenterContent() {
 
   const retryFailedBatchJob = async () => {
     if (!activeBatchJob) return;
+    const batchJobId = activeBatchJob.job_id || activeBatchJob.id;
+    if (!batchJobId) return;
     setLoadingAction('retry-batch');
     try {
-      await apiClient.retryFailedBatchJob(activeBatchJob.job_id);
-      await loadBatchJobProgress(activeBatchJob.job_id);
+      await apiClient.retryFailedBatchJob(batchJobId);
+      await loadBatchJobProgress(batchJobId);
       toast({ title: '已重试失败项', type: 'success' });
     } catch (err: any) {
       toast({ title: '重试失败', description: err.message, type: 'error' });
@@ -2016,6 +2035,47 @@ function ProducerCenterContent() {
                   <div className="text-xs text-white/50 text-center">
                     {activeBatchJob.message}
                   </div>
+                  {batchJobItems.length > 0 && (
+                    <div data-testid="producer-batch-items" className="mt-3 space-y-2">
+                      <div className="text-xs font-medium text-white/60">任务明细</div>
+                      <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                        {batchJobItems.map((item) => {
+                          const shot = shots.find((shotItem) => shotItem.id === item.shot_id);
+                          const shotLabel = shot?.shot_number ? `镜头 ${shot.shot_number}` : `镜头 ${item.shot_id}`;
+                          const outputUrl = item.video_url || item.audio_url || item.image_url;
+                          const jobId = item.video_job_id || item.tts_job_id || item.image_job_id;
+                          const statusText = item.status === 'succeeded' ? '已完成'
+                            : item.status === 'failed' ? '失败'
+                              : item.status === 'running' ? '生成中'
+                                : item.status === 'skipped' ? '已跳过'
+                                  : '待处理';
+                          return (
+                            <div key={item.id} className="rounded border border-white/10 bg-black/20 p-2 text-xs">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="font-medium text-white/80">{shotLabel}</div>
+                                <Badge variant="outline" className={
+                                  item.status === 'succeeded' ? 'border-emerald-500/25 text-emerald-300' :
+                                  item.status === 'failed' ? 'border-red-500/25 text-red-300' :
+                                  item.status === 'running' ? 'border-cyan-500/25 text-cyan-300' :
+                                  item.status === 'skipped' ? 'border-white/10 text-white/50' :
+                                  'border-amber-500/25 text-amber-300'
+                                }>
+                                  {statusText}
+                                </Badge>
+                              </div>
+                              {(jobId || outputUrl || item.error_message) && (
+                                <div className="mt-1 space-y-0.5 text-white/50">
+                                  {jobId && <div>产物任务：{jobId}</div>}
+                                  {outputUrl && <div className="truncate">产物地址：{outputUrl}</div>}
+                                  {item.error_message && <div className="text-red-200/80">失败原因：{item.error_message}</div>}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
