@@ -45,7 +45,7 @@ const VOLCANO_VOICES = [
 
 interface Novel { id: string; title: string; }
 interface Chapter { id: string; title: string; novel_id: string; }
-interface Script { id: string; title: string; novel_id?: string; }
+interface Script { id: string; title: string; novel_id?: string; chapter_id?: string; extra_data?: any; }
 interface Storyboard { id: string; title: string; script_id: string; }
 interface Shot {
   id: string; shot_number: number; prompt: string; dialogue?: string;
@@ -130,6 +130,9 @@ export default function TTSPage() {
     if (selectedChapter) {
       loadScripts(selectedChapter);
       setSelectedScript(''); setStoryboards([]); setSelectedStoryboard(''); setShots([]); setSelectedShot('');
+    } else {
+      setScripts([]); setSelectedScript('');
+      setStoryboards([]); setSelectedStoryboard(''); setShots([]); setSelectedShot('');
     }
   }, [selectedChapter]);
 
@@ -171,13 +174,17 @@ export default function TTSPage() {
       if (res.ok) setChapters(await res.json());
     } catch {}
   };
-  const loadScripts = async (_chapterId: string) => {
+  const loadScripts = async (chapterId: string) => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/scripts`);
+      const params = new URLSearchParams();
+      if (selectedNovel) params.set('novel_id', selectedNovel);
+      if (chapterId) params.set('chapter_id', chapterId);
+      const res = await fetchWithAuth(`${API_BASE}/scripts${params.toString() ? `?${params}` : ''}`);
       if (res.ok) {
         const data = await res.json();
         setScripts((Array.isArray(data) ? data : []).filter((script: Script) =>
-          !selectedNovel || script.novel_id === selectedNovel
+          (!selectedNovel || script.novel_id === selectedNovel) &&
+          (!chapterId || script.chapter_id === chapterId || script.extra_data?.chapter_id === chapterId)
         ));
       }
     } catch {}

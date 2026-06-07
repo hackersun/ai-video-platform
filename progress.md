@@ -900,3 +900,11 @@
 - 按钮文案改为“创建/复用本集工程”，让用户明确系统会优先接上已有工程。
 - 新增前端红绿回归：已有 `wf-existing` 时点击“创建/复用本集工程”不会调用 `/workflow/start`，失败前 `startWorkflowCalls=1`，修复后为 0。
 - 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build && npx tsc --noEmit` 通过；Playwright `e2e/producer-next-action.spec.ts e2e/workflow-production-guidance.spec.ts e2e/synthesis-history.spec.ts` 4 passed。
+
+## 2026-06-06 Phase 256 P1 TTS 章节剧本过滤
+
+- 修复 `/tts` 页面剧本加载只按小说过滤的问题；选择章节后现在请求 `/scripts?novel_id=...&chapter_id=...`，避免同小说其他章节剧本混入配音链路。
+- `Script` 前端类型补齐 `chapter_id` 和 `extra_data`；本地兜底过滤兼容 `script.chapter_id` 与旧数据 `script.extra_data.chapter_id`。
+- 章节清空或切换时同步清空剧本、分镜、镜头，避免旧章节的下游选择残留。
+- 新增前端红绿回归 `tts-script-filter.spec.ts`：旧逻辑不带 `chapter_id` 导致红灯，修复后选择第二章只显示第二章剧本。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build && npx tsc --noEmit` 通过；Playwright `e2e/tts-script-filter.spec.ts` 1 passed。
