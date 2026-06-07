@@ -1118,3 +1118,18 @@
 - AI 制片中心的新手路径能明确“下一步只做这一件事”，不会因为一次点击把多个安全动作全部执行导致用户难以理解状态变化。
 - 需要批量补齐时仍可使用独立“安全补齐/AI 补齐”入口，避免削弱自动化。
 - 该能力必须同时有后端行为测试和前端请求 payload 测试，防止以后按钮回退成 broad `auto_fix=true`。
+
+## 2026-06-06 Phase 255 P1 本集制片工程复用
+
+- [x] AI 制片中心的创建工程逻辑改为“创建/复用本集工程”：同一用户、同一小说、同一章节已有未归档 workflow 时优先复用，不再重复 `POST /workflow/start`。
+- [x] 复用已有 workflow 时，如果一键剧本/分镜生成返回了新的 `script_id/storyboard_id`，会通过 `updateWorkflowStep()` 挂载到已有工程，保持章节生产线唯一。
+- [x] “一键生成本集草片”和章节一键生产都复用同一 `createWorkflowRecord()` 幂等入口，避免脚本、分镜、镜头、字幕和视频散落到多个同章节工程。
+- [x] 前端按钮文案从“创建本集工程”改为“创建/复用本集工程”，降低用户误以为每次都新建的困惑。
+- [x] 新增 Playwright 回归：已有 `novel_id + chapter_id` workflow 时点击“创建/复用本集工程”不会调用 `/workflow/start`，并保持当前 workflow 为 `wf-existing`。
+- [x] 验证通过：前端 `tsc -> build -> tsc` 通过；Playwright `producer-next-action.spec.ts`、`workflow-production-guidance.spec.ts`、`synthesis-history.spec.ts` 共 4 passed。
+
+## Phase 255 成功标准
+
+- 同一本小说同一章节默认只有一条制片主线，减少角色、分镜、镜头、配音和视频生成结果分叉。
+- 用户仍可在工程下拉中选择已有工程；显式“创建/复用”优先复用，不隐藏执行结果。
+- 后续一键生产产物能挂到已有工程，而不是因为 `workflowId` 暂时为空就创建重复工程。

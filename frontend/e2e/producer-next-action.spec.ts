@@ -169,3 +169,127 @@ test('producer next action posts only the selected assistant action code', async
   expect(assistantRequests[0]).toEqual({ auto_fix: false });
   expect(assistantRequests[1]).toEqual({ auto_fix: true, action_code: 'build_production_pack' });
 });
+
+test('producer reuses an existing novel chapter workflow instead of creating a duplicate', async ({ page }) => {
+  let startWorkflowCalls = 0;
+
+  await page.route('**/api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname;
+
+    if (path === '/api/v1/novels') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'novel-001', title: '逆天至尊', genre: '玄幻', description: '少年逆境崛起。' }]),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/llm/configs') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+
+    if (path === '/api/v1/workflow' && route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{
+          workflow_id: 'wf-existing',
+          title: '逆天至尊 第一章 已有工程',
+          status: 'active',
+          current_step: 4,
+          novel_id: 'novel-001',
+          chapter_id: 'chapter-001',
+          script_id: 'script-001',
+          storyboard_id: 'storyboard-001',
+          video_job_ids: [],
+          tts_job_ids: [],
+          synthesis_job_ids: [],
+        }]),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/workflow/start') {
+      startWorkflowCalls += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ workflow_id: 'wf-duplicate' }),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/workflow/status/wf-existing') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          workflow_id: 'wf-existing',
+          title: '逆天至尊 第一章 已有工程',
+          status: 'active',
+          current_step: 4,
+          completed_steps: [1, 2, 3, 4],
+          novel_id: 'novel-001',
+          chapter_id: 'chapter-001',
+          script_id: 'script-001',
+          storyboard_id: 'storyboard-001',
+          video_jobs: [],
+          tts_jobs: [],
+          synthesis_jobs: [],
+        }),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/short-video/workflow/wf-existing/readiness') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          summary: { ready: false, score: 68, blocker_count: 0, warning_count: 1 },
+          recommendations: ['复用已有工程继续补齐。'],
+        }),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/chapters/novel/novel-001') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'chapter-001', title: '第一章 少年出山', chapter_number: 1, content: '少年踏入风雪。' }]),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/chapters/chapter-001/production-status') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ script_id: 'script-001', storyboard_id: 'storyboard-001', shot_count: 2 }),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/story-bibles') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+
+  await page.goto('/producer');
+  await page.getByRole('combobox').first().selectOption('novel-001');
+  await page.getByRole('combobox').nth(1).selectOption('chapter-001');
+  await expect(page.getByRole('combobox').nth(2)).toHaveValue('wf-existing');
+
+  await page.getByRole('button', { name: /创建\/复用本集工程/ }).click();
+
+  await page.waitForTimeout(500);
+  expect(startWorkflowCalls).toBe(0);
+  await expect(page.getByRole('combobox').nth(2)).toHaveValue('wf-existing');
+});

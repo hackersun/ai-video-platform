@@ -891,3 +891,12 @@
 - 新增后端回归 `test_ai_producer_assistant_executes_only_requested_safe_next_action`，覆盖只生成资产定稿包、不顺带写入 production contract。
 - 新增前端 E2E `producer-next-action.spec.ts`，通过 mock API 断言页面提交的第二次制片助手请求为 `{ auto_fix: true, action_code: 'build_production_pack' }`。
 - 验证通过：`DEV_MODE=true PYTHONPATH=. pytest -q test_production_control.py::test_ai_producer_assistant_executes_only_requested_safe_next_action -q` 1 passed；`DEV_MODE=true PYTHONPATH=. pytest -q test_production_control.py -q` 3 passed；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app && DEV_MODE=true PYTHONPATH=. pytest -q test_production_control.py test_workflow_routes.py` 43 passed；前端 `PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit && npm run build && npx tsc --noEmit` 通过；Playwright `e2e/producer-next-action.spec.ts e2e/workflow-production-guidance.spec.ts e2e/synthesis-history.spec.ts` 3 passed。
+
+## 2026-06-06 Phase 255 P1 本集制片工程复用
+
+- AI 制片中心 `createWorkflowRecord()` 改为幂等的“创建/复用本集工程”：同一小说、同一章节已有未归档 workflow 时优先复用，不再重复 `POST /workflow/start`。
+- 复用已有 workflow 时，如果一键生成返回了新的 `script_id/storyboard_id`，会通过 `updateWorkflowStep()` 挂载到已有工程，保持小说章节生产线连续。
+- `createWorkflowForSelection`、`runOneClickProduction`、`runPreviewProduction` 三条路径都复用同一幂等入口，减少剧本、分镜、镜头、配音和视频散落到多个同章节工程。
+- 按钮文案改为“创建/复用本集工程”，让用户明确系统会优先接上已有工程。
+- 新增前端红绿回归：已有 `wf-existing` 时点击“创建/复用本集工程”不会调用 `/workflow/start`，失败前 `startWorkflowCalls=1`，修复后为 0。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build && npx tsc --noEmit` 通过；Playwright `e2e/producer-next-action.spec.ts e2e/workflow-production-guidance.spec.ts e2e/synthesis-history.spec.ts` 4 passed。

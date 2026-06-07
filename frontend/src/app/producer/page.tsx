@@ -126,6 +126,11 @@ type ProducerResult = {
   [key: string]: any;
 };
 
+type WorkflowRecordResult = {
+  workflowId: string;
+  reused: boolean;
+};
+
 const statusLabels: Record<string, string> = {
   draft: '草稿',
   active: '进行中',
@@ -365,10 +370,35 @@ function ProducerCenterContent() {
     }
   }, []);
 
-  const createWorkflowRecord = async (links: { scriptId?: string; storyboardId?: string } = {}) => {
+  const createWorkflowRecord = async (links: { scriptId?: string; storyboardId?: string } = {}): Promise<WorkflowRecordResult> => {
     if (!selectedNovelId || !selectedChapterId) {
       toast({ title: '请先选择小说和章节', description: 'AI 制片工程必须绑定到具体小说章节。', type: 'info' });
-      return '';
+      return { workflowId: '', reused: false };
+    }
+    const reusableWorkflow = workflows.find((item) =>
+      item.workflow_id &&
+      item.novel_id === selectedNovelId &&
+      item.chapter_id === selectedChapterId &&
+      item.status !== 'archived'
+    );
+    if (reusableWorkflow?.workflow_id) {
+      const nextScriptId = links.scriptId || reusableWorkflow.script_id || '';
+      const nextStoryboardId = links.storyboardId || reusableWorkflow.storyboard_id || '';
+      if (links.scriptId || links.storyboardId) {
+        await apiClient.updateWorkflowStep(reusableWorkflow.workflow_id, {
+          current_step: nextStoryboardId ? Math.max(reusableWorkflow.current_step || 0, 6) : Math.max(reusableWorkflow.current_step || 0, 4),
+          completed_steps: nextStoryboardId ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4],
+          novel_id: selectedNovelId,
+          chapter_id: selectedChapterId,
+          script_id: nextScriptId,
+          storyboard_id: nextStoryboardId,
+        });
+      }
+      setWorkflowId(reusableWorkflow.workflow_id);
+      await loadWorkflows();
+      await refreshWorkflowStatus(reusableWorkflow.workflow_id);
+      await loadShortVideoReadiness(reusableWorkflow.workflow_id);
+      return { workflowId: reusableWorkflow.workflow_id, reused: true };
     }
     const result = await apiClient.startWorkflow({
       title: `${selectedNovel?.title || '小说'} · ${selectedChapter?.title || '章节'} 制片工程`,
@@ -381,7 +411,7 @@ function ProducerCenterContent() {
     await loadWorkflows();
     await refreshWorkflowStatus(result.workflow_id);
     await loadShortVideoReadiness(result.workflow_id);
-    return result.workflow_id;
+    return { workflowId: result.workflow_id, reused: false };
   };
 
   const runOneClickProduction = async (mode: 'script' | 'storyboard' | 'all') => {
@@ -428,12 +458,12 @@ function ProducerCenterContent() {
       // 更新生产状态
       await loadChapterProductionStatus(selectedChapterId);
       if (!workflowId && (result.script_id || result.storyboard_id)) {
-        const createdWorkflowId = await createWorkflowRecord({
+        const workflowRecord = await createWorkflowRecord({
           scriptId: result.script_id,
           storyboardId: result.storyboard_id,
         });
-        if (createdWorkflowId) {
-          setGenerationProgress('生成完成，本集工程已自动创建');
+        if (workflowRecord.workflowId) {
+          setGenerationProgress(workflowRecord.reused ? '生成完成，已挂载到已有本集工程' : '生成完成，本集工程已自动创建');
         }
       } else if (workflowId) {
         if (result.script_id || result.storyboard_id) {
@@ -578,8 +608,10 @@ function ProducerCenterContent() {
     setLoadingAction('create-workflow');
     setError(null);
     try {
-      await createWorkflowRecord();
-      toast({ title: '本集制片工程已创建', type: 'success' });
+      const result = await createWorkflowRecord();
+      if (result.workflowId) {
+        toast({ title: result.reused ? '已复用本集制片工程' : '本集制片工程已创建', type: 'success' });
+      }
     } catch (err: any) {
       const message = err.message || '创建工作流失败';
       setError(message);
@@ -596,10 +628,13 @@ function ProducerCenterContent() {
     setPreviewStages(createInitialEpisodePreviewStages());
     setError(null);
     try {
-      const activeWorkflowId = workflowId || await createWorkflowRecord({
+      const activeWorkflow = workflowId
+        ? { workflowId, reused: true }
+        : await createWorkflowRecord({
         scriptId: productionStatus?.script_id,
         storyboardId: productionStatus?.storyboard_id,
       });
+      const activeWorkflowId = activeWorkflow.workflowId;
       if (!activeWorkflowId) return;
       const result = await runEpisodePreviewProduction({
         workflowId: activeWorkflowId,
@@ -1109,7 +1144,7 @@ function ProducerCenterContent() {
                     disabled={!selectedNovelId || !selectedChapterId || Boolean(loadingAction)}
                   >
                     {loadingAction === 'create-workflow' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Workflow className="mr-2 h-4 w-4" />}
-                    创建本集工程
+                    创建/复用本集工程
                   </Button>
                   <Button
                     className="flex-1 bg-violet-600 hover:bg-violet-700"
