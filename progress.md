@@ -932,3 +932,10 @@
 - 如果预检返回 `ready=false`，页面停留在可操作状态，展示“生成前预检未通过”和后端返回的阻断项，不再请求 `/video/generate`。
 - 当前阶段只覆盖静音视频生成路径；直生音视频路径需要结合外部适配配置和字幕参数在后续阶段单独接入。
 - 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/video-generation-preflight.spec.ts e2e/video-generation-history-backfill.spec.ts --project=chromium` 2 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 260 P1 直生音视频生成前一致性预检
+
+- 新增前端红灯回归：切换到“直生音视频”后点击“生成音视频”，旧代码不会调用 `/consistency/preflight`。
+- `handleGenerateAudioVideo()` 现在先调用 `apiClient.preflightGeneration()`，传入 `task_type=direct_audio_video`、外部适配配置、参考图 URL 和小说/章节/剧本/分镜/镜头链路。
+- 如果预检返回阻断项，页面展示同一张“生成前预检未通过”卡片，不再请求 `/media/generate`，避免音视频直生绕过资产锁和参考图规则。
+- 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/video-generation-preflight.spec.ts e2e/video-generation-history-backfill.spec.ts --project=chromium` 3 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

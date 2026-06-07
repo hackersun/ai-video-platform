@@ -1184,3 +1184,11 @@
 - [x] 预检请求携带 `task_type/model_config_id/image_url/novel_id/chapter_id/script_id/storyboard_id/shot_id`，让后端可校验模型、参考图、链路和资产锁。
 - [x] 新增 Playwright 回归 `frontend/e2e/video-generation-preflight.spec.ts`，覆盖本地参考图阻断、问题展示和不提交视频任务。
 - [x] 验证通过：Playwright `video-generation-preflight.spec.ts` 与 `video-generation-history-backfill.spec.ts` 2 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 260 P1 直生音视频生成前一致性预检
+
+- [x] `/video-generation` 直生音视频路径在提交 `/media/generate` 前调用统一 `/consistency/preflight`。
+- [x] 预检使用 `task_type=direct_audio_video`，并携带外部适配配置、参考图和完整小说/章节/剧本/分镜/镜头链路。
+- [x] 预检阻断时展示同一套“生成前预检未通过”问题清单，不创建音视频直生任务。
+- [x] 扩展 Playwright 回归，覆盖直生音视频缺少定稿资产锁时不调用 `/media/generate`。
+- [x] 验证通过：Playwright `video-generation-preflight.spec.ts` 与 `video-generation-history-backfill.spec.ts` 3 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

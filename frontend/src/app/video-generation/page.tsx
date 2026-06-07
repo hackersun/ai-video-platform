@@ -959,8 +959,31 @@ function VideoGenerationPageInner() {
     setMediaJob(null);
     setSubtitleTrack(null);
     setSubtitleExportUrl(null);
+    setGenerationPreflight(null);
 
     try {
+      const referenceImageUrl = imageUrl?.trim();
+      const preflight = await apiClient.preflightGeneration({
+        task_type: 'direct_audio_video',
+        external_config_id: selectedExternalConfigId || undefined,
+        image_url: referenceImageUrl || undefined,
+        production_mode: !devModeEnabled,
+        require_public_reference_image: Boolean(referenceImageUrl),
+        novel_id: selectedNovel || undefined,
+        chapter_id: selectedChapter || undefined,
+        script_id: scriptId || undefined,
+        storyboard_id: storyboardId || undefined,
+        shot_id: currentShotId || undefined,
+      });
+      setGenerationPreflight(preflight);
+      if (preflight?.ready === false) {
+        const blockingCount = preflight.blocking_issue_count || preflight.issues?.length || 0;
+        setStatus('idle');
+        setError(`生成前预检未通过：发现 ${blockingCount} 个阻断项。`);
+        toast({ title: '生成前预检未通过', description: '请先处理下方阻断项，再提交生成。', type: 'error' });
+        return;
+      }
+
       const data = await apiClient.generateMedia({
         task_type: 'shot_audio_video',
         media_type: 'audio_video',
