@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { apiClient } from '@/lib/api-client';
+import { PreflightIssueList } from '@/components/production/preflight-issue-list';
 import {
   getConfigsByCapability,
   getDefaultConfigForCapability,
@@ -75,6 +77,7 @@ export default function TTSPage() {
   const [generating, setGenerating] = useState(false);
   const [currentAudio, setCurrentAudio] = useState<string | null>(null);
   const [currentSegments, setCurrentSegments] = useState<TTSSegment[]>([]);
+  const [generationPreflight, setGenerationPreflight] = useState<any>(null);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TTSJob[]>([]);
@@ -225,9 +228,27 @@ export default function TTSPage() {
       toast({ title: '请输入要转换的文本', type: 'info' });
       return;
     }
-    setGenerating(true); setError(null); setCurrentAudio(null); setCurrentSegments([]);
+    setGenerating(true); setError(null); setCurrentAudio(null); setCurrentSegments([]); setGenerationPreflight(null);
 
     try {
+      const preflight = await apiClient.preflightGeneration({
+        task_type: 'tts_dialogue',
+        model_config_id: selectedTTSConfig?.id || selectedModelConfigId || undefined,
+        production_mode: true,
+        novel_id: selectedNovel || undefined,
+        chapter_id: selectedChapter || undefined,
+        script_id: selectedScript || undefined,
+        storyboard_id: selectedStoryboard || undefined,
+        shot_id: selectedShot || undefined,
+      });
+      setGenerationPreflight(preflight);
+      if (preflight?.ready === false) {
+        const blockingCount = preflight.blocking_issue_count || preflight.issues?.length || 0;
+        setError(`生成前预检未通过：发现 ${blockingCount} 个阻断项。`);
+        toast({ title: '生成前预检未通过', description: '请先处理下方阻断项，再提交生成。', type: 'error' });
+        return;
+      }
+
       const res = await fetchWithAuth(`${API_BASE}/tts/generate`, {
         method: 'POST',
         body: JSON.stringify({
@@ -535,6 +556,23 @@ export default function TTSPage() {
                 <CardContent className="p-3 flex items-center gap-2">
                   <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
                   <p className="text-red-400 text-sm">{error}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {generationPreflight && (
+              <Card
+                data-testid="tts-generation-preflight"
+                className={generationPreflight.ready ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}
+              >
+                <CardContent className="p-3 space-y-2">
+                  <div className={generationPreflight.ready ? 'text-emerald-100 text-sm font-medium' : 'text-red-100 text-sm font-medium'}>
+                    {generationPreflight.ready ? '生成前预检通过' : '生成前预检未通过'}
+                  </div>
+                  <PreflightIssueList
+                    issues={generationPreflight.issues || []}
+                    emptyText="预检通过，可以提交生成。"
+                  />
                 </CardContent>
               </Card>
             )}

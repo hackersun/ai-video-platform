@@ -939,3 +939,10 @@
 - `handleGenerateAudioVideo()` 现在先调用 `apiClient.preflightGeneration()`，传入 `task_type=direct_audio_video`、外部适配配置、参考图 URL 和小说/章节/剧本/分镜/镜头链路。
 - 如果预检返回阻断项，页面展示同一张“生成前预检未通过”卡片，不再请求 `/media/generate`，避免音视频直生绕过资产锁和参考图规则。
 - 验证通过：`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx playwright test e2e/video-generation-preflight.spec.ts e2e/video-generation-history-backfill.spec.ts --project=chromium` 3 passed；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npx tsc --noEmit` 通过；`PATH=/opt/homebrew/opt/node@22/bin:$PATH npm run build` 通过；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 261 P1 TTS 生成前一致性预检
+
+- 新增前端红灯回归 `frontend/e2e/tts-preflight.spec.ts`：旧 `/tts` 点击“生成语音”不会调用 `/consistency/preflight`。
+- `/tts` 生成语音现在先调用 `apiClient.preflightGeneration()`，传入 `task_type=tts_dialogue`、音频模型配置和小说/章节/剧本/分镜/镜头链路。
+- 如果预检返回 `ready=false`，页面展示“生成前预检未通过”和具体阻断项，不再请求 `/tts/generate`，避免配音绕过模型验证与链路一致性规则。
+- 验证通过：Playwright `tts-preflight.spec.ts`、`tts-script-filter.spec.ts`、`video-generation-preflight.spec.ts`、`video-generation-history-backfill.spec.ts` 共 5 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。

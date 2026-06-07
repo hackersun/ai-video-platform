@@ -1192,3 +1192,11 @@
 - [x] 预检阻断时展示同一套“生成前预检未通过”问题清单，不创建音视频直生任务。
 - [x] 扩展 Playwright 回归，覆盖直生音视频缺少定稿资产锁时不调用 `/media/generate`。
 - [x] 验证通过：Playwright `video-generation-preflight.spec.ts` 与 `video-generation-history-backfill.spec.ts` 3 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
+
+## 2026-06-06 Phase 261 P1 TTS 生成前一致性预检
+
+- [x] `/tts` 语音生成在提交 `/tts/generate` 前调用统一 `/consistency/preflight`。
+- [x] 预检使用 `task_type=tts_dialogue`，并携带音频模型配置和完整小说/章节/剧本/分镜/镜头链路。
+- [x] 预检阻断时展示同一套“生成前预检未通过”问题清单，不创建 TTS 任务。
+- [x] 新增 Playwright 回归 `frontend/e2e/tts-preflight.spec.ts`，覆盖阻断项展示、请求参数和不调用 `/tts/generate`。
+- [x] 验证通过：Playwright 相关 5 passed；前端 `npx tsc --noEmit` 通过；前端 `npm run build` 通过；后端 `DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
