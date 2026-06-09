@@ -173,6 +173,26 @@ async def _skills_by_ids(db: AsyncSession, user_id: str, skill_ids: Iterable[str
     return list(result.scalars().all())
 
 
+async def active_prompt_skill_blocks(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    task: str,
+    context: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    result = await db.execute(
+        select(PromptSkill)
+        .where(
+            PromptSkill.task == task,
+            PromptSkill.is_active == True,
+            or_(PromptSkill.user_id == user_id, PromptSkill.is_builtin == True),
+        )
+        .order_by(PromptSkill.priority, PromptSkill.created_at)
+    )
+    blocks = [render_prompt_skill(skill, context) for skill in result.scalars().all()]
+    return [block for block in blocks if block]
+
+
 async def preview_prompt_skills(
     db: AsyncSession,
     user_id: str,

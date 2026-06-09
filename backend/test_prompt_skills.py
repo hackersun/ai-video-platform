@@ -81,3 +81,36 @@ def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:
     assert preview["skill_count"] == 1
     assert "技能约束: 使用冷蓝月光，避免脸型变化。" in preview["prompt"]
     assert "视频一致性约束:" in preview["prompt"]
+
+
+def test_story_bible_compose_prompt_uses_active_prompt_skills(client: TestClient) -> None:
+    user_id = f"prompt-skill-compose-user-{uuid4()}"
+    create_response = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "自动注入技能",
+            "task": "shot_video",
+            "stage": "consistency",
+            "content": "技能约束: 使用{tone}，避免{bad_case}。",
+            "variables": {"tone": "冷蓝光影", "bad_case": "角色服装漂移"},
+            "priority": 10,
+            "inject_position": "before_constraints",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert create_response.status_code == 201
+
+    compose_response = client.post(
+        "/api/v1/story-bibles/compose-prompt",
+        json={
+            "task": "shot_video",
+            "extra_context": {"tone": "冷蓝月光", "bad_case": "脸型变化"},
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert compose_response.status_code == 200
+    prompt = compose_response.json()["prompt"]
+    assert "技能约束: 使用冷蓝月光，避免脸型变化。" in prompt
+    assert prompt.index("技能约束: 使用冷蓝月光") < prompt.index("视频一致性约束:")

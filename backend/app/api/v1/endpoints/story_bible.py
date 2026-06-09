@@ -25,6 +25,7 @@ from app.services.entity_extraction_service import (
 )
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.prompt_composer import compose_generation_prompt
+from app.services.prompt_skill_service import active_prompt_skill_blocks
 from app.services.story_state_machine import (
     build_story_state_machine,
     check_story_state_machine,
@@ -1962,6 +1963,13 @@ async def compose_prompt(
         )
         characters = list(char_result.scalars().all())
 
+    skill_blocks = await active_prompt_skill_blocks(
+        db,
+        user_id,
+        task=request.task,
+        context=request.extra_context,
+    )
+
     prompt = compose_generation_prompt(
         task=request.task,
         shot=shot,
@@ -1969,6 +1977,7 @@ async def compose_prompt(
         characters=characters,
         project=project,
         extra_context=request.extra_context,
+        skill_blocks=skill_blocks,
     )
     return ComposePromptResponse(
         prompt=prompt,
