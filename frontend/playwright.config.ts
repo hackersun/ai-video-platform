@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const e2ePort = process.env.PLAYWRIGHT_PORT || '3100';
+const baseURL = `http://localhost:${e2ePort}`;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -8,7 +11,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'list',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     launchOptions: {
@@ -25,8 +28,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:3000/workflow',
+    command: `npm run dev -- -p ${e2ePort}`,
+    url: `${baseURL}/workflow`,
     reuseExistingServer: true,
     timeout: 120 * 1000,
   },

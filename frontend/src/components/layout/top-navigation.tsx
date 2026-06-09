@@ -23,7 +23,8 @@ import {
   ChevronDown,
   Wand2,
   PlugZap,
-  Workflow
+  Workflow,
+  MonitorPlay
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -35,6 +36,7 @@ const mainMenuItems = [
   { label: '剧本', path: '/scripts', icon: FileText },
   { label: '角色', path: '/characters', icon: Users },
   { label: '分镜', path: '/storyboards', icon: LayoutGrid },
+  { label: '创作工作台', path: '/studio', icon: MonitorPlay },
   { label: '工作流', path: '/workflow', icon: Workflow },
   { label: 'AI制片', path: '/producer', icon: Bot },
   { label: '视频生成', path: '/video-generation', icon: Video },
