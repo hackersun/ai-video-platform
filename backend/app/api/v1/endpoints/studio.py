@@ -5,14 +5,25 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
+from app.services.studio_actions import list_studio_actions, run_studio_action
 from app.services.studio_mode import policy_from_request
 from app.services.studio_snapshot import build_studio_snapshot
 
 router = APIRouter(tags=["创作工作台"])
+
+
+class StudioActionRequest(BaseModel):
+    code: str = Field(..., min_length=1)
+    params: Dict[str, Any] = Field(default_factory=dict)
+    mode: str = Field("production", pattern="^(test|production)$")
+    allow_test_bypass: bool = False
+    bypass_reason: Optional[str] = None
+    source_issue_code: Optional[str] = None
 
 
 @router.get("/workflows/{workflow_id}/snapshot", response_model=Dict[str, Any])
@@ -35,4 +46,38 @@ async def get_workflow_studio_snapshot(
             allow_test_bypass=allow_test_bypass,
             bypass_reason=bypass_reason,
         ),
+    )
+
+
+@router.get("/workflows/{workflow_id}/actions", response_model=Dict[str, Any])
+async def get_workflow_studio_actions(
+    workflow_id: str,
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """读取工作台最近返修动作和跳过审计。"""
+
+    return await list_studio_actions(db, user_id, workflow_id, limit=limit)
+
+
+@router.post("/workflows/{workflow_id}/actions", response_model=Dict[str, Any])
+async def execute_workflow_studio_action(
+    workflow_id: str,
+    request: StudioActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """执行受控返修动作；生产模式下不允许跳过阻断项。"""
+
+    return await run_studio_action(
+        db,
+        user_id,
+        workflow_id,
+        code=request.code,
+        params=request.params,
+        mode=request.mode,
+        allow_test_bypass=request.allow_test_bypass,
+        bypass_reason=request.bypass_reason,
+        source_issue_code=request.source_issue_code,
     )

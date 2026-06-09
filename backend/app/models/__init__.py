@@ -30,6 +30,7 @@ from app.models.subtitle import SubtitleTrack, SubtitleSegment
 from app.models.batch_job import BatchJob, BatchJobItem
 from app.models.template import Template
 from app.models.version import Version, VersionRule
+from app.models.studio_review import StudioRepairAction
 
 __all__ = [
     "LLMProvider",
@@ -70,4 +71,5 @@ __all__ = [
     "Template",
     "Version",
     "VersionRule",
+    "StudioRepairAction",
 ]
