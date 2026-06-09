@@ -24,7 +24,8 @@ import {
   Wand2,
   PlugZap,
   Workflow,
-  MonitorPlay
+  MonitorPlay,
+  MessageSquare
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -52,6 +53,7 @@ const toolMenuItems = [
   { label: '资产库', path: '/assets', icon: Images },
   { label: '实体库', path: '/entities', icon: Boxes },
   { label: '模板库', path: '/templates', icon: LayoutGrid },
+  { label: 'Prompt 技能', path: '/prompt-skills', icon: MessageSquare },
   { label: 'AI模型', path: '/llm-config', icon: Cpu },
   { label: '任务队列', path: '/jobs', icon: ListTodo },
 ];
