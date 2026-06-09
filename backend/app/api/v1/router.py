@@ -10,7 +10,7 @@ from app.api.v1.endpoints import (
     chapters, storyboards, shots, synthesis, tts,
     workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
     media, subtitles, short_video, production_control, graph, batch, templates, versions,
-    consistency, studio,
+    consistency, studio, prompt_skills,
 )
 
 api_router = APIRouter()
@@ -113,3 +113,6 @@ api_router.include_router(consistency.router, prefix="/consistency", tags=["一�
 
 # 统一创作工作台API
 api_router.include_router(studio.router, prefix="/studio", tags=["创作工作台"])
+
+# Prompt 技能配置API
+api_router.include_router(prompt_skills.router, prefix="/prompt-skills", tags=["Prompt 技能"])

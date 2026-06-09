@@ -38,6 +38,7 @@ def compose_generation_prompt(
     project: Optional[Any] = None,
     extra_context: Optional[Dict[str, Any]] = None,
     locked_assets: Optional[List[Dict]] = None,
+    skill_blocks: Optional[List[str]] = None,
 ) -> str:
     """Compose a deterministic prompt from consistency sources."""
     sections: List[str] = [f"任务: {task}"]
@@ -128,6 +129,10 @@ def compose_generation_prompt(
         for key, value in extra_context.items():
             if value is not None:
                 sections.append(f"- {key}: {value}")
+
+    if skill_blocks:
+        sections.append("Prompt技能约束:")
+        sections.extend(f"- {block}" for block in skill_blocks if block)
 
     if task == "shot_video":
         sections.append(

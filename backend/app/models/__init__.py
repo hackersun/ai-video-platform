@@ -31,6 +31,7 @@ from app.models.batch_job import BatchJob, BatchJobItem
 from app.models.template import Template
 from app.models.version import Version, VersionRule
 from app.models.studio_review import StudioRepairAction
+from app.models.prompt_skill import PromptSkill
 
 __all__ = [
     "LLMProvider",
@@ -72,4 +73,5 @@ __all__ = [
     "Version",
     "VersionRule",
     "StudioRepairAction",
+    "PromptSkill",
 ]
