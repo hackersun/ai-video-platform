@@ -11,6 +11,24 @@ from main import app
 from test_short_video_production import _auth_headers
 
 
+EXPECTED_STANDARD_TASKS = {
+    "novel_generation",
+    "chapter_writing",
+    "script_generation",
+    "storyboard_generation",
+    "shot_prompt",
+    "shot_video",
+    "character_image",
+    "scene_reference_image",
+    "prop_image",
+    "novel_cover",
+    "tts_dialogue",
+    "shot_audio_video",
+    "consistency_review",
+    "repair_suggestion",
+}
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _init_database() -> None:
     init_db()
@@ -30,6 +48,45 @@ def test_compose_generation_prompt_injects_skill_blocks_before_video_constraints
 
     assert "技能约束: 使用冷蓝光影，保持角色服装连续。" in prompt
     assert prompt.index("技能约束: 使用冷蓝光影") < prompt.index("视频一致性约束:")
+
+
+def test_builtin_prompt_skills_cover_core_ai_flow(client: TestClient) -> None:
+    user_id = f"prompt-skill-builtin-user-{uuid4()}"
+
+    list_response = client.get(
+        "/api/v1/prompt-skills",
+        headers=_auth_headers(user_id),
+    )
+
+    assert list_response.status_code == 200
+    items = list_response.json()["items"]
+    builtin_items = [item for item in items if item["is_builtin"]]
+    builtin_tasks = {item["task"] for item in builtin_items}
+
+    assert EXPECTED_STANDARD_TASKS.issubset(builtin_tasks)
+    for task in EXPECTED_STANDARD_TASKS:
+        task_items = [item for item in builtin_items if item["task"] == task]
+        assert len(task_items) == 1
+        skill = task_items[0]
+        assert skill["name"].strip()
+        assert skill["content"].strip()
+        assert skill["is_active"] is True
+        assert "标准" in skill["tags"]
+
+    preview_response = client.post(
+        "/api/v1/prompt-skills/preview",
+        json={
+            "task": "novel_cover",
+            "context": {"title": "星海试炼", "genre": "科幻冒险", "style": "电影感动漫"},
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert preview_response.status_code == 200
+    preview = preview_response.json()
+    assert preview["skill_count"] == 1
+    assert "封面" in preview["prompt"]
+    assert "星海试炼" in preview["prompt"]
 
 
 def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:
@@ -64,7 +121,10 @@ def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:
     )
     assert list_response.status_code == 200
     items = list_response.json()["items"]
-    assert [item["id"] for item in items] == [created["id"]]
+    by_id = {item["id"]: item for item in items}
+    assert created["id"] in by_id
+    assert "builtin-shot_video-standard" in by_id
+    assert by_id["builtin-shot_video-standard"]["is_builtin"] is True
 
     preview_response = client.post(
         "/api/v1/prompt-skills/preview",
@@ -211,3 +271,36 @@ def test_story_bible_compose_prompt_uses_active_prompt_skills(client: TestClient
     prompt = compose_response.json()["prompt"]
     assert "技能约束: 使用冷蓝月光，避免脸型变化。" in prompt
     assert prompt.index("技能约束: 使用冷蓝月光") < prompt.index("视频一致性约束:")
+
+
+def test_user_active_prompt_skill_overrides_builtin_prompt_skill(client: TestClient) -> None:
+    user_id = f"prompt-skill-override-user-{uuid4()}"
+    create_response = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "用户镜头视频标准",
+            "task": "shot_video",
+            "stage": "generation",
+            "content": "用户覆盖技能: 使用{tone}，只保留当前项目自定义规则。",
+            "variables": {"tone": "冷蓝光影"},
+            "priority": 1,
+            "inject_position": "before_constraints",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert create_response.status_code == 201
+
+    compose_response = client.post(
+        "/api/v1/story-bibles/compose-prompt",
+        json={
+            "task": "shot_video",
+            "extra_context": {"tone": "银蓝夜色"},
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert compose_response.status_code == 200
+    prompt = compose_response.json()["prompt"]
+    assert "用户覆盖技能: 使用银蓝夜色" in prompt
+    assert "标准镜头视频技能" not in prompt

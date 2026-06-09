@@ -23,6 +23,23 @@ const initialSkill = {
   tags: ['短剧', '一致性'],
 };
 
+const expectedTaskLabels = [
+  '小说创建',
+  '章节创建',
+  '剧本创建',
+  '分镜创建',
+  '镜头创建',
+  '镜头视频',
+  '头像/角色图',
+  '场景图',
+  '道具图',
+  '封面图',
+  '角色配音',
+  '音视频直生',
+  '一致性审查',
+  '返修建议',
+];
+
 test.beforeEach(async ({ page }) => {
   const userId = `prompt-skill-user-${Date.now()}`;
   const token = devToken(userId);
@@ -138,6 +155,17 @@ test('prompt skill page manages clone edit preview and activation flow', async (
 
   await expect(page.getByRole('heading', { name: 'Prompt 技能' })).toBeVisible();
   await expect(page.getByText('Prompt 技能会影响生成质量。修改后建议先用测试验证模式跑完整流程。')).toBeVisible();
+  await expect(page.getByRole('link', { name: '工作台' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开内容创作菜单' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开资产设定菜单' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开生产菜单' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开配置菜单' })).toBeVisible();
+
+  const taskLabels = await page.getByTestId('prompt-skill-task-select').locator('option').allTextContents();
+  for (const label of expectedTaskLabels) {
+    expect(taskLabels).toContain(label);
+  }
+
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
   await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue('技能约束: 使用{tone}，避免{bad_case}。');
 

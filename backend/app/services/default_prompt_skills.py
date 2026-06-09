@@ -1,0 +1,248 @@
+"""Built-in Prompt skills for the full novel-to-video creation flow."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models import PromptSkill
+
+SYSTEM_PROMPT_SKILL_USER_ID = "system"
+
+
+def _skill(
+    *,
+    task: str,
+    name: str,
+    description: str,
+    stage: str,
+    content: str,
+    priority: int,
+    variables: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "id": f"builtin-{task}-standard",
+        "user_id": SYSTEM_PROMPT_SKILL_USER_ID,
+        "name": name,
+        "description": description,
+        "task": task,
+        "stage": stage,
+        "content": content.strip(),
+        "variables": variables,
+        "priority": priority,
+        "inject_position": "before_constraints",
+        "version": 1,
+        "is_active": True,
+        "is_builtin": True,
+        "tags": ["标准", "内置", "全流程"],
+    }
+
+
+STANDARD_PROMPT_SKILLS: List[Dict[str, Any]] = [
+    _skill(
+        task="novel_generation",
+        name="标准小说创建技能",
+        description="从题材、受众和短剧化目标生成可持续拆章的小说设定。",
+        stage="content",
+        priority=10,
+        variables={"genre": "国风幻想", "audience": "短剧观众", "episode_count": "12"},
+        content="""
+标准小说创建技能：围绕「{genre}」题材，为「{audience}」创作适合后续动画短剧改编的小说。
+必须输出核心卖点、世界观、主角目标、主要矛盾、角色关系、章节走向和可视化风格提示。
+故事结构要便于拆分为约 {episode_count} 集，每章结尾保留清晰钩子，避免只写散文式气氛。
+""",
+    ),
+    _skill(
+        task="chapter_writing",
+        name="标准章节创建技能",
+        description="承接前后章节、状态机和 Story Bible 写出可分镜章节。",
+        stage="content",
+        priority=20,
+        variables={"chapter_goal": "推进主线冲突", "tone": "电影感动漫"},
+        content="""
+标准章节创建技能：本章目标是「{chapter_goal}」，语气保持「{tone}」。
+章节必须包含明确场景、出场角色、行动目标、冲突升级、关键道具或线索、结尾悬念。
+写作时保留可视化动作和对白信息，避免大段内心独白导致后续剧本和分镜无法执行。
+""",
+    ),
+    _skill(
+        task="script_generation",
+        name="标准剧本创建技能",
+        description="把章节改编成适合分镜、配音、字幕和视频生成的短剧剧本。",
+        stage="content",
+        priority=30,
+        variables={"format": "分场剧本", "duration": "60-90秒"},
+        content="""
+标准剧本创建技能：将章节改编为「{format}」，单集目标时长约 {duration}。
+剧本必须按场次组织，包含场景、人物、动作、对白、旁白、情绪节奏和转场提示。
+每段对白要短、可配音、可生成字幕；每个动作要能转成镜头，不写无法拍摄的抽象描述。
+""",
+    ),
+    _skill(
+        task="storyboard_generation",
+        name="标准分镜创建技能",
+        description="把剧本拆成镜头、对白、运镜、字幕和生产字段。",
+        stage="content",
+        priority=40,
+        variables={"shot_count": "6-10", "style": "电影感动漫"},
+        content="""
+标准分镜创建技能：基于剧本生成 {shot_count} 个连续镜头，整体风格为「{style}」。
+每个镜头必须包含景别、机位、运镜、主体动作、视觉焦点、情绪、光影、色彩、对白/旁白和字幕草稿。
+镜头之间要保持角色、场景、道具和事件状态连续，避免突然换装、换场或跳过关键动作。
+""",
+    ),
+    _skill(
+        task="shot_prompt",
+        name="标准镜头创建技能",
+        description="把分镜字段整理为可进入图像/视频模型的镜头提示词。",
+        stage="generation",
+        priority=50,
+        variables={"tone": "冷蓝月光", "aspect_ratio": "9:16"},
+        content="""
+标准镜头创建技能：将当前镜头整理为 {aspect_ratio} 竖屏短剧提示词，主色调「{tone}」。
+提示词要明确主体、动作、场景、镜头运动、光线、构图、情绪、字幕和禁止变化项。
+必须继承已锁定角色与资产视觉 DNA，不得新增未声明角色、无关道具或改变时代背景。
+""",
+    ),
+    _skill(
+        task="shot_video",
+        name="标准镜头视频技能",
+        description="生成单镜头视频时保持角色、资产、镜头运动和时长一致。",
+        stage="generation",
+        priority=60,
+        variables={"motion": "轻微推进", "duration": "4秒"},
+        content="""
+标准镜头视频技能：生成约 {duration} 的单镜头视频，运镜以「{motion}」为主。
+严格保持角色脸型、发型、服装、道具、场景结构、光影方向和色彩基调。
+视频只表现当前镜头动作，不跳切、不换人、不改变年龄和身份，不加入文字水印或无关镜头。
+""",
+    ),
+    _skill(
+        task="character_image",
+        name="标准头像/角色图技能",
+        description="生成头像、角色定稿图和多视图时锁定角色视觉 DNA。",
+        stage="asset",
+        priority=70,
+        variables={"view": "头像", "style": "电影感动漫"},
+        content="""
+标准头像/角色图技能：生成「{view}」角色资产，画风为「{style}」。
+只生成一个角色，保持性别、年龄感、脸型、发型、服装、标志道具和气质一致。
+背景保持简洁，不要生成多人、拼贴、多宫格、文字、水印或与小说无关的饰物。
+""",
+    ),
+    _skill(
+        task="scene_reference_image",
+        name="标准场景图技能",
+        description="生成单一连续空间的场景设定图。",
+        stage="asset",
+        priority=80,
+        variables={"scene_type": "主场景", "lighting": "自然光"},
+        content="""
+标准场景图技能：生成「{scene_type}」参考图，光线为「{lighting}」。
+画面必须是一个连续空间，明确时代、建筑结构、天气、光源方向、色彩基调和可行动区域。
+不要拼接多个地点，不要出现无关人物特写，后续镜头必须继承该场景空间结构。
+""",
+    ),
+    _skill(
+        task="prop_image",
+        name="标准道具图技能",
+        description="生成核心道具设定图并稳定材质、比例和特殊状态。",
+        stage="asset",
+        priority=90,
+        variables={"material": "金属与玉石", "state": "轻微发光"},
+        content="""
+标准道具图技能：生成单个核心道具，材质为「{material}」，状态为「{state}」。
+必须清楚呈现外形、纹理、比例、破损、发光颜色和使用方式。
+不要把多个无关物品拼在一起，不要生成文字、水印或与剧情无关的装饰。
+""",
+    ),
+    _skill(
+        task="novel_cover",
+        name="标准封面图技能",
+        description="根据小说题材、主角、世界观和卖点生成封面提示词。",
+        stage="asset",
+        priority=100,
+        variables={"title": "未命名作品", "genre": "幻想冒险", "style": "电影感动漫"},
+        content="""
+标准封面图技能：为《{title}》生成「{genre}」封面，整体画风为「{style}」。
+封面必须突出主角、核心冲突、世界观符号和商业可读性，构图适合竖版封面。
+不要生成真实文字、logo、水印、杂乱拼贴或与作品设定矛盾的人物和场景。
+""",
+    ),
+    _skill(
+        task="tts_dialogue",
+        name="标准角色配音技能",
+        description="把对白整理成适合 TTS 的短句、情绪和停顿。",
+        stage="production",
+        priority=110,
+        variables={"voice_style": "清晰自然", "emotion": "克制紧张"},
+        content="""
+标准角色配音技能：对白使用「{voice_style}」声音风格，情绪为「{emotion}」。
+每句台词要短、口语化、适合字幕显示；标注说话人、情绪、停顿和重音。
+保持角色音色、人设和关系一致，不把旁白、动作描述和角色台词混在同一句里。
+""",
+    ),
+    _skill(
+        task="shot_audio_video",
+        name="标准音视频直生技能",
+        description="用于支持有声视频模型的一体化镜头生成约束。",
+        stage="production",
+        priority=120,
+        variables={"duration": "4秒", "audio_mode": "对白优先"},
+        content="""
+标准音视频直生技能：生成约 {duration} 的有声镜头，音频策略为「{audio_mode}」。
+画面、对白、口型、字幕节奏和动作必须同步；不得让角色口型与台词错位。
+保持已锁定角色、场景、道具和故事状态，不插入无关镜头、旁白噪声或背景音乐喧宾夺主。
+""",
+    ),
+    _skill(
+        task="consistency_review",
+        name="标准一致性审查技能",
+        description="检查生成链路中的人物、场景、道具、剧情和生产约束。",
+        stage="review",
+        priority=130,
+        variables={"risk_focus": "角色漂移、资产缺失、剧情断裂"},
+        content="""
+标准一致性审查技能：重点检查「{risk_focus}」。
+审查必须指出问题位置、影响、阻断级别、是否可测试跳过，以及明确修复入口。
+生产模式下不得放行缺失资产锁、公网引用图、模型配置或镜头媒体的关键阻断项。
+""",
+    ),
+    _skill(
+        task="repair_suggestion",
+        name="标准返修建议技能",
+        description="把审查问题转成可执行返修动作和快捷入口。",
+        stage="review",
+        priority=140,
+        variables={"repair_depth": "最小可行修复"},
+        content="""
+标准返修建议技能：按「{repair_depth}」原则给出返修路径。
+每条建议必须包含修复目标、推荐动作、影响范围、快捷入口和验证方式。
+优先使用安全动作：补齐实体引用、应用资产锁、刷新生产合约、质量检查、媒体审计。
+""",
+    ),
+]
+
+
+async def ensure_standard_prompt_skills(db: AsyncSession) -> None:
+    """Create or refresh built-in Prompt skills without touching user clones."""
+    expected_ids = [item["id"] for item in STANDARD_PROMPT_SKILLS]
+    result = await db.execute(select(PromptSkill).where(PromptSkill.id.in_(expected_ids)))
+    existing = {skill.id: skill for skill in result.scalars().all()}
+    changed = False
+
+    for definition in STANDARD_PROMPT_SKILLS:
+        skill = existing.get(definition["id"])
+        if skill is None:
+            db.add(PromptSkill(**definition))
+            changed = True
+            continue
+        for key, value in definition.items():
+            if getattr(skill, key) != value:
+                setattr(skill, key, value)
+                changed = True
+
+    if changed:
+        await db.commit()

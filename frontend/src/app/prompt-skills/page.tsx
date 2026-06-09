@@ -21,10 +21,20 @@ import {
 } from '@/lib/prompt-skills-api';
 
 const taskOptions = [
+  { value: 'novel_generation', label: '小说创建' },
+  { value: 'chapter_writing', label: '章节创建' },
+  { value: 'script_generation', label: '剧本创建' },
+  { value: 'storyboard_generation', label: '分镜创建' },
+  { value: 'shot_prompt', label: '镜头创建' },
   { value: 'shot_video', label: '镜头视频' },
-  { value: 'character_image', label: '角色定稿图' },
-  { value: 'storyboard', label: '分镜生成' },
-  { value: 'tts_dialogue', label: '对白配音' },
+  { value: 'character_image', label: '头像/角色图' },
+  { value: 'scene_reference_image', label: '场景图' },
+  { value: 'prop_image', label: '道具图' },
+  { value: 'novel_cover', label: '封面图' },
+  { value: 'tts_dialogue', label: '角色配音' },
+  { value: 'shot_audio_video', label: '音视频直生' },
+  { value: 'consistency_review', label: '一致性审查' },
+  { value: 'repair_suggestion', label: '返修建议' },
 ];
 
 const defaultContext = {

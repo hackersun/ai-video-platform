@@ -10,6 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import PromptSkill
+from app.services.default_prompt_skills import ensure_standard_prompt_skills
 from app.services.prompt_composer import compose_generation_prompt
 
 
@@ -81,6 +82,22 @@ async def list_prompt_skills(
     stage: Optional[str] = None,
     active: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    await ensure_standard_prompt_skills(db)
+    if active is True and task:
+        user_query = (
+            select(PromptSkill)
+            .where(
+                PromptSkill.user_id == user_id,
+                PromptSkill.task == task,
+                PromptSkill.is_active == True,
+                PromptSkill.is_builtin == False,
+            )
+            .order_by(PromptSkill.priority, PromptSkill.created_at)
+        )
+        user_skills = list((await db.execute(user_query)).scalars().all())
+        if user_skills:
+            return {"items": [prompt_skill_payload(skill) for skill in user_skills], "count": len(user_skills)}
+
     query = select(PromptSkill).where(or_(PromptSkill.user_id == user_id, PromptSkill.is_builtin == True))
     if task:
         query = query.where(PromptSkill.task == task)
@@ -208,6 +225,7 @@ async def clone_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> D
 
 
 async def _skills_by_ids(db: AsyncSession, user_id: str, skill_ids: Iterable[str]) -> List[PromptSkill]:
+    await ensure_standard_prompt_skills(db)
     ids = [skill_id for skill_id in skill_ids if skill_id]
     if not ids:
         return []
@@ -229,16 +247,32 @@ async def active_prompt_skill_entries(
     task: str,
     context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    result = await db.execute(
+    await ensure_standard_prompt_skills(db)
+    user_result = await db.execute(
         select(PromptSkill)
         .where(
             PromptSkill.task == task,
             PromptSkill.is_active == True,
-            or_(PromptSkill.user_id == user_id, PromptSkill.is_builtin == True),
+            PromptSkill.user_id == user_id,
+            PromptSkill.is_builtin == False,
         )
         .order_by(PromptSkill.priority, PromptSkill.created_at)
     )
-    entries = [rendered_prompt_skill_entry(skill, context) for skill in result.scalars().all()]
+    user_skills = list(user_result.scalars().all())
+    if user_skills:
+        entries = [rendered_prompt_skill_entry(skill, context) for skill in user_skills]
+        return [entry for entry in entries if entry["content"]]
+
+    builtin_result = await db.execute(
+        select(PromptSkill)
+        .where(
+            PromptSkill.task == task,
+            PromptSkill.is_active == True,
+            PromptSkill.is_builtin == True,
+        )
+        .order_by(PromptSkill.priority, PromptSkill.created_at)
+    )
+    entries = [rendered_prompt_skill_entry(skill, context) for skill in builtin_result.scalars().all()]
     return [entry for entry in entries if entry["content"]]
 
 
