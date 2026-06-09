@@ -10,7 +10,7 @@ from app.api.v1.endpoints import (
     chapters, storyboards, shots, synthesis, tts,
     workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
     media, subtitles, short_video, production_control, graph, batch, templates, versions,
-    consistency,
+    consistency, studio,
 )
 
 api_router = APIRouter()
@@ -110,3 +110,6 @@ api_router.include_router(versions.router, prefix="", tags=["版本管理"])
 
 # 一致性检查API
 api_router.include_router(consistency.router, prefix="/consistency", tags=["一致性检查"])
+
+# 统一创作工作台API
+api_router.include_router(studio.router, prefix="/studio", tags=["创作工作台"])
