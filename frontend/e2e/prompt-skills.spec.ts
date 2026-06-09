@@ -19,6 +19,7 @@ const initialSkill = {
   inject_position: 'before_constraints',
   version: 1,
   is_active: true,
+  is_builtin: false,
   tags: ['短剧', '一致性'],
 };
 
@@ -35,32 +36,89 @@ test.beforeEach(async ({ page }) => {
   }, { authToken: token, authUserId: userId });
 });
 
-test('prompt skill page creates and previews skills', async ({ page }) => {
+test('prompt skill page manages clone edit preview and activation flow', async ({ page }) => {
   let created = false;
-  let previewRequested = false;
+  let previewRequestedSkillIds: string[] = [];
+  let activatedSkillId = '';
+  let skills = [initialSkill];
 
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '');
     if (path === '/api/v1/prompt-skills' && route.request().method() === 'GET') {
+      const task = url.searchParams.get('task');
+      const items = task ? skills.filter((skill) => skill.task === task) : skills;
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ items: created ? [initialSkill, { ...initialSkill, id: 'skill-002', name: '面部一致性' }] : [initialSkill], count: created ? 2 : 1 }),
+        body: JSON.stringify({ items, count: items.length }),
       });
       return;
     }
     if (path === '/api/v1/prompt-skills' && route.request().method() === 'POST') {
+      const payload = route.request().postDataJSON();
       created = true;
+      const createdSkill = {
+        ...initialSkill,
+        ...payload,
+        id: 'skill-002',
+        version: 1,
+        is_builtin: false,
+      };
+      skills = skills.map((skill) => ({ ...skill, is_active: false })).concat(createdSkill);
       await route.fulfill({
         status: 201,
         contentType: 'application/json',
-        body: JSON.stringify({ ...initialSkill, id: 'skill-002', name: '面部一致性', content: '技能约束: 保持脸型稳定。' }),
+        body: JSON.stringify(createdSkill),
+      });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills/skill-001/clone' && route.request().method() === 'POST') {
+      const clonedSkill = {
+        ...initialSkill,
+        id: 'skill-clone-001',
+        name: '冷蓝短剧一致性 副本',
+        is_active: false,
+        version: 1,
+      };
+      skills = skills.concat(clonedSkill);
+      await route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify(clonedSkill),
+      });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills/skill-clone-001' && route.request().method() === 'PUT') {
+      const payload = route.request().postDataJSON();
+      const updatedSkill = {
+        ...skills.find((skill) => skill.id === 'skill-clone-001')!,
+        ...payload,
+        version: 2,
+      };
+      skills = skills.map((skill) => (skill.id === 'skill-clone-001' ? updatedSkill : skill));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(updatedSkill),
+      });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills/skill-clone-001/activate' && route.request().method() === 'POST') {
+      activatedSkillId = 'skill-clone-001';
+      skills = skills.map((skill) => ({
+        ...skill,
+        is_active: skill.id === activatedSkillId,
+      }));
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(skills.find((skill) => skill.id === activatedSkillId)),
       });
       return;
     }
     if (path === '/api/v1/prompt-skills/preview') {
-      previewRequested = true;
+      previewRequestedSkillIds = route.request().postDataJSON().skill_ids || [];
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -79,16 +137,35 @@ test('prompt skill page creates and previews skills', async ({ page }) => {
   await page.goto('/prompt-skills');
 
   await expect(page.getByRole('heading', { name: 'Prompt 技能' })).toBeVisible();
+  await expect(page.getByText('Prompt 技能会影响生成质量。修改后建议先用测试验证模式跑完整流程。')).toBeVisible();
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
+  await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue('技能约束: 使用{tone}，避免{bad_case}。');
 
-  await page.getByPlaceholder('例如：面部一致性').fill('面部一致性');
-  await page.getByPlaceholder('输入可复用的 Prompt 技能内容').fill('技能约束: 保持脸型稳定。');
-  await page.getByRole('button', { name: '保存技能' }).click();
+  await page.getByRole('button', { name: '新建' }).click();
+  await page.getByTestId('prompt-skill-name-input').fill('面部一致性');
+  await page.getByTestId('prompt-skill-content-input').fill('技能约束: 保持脸型稳定。');
+  await page.getByTestId('prompt-skill-save').click();
 
   await expect(page.getByText('面部一致性')).toBeVisible();
   expect(created).toBe(true);
 
-  await page.getByRole('button', { name: '预览 Prompt' }).click();
+  await page.getByTestId('prompt-skill-card-skill-001').click();
+  await page.getByRole('button', { name: '克隆技能' }).click();
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('冷蓝短剧一致性 副本');
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('未激活');
+
+  await page.getByTestId('prompt-skill-name-input').fill('回滚镜头技能');
+  await page.getByTestId('prompt-skill-content-input').fill('回滚技能: 使用{tone}，避免{bad_case}。');
+  await page.getByTestId('prompt-skill-save').click();
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('回滚镜头技能');
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('v2');
+
+  await page.getByTestId('prompt-skill-preview').click();
   await expect(page.getByText('技能约束: 使用冷蓝月光，避免脸型变化。')).toBeVisible();
-  expect(previewRequested).toBe(true);
+  expect(previewRequestedSkillIds).toEqual(['skill-clone-001']);
+
+  await page.getByTestId('prompt-skill-activate').click();
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('当前激活');
+  await expect(page.getByTestId('prompt-skill-card-skill-001')).toContainText('未激活');
+  expect(activatedSkillId).toBe('skill-clone-001');
 });

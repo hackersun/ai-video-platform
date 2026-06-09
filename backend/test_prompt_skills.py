@@ -83,6 +83,103 @@ def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:
     assert "视频一致性约束:" in preview["prompt"]
 
 
+def test_prompt_skill_clone_edit_activate_keeps_one_active_per_task(client: TestClient) -> None:
+    user_id = f"prompt-skill-activate-user-{uuid4()}"
+
+    first_response = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "基础镜头技能",
+            "task": "shot_video",
+            "stage": "consistency",
+            "content": "基础技能: {tone}",
+            "variables": {"tone": "冷蓝光影"},
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert first_response.status_code == 201
+    first = first_response.json()
+
+    second_response = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "新版镜头技能",
+            "task": "shot_video",
+            "stage": "consistency",
+            "content": "新版技能: {tone}",
+            "variables": {"tone": "冷蓝月光"},
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert second_response.status_code == 201
+    second = second_response.json()
+
+    active_response = client.get(
+        "/api/v1/prompt-skills",
+        params={"task": "shot_video", "active": "true"},
+        headers=_auth_headers(user_id),
+    )
+    assert active_response.status_code == 200
+    active_items = active_response.json()["items"]
+    assert [item["id"] for item in active_items] == [second["id"]]
+
+    clone_response = client.post(
+        f"/api/v1/prompt-skills/{second['id']}/clone",
+        headers=_auth_headers(user_id),
+    )
+    assert clone_response.status_code == 201
+    clone = clone_response.json()
+    assert clone["is_active"] is False
+
+    update_response = client.put(
+        f"/api/v1/prompt-skills/{clone['id']}",
+        json={
+            "name": "回滚镜头技能",
+            "task": "shot_video",
+            "stage": "consistency",
+            "content": "回滚技能: {tone}",
+            "variables": {"tone": "冷蓝微光"},
+            "priority": 30,
+            "inject_position": "before_constraints",
+            "is_active": False,
+            "tags": ["回滚"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["version"] == clone["version"] + 1
+
+    activate_response = client.post(
+        f"/api/v1/prompt-skills/{clone['id']}/activate",
+        headers=_auth_headers(user_id),
+    )
+    assert activate_response.status_code == 200
+    activated = activate_response.json()
+    assert activated["id"] == clone["id"]
+    assert activated["is_active"] is True
+
+    active_after_response = client.get(
+        "/api/v1/prompt-skills",
+        params={"task": "shot_video", "active": "true"},
+        headers=_auth_headers(user_id),
+    )
+    active_after = active_after_response.json()["items"]
+    assert [item["id"] for item in active_after] == [clone["id"]]
+
+    all_response = client.get(
+        "/api/v1/prompt-skills",
+        params={"task": "shot_video"},
+        headers=_auth_headers(user_id),
+    )
+    by_id = {item["id"]: item for item in all_response.json()["items"]}
+    assert by_id[first["id"]]["is_active"] is False
+    assert by_id[second["id"]]["is_active"] is False
+    assert by_id[clone["id"]]["is_active"] is True
+
+
 def test_story_bible_compose_prompt_uses_active_prompt_skills(client: TestClient) -> None:
     user_id = f"prompt-skill-compose-user-{uuid4()}"
     create_response = client.post(

@@ -93,7 +93,30 @@ async def list_prompt_skills(
     return {"items": [prompt_skill_payload(skill) for skill in skills], "count": len(skills)}
 
 
+async def _deactivate_user_task_skills(
+    db: AsyncSession,
+    user_id: str,
+    task: str,
+    *,
+    exclude_skill_id: Optional[str] = None,
+) -> None:
+    result = await db.execute(
+        select(PromptSkill).where(
+            PromptSkill.user_id == user_id,
+            PromptSkill.task == task,
+            PromptSkill.is_active == True,
+            PromptSkill.is_builtin == False,
+        )
+    )
+    for skill in result.scalars().all():
+        if exclude_skill_id and skill.id == exclude_skill_id:
+            continue
+        skill.is_active = False
+
+
 async def create_prompt_skill(db: AsyncSession, user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    if data.get("is_active", True):
+        await _deactivate_user_task_skills(db, user_id, data["task"])
     skill = PromptSkill(
         id=str(uuid4()),
         user_id=user_id,
@@ -120,6 +143,9 @@ async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, dat
     skill = await get_prompt_skill(db, user_id, skill_id)
     if skill.is_builtin:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能不能直接修改，请先克隆")
+    next_task = data.get("task", skill.task)
+    if data.get("is_active") is True:
+        await _deactivate_user_task_skills(db, user_id, next_task, exclude_skill_id=skill.id)
     for key in (
         "name",
         "description",
@@ -135,6 +161,17 @@ async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, dat
         if key in data:
             setattr(skill, key, data[key])
     skill.version = int(skill.version or 1) + 1
+    await db.commit()
+    await db.refresh(skill)
+    return prompt_skill_payload(skill)
+
+
+async def activate_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
+    skill = await get_prompt_skill(db, user_id, skill_id)
+    if skill.is_builtin:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能请先克隆后激活")
+    await _deactivate_user_task_skills(db, user_id, skill.task, exclude_skill_id=skill.id)
+    skill.is_active = True
     await db.commit()
     await db.refresh(skill)
     return prompt_skill_payload(skill)

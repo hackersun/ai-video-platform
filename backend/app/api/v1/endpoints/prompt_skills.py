@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.services.prompt_skill_service import (
+    activate_prompt_skill,
     clone_prompt_skill,
     create_prompt_skill,
     deactivate_prompt_skill,
@@ -91,6 +92,15 @@ async def clone_prompt_skill_endpoint(
     user_id: str = Depends(get_current_user_id),
 ):
     return await clone_prompt_skill(db, user_id, skill_id)
+
+
+@router.post("/{skill_id}/activate", response_model=Dict[str, Any])
+async def activate_prompt_skill_endpoint(
+    skill_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await activate_prompt_skill(db, user_id, skill_id)
 
 
 @router.post("/preview", response_model=Dict[str, Any])

@@ -14,6 +14,7 @@ export type PromptSkill = {
   inject_position?: string;
   version?: number;
   is_active?: boolean;
+  is_builtin?: boolean;
   tags?: string[];
 };
 
@@ -44,6 +45,25 @@ export async function createPromptSkill(payload: PromptSkillPayload) {
   return fetchJsonWithAuth<PromptSkill>(`${API_BASE}/prompt-skills`, {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePromptSkill(skillId: string, payload: PromptSkillPayload) {
+  return fetchJsonWithAuth<PromptSkill>(`${API_BASE}/prompt-skills/${skillId}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function clonePromptSkill(skillId: string) {
+  return fetchJsonWithAuth<PromptSkill>(`${API_BASE}/prompt-skills/${skillId}/clone`, {
+    method: 'POST',
+  });
+}
+
+export async function activatePromptSkill(skillId: string) {
+  return fetchJsonWithAuth<PromptSkill>(`${API_BASE}/prompt-skills/${skillId}/activate`, {
+    method: 'POST',
   });
 }
 
