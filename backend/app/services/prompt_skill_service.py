@@ -48,6 +48,18 @@ def render_prompt_skill(skill: PromptSkill, context: Optional[Dict[str, Any]] = 
     return rendered.strip()
 
 
+def rendered_prompt_skill_entry(skill: PromptSkill, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    content = render_prompt_skill(skill, context)
+    return {
+        "id": skill.id,
+        "name": skill.name,
+        "task": skill.task,
+        "stage": skill.stage,
+        "version": skill.version or 1,
+        "content": content,
+    }
+
+
 async def get_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> PromptSkill:
     result = await db.execute(
         select(PromptSkill).where(
@@ -173,13 +185,13 @@ async def _skills_by_ids(db: AsyncSession, user_id: str, skill_ids: Iterable[str
     return list(result.scalars().all())
 
 
-async def active_prompt_skill_blocks(
+async def active_prompt_skill_entries(
     db: AsyncSession,
     user_id: str,
     *,
     task: str,
     context: Optional[Dict[str, Any]] = None,
-) -> List[str]:
+) -> List[Dict[str, Any]]:
     result = await db.execute(
         select(PromptSkill)
         .where(
@@ -189,8 +201,19 @@ async def active_prompt_skill_blocks(
         )
         .order_by(PromptSkill.priority, PromptSkill.created_at)
     )
-    blocks = [render_prompt_skill(skill, context) for skill in result.scalars().all()]
-    return [block for block in blocks if block]
+    entries = [rendered_prompt_skill_entry(skill, context) for skill in result.scalars().all()]
+    return [entry for entry in entries if entry["content"]]
+
+
+async def active_prompt_skill_blocks(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    task: str,
+    context: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    entries = await active_prompt_skill_entries(db, user_id, task=task, context=context)
+    return [entry["content"] for entry in entries]
 
 
 async def preview_prompt_skills(
@@ -203,16 +226,19 @@ async def preview_prompt_skills(
 ) -> Dict[str, Any]:
     if skill_ids:
         skills = await _skills_by_ids(db, user_id, skill_ids)
+        selected_skills = [skill for skill in skills if skill.task == task]
     else:
         skills_result = await list_prompt_skills(db, user_id, task=task, active=True)
         skills = [await get_prompt_skill(db, user_id, item["id"]) for item in skills_result["items"]]
-    active_skills = [skill for skill in skills if skill.task == task and skill.is_active]
-    blocks = [render_prompt_skill(skill, context) for skill in active_skills]
-    blocks = [block for block in blocks if block]
+        selected_skills = [skill for skill in skills if skill.task == task and skill.is_active]
+    entries = [rendered_prompt_skill_entry(skill, context) for skill in selected_skills]
+    entries = [entry for entry in entries if entry["content"]]
+    blocks = [entry["content"] for entry in entries]
     prompt = compose_generation_prompt(task=task, extra_context=context or {}, skill_blocks=blocks)
     return {
         "task": task,
-        "skill_count": len(active_skills),
+        "skill_count": len(entries),
+        "skills": [{key: entry[key] for key in ("id", "name", "task", "stage", "version")} for entry in entries],
         "skill_blocks": blocks,
         "prompt": prompt,
     }

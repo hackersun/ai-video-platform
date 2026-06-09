@@ -21,6 +21,7 @@ from app.models import Character, Project, Script, Shot, StoryBible, StoryEntity
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
 from app.services.entity_ref_normalizer import normalize_entity_refs
 from app.services.prompt_composer import compose_generation_prompt
+from app.services.prompt_skill_service import active_prompt_skill_entries
 
 
 def _compact_ids(values: Iterable[Optional[str]]) -> List[str]:
@@ -563,6 +564,7 @@ async def build_consistency_prompt(
         if subtitle_text:
             context.setdefault("字幕/对白文本", subtitle_text)
     locked_assets = _locked_asset_refs_from_extra(_json_dict(getattr(shot, "extra_data", None))) if shot else []
+    prompt_skill_entries = await active_prompt_skill_entries(db, user_id, task=task, context=context)
 
     prompt = compose_generation_prompt(
         task=task,
@@ -572,6 +574,7 @@ async def build_consistency_prompt(
         project=project,
         extra_context=context,
         locked_assets=locked_assets,
+        skill_blocks=[entry["content"] for entry in prompt_skill_entries],
     )
 
     task_default = get_task_default(task)
@@ -593,6 +596,11 @@ async def build_consistency_prompt(
             "character_ids": [character.id for character in characters],
             "entity_refs": normalize_entity_refs(_json_dict(getattr(shot, "extra_data", None)).get("entity_refs")) if shot else {},
             "locked_assets": locked_assets,
+            "prompt_skill_count": len(prompt_skill_entries),
+            "prompt_skills": [
+                {key: entry[key] for key in ("id", "name", "task", "stage", "version")}
+                for entry in prompt_skill_entries
+            ],
             "subtitle_text": (_json_dict(getattr(shot, "extra_data", None)).get("subtitle_text") or getattr(shot, "dialogue", None)) if shot else None,
             "default_model_id": task_default.get("default_model_id") if task_default else None,
         },

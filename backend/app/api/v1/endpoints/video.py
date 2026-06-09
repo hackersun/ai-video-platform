@@ -38,6 +38,7 @@ from app.services.consistency_context import get_project_for_context, get_story_
 from app.services.consistency_preflight import build_generation_context_package
 from app.services.novel_continuity import build_novel_continuity_package
 from app.services.prompt_composer import compose_generation_prompt
+from app.services.prompt_skill_service import active_prompt_skill_entries
 from app.services.asset_lock_service import AssetLockService
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 from app.api.v1.endpoints.dashboard import log_activity
@@ -1172,6 +1173,13 @@ async def _build_video_consistency_package(
         }
         for lock in asset_locks
     ]
+    prompt_skill_context = {"用户提示词": request.prompt, **extra_context}
+    prompt_skill_entries = await active_prompt_skill_entries(
+        db,
+        user_id,
+        task="shot_video",
+        context=prompt_skill_context,
+    )
 
     final_prompt = compose_generation_prompt(
         task="shot_video",
@@ -1183,8 +1191,9 @@ async def _build_video_consistency_package(
             if ref.get("character_id") in character_by_id
         ],
         project=project,
-        extra_context={"用户提示词": request.prompt, **extra_context},
+        extra_context=prompt_skill_context,
         locked_assets=locked_assets_prompts,
+        skill_blocks=[entry["content"] for entry in prompt_skill_entries],
     )
     metadata = {
         "task": "shot_video",
@@ -1208,6 +1217,11 @@ async def _build_video_consistency_package(
         "chapter_seed": chapter_seed,
         "storyboard_seed": storyboard_seed,
         "style_lock": style_lock,
+        "prompt_skill_count": len(prompt_skill_entries),
+        "prompt_skills": [
+            {key: entry[key] for key in ("id", "name", "task", "stage", "version")}
+            for entry in prompt_skill_entries
+        ],
         "continuity_lock": novel_continuity.get("continuity_lock"),
         "previous_chapter_context": novel_continuity.get("previous_chapter_context"),
         "current_chapter_context": novel_continuity.get("current_chapter_context"),

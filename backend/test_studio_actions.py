@@ -70,6 +70,87 @@ def test_studio_action_rejects_unknown_action_code(client: TestClient) -> None:
     assert "不支持的工作台修复动作" in response.json()["detail"]
 
 
+def test_studio_review_creates_and_lists_review_runs(client: TestClient) -> None:
+    user_id = f"studio-review-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+    workflow_id = fixture["workflow_id"]
+
+    response = client.post(
+        f"/api/v1/studio/workflows/{workflow_id}/review",
+        json={"mode": "production"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["workflow_id"] == workflow_id
+    assert payload["mode"] == "production"
+    assert payload["status"] == "blocked"
+    assert payload["summary"]["blocking_issue_count"] >= 1
+    assert any(issue["code"] == "missing_asset_locks" for issue in payload["issues"])
+    assert any(action["code"] == "apply_asset_locks" for action in payload["actions"])
+
+    history_response = client.get(
+        f"/api/v1/studio/workflows/{workflow_id}/review-runs",
+        headers=_auth_headers(user_id),
+    )
+
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert history["count"] >= 1
+    assert history["items"][0]["id"] == payload["id"]
+    assert history["items"][0]["summary"]["blocking_issue_count"] >= 1
+
+
+def test_studio_review_records_test_bypass_audit(client: TestClient) -> None:
+    user_id = f"studio-review-bypass-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+    workflow_id = fixture["workflow_id"]
+
+    response = client.post(
+        f"/api/v1/studio/workflows/{workflow_id}/review",
+        json={
+            "mode": "test",
+            "allow_test_bypass": True,
+            "bypass_reason": "本地验证全流程先跳过",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "test"
+    assert payload["status"] in {"ready", "confirmable"}
+    assert payload["bypass_audit"]["reason"] == "本地验证全流程先跳过"
+    assert payload["summary"]["bypassed_issue_count"] >= 1
+
+
+def test_studio_action_execute_compat_route_and_safe_audit_action(client: TestClient) -> None:
+    user_id = f"studio-action-compat-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+    workflow_id = fixture["workflow_id"]
+
+    lock_response = client.post(
+        f"/api/v1/studio/workflows/{workflow_id}/actions/apply_asset_locks/execute",
+        json={"mode": "production"},
+        headers=_auth_headers(user_id),
+    )
+    assert lock_response.status_code == 200
+    assert lock_response.json()["code"] == "apply_asset_locks"
+    assert lock_response.json()["status"] == "succeeded"
+
+    quality_response = client.post(
+        f"/api/v1/studio/workflows/{workflow_id}/actions/quality_check/execute",
+        json={"mode": "production"},
+        headers=_auth_headers(user_id),
+    )
+    assert quality_response.status_code == 200
+    payload = quality_response.json()
+    assert payload["code"] == "quality_check"
+    assert payload["status"] == "succeeded"
+    assert payload["result"]["message"] == "已记录质量检查请求，请根据工作台问题列表继续处理。"
+
+
 def test_studio_test_mode_skip_persists_bypass_audit(client: TestClient) -> None:
     user_id = f"studio-skip-user-{uuid4()}"
     fixture = _create_short_video_fixture(client, user_id)

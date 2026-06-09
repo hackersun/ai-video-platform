@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
-from app.services.studio_actions import list_studio_actions, run_studio_action
+from app.services.studio_actions import create_studio_review_run, list_studio_actions, list_studio_review_runs, run_studio_action
 from app.services.studio_mode import policy_from_request
 from app.services.studio_snapshot import build_studio_snapshot
 
@@ -24,6 +24,20 @@ class StudioActionRequest(BaseModel):
     allow_test_bypass: bool = False
     bypass_reason: Optional[str] = None
     source_issue_code: Optional[str] = None
+
+
+class StudioActionExecuteRequest(BaseModel):
+    params: Dict[str, Any] = Field(default_factory=dict)
+    mode: str = Field("production", pattern="^(test|production)$")
+    allow_test_bypass: bool = False
+    bypass_reason: Optional[str] = None
+    source_issue_code: Optional[str] = None
+
+
+class StudioReviewRequest(BaseModel):
+    mode: str = Field("production", pattern="^(test|production)$")
+    allow_test_bypass: bool = False
+    bypass_reason: Optional[str] = None
 
 
 @router.get("/workflows/{workflow_id}/snapshot", response_model=Dict[str, Any])
@@ -49,6 +63,37 @@ async def get_workflow_studio_snapshot(
     )
 
 
+@router.post("/workflows/{workflow_id}/review", response_model=Dict[str, Any])
+async def create_workflow_studio_review(
+    workflow_id: str,
+    request: StudioReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """运行一次规则检查并保存审计记录；不调用外部模型。"""
+
+    return await create_studio_review_run(
+        db,
+        user_id,
+        workflow_id,
+        mode=request.mode,
+        allow_test_bypass=request.allow_test_bypass,
+        bypass_reason=request.bypass_reason,
+    )
+
+
+@router.get("/workflows/{workflow_id}/review-runs", response_model=Dict[str, Any])
+async def get_workflow_studio_review_runs(
+    workflow_id: str,
+    limit: int = Query(30, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """读取工作台检查运行历史。"""
+
+    return await list_studio_review_runs(db, user_id, workflow_id, limit=limit)
+
+
 @router.get("/workflows/{workflow_id}/actions", response_model=Dict[str, Any])
 async def get_workflow_studio_actions(
     workflow_id: str,
@@ -59,6 +104,29 @@ async def get_workflow_studio_actions(
     """读取工作台最近返修动作和跳过审计。"""
 
     return await list_studio_actions(db, user_id, workflow_id, limit=limit)
+
+
+@router.post("/workflows/{workflow_id}/actions/{action_code}/execute", response_model=Dict[str, Any])
+async def execute_workflow_studio_action_by_code(
+    workflow_id: str,
+    action_code: str,
+    request: StudioActionExecuteRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """兼容计划中的动作执行路径，路径参数优先。"""
+
+    return await run_studio_action(
+        db,
+        user_id,
+        workflow_id,
+        code=action_code,
+        params=request.params,
+        mode=request.mode,
+        allow_test_bypass=request.allow_test_bypass,
+        bypass_reason=request.bypass_reason,
+        source_issue_code=request.source_issue_code,
+    )
 
 
 @router.post("/workflows/{workflow_id}/actions", response_model=Dict[str, Any])

@@ -58,7 +58,7 @@ export function StudioAgentPanel({
               placeholder="说明为什么临时跳过，以及后续如何补齐。至少 8 个字符。"
             />
             <div className="mt-2 text-xs leading-5 text-amber-50/70">
-              只用于测试验证模式；生产出片模式仍会强制修复阻断项。
+              此操作只用于测试验证，生产出片仍需修复该问题。
             </div>
           </div>
         ) : null}

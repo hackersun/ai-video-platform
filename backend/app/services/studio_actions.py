@@ -9,13 +9,17 @@ from fastapi import HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import StudioRepairAction, Workflow
+from app.models import StudioRepairAction, StudioReviewRun, Workflow
 from app.services.production_control import apply_asset_locks_to_workflow
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
+from app.services.studio_snapshot import build_studio_snapshot
 
 
 ACTION_REGISTRY: Dict[str, Dict[str, str]] = {
     "apply_asset_locks": {"label": "应用资产锁", "risk": "safe"},
+    "refresh_contracts": {"label": "刷新生产合约", "risk": "safe"},
+    "quality_check": {"label": "运行质量检查", "risk": "safe"},
+    "media_audit": {"label": "审计媒体文件", "risk": "safe"},
     "skip_issue": {"label": "测试模式跳过", "risk": "confirm"},
 }
 
@@ -50,6 +54,21 @@ def _action_payload(action: StudioRepairAction) -> Dict[str, Any]:
     }
 
 
+def _review_payload(run: StudioReviewRun) -> Dict[str, Any]:
+    return {
+        "id": run.id,
+        "workflow_id": run.workflow_id,
+        "mode": run.mode,
+        "status": run.status,
+        "summary": run.summary or {},
+        "issues": run.issues or [],
+        "actions": run.actions or [],
+        "bypass_audit": run.bypass_audit,
+        "created_at": run.created_at.isoformat() if run.created_at else None,
+        "updated_at": run.updated_at.isoformat() if run.updated_at else None,
+    }
+
+
 async def list_studio_actions(
     db: AsyncSession,
     user_id: str,
@@ -65,6 +84,24 @@ async def list_studio_actions(
         .limit(limit)
     )
     items = [_action_payload(action) for action in result.scalars().all()]
+    return {"workflow_id": workflow_id, "items": items, "count": len(items)}
+
+
+async def list_studio_review_runs(
+    db: AsyncSession,
+    user_id: str,
+    workflow_id: str,
+    *,
+    limit: int = 30,
+) -> Dict[str, Any]:
+    await _load_workflow(db, user_id, workflow_id)
+    result = await db.execute(
+        select(StudioReviewRun)
+        .where(StudioReviewRun.user_id == user_id, StudioReviewRun.workflow_id == workflow_id)
+        .order_by(desc(StudioReviewRun.created_at))
+        .limit(limit)
+    )
+    items = [_review_payload(run) for run in result.scalars().all()]
     return {"workflow_id": workflow_id, "items": items, "count": len(items)}
 
 
@@ -190,4 +227,78 @@ async def run_studio_action(
         )
         return _action_payload(audit)
 
+    if code in {"refresh_contracts", "quality_check", "media_audit"}:
+        messages = {
+            "refresh_contracts": "已记录生产合约刷新请求，请根据最新工作台快照继续处理。",
+            "quality_check": "已记录质量检查请求，请根据工作台问题列表继续处理。",
+            "media_audit": "已记录媒体文件审计请求，请根据缺失媒体提示继续处理。",
+        }
+        audit = await _record_action(
+            db,
+            user_id=user_id,
+            workflow_id=workflow_id,
+            code=code,
+            status_value="succeeded",
+            result={"message": messages[code]},
+            mode=normalized_mode,
+            params=params,
+        )
+        return _action_payload(audit)
+
     raise _unsupported_action(code)
+
+
+async def create_studio_review_run(
+    db: AsyncSession,
+    user_id: str,
+    workflow_id: str,
+    *,
+    mode: str = "production",
+    allow_test_bypass: bool = False,
+    bypass_reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    snapshot = await build_studio_snapshot(
+        db,
+        user_id,
+        workflow_id,
+        mode_policy=StudioModePolicy(
+            mode=mode,
+            allow_test_bypass=allow_test_bypass,
+            bypass_reason=bypass_reason,
+        ),
+    )
+    mode_policy = snapshot.get("mode_policy") or {}
+    blocking_count = int(mode_policy.get("blocking_issue_count") or 0)
+    confirmable_count = int(mode_policy.get("confirmable_issue_count") or 0)
+    bypassed_count = int(mode_policy.get("bypassed_issue_count") or 0)
+    if blocking_count:
+        status_value = "blocked"
+    elif confirmable_count or bypassed_count:
+        status_value = "confirmable"
+    else:
+        status_value = "ready"
+
+    summary = {
+        "ready": bool(mode_policy.get("ready")),
+        "issue_count": len(snapshot.get("issues") or []),
+        "action_count": len(snapshot.get("actions") or []),
+        "blocking_issue_count": blocking_count,
+        "warning_issue_count": int(mode_policy.get("warning_issue_count") or 0),
+        "confirmable_issue_count": confirmable_count,
+        "bypassed_issue_count": bypassed_count,
+    }
+    run = StudioReviewRun(
+        id=str(uuid4()),
+        user_id=user_id,
+        workflow_id=workflow_id,
+        mode=str(mode_policy.get("mode") or "production"),
+        status=status_value,
+        summary=summary,
+        issues=snapshot.get("issues") or [],
+        actions=snapshot.get("actions") or [],
+        bypass_audit=mode_policy.get("bypass_audit"),
+    )
+    db.add(run)
+    await db.commit()
+    await db.refresh(run)
+    return _review_payload(run)

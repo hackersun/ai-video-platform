@@ -111,6 +111,14 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
       });
       return;
     }
+    if (path === '/api/v1/prompt-skills') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], count: 0 }),
+      });
+      return;
+    }
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 

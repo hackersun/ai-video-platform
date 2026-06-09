@@ -30,9 +30,10 @@ export type PromptSkillPayload = {
   tags?: string[];
 };
 
-export async function listPromptSkills(task?: string) {
+export async function listPromptSkills(task?: string, options: { active?: boolean } = {}) {
   const params = new URLSearchParams();
   if (task) params.set('task', task);
+  if (options.active !== undefined) params.set('active', String(options.active));
   const qs = params.toString();
   return fetchJsonWithAuth<{ items: PromptSkill[]; count: number }>(
     `${API_BASE}/prompt-skills${qs ? `?${qs}` : ''}`

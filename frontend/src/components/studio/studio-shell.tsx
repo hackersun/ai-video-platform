@@ -13,6 +13,7 @@ import { StudioAgentPanel } from './studio-agent-panel';
 import { StudioContextPanel } from './studio-context-panel';
 import { StudioModeBanner } from './studio-mode-banner';
 import { StudioProductionBoard } from './studio-production-board';
+import { PromptSkillPanel } from './prompt-skill-panel';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
@@ -178,6 +179,7 @@ export function StudioShell() {
               正在加载工作台快照…
             </div>
           ) : null}
+          <PromptSkillPanel />
           <StudioContextPanel snapshot={snapshot} />
           <StudioProductionBoard snapshot={snapshot} />
           <StudioAgentPanel

@@ -66,7 +66,7 @@ export function StudioIssueCard({
             disabled={disabled}
             onClick={() => onAction?.({ code: 'skip_issue', label: '确认跳过', risk: 'confirm' }, issue)}
           >
-            确认跳过
+            确认临时跳过并继续验证
           </Button>
         )}
       </div>
