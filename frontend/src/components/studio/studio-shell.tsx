@@ -7,8 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
-import { applyStudioAssetLocks, getStudioSnapshot, getStudioWorkflows } from '@/lib/studio-api';
-import type { StudioRunMode, StudioSnapshot, StudioWorkflowOption } from '@/lib/studio-types';
+import { getStudioSnapshot, getStudioWorkflows, runStudioAction } from '@/lib/studio-api';
+import type { StudioAction, StudioActionResult, StudioIssue, StudioRunMode, StudioSnapshot, StudioWorkflowOption } from '@/lib/studio-types';
 import { StudioAgentPanel } from './studio-agent-panel';
 import { StudioContextPanel } from './studio-context-panel';
 import { StudioModeBanner } from './studio-mode-banner';
@@ -26,6 +26,8 @@ export function StudioShell() {
   const [workflows, setWorkflows] = useState<StudioWorkflowOption[]>([]);
   const [workflowId, setWorkflowId] = useState(searchParams.get('workflow_id') || '');
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
+  const [bypassReason, setBypassReason] = useState('');
+  const [lastAction, setLastAction] = useState<StudioActionResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -49,12 +51,16 @@ export function StudioShell() {
     }
   }, [router, workflowId]);
 
-  const loadSnapshot = useCallback(async (targetWorkflowId = workflowId, nextMode = mode) => {
+  const loadSnapshot = useCallback(async (
+    targetWorkflowId = workflowId,
+    nextMode = mode,
+    policy?: { allow_test_bypass?: boolean; bypass_reason?: string }
+  ) => {
     if (!targetWorkflowId) return;
     setLoading(true);
     setError('');
     try {
-      const data = await getStudioSnapshot(targetWorkflowId, { mode: nextMode });
+      const data = await getStudioSnapshot(targetWorkflowId, { mode: nextMode, ...policy });
       setSnapshot(data);
     } catch (err: any) {
       setError(err.message || '加载工作台快照失败');
@@ -80,17 +86,38 @@ export function StudioShell() {
     setMode(nextMode);
   };
 
-  const handleAction = async (code: string) => {
+  const handleAction = async (action: StudioAction, issue: StudioIssue) => {
     if (!workflowId) return;
-    if (code !== 'apply_asset_locks') {
-      toast({ title: '已提供修复入口', description: '该动作将在 Agent 返修阶段接入直接执行。' });
+    const isSkip = action.code === 'skip_issue';
+    const reason = bypassReason.trim();
+    if (isSkip && mode !== 'test') {
+      toast({ title: '生产模式不能跳过', description: '请按修复入口补齐后再继续。', type: 'error' });
+      return;
+    }
+    if (isSkip && reason.length < 8) {
+      toast({ title: '需要填写跳过原因', description: '测试模式跳过需要至少 8 个字符，并说明后续修复路径。', type: 'error' });
       return;
     }
     setLoading(true);
     try {
-      await applyStudioAssetLocks(workflowId);
-      toast({ title: '资产锁已应用', type: 'success' });
-      await loadSnapshot(workflowId, mode);
+      const result = await runStudioAction(workflowId, {
+        code: action.code,
+        mode,
+        allow_test_bypass: isSkip,
+        bypass_reason: isSkip ? reason : undefined,
+        source_issue_code: issue.code,
+      });
+      setLastAction(result);
+      toast({
+        title: result.status === 'skipped' ? '已记录测试跳过' : `${result.label || action.label}已执行`,
+        description: isSkip ? '该跳过只适用于测试验证模式，生产出片仍需修复。' : '已刷新工作台检查结果。',
+        type: 'success',
+      });
+      await loadSnapshot(
+        workflowId,
+        mode,
+        isSkip ? { allow_test_bypass: true, bypass_reason: reason } : undefined
+      );
     } catch (err: any) {
       setError(err.message || '执行修复动作失败');
     } finally {
@@ -157,6 +184,9 @@ export function StudioShell() {
             snapshot={snapshot}
             mode={mode}
             loading={loading}
+            bypassReason={bypassReason}
+            lastAction={lastAction}
+            onBypassReasonChange={setBypassReason}
             onRefresh={() => loadSnapshot(workflowId, mode)}
             onAction={handleAction}
           />

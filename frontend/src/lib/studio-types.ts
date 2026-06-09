@@ -27,6 +27,23 @@ export type StudioAction = {
   risk?: 'safe' | 'navigation' | 'confirm' | string;
 };
 
+export type StudioActionResult = StudioAction & {
+  id?: string;
+  workflow_id?: string;
+  status?: 'suggested' | 'running' | 'succeeded' | 'failed' | 'skipped' | string;
+  source_issue_code?: string | null;
+  target_type?: string | null;
+  target_id?: string | null;
+  params?: Record<string, any>;
+  result?: Record<string, any>;
+  error_message?: string | null;
+  mode?: StudioRunMode;
+  allow_test_bypass?: boolean;
+  bypass_reason?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type StudioSnapshot = {
   workflow?: {
     id?: string;

@@ -1,5 +1,5 @@
 import { fetchJsonWithAuth } from './fetch-with-auth';
-import type { StudioRunMode, StudioSnapshot, StudioWorkflowOption } from './studio-types';
+import type { StudioActionResult, StudioRunMode, StudioSnapshot, StudioWorkflowOption } from './studio-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -27,9 +27,25 @@ export async function getStudioSnapshot(
   );
 }
 
-export async function applyStudioAssetLocks(workflowId: string) {
-  return fetchJsonWithAuth(`${API_BASE}/production-control/workflow/${workflowId}/asset-locks`, {
+export async function runStudioAction(
+  workflowId: string,
+  payload: {
+    code: string;
+    params?: Record<string, any>;
+    mode?: StudioRunMode;
+    allow_test_bypass?: boolean;
+    bypass_reason?: string;
+    source_issue_code?: string;
+  }
+) {
+  return fetchJsonWithAuth<StudioActionResult>(`${API_BASE}/studio/workflows/${workflowId}/actions`, {
     method: 'POST',
-    body: JSON.stringify({ create_missing_assets: true, persist: true }),
+    body: JSON.stringify(payload),
   });
+}
+
+export async function getStudioActions(workflowId: string) {
+  return fetchJsonWithAuth<{ items: StudioActionResult[]; count: number }>(
+    `${API_BASE}/studio/workflows/${workflowId}/actions`
+  );
 }

@@ -5,19 +5,22 @@ import { AlertTriangle, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { severityLabel, severityTone } from '@/lib/studio-mode';
-import type { StudioIssue } from '@/lib/studio-types';
+import type { StudioAction, StudioIssue, StudioRunMode } from '@/lib/studio-types';
 
 export function StudioIssueCard({
   issue,
+  mode,
   onAction,
   disabled,
 }: {
   issue: StudioIssue;
-  onAction?: (code: string) => void;
+  mode: StudioRunMode;
+  onAction?: (action: StudioAction, issue: StudioIssue) => void;
   disabled?: boolean;
 }) {
   const action = issue.repair_action || undefined;
   const blocking = issue.severity === 'blocking' || issue.severity === 'error';
+  const canSkipInTest = mode === 'test' && (blocking || issue.severity === 'confirmable');
   return (
     <div className={`rounded-lg border p-3 text-sm leading-6 ${severityTone(issue.severity)}`}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -50,11 +53,22 @@ export function StudioIssueCard({
             size="sm"
             className="shrink-0 bg-cyan-600 hover:bg-cyan-700"
             disabled={disabled}
-            onClick={() => onAction?.(action.code)}
+            onClick={() => onAction?.(action, issue)}
           >
             {action.label}
           </Button>
         ) : null}
+        {canSkipInTest && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-300/40 text-amber-50"
+            disabled={disabled}
+            onClick={() => onAction?.({ code: 'skip_issue', label: '确认跳过', risk: 'confirm' }, issue)}
+          >
+            确认跳过
+          </Button>
+        )}
       </div>
     </div>
   );

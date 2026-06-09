@@ -52,6 +52,15 @@ const snapshot = {
   mode_policy: { mode: 'production', ready: false, blocking_issue_count: 1, warning_issue_count: 0 },
 };
 
+const lockedSnapshot = {
+  ...snapshot,
+  production: { ...snapshot.production, asset_lock_coverage: 1, ready: true },
+  shots: snapshot.shots.map((shot) => ({ ...shot, asset_lock_count: 2 })),
+  issues: [],
+  actions: [],
+  mode_policy: { mode: 'production', ready: true, blocking_issue_count: 0, warning_issue_count: 0 },
+};
+
 test.beforeEach(async ({ page }) => {
   const userId = `studio-user-${Date.now()}`;
   const token = devToken(userId);
@@ -66,6 +75,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('studio workspace renders snapshot and repair path', async ({ page }) => {
+  let actionRequested = false;
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '');
@@ -78,11 +88,27 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
       return;
     }
     if (path === '/api/v1/studio/workflows/wf-001/snapshot') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(actionRequested ? lockedSnapshot : snapshot),
+      });
       return;
     }
-    if (path === '/api/v1/production-control/workflow/wf-001/asset-locks') {
-      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ applied_shots: [] }) });
+    if (path === '/api/v1/studio/workflows/wf-001/actions' && route.request().method() === 'POST') {
+      actionRequested = true;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'action-001',
+          code: 'apply_asset_locks',
+          label: '应用资产锁',
+          status: 'succeeded',
+          risk: 'safe',
+          result: { applied_shot_count: 2 },
+        }),
+      });
       return;
     }
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
@@ -96,5 +122,8 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
   await expect(page.getByText('角色/场景/道具锁覆盖')).toBeVisible();
   await expect(page.getByText('0%')).toBeVisible();
   await expect(page.getByText('2 个镜头缺少角色/场景/道具资产锁，生产出片前必须锁定。').first()).toBeVisible();
-  await expect(page.getByRole('button', { name: '应用资产锁' })).toBeVisible();
+  await page.getByRole('button', { name: '应用资产锁' }).click();
+
+  await expect(page.getByText('当前工作流没有阻断项，可继续生成、合成或导出。')).toBeVisible();
+  expect(actionRequested).toBe(true);
 });

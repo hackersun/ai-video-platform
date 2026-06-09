@@ -3,21 +3,28 @@
 import { Bot, Loader2, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Textarea } from '@/components/ui/textarea';
 import { StudioIssueCard } from './studio-issue-card';
-import type { StudioIssue, StudioRunMode, StudioSnapshot } from '@/lib/studio-types';
+import type { StudioAction, StudioActionResult, StudioIssue, StudioRunMode, StudioSnapshot } from '@/lib/studio-types';
 
 export function StudioAgentPanel({
   snapshot,
   mode,
   loading,
+  bypassReason,
+  lastAction,
+  onBypassReasonChange,
   onRefresh,
   onAction,
 }: {
   snapshot: StudioSnapshot | null;
   mode: StudioRunMode;
   loading?: boolean;
+  bypassReason: string;
+  lastAction?: StudioActionResult | null;
+  onBypassReasonChange: (value: string) => void;
   onRefresh: () => void;
-  onAction: (code: string) => void;
+  onAction: (action: StudioAction, issue: StudioIssue) => void;
 }) {
   const issues = snapshot?.issues || [];
   const nextIssue: StudioIssue | undefined = issues.find((item) => ['blocking', 'error', 'confirmable'].includes(String(item.severity))) || issues[0];
@@ -41,6 +48,28 @@ export function StudioAgentPanel({
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {mode === 'test' && issues.length ? (
+          <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3">
+            <div className="text-sm font-medium text-amber-50">测试跳过原因</div>
+            <Textarea
+              className="mt-2 min-h-[72px]"
+              value={bypassReason}
+              onChange={(event) => onBypassReasonChange(event.target.value)}
+              placeholder="说明为什么临时跳过，以及后续如何补齐。至少 8 个字符。"
+            />
+            <div className="mt-2 text-xs leading-5 text-amber-50/70">
+              只用于测试验证模式；生产出片模式仍会强制修复阻断项。
+            </div>
+          </div>
+        ) : null}
+
+        {lastAction ? (
+          <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-white/70">
+            最近动作：<span className="font-medium text-white">{lastAction.label}</span>
+            <span className="ml-2 text-cyan-200">{lastAction.status}</span>
+          </div>
+        ) : null}
+
         {nextIssue ? (
           <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-50">
             <div className="font-medium">下一步：{nextIssue.repair_action?.label || nextIssue.message || '继续完善生产条件'}</div>
@@ -54,7 +83,13 @@ export function StudioAgentPanel({
 
         {issues.length ? (
           issues.map((issue, index) => (
-            <StudioIssueCard key={`${issue.code || 'issue'}-${index}`} issue={issue} onAction={onAction} disabled={loading} />
+            <StudioIssueCard
+              key={`${issue.code || 'issue'}-${index}`}
+              issue={issue}
+              mode={mode}
+              onAction={onAction}
+              disabled={loading}
+            />
           ))
         ) : (
           <div className="rounded-lg border border-white/10 bg-black/20 p-6 text-center text-sm text-white/50">
