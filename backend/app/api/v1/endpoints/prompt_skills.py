@@ -16,6 +16,7 @@ from app.services.prompt_skill_service import (
     create_prompt_skill,
     deactivate_prompt_skill,
     list_prompt_skills,
+    optimize_prompt_skill_content,
     preview_prompt_skills,
     update_prompt_skill,
 )
@@ -44,6 +45,18 @@ class PromptSkillPreviewRequest(BaseModel):
     task: str = Field(..., min_length=1, max_length=80)
     skill_ids: List[str] = Field(default_factory=list)
     context: Dict[str, Any] = Field(default_factory=dict)
+    draft_name: Optional[str] = Field(None, max_length=120)
+    draft_content: Optional[str] = None
+    draft_stage: Optional[str] = Field(None, max_length=80)
+
+
+class PromptSkillOptimizeRequest(BaseModel):
+    task: str = Field(..., min_length=1, max_length=80)
+    name: Optional[str] = Field(None, max_length=120)
+    description: Optional[str] = None
+    content: str = Field(..., min_length=1)
+    mode: str = Field("polish", pattern="^(polish|tighten|productionize)$")
+    model_config_id: Optional[str] = None
 
 
 @router.get("", response_model=Dict[str, Any])
@@ -64,6 +77,15 @@ async def post_prompt_skill(
     user_id: str = Depends(get_current_user_id),
 ):
     return await create_prompt_skill(db, user_id, request.model_dump())
+
+
+@router.post("/optimize", response_model=Dict[str, Any])
+async def optimize_prompt_skill_endpoint(
+    request: PromptSkillOptimizeRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await optimize_prompt_skill_content(db, user_id, request.model_dump())
 
 
 @router.put("/{skill_id}", response_model=Dict[str, Any])
@@ -115,4 +137,7 @@ async def preview_prompt_skill_endpoint(
         task=request.task,
         skill_ids=request.skill_ids,
         context=request.context,
+        draft_name=request.draft_name,
+        draft_content=request.draft_content,
+        draft_stage=request.draft_stage,
     )

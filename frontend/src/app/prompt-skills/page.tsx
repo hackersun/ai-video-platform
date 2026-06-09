@@ -1,7 +1,19 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, Copy, Eye, Loader2, Plus, Power, Save } from 'lucide-react';
+import {
+  AlertTriangle,
+  BrainCircuit,
+  CheckCircle2,
+  Copy,
+  Eye,
+  FileText,
+  Loader2,
+  Plus,
+  Power,
+  Save,
+  Sparkles,
+} from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,6 +27,7 @@ import {
   clonePromptSkill,
   createPromptSkill,
   listPromptSkills,
+  optimizePromptSkill,
   previewPromptSkill,
   updatePromptSkill,
   type PromptSkill,
@@ -42,6 +55,15 @@ const defaultContext = {
   bad_case: '脸型变化',
 };
 
+type OptimizationResult = {
+  task: string;
+  source: 'ai_model' | 'local_rules';
+  original_content: string;
+  optimized_content: string;
+  suggestions: string[];
+  warnings: string[];
+};
+
 export default function PromptSkillsPage() {
   const { toast } = useToast();
   const [task, setTask] = useState('shot_video');
@@ -54,11 +76,34 @@ export default function PromptSkillsPage() {
   const [preview, setPreview] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [optimizing, setOptimizing] = useState(false);
+  const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
   const [error, setError] = useState('');
 
   const selectedSkill = useMemo(
     () => skills.find((item) => item.id === selectedSkillId) || null,
     [selectedSkillId, skills]
+  );
+
+  const selectedTaskLabel = useMemo(
+    () => taskOptions.find((item) => item.value === task)?.label || task,
+    [task]
+  );
+
+  const canEdit = !(formMode === 'edit' && selectedSkill?.is_builtin);
+
+  const contentVariables = useMemo(() => {
+    return Array.from(new Set(Array.from(content.matchAll(/\{([^}]+)\}/g)).map((match) => match[1].trim()))).filter(Boolean);
+  }, [content]);
+
+  const boundaryChecks = useMemo(
+    () => [
+      { label: '技能名称不能为空', passed: Boolean(name.trim()) },
+      { label: '技能内容不能为空', passed: Boolean(content.trim()) },
+      { label: '建议包含禁止项或不得项', passed: /禁止|不得|不要|避免/.test(content) },
+      { label: '预览优先使用当前草稿', passed: Boolean(content.trim()) && canEdit },
+    ],
+    [canEdit, content, name]
   );
 
   const loadSkills = async (nextTask = task, nextSelectedId?: string) => {
@@ -71,9 +116,12 @@ export default function PromptSkillsPage() {
       if (nextSelectedId) {
         setSelectedSkillId(nextSelectedId);
         setFormMode('edit');
-      } else if (!selectedSkillId && nextItems[0]) {
+      } else if ((!selectedSkillId || !nextItems.some((item) => item.id === selectedSkillId)) && nextItems[0]) {
         setSelectedSkillId(nextItems[0].id);
         setFormMode('edit');
+      } else if (!nextItems.length) {
+        setSelectedSkillId('');
+        setFormMode('create');
       }
       return nextItems;
     } catch (err: any) {
@@ -94,6 +142,7 @@ export default function PromptSkillsPage() {
     setName(selectedSkill.name || '');
     setDescription(selectedSkill.description || '');
     setContent(selectedSkill.content || '');
+    setOptimization(null);
   }, [formMode, selectedSkill]);
 
   const resetForm = () => {
@@ -103,6 +152,7 @@ export default function PromptSkillsPage() {
     setDescription('');
     setContent('');
     setPreview('');
+    setOptimization(null);
   };
 
   const handleTaskChange = (nextTask: string) => {
@@ -151,6 +201,41 @@ export default function PromptSkillsPage() {
     }
   };
 
+  const handleOptimize = async () => {
+    if (!content.trim()) {
+      toast({ title: '请先填写技能内容', type: 'error' });
+      return;
+    }
+    if (!canEdit) {
+      toast({ title: '内置技能请先克隆后优化', type: 'error' });
+      return;
+    }
+    setOptimizing(true);
+    setError('');
+    try {
+      const result = await optimizePromptSkill({
+        task,
+        name: name.trim(),
+        description: description.trim(),
+        content: content.trim(),
+        mode: 'polish',
+      });
+      setOptimization(result);
+      toast({ title: result.source === 'ai_model' ? 'AI 优化建议已生成' : '本地优化建议已生成', type: 'success' });
+    } catch (err: any) {
+      setError(err.message || 'AI 优化 Prompt 技能失败');
+    } finally {
+      setOptimizing(false);
+    }
+  };
+
+  const applyOptimization = () => {
+    if (!optimization) return;
+    setContent(optimization.optimized_content);
+    setPreview('');
+    toast({ title: '已应用优化结果，可继续预览或保存', type: 'success' });
+  };
+
   const handleClone = async () => {
     if (!selectedSkill) {
       toast({ title: '请先选择要克隆的技能', type: 'error' });
@@ -192,11 +277,24 @@ export default function PromptSkillsPage() {
   };
 
   const handlePreview = async () => {
-    const skillIds = selectedSkill?.id ? [selectedSkill.id] : [];
+    const draftContent = content.trim();
+    const useDraft = canEdit && Boolean(draftContent);
+    const skillIds = !useDraft && selectedSkill?.id ? [selectedSkill.id] : [];
+    if (!useDraft && !skillIds.length) {
+      toast({ title: '请先选择技能或填写草稿内容', type: 'error' });
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const result = await previewPromptSkill({ task, skill_ids: skillIds, context: defaultContext });
+      const result = await previewPromptSkill({
+        task,
+        skill_ids: skillIds,
+        context: defaultContext,
+        draft_name: useDraft ? name.trim() || '当前编辑草稿' : undefined,
+        draft_content: useDraft ? draftContent : undefined,
+        draft_stage: useDraft ? selectedSkill?.stage || 'draft' : undefined,
+      });
       setPreview(result.prompt);
     } catch (err: any) {
       setError(err.message || '预览 Prompt 失败');
@@ -230,16 +328,28 @@ export default function PromptSkillsPage() {
           </div>
         </div>
 
-        <div className="rounded-lg border border-amber-400/25 bg-amber-400/10 p-3 text-sm leading-6 text-amber-50">
-          Prompt 技能会影响生成质量。修改后建议先用测试验证模式跑完整流程。
+        <div className="grid gap-3 rounded-lg border border-amber-400/25 bg-amber-400/10 p-3 text-sm leading-6 text-amber-50 md:grid-cols-[1fr_auto] md:items-center">
+          <div>
+            <span className="font-medium">当前任务：{selectedTaskLabel}</span>
+            <span className="ml-2 text-amber-50/75">修改后先预览草稿，再保存并用测试验证模式跑完整流程。</span>
+          </div>
+          <div className="text-amber-50/75">示例上下文：tone=冷蓝月光，bad_case=脸型变化</div>
         </div>
 
         {error && <div className="rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-50">{error}</div>}
 
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(18rem,0.85fr)_minmax(0,1.15fr)]">
           <Card className="border-white/10 bg-white/5">
             <CardHeader className="pb-3">
-              <CardTitle className="text-white">技能列表</CardTitle>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <CardTitle className="text-white">技能列表</CardTitle>
+                  <p className="mt-2 text-xs leading-5 text-white/45">选择任务后会显示可用技能。</p>
+                </div>
+                <Badge variant="outline" className="border-cyan-300/40 text-cyan-100">
+                  {skills.length} 个
+                </Badge>
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
               {loading && !skills.length ? (
@@ -257,11 +367,13 @@ export default function PromptSkillsPage() {
                     onClick={() => {
                       setSelectedSkillId(skill.id);
                       setFormMode('edit');
+                      setPreview('');
+                      setOptimization(null);
                     }}
                     className={`w-full rounded-lg border p-3 text-left transition-colors ${
                       selectedSkill?.id === skill.id
-                        ? 'border-cyan-400/40 bg-cyan-500/10'
-                        : 'border-white/10 bg-black/20 hover:bg-white/10'
+                        ? 'border-cyan-400/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.15)]'
+                        : 'border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/10'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
@@ -286,14 +398,25 @@ export default function PromptSkillsPage() {
                         </Badge>
                       </div>
                     </div>
-                    <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/50">
+                    <div className="mt-2 line-clamp-2 text-xs leading-5 text-white/55">
                       {skill.description || skill.content}
+                    </div>
+                    <div className="mt-3 flex items-center gap-2 text-[11px] text-white/35">
+                      <span>{skill.stage || '未分阶段'}</span>
+                      <span>·</span>
+                      <span>{skill.content?.length || 0} 字符</span>
                     </div>
                   </button>
                 ))
               ) : (
-                <div className="rounded-lg border border-white/10 bg-black/20 p-6 text-center text-sm text-white/50">
-                  当前任务还没有 Prompt 技能。
+                <div className="rounded-lg border border-dashed border-white/15 bg-black/20 p-6 text-center">
+                  <FileText className="mx-auto mb-3 h-5 w-5 text-white/35" />
+                  <div className="text-sm font-medium text-white">当前任务还没有 Prompt 技能</div>
+                  <p className="mt-2 text-xs leading-5 text-white/45">可以先新建一个草稿，预览后再激活。</p>
+                  <Button type="button" size="sm" className="mt-4 bg-cyan-600 hover:bg-cyan-700" onClick={resetForm}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    新建技能
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -302,7 +425,12 @@ export default function PromptSkillsPage() {
           <Card className="border-white/10 bg-white/5">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-white">{formMode === 'edit' ? '编辑技能' : '新建技能'}</CardTitle>
+                <div>
+                  <CardTitle className="text-white">{formMode === 'edit' ? '编辑技能' : '新建技能'}</CardTitle>
+                  <p className="mt-2 text-xs text-white/45">
+                    {selectedSkill?.is_builtin ? '内置模板只读，克隆后可编辑。' : '当前草稿可直接预览注入效果。'}
+                  </p>
+                </div>
                 <Button
                   type="button"
                   variant="outline"
@@ -323,7 +451,7 @@ export default function PromptSkillsPage() {
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder="例如：面部一致性"
-                disabled={formMode === 'edit' && selectedSkill?.is_builtin}
+                disabled={!canEdit}
               />
               <Input
                 aria-label="用途说明"
@@ -331,19 +459,64 @@ export default function PromptSkillsPage() {
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 placeholder="用途说明，可选"
-                disabled={formMode === 'edit' && selectedSkill?.is_builtin}
+                disabled={!canEdit}
               />
-              <Textarea
-                aria-label="技能内容"
-                data-testid="prompt-skill-content-input"
-                value={content}
-                onChange={(event) => setContent(event.target.value)}
-                placeholder="输入可复用的 Prompt 技能内容"
-                disabled={formMode === 'edit' && selectedSkill?.is_builtin}
-              />
+              <div className="overflow-hidden rounded-lg border border-white/10 bg-black/20">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2 text-xs text-white/45">
+                  <span>技能内容</span>
+                  <span>
+                    {content.length} 字符 · {content.split('\n').filter(Boolean).length || 0} 行 · {contentVariables.length} 个变量
+                  </span>
+                </div>
+                <Textarea
+                  aria-label="技能内容"
+                  data-testid="prompt-skill-content-input"
+                  value={content}
+                  onChange={(event) => {
+                    setContent(event.target.value);
+                    setOptimization(null);
+                  }}
+                  placeholder="输入可复用的 Prompt 技能内容"
+                  disabled={!canEdit}
+                  className="min-h-[14rem] resize-y rounded-none border-0 bg-transparent font-mono text-sm leading-6"
+                />
+              </div>
+              <div className="grid gap-3 rounded-lg border border-white/10 bg-black/20 p-3 md:grid-cols-2">
+                <div>
+                  <div className="mb-2 text-xs font-medium text-white/65">边界检查</div>
+                  <div className="space-y-2">
+                    {boundaryChecks.map((item) => (
+                      <div key={item.label} className="flex items-center gap-2 text-xs text-white/55">
+                        {item.passed ? (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" />
+                        ) : (
+                          <AlertTriangle className="h-4 w-4 shrink-0 text-amber-300" />
+                        )}
+                        <span>{item.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-2 text-xs font-medium text-white/65">变量占位</div>
+                  {contentVariables.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {contentVariables.map((variable) => (
+                        <Badge key={variable} variant="outline" className="border-white/20 text-white/70">
+                          {`{${variable}}`}
+                        </Badge>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-white/45">
+                      暂无变量占位
+                    </div>
+                  )}
+                </div>
+              </div>
               {formMode === 'edit' && selectedSkill?.is_builtin ? (
                 <div className="rounded-lg border border-violet-300/20 bg-violet-400/10 p-3 text-sm leading-6 text-violet-50">
-                  内置技能作为模板保留，克隆后可编辑、预览和激活。
+                  内置技能作为模板保留，克隆后可编辑、AI 优化、预览和激活。
                 </div>
               ) : null}
               <div className="flex flex-col gap-2 xl:flex-row xl:flex-wrap">
@@ -351,7 +524,7 @@ export default function PromptSkillsPage() {
                   data-testid="prompt-skill-save"
                   className="bg-cyan-600 hover:bg-cyan-700"
                   onClick={handleSave}
-                  disabled={saving}
+                  disabled={saving || !canEdit}
                 >
                   {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   {formMode === 'edit' ? '保存修改' : '保存技能'}
@@ -377,6 +550,16 @@ export default function PromptSkillsPage() {
                   {selectedSkill?.is_active ? '已激活' : '设为当前激活'}
                 </Button>
                 <Button
+                  data-testid="prompt-skill-optimize"
+                  variant="outline"
+                  className="border-emerald-300/30 text-emerald-50"
+                  onClick={handleOptimize}
+                  disabled={!canEdit || !content.trim() || optimizing}
+                >
+                  {optimizing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                  AI 优化
+                </Button>
+                <Button
                   data-testid="prompt-skill-preview"
                   variant="outline"
                   className="border-white/20 text-white"
@@ -387,21 +570,89 @@ export default function PromptSkillsPage() {
                   预览 Prompt
                 </Button>
               </div>
+              {optimization ? (
+                <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/10 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-sm font-medium text-emerald-50">
+                      <Sparkles className="h-4 w-4" />
+                      优化结果
+                      <Badge variant="outline" className="border-emerald-200/40 text-emerald-50">
+                        {optimization.source === 'ai_model' ? 'AI 模型' : '本地规则'}
+                      </Badge>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      data-testid="prompt-skill-apply-optimization"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={applyOptimization}
+                    >
+                      应用优化结果
+                    </Button>
+                  </div>
+                  <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/30 p-3 text-xs leading-5 text-white/75">
+                    {optimization.optimized_content}
+                  </pre>
+                  {optimization.suggestions.length || optimization.warnings.length ? (
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                        <div className="mb-2 text-xs font-medium text-white/65">建议</div>
+                        <ul className="space-y-1 text-xs leading-5 text-white/55">
+                          {optimization.suggestions.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded-lg border border-amber-300/20 bg-amber-400/10 p-3">
+                        <div className="mb-2 text-xs font-medium text-amber-50">提示</div>
+                        <ul className="space-y-1 text-xs leading-5 text-amber-50/75">
+                          {optimization.warnings.map((item) => (
+                            <li key={item}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </div>
 
         <Card className="border-white/10 bg-white/5">
           <CardHeader className="pb-3">
-            <CardTitle className="text-white">预览结果</CardTitle>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle className="text-white">预览结果</CardTitle>
+              <div className="flex flex-wrap gap-2 text-xs">
+                <Badge variant="outline" className="border-white/20 text-white/60">
+                  {canEdit ? '草稿优先' : '已保存技能'}
+                </Badge>
+                <Badge variant="outline" className="border-white/20 text-white/60">
+                  {selectedTaskLabel}
+                </Badge>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
-            <pre
-              data-testid="prompt-skill-preview-output"
-              className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/30 p-4 text-sm leading-6 text-white/75"
-            >
-              {preview || '选择或保存技能后，可在这里查看最终 Prompt 片段如何注入生成上下文。'}
-            </pre>
+            {preview ? (
+              <pre
+                data-testid="prompt-skill-preview-output"
+                className="max-h-[28rem] overflow-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/30 p-4 text-sm leading-6 text-white/75"
+              >
+                {preview}
+              </pre>
+            ) : (
+              <div
+                data-testid="prompt-skill-preview-output"
+                className="rounded-lg border border-dashed border-white/15 bg-black/20 p-8 text-center"
+              >
+                <Eye className="mx-auto mb-3 h-5 w-5 text-white/35" />
+                <div className="text-sm font-medium text-white">暂无预览结果</div>
+                <p className="mt-2 text-xs leading-5 text-white/45">
+                  编辑草稿或选择技能后，可预览 Prompt 注入效果。
+                </p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

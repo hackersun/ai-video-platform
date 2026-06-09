@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import uuid4
 
@@ -9,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
 from app.models import PromptSkill
 from app.services.default_prompt_skills import ensure_standard_prompt_skills
 from app.services.prompt_composer import compose_generation_prompt
@@ -58,6 +61,105 @@ def rendered_prompt_skill_entry(skill: PromptSkill, context: Optional[Dict[str, 
         "stage": skill.stage,
         "version": skill.version or 1,
         "content": content,
+    }
+
+
+def _task_label(task: str) -> str:
+    labels = {
+        "novel_generation": "小说创建",
+        "chapter_writing": "章节创建",
+        "script_generation": "剧本创建",
+        "storyboard_generation": "分镜创建",
+        "shot_prompt": "镜头创建",
+        "shot_video": "镜头视频",
+        "character_image": "头像/角色图",
+        "scene_reference_image": "场景图",
+        "prop_image": "道具图",
+        "novel_cover": "封面图",
+        "tts_dialogue": "角色配音",
+        "shot_audio_video": "音视频直生",
+        "consistency_review": "一致性审查",
+        "repair_suggestion": "返修建议",
+    }
+    return labels.get(task, task)
+
+
+def _compact_prompt_skill_text(value: str, limit: int = 5000) -> str:
+    compacted = re.sub(r"\n{3,}", "\n\n", value.strip())
+    if len(compacted) <= limit:
+        return compacted
+    return f"{compacted[:limit].rstrip()}\n..."
+
+
+def _extract_prompt_variables(content: str) -> List[str]:
+    return sorted({match.group(1).strip() for match in re.finditer(r"\{([a-zA-Z0-9_\u4e00-\u9fff-]+)\}", content)})
+
+
+def _parse_optimization_response(content: str) -> Dict[str, Any]:
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start >= 0 and end > start:
+            parsed = json.loads(cleaned[start : end + 1])
+        else:
+            parsed = {"optimized_content": cleaned}
+    if not isinstance(parsed, dict):
+        return {"optimized_content": cleaned}
+    return parsed
+
+
+def _build_local_prompt_skill_optimization(data: Dict[str, Any], warning: Optional[str] = None) -> Dict[str, Any]:
+    task = str(data.get("task") or "").strip()
+    name = str(data.get("name") or "").strip() or f"{_task_label(task)}标准技能"
+    description = str(data.get("description") or "").strip()
+    content = _compact_prompt_skill_text(str(data.get("content") or ""))
+    variables = _extract_prompt_variables(content)
+    variable_line = "、".join(f"{{{item}}}" for item in variables) if variables else "无"
+    description_line = f"\n适用说明：{description}" if description else ""
+    mode = str(data.get("mode") or "polish")
+    mode_goal = "压缩重复表达并保留关键约束" if mode == "tighten" else "强化生成可执行性和一致性边界"
+
+    optimized = f"""优化目标：{mode_goal}，用于「{_task_label(task)}」环节的「{name}」。{description_line}
+
+执行规则：
+- 保留原始意图：{content}
+- 明确主体、动作、场景、风格、连续性和可验证输出，避免只写抽象形容词。
+- 变量占位保持可替换：{variable_line}。
+
+禁止项：
+- 不新增未声明角色、道具、地点或剧情结论。
+- 不改变已锁定角色外观、资产状态、时代背景和镜头任务。
+- 不输出水印、真实文字、无关镜头或无法生成的抽象要求。
+
+验收标准：
+- 生成前能看出任务目标、关键约束、禁止变化项和失败修复方向。
+- 测试模式可预览，生产模式必须满足资产锁、模型配置和媒体产物等强制限制。"""
+
+    warnings = ["本次使用本地规则优化；配置可用文本模型后可获得更细的 AI 润色。"]
+    if warning:
+        warnings.insert(0, warning)
+
+    suggestions = [
+        "补充具体主体、镜头动作和视觉风格",
+        "把禁止变化项写成可检查的清单",
+        "预览后再克隆/激活，避免直接覆盖当前生产规则",
+    ]
+    if variables:
+        suggestions.append("检查变量占位是否能由当前任务上下文填充")
+
+    return {
+        "task": task,
+        "source": "local_rules",
+        "original_content": content,
+        "optimized_content": optimized.strip(),
+        "suggestions": suggestions,
+        "warnings": warnings,
     }
 
 
@@ -287,6 +389,79 @@ async def active_prompt_skill_blocks(
     return [entry["content"] for entry in entries]
 
 
+async def optimize_prompt_skill_content(
+    db: AsyncSession,
+    user_id: str,
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
+    content = str(data.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先填写技能内容后再使用 AI 优化")
+
+    task = str(data.get("task") or "").strip()
+    mode = str(data.get("mode") or "polish").strip()
+    model_config_id = data.get("model_config_id")
+
+    system_prompt = """你是 AI 视频创作平台的 Prompt 技能编辑器，负责把用户写的技能片段润色为可复用、可测试、适合生产链路的中文提示词。
+
+规则：
+1. 只围绕用户原意优化，不发明新人物、剧情、模型能力或业务入口。
+2. 必须保留原文中的 {变量占位}。
+3. 输出 JSON，不要 markdown，不要解释。
+4. JSON 字段必须包含 optimized_content、suggestions、warnings。
+5. optimized_content 使用中文，结构包含优化目标、执行规则、禁止项、验收标准。"""
+
+    user_prompt = f"""任务类型：{task}（{_task_label(task)}）
+技能名称：{data.get('name') or '未命名'}
+用途说明：{data.get('description') or '未填写'}
+优化模式：{mode}
+原始技能内容：
+{_compact_prompt_skill_text(content)}
+
+请返回：
+{{
+  "optimized_content": "优化后的完整 Prompt 技能内容",
+  "suggestions": ["后续可补充项"],
+  "warnings": ["需要用户确认的风险"]
+}}"""
+
+    try:
+        api_key, provider_name, model_id, base_url = await get_user_text_model_config(
+            db,
+            user_id,
+            raise_if_missing=False,
+            config_id=model_config_id,
+        )
+        if not api_key or not provider_name or not model_id:
+            return _build_local_prompt_skill_optimization(data)
+        service = create_text_generation_service(api_key, provider_name, base_url)
+        response = await service.safe_chat_completion(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.25,
+            max_tokens=2200,
+        )
+        parsed = _parse_optimization_response(response["choices"][0]["message"]["content"])
+        optimized_content = str(parsed.get("optimized_content") or "").strip()
+        if not optimized_content:
+            return _build_local_prompt_skill_optimization(data, warning="AI 返回内容为空，已改用本地规则优化。")
+        suggestions = parsed.get("suggestions") if isinstance(parsed.get("suggestions"), list) else []
+        warnings = parsed.get("warnings") if isinstance(parsed.get("warnings"), list) else []
+        return {
+            "task": task,
+            "source": "ai_model",
+            "original_content": _compact_prompt_skill_text(content),
+            "optimized_content": optimized_content,
+            "suggestions": [str(item).strip() for item in suggestions if str(item).strip()],
+            "warnings": [str(item).strip() for item in warnings if str(item).strip()],
+        }
+    except Exception as exc:
+        return _build_local_prompt_skill_optimization(data, warning=f"AI 优化暂不可用：{str(exc)[:120]}")
+
+
 async def preview_prompt_skills(
     db: AsyncSession,
     user_id: str,
@@ -294,15 +469,48 @@ async def preview_prompt_skills(
     task: str,
     skill_ids: Optional[List[str]] = None,
     context: Optional[Dict[str, Any]] = None,
+    draft_name: Optional[str] = None,
+    draft_content: Optional[str] = None,
+    draft_stage: Optional[str] = None,
 ) -> Dict[str, Any]:
-    if skill_ids:
+    if draft_content and draft_content.strip():
+        content = render_prompt_skill(
+            PromptSkill(
+                id="draft",
+                user_id=user_id,
+                name=draft_name or "当前编辑草稿",
+                task=task,
+                stage=draft_stage or "draft",
+                content=draft_content,
+                variables={},
+                priority=0,
+                inject_position="before_constraints",
+                version=0,
+                is_active=False,
+                is_builtin=False,
+                tags=[],
+            ),
+            context,
+        )
+        entries = [
+            {
+                "id": "draft",
+                "name": draft_name or "当前编辑草稿",
+                "task": task,
+                "stage": draft_stage or "draft",
+                "version": 0,
+                "content": content,
+            }
+        ]
+    elif skill_ids:
         skills = await _skills_by_ids(db, user_id, skill_ids)
         selected_skills = [skill for skill in skills if skill.task == task]
+        entries = [rendered_prompt_skill_entry(skill, context) for skill in selected_skills]
     else:
         skills_result = await list_prompt_skills(db, user_id, task=task, active=True)
         skills = [await get_prompt_skill(db, user_id, item["id"]) for item in skills_result["items"]]
         selected_skills = [skill for skill in skills if skill.task == task and skill.is_active]
-    entries = [rendered_prompt_skill_entry(skill, context) for skill in selected_skills]
+        entries = [rendered_prompt_skill_entry(skill, context) for skill in selected_skills]
     entries = [entry for entry in entries if entry["content"]]
     blocks = [entry["content"] for entry in entries]
     prompt = compose_generation_prompt(task=task, extra_context=context or {}, skill_blocks=blocks)

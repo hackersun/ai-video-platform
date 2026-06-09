@@ -56,6 +56,8 @@ test.beforeEach(async ({ page }) => {
 test('prompt skill page manages clone edit preview and activation flow', async ({ page }) => {
   let created = false;
   let previewRequestedSkillIds: string[] = [];
+  let previewDraftContent = '';
+  let optimizeRequested = false;
   let activatedSkillId = '';
   let skills = [initialSkill];
 
@@ -135,7 +137,9 @@ test('prompt skill page manages clone edit preview and activation flow', async (
       return;
     }
     if (path === '/api/v1/prompt-skills/preview') {
-      previewRequestedSkillIds = route.request().postDataJSON().skill_ids || [];
+      const payload = route.request().postDataJSON();
+      previewRequestedSkillIds = payload.skill_ids || [];
+      previewDraftContent = payload.draft_content || '';
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -148,13 +152,30 @@ test('prompt skill page manages clone edit preview and activation flow', async (
       });
       return;
     }
+    if (path === '/api/v1/prompt-skills/optimize') {
+      optimizeRequested = true;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          task: 'shot_video',
+          source: 'local_rules',
+          original_content: route.request().postDataJSON().content,
+          optimized_content: '优化目标：强化镜头一致性。\n执行规则：保持脸型、服装、道具和场景连续。\n禁止项：不要乱变、不要新增无关角色。',
+          suggestions: ['补充镜头运动', '补充禁止项'],
+          warnings: ['本次使用本地规则优化，可继续接入模型配置。'],
+        }),
+      });
+      return;
+    }
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 
   await page.goto('/prompt-skills');
 
   await expect(page.getByRole('heading', { name: 'Prompt 技能' })).toBeVisible();
-  await expect(page.getByText('Prompt 技能会影响生成质量。修改后建议先用测试验证模式跑完整流程。')).toBeVisible();
+  await expect(page.getByText('当前任务：镜头视频')).toBeVisible();
+  await expect(page.getByText('修改后先预览草稿，再保存并用测试验证模式跑完整流程。')).toBeVisible();
   await expect(page.getByRole('link', { name: '工作台' })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开内容创作菜单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开资产设定菜单' })).toBeVisible();
@@ -167,6 +188,8 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   }
 
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
+  await expect(page.getByText('选择任务后会显示可用技能。')).toBeVisible();
+  await expect(page.getByText('技能内容不能为空')).toBeVisible();
   await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue('技能约束: 使用{tone}，避免{bad_case}。');
 
   await page.getByRole('button', { name: '新建' }).click();
@@ -184,13 +207,19 @@ test('prompt skill page manages clone edit preview and activation flow', async (
 
   await page.getByTestId('prompt-skill-name-input').fill('回滚镜头技能');
   await page.getByTestId('prompt-skill-content-input').fill('回滚技能: 使用{tone}，避免{bad_case}。');
+  await page.getByTestId('prompt-skill-optimize').click();
+  await expect(page.getByText('优化目标：强化镜头一致性。')).toBeVisible();
+  await page.getByTestId('prompt-skill-apply-optimization').click();
+  await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue(/优化目标：强化镜头一致性/);
+  expect(optimizeRequested).toBe(true);
   await page.getByTestId('prompt-skill-save').click();
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('回滚镜头技能');
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('v2');
 
   await page.getByTestId('prompt-skill-preview').click();
   await expect(page.getByText('技能约束: 使用冷蓝月光，避免脸型变化。')).toBeVisible();
-  expect(previewRequestedSkillIds).toEqual(['skill-clone-001']);
+  expect(previewRequestedSkillIds).toEqual([]);
+  expect(previewDraftContent).toContain('优化目标：强化镜头一致性');
 
   await page.getByTestId('prompt-skill-activate').click();
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('当前激活');

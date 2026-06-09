@@ -71,6 +71,9 @@ export async function previewPromptSkill(payload: {
   task: string;
   skill_ids?: string[];
   context?: Record<string, any>;
+  draft_name?: string;
+  draft_content?: string;
+  draft_stage?: string;
 }) {
   return fetchJsonWithAuth<{
     task: string;
@@ -78,6 +81,27 @@ export async function previewPromptSkill(payload: {
     skill_blocks: string[];
     prompt: string;
   }>(`${API_BASE}/prompt-skills/preview`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function optimizePromptSkill(payload: {
+  task: string;
+  name?: string;
+  description?: string;
+  content: string;
+  mode?: 'polish' | 'tighten' | 'productionize';
+  model_config_id?: string;
+}) {
+  return fetchJsonWithAuth<{
+    task: string;
+    source: 'ai_model' | 'local_rules';
+    original_content: string;
+    optimized_content: string;
+    suggestions: string[];
+    warnings: string[];
+  }>(`${API_BASE}/prompt-skills/optimize`, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

@@ -304,3 +304,67 @@ def test_user_active_prompt_skill_overrides_builtin_prompt_skill(client: TestCli
     prompt = compose_response.json()["prompt"]
     assert "用户覆盖技能: 使用银蓝夜色" in prompt
     assert "标准镜头视频技能" not in prompt
+
+
+def test_prompt_skill_optimize_returns_polished_content_and_warnings(client: TestClient) -> None:
+    user_id = f"prompt-skill-optimize-user-{uuid4()}"
+
+    response = client.post(
+        "/api/v1/prompt-skills/optimize",
+        json={
+            "task": "shot_video",
+            "name": "镜头漂移控制",
+            "description": "控制镜头生成时的角色漂移",
+            "content": "保持角色一致，不要乱变。",
+            "mode": "polish",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["task"] == "shot_video"
+    assert result["source"] in {"local_rules", "ai_model"}
+    assert "优化目标" in result["optimized_content"]
+    assert "保持角色一致" in result["optimized_content"]
+    assert result["warnings"]
+    assert "original_content" in result
+
+
+def test_prompt_skill_optimize_requires_content(client: TestClient) -> None:
+    user_id = f"prompt-skill-optimize-empty-user-{uuid4()}"
+
+    response = client.post(
+        "/api/v1/prompt-skills/optimize",
+        json={
+            "task": "shot_video",
+            "name": "空内容",
+            "content": "   ",
+            "mode": "polish",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 400
+    assert "请先填写" in response.json()["detail"]
+
+
+def test_prompt_skill_preview_can_use_unsaved_draft_content(client: TestClient) -> None:
+    user_id = f"prompt-skill-draft-preview-user-{uuid4()}"
+
+    response = client.post(
+        "/api/v1/prompt-skills/preview",
+        json={
+            "task": "shot_video",
+            "draft_name": "草稿镜头技能",
+            "draft_content": "草稿技能约束: 使用{tone}，避免{bad_case}。",
+            "context": {"tone": "青绿色边缘光", "bad_case": "表情漂移"},
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["skill_count"] == 1
+    assert result["skills"][0]["id"] == "draft"
+    assert "草稿技能约束: 使用青绿色边缘光，避免表情漂移。" in result["prompt"]
