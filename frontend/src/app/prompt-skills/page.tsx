@@ -30,12 +30,14 @@ import {
   clonePromptSkill,
   createPromptSkill,
   deletePromptSkill,
+  getPromptSkillVariableGuide,
   listPromptSkillOptimizationModelConfigs,
   listPromptSkills,
   optimizePromptSkill,
   previewPromptSkill,
   updatePromptSkill,
   type PromptSkill,
+  type PromptSkillVariableGuide,
 } from '@/lib/prompt-skills-api';
 import {
   getConfigsByCapability,
@@ -61,11 +63,6 @@ const taskOptions = [
   { value: 'consistency_review', label: '一致性审查' },
   { value: 'repair_suggestion', label: '返修建议' },
 ];
-
-const defaultContext = {
-  tone: '冷蓝月光',
-  bad_case: '脸型变化',
-};
 
 type OptimizationResult = {
   task: string;
@@ -95,6 +92,8 @@ export default function PromptSkillsPage() {
   const [selectedOptimizeModelConfigId, setSelectedOptimizeModelConfigId] = useState('');
   const [loadingModelConfigs, setLoadingModelConfigs] = useState(false);
   const [modelConfigError, setModelConfigError] = useState('');
+  const [variableGuide, setVariableGuide] = useState<PromptSkillVariableGuide | null>(null);
+  const [variableGuideError, setVariableGuideError] = useState('');
 
   const selectedSkill = useMemo(
     () => skills.find((item) => item.id === selectedSkillId) || null,
@@ -150,6 +149,35 @@ export default function PromptSkillsPage() {
   const contentVariables = useMemo(() => {
     return Array.from(new Set(Array.from(content.matchAll(/\{([^}]+)\}/g)).map((match) => match[1].trim()))).filter(Boolean);
   }, [content]);
+
+  const variableGuideByName = useMemo(() => {
+    return new Map((variableGuide?.items || []).map((item) => [item.name, item]));
+  }, [variableGuide]);
+
+  const previewContext = useMemo(
+    () => ({
+      ...(variableGuide?.sample_context || {}),
+      ...(selectedSkill?.variables || {}),
+    }),
+    [selectedSkill, variableGuide]
+  );
+
+  const contextPreviewPairs = useMemo(() => Object.entries(previewContext).slice(0, 5), [previewContext]);
+
+  const contentVariableDetails = useMemo(
+    () =>
+      contentVariables.map((variable) => {
+        const guide = variableGuideByName.get(variable);
+        const hasPreviewValue = Object.prototype.hasOwnProperty.call(previewContext, variable);
+        return {
+          name: variable,
+          guide,
+          hasPreviewValue,
+          status: guide?.system_fill ? '系统可填' : guide ? '模板默认' : hasPreviewValue ? '技能默认' : '未知变量',
+        };
+      }),
+    [contentVariables, previewContext, variableGuideByName]
+  );
 
   const boundaryChecks = useMemo(
     () => [
@@ -207,8 +235,22 @@ export default function PromptSkillsPage() {
     }
   };
 
+  const loadVariableGuide = async (nextTask = task) => {
+    setVariableGuideError('');
+    try {
+      const guide = await getPromptSkillVariableGuide(nextTask);
+      setVariableGuide(guide);
+      return guide;
+    } catch (err: any) {
+      setVariableGuide(null);
+      setVariableGuideError(err.message || '加载变量说明失败');
+      return null;
+    }
+  };
+
   useEffect(() => {
     loadSkills(task);
+    loadVariableGuide(task);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task]);
 
@@ -245,7 +287,14 @@ export default function PromptSkillsPage() {
     task,
     stage: selectedSkill?.stage || 'consistency',
     content: content.trim(),
-    variables: selectedSkill?.variables || {},
+    variables: contentVariables.reduce<Record<string, any>>((acc, variable) => {
+      if (selectedSkill?.variables && Object.prototype.hasOwnProperty.call(selectedSkill.variables, variable)) {
+        acc[variable] = selectedSkill.variables[variable];
+      } else if (variableGuide?.sample_context && Object.prototype.hasOwnProperty.call(variableGuide.sample_context, variable)) {
+        acc[variable] = variableGuide.sample_context[variable];
+      }
+      return acc;
+    }, {}),
     priority: selectedSkill?.priority ?? 100,
     inject_position: selectedSkill?.inject_position || 'before_constraints',
     is_active: isActive,
@@ -401,7 +450,7 @@ export default function PromptSkillsPage() {
       const result = await previewPromptSkill({
         task,
         skill_ids: skillIds,
-        context: defaultContext,
+        context: previewContext,
         draft_name: useDraft ? name.trim() || '当前编辑草稿' : undefined,
         draft_content: useDraft ? draftContent : undefined,
         draft_stage: useDraft ? selectedSkill?.stage || 'draft' : undefined,
@@ -444,7 +493,51 @@ export default function PromptSkillsPage() {
             <span className="font-medium">当前任务：{selectedTaskLabel}</span>
             <span className="ml-2 text-amber-50/75">修改后先预览草稿，再保存并用测试验证模式跑完整流程。</span>
           </div>
-          <div className="text-amber-50/75">示例上下文：tone=冷蓝月光，bad_case=脸型变化</div>
+          <div className="text-amber-50/75">
+            预览样例：
+            {contextPreviewPairs.length
+              ? contextPreviewPairs.map(([key, value]) => `${key}=${String(value).slice(0, 14)}`).join('，')
+              : '等待变量说明加载'}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/10 p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium text-cyan-50">
+                <BrainCircuit className="h-4 w-4" />
+                统一变量说明
+              </div>
+              <p className="mt-2 text-xs leading-5 text-cyan-50/70">
+                使用 {`{变量名}`} 作为占位；真实生成和预览会优先使用系统上下文，其次使用技能变量默认值。未识别变量会保留为占位符，预览后再保存。
+              </p>
+            </div>
+            <Badge variant="outline" className="w-fit border-cyan-200/40 text-cyan-50">
+              {variableGuide?.task_label || selectedTaskLabel}变量
+            </Badge>
+          </div>
+          {variableGuideError ? (
+            <div className="mt-3 rounded-md border border-red-300/25 bg-red-500/10 p-3 text-xs text-red-50">
+              {variableGuideError}
+            </div>
+          ) : null}
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {(variableGuide?.items || []).slice(0, 12).map((item) => (
+              <div key={item.name} className="rounded-md border border-white/10 bg-black/20 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-xs text-cyan-100">{`{${item.name}}`}</span>
+                  <Badge
+                    variant="outline"
+                    className={item.system_fill ? 'border-emerald-300/40 text-emerald-100' : 'border-amber-300/40 text-amber-100'}
+                  >
+                    {item.system_fill ? '系统可填' : '模板默认'}
+                  </Badge>
+                </div>
+                <div className="mt-1 text-xs font-medium text-white/75">{item.label}</div>
+                <div className="mt-1 line-clamp-2 text-xs leading-5 text-white/45">{item.description}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {error && <div className="rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-50">{error}</div>}
@@ -610,12 +703,33 @@ export default function PromptSkillsPage() {
                 </div>
                 <div>
                   <div className="mb-2 text-xs font-medium text-white/65">变量占位</div>
-                  {contentVariables.length ? (
-                    <div className="flex flex-wrap gap-2">
-                      {contentVariables.map((variable) => (
-                        <Badge key={variable} variant="outline" className="border-white/20 text-white/70">
-                          {`{${variable}}`}
-                        </Badge>
+                  {contentVariableDetails.length ? (
+                    <div className="space-y-2">
+                      {contentVariableDetails.map((item) => (
+                        <div key={item.name} className="rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge
+                              variant="outline"
+                              className={
+                                item.status === '系统可填'
+                                  ? 'border-emerald-300/40 text-emerald-100'
+                                  : item.status === '未知变量'
+                                    ? 'border-red-300/40 text-red-100'
+                                    : 'border-amber-300/40 text-amber-100'
+                              }
+                            >
+                              {item.status}
+                            </Badge>
+                            <span className="font-mono text-xs text-white/75">{`{${item.name}}`}</span>
+                            {item.guide ? <span className="text-xs text-white/45">{item.guide.label}</span> : null}
+                          </div>
+                          <div className="mt-1 text-xs leading-5 text-white/45">
+                            {item.guide?.description || '当前任务变量说明中没有该占位；请确认是否需要补充默认值或改用系统变量。'}
+                          </div>
+                          {item.hasPreviewValue ? (
+                            <div className="mt-1 truncate text-xs text-cyan-100/70">预览值：{String(previewContext[item.name])}</div>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : (

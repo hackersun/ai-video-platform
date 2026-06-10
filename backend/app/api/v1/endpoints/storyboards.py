@@ -26,6 +26,7 @@ from app.core.security import get_current_user_id
 from app.models import Asset, Storyboard, Shot, Novel, Chapter, Script, SynthesisJob
 from app.services.consistency_context import build_consistency_prompt, build_shot_entity_context, auto_fill_shot_entity_refs
 from app.services.novel_continuity import build_novel_continuity_package
+from app.services.prompt_skill_service import apply_active_prompt_skill_template
 from app.services.story_prompt_context import (
     build_shot_dialogue_context,
     build_story_context_block,
@@ -228,6 +229,21 @@ async def get_user_qwen_api_key(
         config_id=model_config_id,
     )
     return api_key or "", provider_name or "", model_id or "", base_url
+
+
+def _compact_prompt_context_value(value: Optional[str], limit: int = 2400) -> str:
+    text = (value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def _extract_first_dialogue_line(content: Optional[str]) -> str:
+    for line in (content or "").splitlines():
+        text = line.strip()
+        if re.match(r"^(.{1,16}[：:].+|（旁白）.+)", text):
+            return text
+    return ""
 
 
 async def get_script_for_user(db: AsyncSession, script_id: str, user_id: str):
@@ -666,6 +682,17 @@ async def refine_template_shots_with_ai(
         description=source_content,
         style=request.style,
     )
+    dialogue_sample = _extract_first_dialogue_line(source_content)
+    prompt_skill_context = {
+        "title": source_title,
+        "source_title": source_title,
+        "source_content": _compact_prompt_context_value(source_content),
+        "style": request.style,
+        "shot_count": request.shot_count or len(draft_shots),
+        "template_name": template["name"],
+        "dialogue": dialogue_sample,
+        "subtitle_text": dialogue_sample,
+    }
     if request.use_consistency_context:
         novel_continuity = await build_novel_continuity_package(
             db,
@@ -685,6 +712,7 @@ async def refine_template_shots_with_ai(
             project_id=request.project_id,
             novel_id=request.novel_id,
             extra_context={
+                **prompt_skill_context,
                 "分镜风格": request.style,
                 "匹配模板": template["name"],
                 "镜头数量": request.shot_count or len(draft_shots),
@@ -712,6 +740,15 @@ async def refine_template_shots_with_ai(
 """
     if consistency_prompt:
         system_prompt += f"\n全局一致性约束：\n{consistency_prompt}\n"
+    else:
+        prompt_result = await apply_active_prompt_skill_template(
+            db,
+            user_id,
+            task="storyboard_generation",
+            internal_prompt=system_prompt,
+            context=prompt_skill_context,
+        )
+        system_prompt = prompt_result["prompt"]
 
     response = await service.safe_chat_completion(
         model=model_id or "",
@@ -1581,6 +1618,18 @@ async def generate_storyboard(
         model_id=model_id,
         task="storyboard_generation",
     )
+    dialogue_sample = _extract_first_dialogue_line(script.content)
+    prompt_skill_context = {
+        "title": script_title,
+        "script_title": script_title,
+        "source_title": script_title,
+        "source_content": _compact_prompt_context_value(script.content),
+        "genre": script.genre or "",
+        "style": request.style,
+        "shot_count": request.shot_count or "自动",
+        "dialogue": dialogue_sample,
+        "subtitle_text": dialogue_sample,
+    }
     if request.use_consistency_context:
         context = await build_consistency_prompt(
             db,
@@ -1591,6 +1640,7 @@ async def generate_storyboard(
             project_id=request.project_id,
             novel_id=inferred_novel_id,
             extra_context={
+                **prompt_skill_context,
                 "分镜风格": request.style,
                 "镜头数量": request.shot_count or "自动",
                 "剧本标题": script_title,
@@ -1653,6 +1703,15 @@ async def generate_storyboard(
         system_prompt += f"\n\n【全局一致性约束】\n{consistency_prompt}"
     if novel_continuity:
         system_prompt += f"\n\n{novel_continuity.get('prompt_block')}"
+    if not consistency_prompt:
+        prompt_result = await apply_active_prompt_skill_template(
+            db,
+            user_id,
+            task="storyboard_generation",
+            internal_prompt=system_prompt,
+            context=prompt_skill_context,
+        )
+        system_prompt = prompt_result["prompt"]
 
     try:
         response = await service.safe_chat_completion(

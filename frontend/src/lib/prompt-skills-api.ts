@@ -32,6 +32,24 @@ export type PromptSkillPayload = {
   tags?: string[];
 };
 
+export type PromptSkillVariableGuideItem = {
+  name: string;
+  label: string;
+  description: string;
+  example: any;
+  source: string;
+  system_fill: boolean;
+  required: boolean;
+  aliases?: string[];
+};
+
+export type PromptSkillVariableGuide = {
+  task: string;
+  task_label: string;
+  items: PromptSkillVariableGuideItem[];
+  sample_context: Record<string, any>;
+};
+
 export async function listPromptSkills(task?: string, options: { active?: boolean } = {}) {
   const params = new URLSearchParams();
   if (task) params.set('task', task);
@@ -40,6 +58,11 @@ export async function listPromptSkills(task?: string, options: { active?: boolea
   return fetchJsonWithAuth<{ items: PromptSkill[]; count: number }>(
     `${API_BASE}/prompt-skills${qs ? `?${qs}` : ''}`
   );
+}
+
+export async function getPromptSkillVariableGuide(task: string) {
+  const params = new URLSearchParams({ task });
+  return fetchJsonWithAuth<PromptSkillVariableGuide>(`${API_BASE}/prompt-skills/variables?${params.toString()}`);
 }
 
 export async function createPromptSkill(payload: PromptSkillPayload) {

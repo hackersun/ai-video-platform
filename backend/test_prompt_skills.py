@@ -89,6 +89,50 @@ def test_builtin_prompt_skills_cover_core_ai_flow(client: TestClient) -> None:
     assert "星海试炼" in preview["prompt"]
 
 
+def test_prompt_skill_variable_guides_cover_storyboard_dialogue_context(client: TestClient) -> None:
+    user_id = f"prompt-skill-variable-user-{uuid4()}"
+
+    guide_response = client.get(
+        "/api/v1/prompt-skills/variables",
+        params={"task": "storyboard_generation"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert guide_response.status_code == 200
+    guide = guide_response.json()
+    assert guide["task"] == "storyboard_generation"
+    assert guide["task_label"] == "分镜创建"
+    variable_by_name = {item["name"]: item for item in guide["items"]}
+
+    for name in ("shot_count", "style", "source_content", "dialogue", "subtitle_text"):
+        assert name in variable_by_name
+        assert variable_by_name[name]["example"]
+
+    assert variable_by_name["dialogue"]["system_fill"] is True
+    assert "角色名：台词" in variable_by_name["dialogue"]["description"]
+    assert variable_by_name["subtitle_text"]["system_fill"] is True
+    assert guide["sample_context"]["dialogue"]
+    assert guide["sample_context"]["subtitle_text"]
+
+    preview_response = client.post(
+        "/api/v1/prompt-skills/preview",
+        json={
+            "task": "storyboard_generation",
+            "draft_name": "分镜变量预览",
+            "draft_content": "生成{shot_count}个镜头，对白为{dialogue}，字幕为{subtitle_text}。",
+            "context": guide["sample_context"],
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert preview_response.status_code == 200
+    prompt = preview_response.json()["prompt"]
+    assert "生成8个镜头" in prompt
+    assert "沈砚：铜铃又响了。" in prompt
+    assert "字幕为沈砚：铜铃又响了。" in prompt
+    assert "{dialogue}" not in prompt
+
+
 def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:
     user_id = f"prompt-skill-user-{uuid4()}"
 

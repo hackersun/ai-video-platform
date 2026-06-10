@@ -205,3 +205,95 @@ def test_script_ai_assist_uses_active_prompt_skill_template(
     assert "用户剧本模板：标题《雾港铜铃》保持悬疑节奏，不新增人物。" in user_prompt
     assert "【内部逻辑提示词】" in user_prompt
     assert "当前剧本" in user_prompt
+
+
+def test_storyboard_generation_uses_active_prompt_skill_template_without_consistency_context(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"storyboard-skill-user-{uuid4()}"
+    calls: list[dict] = []
+
+    async def _fake_text_config(*args, **kwargs):
+        return "fake-key", "qwen", "qwen-plus", None
+
+    class _FakeTextService:
+        async def safe_chat_completion(self, **kwargs) -> dict:
+            calls.append(kwargs)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                [
+                                    {
+                                        "shot_number": 1,
+                                        "duration": 4,
+                                        "shot_type": "dialogue",
+                                        "prompt": "沈砚在旧码头听见铜铃声",
+                                        "dialogue": "沈砚：铜铃又响了。",
+                                        "visual_description": "冷色月光下，沈砚停在旧码头木栈道边，神情警觉。",
+                                        "camera_angle": "medium",
+                                        "camera_movement": "固定",
+                                        "sound_effect": "铜铃声、潮水声",
+                                        "music_mood": "紧张悬疑",
+                                    }
+                                ],
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("app.api.v1.endpoints.storyboards.get_user_qwen_api_key", _fake_text_config)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.storyboards.create_text_generation_service",
+        lambda *args, **kwargs: _FakeTextService(),
+    )
+
+    skill_resp = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "分镜对白强约束",
+            "task": "storyboard_generation",
+            "stage": "storyboard",
+            "content": "用户分镜模板：从{source_content}拆成{shot_count}个{style}镜头，必须保留对白。",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert skill_resp.status_code == 201, skill_resp.text
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "title": "雾港铜铃",
+            "genre": "悬疑",
+            "style": "冷色动漫",
+            "description": "沈砚追查密信失踪。",
+            "content": "沈砚来到旧码头。\n沈砚：铜铃又响了。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201, script_resp.text
+
+    response = client.post(
+        "/api/v1/storyboards/generate",
+        json={
+            "script_id": script_resp.json()["id"],
+            "shot_count": 3,
+            "style": "anime",
+            "use_consistency_context": False,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 201, response.text
+    assert calls
+    system_prompt = calls[0]["messages"][0]["content"]
+    assert "用户分镜模板：从沈砚来到旧码头。" in system_prompt
+    assert "拆成3个anime镜头" in system_prompt
+    assert "必须保留对白" in system_prompt
+    assert "【内部逻辑提示词】" in system_prompt
+    assert "dialogue: 台词/配音" in system_prompt

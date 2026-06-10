@@ -71,6 +71,105 @@ const optimizationModelConfigs = [
   },
 ];
 
+const variableGuides: Record<string, any> = {
+  shot_video: {
+    task: 'shot_video',
+    task_label: '镜头视频',
+    items: [
+      {
+        name: 'duration',
+        label: '视频时长',
+        description: '镜头视频生成时长。',
+        example: '4秒',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+      {
+        name: 'dialogue',
+        label: '对白/台词',
+        description: '当前镜头 dialogue 字段，会用于字幕和有声视频约束。',
+        example: '沈砚：铜铃又响了。',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+      {
+        name: 'subtitle_text',
+        label: '字幕文本',
+        description: '当前镜头字幕文本，视频生成和字幕导出会使用。',
+        example: '沈砚：铜铃又响了。',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+      {
+        name: 'tone',
+        label: '色调',
+        description: '镜头色彩或气氛倾向。',
+        example: '冷蓝月光',
+        source: '模板默认值',
+        system_fill: false,
+        required: false,
+      },
+      {
+        name: 'bad_case',
+        label: '负面示例',
+        description: '需要避免的生成失败类型。',
+        example: '脸型变化',
+        source: '技能默认值',
+        system_fill: false,
+        required: false,
+      },
+    ],
+    sample_context: {
+      duration: '4秒',
+      dialogue: '沈砚：铜铃又响了。',
+      subtitle_text: '沈砚：铜铃又响了。',
+      tone: '冷蓝月光',
+      bad_case: '脸型变化',
+    },
+  },
+  storyboard_generation: {
+    task: 'storyboard_generation',
+    task_label: '分镜创建',
+    items: [
+      {
+        name: 'shot_count',
+        label: '镜头数量',
+        description: '分镜生成入口指定或模板推断的镜头数量。',
+        example: 8,
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+      {
+        name: 'dialogue',
+        label: '对白/台词',
+        description: '分镜中的台词字段，建议使用“角色名：台词”格式。',
+        example: '沈砚：铜铃又响了。',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+      {
+        name: 'subtitle_text',
+        label: '字幕文本',
+        description: '镜头 extra_data.subtitle_text 或 dialogue 的字幕文本。',
+        example: '沈砚：铜铃又响了。',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+    ],
+    sample_context: {
+      shot_count: 8,
+      dialogue: '沈砚：铜铃又响了。',
+      subtitle_text: '沈砚：铜铃又响了。',
+    },
+  },
+};
+
 test.beforeEach(async ({ page }) => {
   const userId = `prompt-skill-user-${Date.now()}`;
   const token = devToken(userId);
@@ -88,6 +187,7 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   let created = false;
   let previewRequestedSkillIds: string[] = [];
   let previewDraftContent = '';
+  let previewRequestContext: any = null;
   let optimizeRequested = false;
   let optimizeRequestBody: any = null;
   let activatedSkillId = '';
@@ -112,6 +212,16 @@ test('prompt skill page manages clone edit preview and activation flow', async (
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(optimizationModelConfigs),
+      });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills/variables' && route.request().method() === 'GET') {
+      const task = url.searchParams.get('task') || 'shot_video';
+      const guide = variableGuides[task] || variableGuides.shot_video;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(guide),
       });
       return;
     }
@@ -191,6 +301,7 @@ test('prompt skill page manages clone edit preview and activation flow', async (
       const payload = route.request().postDataJSON();
       previewRequestedSkillIds = payload.skill_ids || [];
       previewDraftContent = payload.draft_content || '';
+      previewRequestContext = payload.context || {};
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -228,6 +339,10 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await expect(page.getByRole('heading', { name: 'Prompt 技能' })).toBeVisible();
   await expect(page.getByText('当前任务：镜头视频')).toBeVisible();
   await expect(page.getByText('修改后先预览草稿，再保存并用测试验证模式跑完整流程。')).toBeVisible();
+  await expect(page.getByText('统一变量说明')).toBeVisible();
+  await expect(page.getByText('{dialogue}').first()).toBeVisible();
+  await expect(page.getByText('字幕文本', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('系统可填').first()).toBeVisible();
   await expect(page.getByRole('link', { name: '工作台' })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开内容创作菜单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开资产设定菜单' })).toBeVisible();
@@ -238,6 +353,13 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   for (const label of expectedTaskLabels) {
     expect(taskLabels).toContain(label);
   }
+
+  await page.getByTestId('prompt-skill-task-select').selectOption('storyboard_generation');
+  await expect(page.getByText('分镜创建变量')).toBeVisible();
+  await expect(page.getByText('镜头数量', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('建议使用“角色名：台词”格式')).toBeVisible();
+  await page.getByTestId('prompt-skill-task-select').selectOption('shot_video');
+  await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
 
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
   await expect(page.getByText('选择任务后会显示可用技能。')).toBeVisible();
@@ -295,6 +417,8 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await expect(page.getByText('技能约束: 使用冷蓝月光，避免脸型变化。')).toBeVisible();
   expect(previewRequestedSkillIds).toEqual([]);
   expect(previewDraftContent).toContain('优化目标：强化镜头一致性');
+  expect(previewRequestContext.dialogue).toBe('沈砚：铜铃又响了。');
+  expect(previewRequestContext.tone).toBe('冷蓝月光');
 
   await page.getByTestId('prompt-skill-activate').click();
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('当前激活');

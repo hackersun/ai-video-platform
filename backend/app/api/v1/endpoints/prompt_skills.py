@@ -20,6 +20,10 @@ from app.services.prompt_skill_service import (
     preview_prompt_skills,
     update_prompt_skill,
 )
+from app.services.prompt_skill_variable_guides import (
+    get_prompt_skill_variable_guide,
+    list_prompt_skill_variable_guides,
+)
 
 router = APIRouter(tags=["Prompt 技能"])
 
@@ -68,6 +72,13 @@ async def get_prompt_skills(
     user_id: str = Depends(get_current_user_id),
 ):
     return await list_prompt_skills(db, user_id, task=task, stage=stage, active=active)
+
+
+@router.get("/variables", response_model=Dict[str, Any])
+async def get_prompt_skill_variables(task: Optional[str] = Query(None)):
+    if task:
+        return get_prompt_skill_variable_guide(task)
+    return list_prompt_skill_variable_guides()
 
 
 @router.post("", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
