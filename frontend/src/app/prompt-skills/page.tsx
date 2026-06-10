@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   AlertTriangle,
   BrainCircuit,
@@ -12,6 +13,7 @@ import {
   Plus,
   Power,
   Save,
+  Settings,
   Sparkles,
   Trash2,
 } from 'lucide-react';
@@ -28,12 +30,20 @@ import {
   clonePromptSkill,
   createPromptSkill,
   deletePromptSkill,
+  listPromptSkillOptimizationModelConfigs,
   listPromptSkills,
   optimizePromptSkill,
   previewPromptSkill,
   updatePromptSkill,
   type PromptSkill,
 } from '@/lib/prompt-skills-api';
+import {
+  getConfigsByCapability,
+  getDefaultConfigForCapability,
+  modelStatusClass,
+  modelStatusLabel,
+  type SavedModelConfig,
+} from '@/lib/model-configs';
 
 const taskOptions = [
   { value: 'novel_generation', label: '小说创建' },
@@ -81,6 +91,10 @@ export default function PromptSkillsPage() {
   const [optimizing, setOptimizing] = useState(false);
   const [optimization, setOptimization] = useState<OptimizationResult | null>(null);
   const [error, setError] = useState('');
+  const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
+  const [selectedOptimizeModelConfigId, setSelectedOptimizeModelConfigId] = useState('');
+  const [loadingModelConfigs, setLoadingModelConfigs] = useState(false);
+  const [modelConfigError, setModelConfigError] = useState('');
 
   const selectedSkill = useMemo(
     () => skills.find((item) => item.id === selectedSkillId) || null,
@@ -91,6 +105,37 @@ export default function PromptSkillsPage() {
     () => taskOptions.find((item) => item.value === task)?.label || task,
     [task]
   );
+
+  const textModelConfigs = useMemo(() => getConfigsByCapability(modelConfigs, 'text'), [modelConfigs]);
+  const selectedOptimizeModelConfig = useMemo(
+    () => textModelConfigs.find((config) => config.id === selectedOptimizeModelConfigId) || null,
+    [selectedOptimizeModelConfigId, textModelConfigs]
+  );
+  const selectedOptimizeModelReady = Boolean(
+    selectedOptimizeModelConfig?.test_status === 'success' && selectedOptimizeModelConfig.key_available !== false
+  );
+  const selectedOptimizeModelBlocked = Boolean(selectedOptimizeModelConfig && !selectedOptimizeModelReady);
+  const selectedOptimizeModelStatus = selectedOptimizeModelConfig?.key_available === false
+    ? 'Key 缺失'
+    : modelStatusLabel(selectedOptimizeModelConfig?.test_status);
+  const optimizeModelRepairMessage = useMemo(() => {
+    if (modelConfigError) return modelConfigError;
+    if (loadingModelConfigs) return '正在加载可用于提示词优化的文本模型配置。';
+    if (!textModelConfigs.length) {
+      return '还没有配置文本生成模型，本次可先使用本地规则生成结构化优化建议；生产使用前请配置并验证文本模型。';
+    }
+    if (!selectedOptimizeModelConfig) return '请选择一个文本模型后再使用 AI 优化。';
+    if (selectedOptimizeModelConfig.key_available === false) {
+      return selectedOptimizeModelConfig.test_message || '当前模型 API Key 不可用，请到大模型配置页重新填写并测试。';
+    }
+    if (selectedOptimizeModelConfig.test_status === 'failed') {
+      return selectedOptimizeModelConfig.test_message || '当前模型验证失败，请到大模型配置页重新测试或切换可用模型。';
+    }
+    if (selectedOptimizeModelConfig.test_status !== 'success') {
+      return '当前模型还未验证通过，请先完成模型测试，或切换到已验证文本模型。';
+    }
+    return '';
+  }, [loadingModelConfigs, modelConfigError, selectedOptimizeModelConfig, textModelConfigs.length]);
 
   const canEdit = !(formMode === 'edit' && selectedSkill?.is_builtin);
   const canDelete = Boolean(selectedSkill && !selectedSkill.is_builtin && !selectedSkill.is_active);
@@ -142,10 +187,34 @@ export default function PromptSkillsPage() {
     }
   };
 
+  const loadOptimizationModelConfigs = async () => {
+    setLoadingModelConfigs(true);
+    setModelConfigError('');
+    try {
+      const configs = await listPromptSkillOptimizationModelConfigs();
+      const list = Array.isArray(configs) ? configs : [];
+      setModelConfigs(list);
+      const defaultConfig = getDefaultConfigForCapability(list, 'text');
+      setSelectedOptimizeModelConfigId((current) => {
+        const textConfigs = getConfigsByCapability(list, 'text');
+        if (current && textConfigs.some((config) => config.id === current)) return current;
+        return defaultConfig?.id || '';
+      });
+    } catch (err: any) {
+      setModelConfigError(err.message || '加载模型配置失败，可先使用本地规则优化；如需 AI 优化，请到大模型配置页检查配置。');
+    } finally {
+      setLoadingModelConfigs(false);
+    }
+  };
+
   useEffect(() => {
     loadSkills(task);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task]);
+
+  useEffect(() => {
+    loadOptimizationModelConfigs();
+  }, []);
 
   useEffect(() => {
     if (formMode !== 'edit' || !selectedSkill) return;
@@ -220,6 +289,10 @@ export default function PromptSkillsPage() {
       toast({ title: '内置技能请先克隆后优化', type: 'error' });
       return;
     }
+    if (selectedOptimizeModelBlocked) {
+      toast({ title: '所选模型未验证通过，请先修复或切换模型', type: 'error' });
+      return;
+    }
     setOptimizing(true);
     setError('');
     try {
@@ -229,6 +302,7 @@ export default function PromptSkillsPage() {
         description: description.trim(),
         content: content.trim(),
         mode: 'polish',
+        model_config_id: selectedOptimizeModelConfig?.id || undefined,
       });
       setOptimization(result);
       toast({ title: result.source === 'ai_model' ? 'AI 优化建议已生成' : '本地优化建议已生成', type: 'success' });
@@ -551,6 +625,71 @@ export default function PromptSkillsPage() {
                   )}
                 </div>
               </div>
+              <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/10 p-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-emerald-50">
+                      <Sparkles className="h-4 w-4 shrink-0" />
+                      <span>优化模型</span>
+                      <Badge
+                        variant="outline"
+                        className={
+                          selectedOptimizeModelConfig
+                            ? modelStatusClass(selectedOptimizeModelConfig.test_status)
+                            : 'border-amber-300/30 bg-amber-400/10 text-amber-50'
+                        }
+                      >
+                        {selectedOptimizeModelConfig ? selectedOptimizeModelStatus : textModelConfigs.length ? '未选择' : '本地规则'}
+                      </Badge>
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-emerald-50/70">
+                      选择用于润色 Prompt 技能的文本模型；未配置模型时可先用本地规则兜底，生产前建议完成模型验证。
+                    </p>
+                  </div>
+                  <div className="w-full lg:w-80">
+                    {textModelConfigs.length ? (
+                      <Select
+                        aria-label="优化模型"
+                        data-testid="prompt-skill-optimize-model-select"
+                        value={selectedOptimizeModelConfigId}
+                        onChange={(event) => {
+                          setSelectedOptimizeModelConfigId(event.target.value);
+                          setOptimization(null);
+                        }}
+                        disabled={loadingModelConfigs}
+                        options={textModelConfigs.map((config) => ({
+                          value: config.id,
+                          label: `${config.is_default ? '默认 · ' : ''}${config.name} · ${config.provider_name || config.provider_id} / ${config.model_name} · ${
+                            config.key_available === false ? 'Key 缺失' : modelStatusLabel(config.test_status)
+                          }`,
+                        }))}
+                      />
+                    ) : (
+                      <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs leading-5 text-white/60">
+                        暂无文本模型配置
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {optimizeModelRepairMessage ? (
+                  <div
+                    className={`mt-3 flex flex-col gap-2 rounded-md border p-3 text-xs leading-5 sm:flex-row sm:items-center sm:justify-between ${
+                      selectedOptimizeModelBlocked || modelConfigError
+                        ? 'border-red-300/25 bg-red-500/10 text-red-50'
+                        : 'border-amber-300/25 bg-amber-400/10 text-amber-50'
+                    }`}
+                  >
+                    <span>{optimizeModelRepairMessage}</span>
+                    <Link
+                      href="/llm-config"
+                      className="inline-flex shrink-0 items-center justify-center gap-1 rounded-md border border-white/20 px-2.5 py-1.5 text-white hover:bg-white/10"
+                    >
+                      <Settings className="h-3.5 w-3.5" />
+                      去配置模型
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
               {formMode === 'edit' && selectedSkill?.is_builtin ? (
                 <div className="rounded-lg border border-violet-300/20 bg-violet-400/10 p-3 text-sm leading-6 text-violet-50">
                   内置技能作为模板保留，克隆后可编辑、AI 优化、预览和激活。
@@ -591,7 +730,7 @@ export default function PromptSkillsPage() {
                   variant="outline"
                   className="border-emerald-300/30 text-emerald-50"
                   onClick={handleOptimize}
-                  disabled={!canEdit || !content.trim() || optimizing}
+                  disabled={!canEdit || !content.trim() || optimizing || selectedOptimizeModelBlocked}
                 >
                   {optimizing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
                   AI 优化

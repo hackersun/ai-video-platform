@@ -1,4 +1,5 @@
 import { fetchJsonWithAuth } from './fetch-with-auth';
+import type { SavedModelConfig } from './model-configs';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -71,6 +72,10 @@ export async function deletePromptSkill(skillId: string) {
   return fetchJsonWithAuth<{ deleted: boolean; id: string }>(`${API_BASE}/prompt-skills/${skillId}`, {
     method: 'DELETE',
   });
+}
+
+export async function listPromptSkillOptimizationModelConfigs() {
+  return fetchJsonWithAuth<SavedModelConfig[]>(`${API_BASE}/llm/configs`);
 }
 
 export async function previewPromptSkill(payload: {

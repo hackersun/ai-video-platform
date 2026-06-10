@@ -40,6 +40,37 @@ const expectedTaskLabels = [
   '返修建议',
 ];
 
+const optimizationModelConfigs = [
+  {
+    id: 'text-config-ok',
+    model_id: 'model-text-ok',
+    provider_id: 'qwen',
+    provider_name: '阿里百炼',
+    model_name: 'qwen-plus',
+    name: '文案优化模型',
+    model_type: 'chat',
+    model_capabilities: ['chat'],
+    is_default: true,
+    test_status: 'success',
+    test_message: '验证通过',
+    key_available: true,
+  },
+  {
+    id: 'text-config-failed',
+    model_id: 'model-text-failed',
+    provider_id: 'volcano',
+    provider_name: '火山引擎',
+    model_name: 'doubao-pro',
+    name: '未验证文本模型',
+    model_type: 'chat',
+    model_capabilities: ['chat'],
+    is_default: false,
+    test_status: 'failed',
+    test_message: 'API Key 不可用，请重新验证',
+    key_available: false,
+  },
+];
+
 test.beforeEach(async ({ page }) => {
   const userId = `prompt-skill-user-${Date.now()}`;
   const token = devToken(userId);
@@ -58,6 +89,7 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   let previewRequestedSkillIds: string[] = [];
   let previewDraftContent = '';
   let optimizeRequested = false;
+  let optimizeRequestBody: any = null;
   let activatedSkillId = '';
   let deletedSkillId = '';
   let skills = [initialSkill];
@@ -72,6 +104,14 @@ test('prompt skill page manages clone edit preview and activation flow', async (
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({ items, count: items.length }),
+      });
+      return;
+    }
+    if (path === '/api/v1/llm/configs' && route.request().method() === 'GET') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(optimizationModelConfigs),
       });
       return;
     }
@@ -165,13 +205,14 @@ test('prompt skill page manages clone edit preview and activation flow', async (
     }
     if (path === '/api/v1/prompt-skills/optimize') {
       optimizeRequested = true;
+      optimizeRequestBody = route.request().postDataJSON();
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify({
           task: 'shot_video',
           source: 'local_rules',
-          original_content: route.request().postDataJSON().content,
+          original_content: optimizeRequestBody.content,
           optimized_content: '优化目标：强化镜头一致性。\n执行规则：保持脸型、服装、道具和场景连续。\n禁止项：不要乱变、不要新增无关角色。',
           suggestions: ['补充镜头运动', '补充禁止项'],
           warnings: ['本次使用本地规则优化，可继续接入模型配置。'],
@@ -200,6 +241,8 @@ test('prompt skill page manages clone edit preview and activation flow', async (
 
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
   await expect(page.getByText('选择任务后会显示可用技能。')).toBeVisible();
+  await expect(page.getByText('优化模型', { exact: true })).toBeVisible();
+  await expect(page.getByTestId('prompt-skill-optimize-model-select')).toHaveValue('text-config-ok');
   await expect(page.getByText('技能内容不能为空')).toBeVisible();
   await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue('技能约束: 使用{tone}，避免{bad_case}。');
   await expect(page.getByTestId('prompt-skill-delete')).toBeDisabled();
@@ -232,11 +275,18 @@ test('prompt skill page manages clone edit preview and activation flow', async (
 
   await page.getByTestId('prompt-skill-name-input').fill('回滚镜头技能');
   await page.getByTestId('prompt-skill-content-input').fill('回滚技能: 使用{tone}，避免{bad_case}。');
+  await page.getByTestId('prompt-skill-optimize-model-select').selectOption('text-config-failed');
+  await expect(page.getByText('API Key 不可用，请重新验证')).toBeVisible();
+  await expect(page.getByText('去配置模型')).toBeVisible();
+  await expect(page.getByTestId('prompt-skill-optimize')).toBeDisabled();
+  await page.getByTestId('prompt-skill-optimize-model-select').selectOption('text-config-ok');
+  await expect(page.getByTestId('prompt-skill-optimize')).toBeEnabled();
   await page.getByTestId('prompt-skill-optimize').click();
   await expect(page.getByText('优化目标：强化镜头一致性。')).toBeVisible();
   await page.getByTestId('prompt-skill-apply-optimization').click();
   await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue(/优化目标：强化镜头一致性/);
   expect(optimizeRequested).toBe(true);
+  expect(optimizeRequestBody.model_config_id).toBe('text-config-ok');
   await page.getByTestId('prompt-skill-save').click();
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('回滚镜头技能');
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('v2');
