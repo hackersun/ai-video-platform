@@ -240,6 +240,69 @@ def test_prompt_skill_clone_edit_activate_keeps_one_active_per_task(client: Test
     assert by_id[clone["id"]]["is_active"] is True
 
 
+def test_prompt_skill_delete_only_allows_inactive_user_skill(client: TestClient) -> None:
+    user_id = f"prompt-skill-delete-user-{uuid4()}"
+
+    inactive_response = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "未发布草稿技能",
+            "task": "shot_video",
+            "stage": "consistency",
+            "content": "草稿技能: {tone}",
+            "is_active": False,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert inactive_response.status_code == 201
+    inactive = inactive_response.json()
+
+    active_response = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "已发布在用技能",
+            "task": "shot_video",
+            "stage": "consistency",
+            "content": "在用技能: {tone}",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert active_response.status_code == 201
+    active = active_response.json()
+
+    active_delete_response = client.delete(
+        f"/api/v1/prompt-skills/{active['id']}",
+        headers=_auth_headers(user_id),
+    )
+    assert active_delete_response.status_code == 422
+    assert "正在使用" in active_delete_response.json()["detail"]
+
+    builtin_delete_response = client.delete(
+        "/api/v1/prompt-skills/builtin-shot_video-standard",
+        headers=_auth_headers(user_id),
+    )
+    assert builtin_delete_response.status_code == 422
+    assert "内置" in builtin_delete_response.json()["detail"]
+
+    delete_response = client.delete(
+        f"/api/v1/prompt-skills/{inactive['id']}",
+        headers=_auth_headers(user_id),
+    )
+    assert delete_response.status_code == 200
+    assert delete_response.json()["deleted"] is True
+    assert delete_response.json()["id"] == inactive["id"]
+
+    list_response = client.get(
+        "/api/v1/prompt-skills",
+        params={"task": "shot_video"},
+        headers=_auth_headers(user_id),
+    )
+    ids = {item["id"] for item in list_response.json()["items"]}
+    assert inactive["id"] not in ids
+    assert active["id"] in ids
+
+
 def test_story_bible_compose_prompt_uses_active_prompt_skills(client: TestClient) -> None:
     user_id = f"prompt-skill-compose-user-{uuid4()}"
     create_response = client.post(

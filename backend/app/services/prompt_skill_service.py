@@ -296,14 +296,19 @@ async def activate_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -
     return prompt_skill_payload(skill)
 
 
-async def deactivate_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
+async def delete_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
     skill = await get_prompt_skill(db, user_id, skill_id)
     if skill.is_builtin:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能不能停用")
-    skill.is_active = False
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能不能删除，请先克隆后编辑自定义版本")
+    if skill.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="当前激活 Prompt 技能正在使用，不能删除。请先激活其它版本后再删除",
+        )
+    deleted_id = skill.id
+    await db.delete(skill)
     await db.commit()
-    await db.refresh(skill)
-    return prompt_skill_payload(skill)
+    return {"deleted": True, "id": deleted_id}
 
 
 async def clone_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:

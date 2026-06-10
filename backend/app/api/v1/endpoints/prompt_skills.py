@@ -14,7 +14,7 @@ from app.services.prompt_skill_service import (
     activate_prompt_skill,
     clone_prompt_skill,
     create_prompt_skill,
-    deactivate_prompt_skill,
+    delete_prompt_skill as delete_prompt_skill_record,
     list_prompt_skills,
     optimize_prompt_skill_content,
     preview_prompt_skills,
@@ -104,7 +104,7 @@ async def delete_prompt_skill(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    return await deactivate_prompt_skill(db, user_id, skill_id)
+    return await delete_prompt_skill_record(db, user_id, skill_id)
 
 
 @router.post("/{skill_id}/clone", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)

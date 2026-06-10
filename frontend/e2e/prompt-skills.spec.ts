@@ -59,6 +59,7 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   let previewDraftContent = '';
   let optimizeRequested = false;
   let activatedSkillId = '';
+  let deletedSkillId = '';
   let skills = [initialSkill];
 
   await page.route('**/api/v1/**', async (route) => {
@@ -120,6 +121,16 @@ test('prompt skill page manages clone edit preview and activation flow', async (
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(updatedSkill),
+      });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills/skill-clone-001' && route.request().method() === 'DELETE') {
+      deletedSkillId = 'skill-clone-001';
+      skills = skills.filter((skill) => skill.id !== deletedSkillId);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ deleted: true, id: deletedSkillId }),
       });
       return;
     }
@@ -191,6 +202,7 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await expect(page.getByText('选择任务后会显示可用技能。')).toBeVisible();
   await expect(page.getByText('技能内容不能为空')).toBeVisible();
   await expect(page.getByTestId('prompt-skill-content-input')).toHaveValue('技能约束: 使用{tone}，避免{bad_case}。');
+  await expect(page.getByTestId('prompt-skill-delete')).toBeDisabled();
 
   await page.getByRole('button', { name: '新建' }).click();
   await page.getByTestId('prompt-skill-name-input').fill('面部一致性');
@@ -204,6 +216,19 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await page.getByRole('button', { name: '克隆技能' }).click();
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('冷蓝短剧一致性 副本');
   await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('未激活');
+  await expect(page.getByTestId('prompt-skill-delete')).toBeEnabled();
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('删除');
+    await dialog.accept();
+  });
+  await page.getByTestId('prompt-skill-delete').click();
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toHaveCount(0);
+  expect(deletedSkillId).toBe('skill-clone-001');
+
+  await page.getByTestId('prompt-skill-card-skill-001').click();
+  await page.getByRole('button', { name: '克隆技能' }).click();
+  await expect(page.getByTestId('prompt-skill-card-skill-clone-001')).toContainText('冷蓝短剧一致性 副本');
 
   await page.getByTestId('prompt-skill-name-input').fill('回滚镜头技能');
   await page.getByTestId('prompt-skill-content-input').fill('回滚技能: 使用{tone}，避免{bad_case}。');

@@ -13,6 +13,7 @@ import {
   Power,
   Save,
   Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +27,7 @@ import {
   activatePromptSkill,
   clonePromptSkill,
   createPromptSkill,
+  deletePromptSkill,
   listPromptSkills,
   optimizePromptSkill,
   previewPromptSkill,
@@ -91,6 +93,14 @@ export default function PromptSkillsPage() {
   );
 
   const canEdit = !(formMode === 'edit' && selectedSkill?.is_builtin);
+  const canDelete = Boolean(selectedSkill && !selectedSkill.is_builtin && !selectedSkill.is_active);
+  const deleteBlockReason = !selectedSkill
+    ? '请选择一个技能后再删除'
+    : selectedSkill.is_builtin
+      ? '内置技能不能删除；可先克隆为自定义版本'
+      : selectedSkill.is_active
+        ? '当前激活技能正在使用；请先激活其它版本后再删除'
+        : '';
 
   const contentVariables = useMemo(() => {
     return Array.from(new Set(Array.from(content.matchAll(/\{([^}]+)\}/g)).map((match) => match[1].trim()))).filter(Boolean);
@@ -271,6 +281,33 @@ export default function PromptSkillsPage() {
       toast({ title: '已切换当前激活 Prompt 技能', type: 'success' });
     } catch (err: any) {
       setError(err.message || '激活 Prompt 技能失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedSkill) {
+      toast({ title: '请先选择要删除的技能', type: 'error' });
+      return;
+    }
+    if (!canDelete) {
+      toast({ title: deleteBlockReason, type: 'error' });
+      return;
+    }
+    const confirmed = window.confirm(`确定删除「${selectedSkill.name}」吗？此操作不可恢复。`);
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError('');
+    try {
+      await deletePromptSkill(selectedSkill.id);
+      setPreview('');
+      setOptimization(null);
+      await loadSkills(task);
+      toast({ title: '未发布 Prompt 技能已删除', type: 'success' });
+    } catch (err: any) {
+      setError(err.message || '删除 Prompt 技能失败');
     } finally {
       setSaving(false);
     }
@@ -569,7 +606,23 @@ export default function PromptSkillsPage() {
                   <Eye className="mr-2 h-4 w-4" />
                   预览 Prompt
                 </Button>
+                <Button
+                  data-testid="prompt-skill-delete"
+                  variant="outline"
+                  className="border-red-300/30 text-red-100 hover:bg-red-500/10"
+                  onClick={handleDelete}
+                  disabled={!canDelete || saving}
+                >
+                  {saving && canDelete ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                  删除
+                </Button>
               </div>
+              {selectedSkill && !canDelete ? (
+                <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs leading-5 text-white/55">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                  <span>删除限制：{deleteBlockReason}</span>
+                </div>
+              ) : null}
               {optimization ? (
                 <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/10 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">

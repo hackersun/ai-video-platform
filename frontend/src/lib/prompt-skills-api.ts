@@ -67,6 +67,12 @@ export async function activatePromptSkill(skillId: string) {
   });
 }
 
+export async function deletePromptSkill(skillId: string) {
+  return fetchJsonWithAuth<{ deleted: boolean; id: string }>(`${API_BASE}/prompt-skills/${skillId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function previewPromptSkill(payload: {
   task: string;
   skill_ids?: string[];
