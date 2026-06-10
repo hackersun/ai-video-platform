@@ -12,6 +12,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.services.prompt_skill_service import (
     activate_prompt_skill,
+    bulk_prompt_skill_action,
     clone_prompt_skill,
     create_prompt_skill,
     delete_prompt_skill as delete_prompt_skill_record,
@@ -63,6 +64,12 @@ class PromptSkillOptimizeRequest(BaseModel):
     model_config_id: Optional[str] = None
 
 
+class PromptSkillBulkActionRequest(BaseModel):
+    skill_ids: List[str] = Field(..., min_length=1)
+    action: str = Field(..., description="delete/clone/set_tags")
+    tags: List[str] = Field(default_factory=list)
+
+
 @router.get("", response_model=Dict[str, Any])
 async def get_prompt_skills(
     task: Optional[str] = Query(None),
@@ -97,6 +104,15 @@ async def optimize_prompt_skill_endpoint(
     user_id: str = Depends(get_current_user_id),
 ):
     return await optimize_prompt_skill_content(db, user_id, request.model_dump())
+
+
+@router.post("/bulk-action", response_model=Dict[str, Any])
+async def bulk_action_prompt_skills(
+    request: PromptSkillBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await bulk_prompt_skill_action(db, user_id, request.model_dump())
 
 
 @router.put("/{skill_id}", response_model=Dict[str, Any])

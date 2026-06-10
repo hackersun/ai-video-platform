@@ -93,6 +93,29 @@ class TemplateCategoryResponse(BaseModel):
     description: Optional[str]
 
 
+class BulkSkippedItem(BaseModel):
+    id: str
+    reason: str
+    repair_action: Optional[str] = None
+
+
+class TemplateBulkActionRequest(BaseModel):
+    template_ids: List[str] = Field(..., min_length=1, description="要批量维护的模板ID")
+    action: str = Field(..., description="delete/clone/set_category/set_tags/set_public")
+    category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    is_public: Optional[bool] = None
+
+
+class TemplateBulkActionResponse(BaseModel):
+    updated_count: int = 0
+    deleted_count: int = 0
+    created_count: int = 0
+    skipped: List[BulkSkippedItem] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    templates: List[TemplateResponse] = Field(default_factory=list)
+
+
 # ============== API端点 ==============
 
 @router.get("/categories", response_model=List[TemplateCategoryResponse])
@@ -191,6 +214,70 @@ async def list_templates(
             ))
 
     return responses
+
+
+@router.post("/bulk-action", response_model=TemplateBulkActionResponse)
+async def bulk_action_templates(
+    request: TemplateBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id)
+):
+    if request.action not in {"delete", "clone", "set_category", "set_tags", "set_public"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的模板批量动作")
+
+    updated: list[Template] = []
+    created: list[TemplateResponse] = []
+    deleted_count = 0
+    skipped: list[BulkSkippedItem] = []
+
+    for template_id in request.template_ids:
+        if request.action == "clone":
+            cloned = await clone_template(template_id, db, user_id)
+            created.append(cloned)
+            continue
+
+        if template_id.startswith("preset_"):
+            skipped.append(
+                BulkSkippedItem(
+                    id=template_id,
+                    reason="预置模板不可直接修改或删除",
+                    repair_action="先复制到我的模板库后再维护",
+                )
+            )
+            continue
+
+        result = await db.execute(
+            select(Template).where(and_(Template.id == template_id, Template.user_id == user_id))
+        )
+        template = result.scalar_one_or_none()
+        if not template:
+            skipped.append(BulkSkippedItem(id=template_id, reason="模板不存在", repair_action="刷新模板库后重新选择"))
+            continue
+
+        if request.action == "delete":
+            await db.delete(template)
+            deleted_count += 1
+            continue
+        if request.action == "set_category":
+            template.category = request.category
+        elif request.action == "set_tags":
+            template.tags = json.dumps(request.tags or [])
+        elif request.action == "set_public":
+            template.is_public = bool(request.is_public)
+        template.updated_at = utc_now()
+        updated.append(template)
+
+    await db.commit()
+    for template in updated:
+        await db.refresh(template)
+
+    return TemplateBulkActionResponse(
+        updated_count=len(updated),
+        deleted_count=deleted_count,
+        created_count=len(created),
+        skipped=skipped,
+        templates=[TemplateResponse.from_orm(template) for template in updated] + created,
+    )
 
 
 @router.get("/{template_id}", response_model=TemplateResponse)

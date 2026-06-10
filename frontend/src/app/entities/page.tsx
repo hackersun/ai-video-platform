@@ -36,10 +36,12 @@ import {
   Trash2,
   Edit,
   Eye,
+  Image as ImageIcon,
   MoreVertical,
   RefreshCw,
 } from 'lucide-react';
 import Link from 'next/link';
+import { apiClient } from '@/lib/api-client';
 
 interface StoryEntity {
   id: string;
@@ -63,6 +65,7 @@ interface StoryEntity {
   source: string;
   novel_id?: string;
   chapter_id?: string;
+  script_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -72,6 +75,37 @@ interface EntityStats {
   counts: Record<string, number>;
 }
 
+interface Asset {
+  id: string;
+  name: string;
+  url?: string;
+  thumbnail_url?: string;
+  entity_id?: string;
+  entity_type?: string;
+  generation_params?: Record<string, any>;
+  is_locked?: boolean;
+  is_final?: boolean;
+}
+
+interface EntityAssetsResponse {
+  assets: Asset[];
+  locked_assets: Asset[];
+  total: number;
+}
+
+interface AssetViewPreset {
+  entity_type: string;
+  category: string;
+  title: string;
+  description?: string;
+  views: {
+    key: string;
+    label: string;
+    aspect_ratio?: string;
+    prompt_hint?: string;
+  }[];
+}
+
 const ENTITY_TYPE_CONFIG = {
   character: { label: '角色', icon: Users, color: 'text-green-400', bgColor: 'bg-green-500/20' },
   scene: { label: '场景', icon: MapPin, color: 'text-blue-400', bgColor: 'bg-blue-500/20' },
@@ -79,9 +113,51 @@ const ENTITY_TYPE_CONFIG = {
   event: { label: '事件', icon: Zap, color: 'text-purple-400', bgColor: 'bg-purple-500/20' },
 };
 
+const FALLBACK_VIEW_PRESETS: AssetViewPreset[] = [
+  {
+    entity_type: 'character',
+    category: 'character',
+    title: '角色三视图',
+    description: '锁定角色正面、侧面、背面外观，供后续镜头保持人物一致。',
+    views: [
+      { key: 'front', label: '正面', aspect_ratio: '9:16' },
+      { key: 'side', label: '侧面', aspect_ratio: '9:16' },
+      { key: 'back', label: '背面', aspect_ratio: '9:16' },
+    ],
+  },
+  {
+    entity_type: 'scene',
+    category: 'scene',
+    title: '场景四视图',
+    description: '固定场景全景、空间布局、关键细节和光影氛围。',
+    views: [
+      { key: 'establishing', label: '全景定场', aspect_ratio: '16:9' },
+      { key: 'layout', label: '空间布局', aspect_ratio: '16:9' },
+      { key: 'detail', label: '关键细节', aspect_ratio: '16:9' },
+      { key: 'lighting', label: '光影氛围', aspect_ratio: '16:9' },
+    ],
+  },
+  {
+    entity_type: 'prop',
+    category: 'prop',
+    title: '道具多视图',
+    description: '固定道具主视图、细节、比例和使用状态。',
+    views: [
+      { key: 'main', label: '主视图', aspect_ratio: '1:1' },
+      { key: 'detail', label: '细节纹理', aspect_ratio: '1:1' },
+      { key: 'scale', label: '比例参考', aspect_ratio: '1:1' },
+      { key: 'in_use', label: '使用状态', aspect_ratio: '1:1' },
+    ],
+  },
+];
+
+const SUPPORTED_VIEW_ENTITY_TYPES = new Set(['character', 'scene', 'prop']);
+
 export default function EntitiesPage() {
   const [entities, setEntities] = useState<StoryEntity[]>([]);
   const [stats, setStats] = useState<EntityStats>({ total: 0, counts: {} });
+  const [viewPresets, setViewPresets] = useState<AssetViewPreset[]>(FALLBACK_VIEW_PRESETS);
+  const [entityAssetPacks, setEntityAssetPacks] = useState<Record<string, EntityAssetsResponse>>({});
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEntities, setSelectedEntities] = useState<Set<string>>(new Set());
@@ -111,25 +187,35 @@ export default function EntitiesPage() {
     loadStats();
   }, [activeTab]);
 
+  useEffect(() => {
+    const loadViewPresets = async () => {
+      try {
+        const data = await apiClient.getAssetViewPresets();
+        const presets = Array.isArray(data?.presets) ? data.presets : FALLBACK_VIEW_PRESETS;
+        setViewPresets(presets.length ? presets : FALLBACK_VIEW_PRESETS);
+      } catch (error) {
+        console.error('加载多视图预设失败:', error);
+        setViewPresets(FALLBACK_VIEW_PRESETS);
+      }
+    };
+    loadViewPresets();
+  }, []);
+
+  useEffect(() => {
+    loadEntityAssetPacks(entities);
+  }, [entities]);
+
   const loadEntities = async () => {
     setLoading(true);
     try {
-      const params: Record<string, string> = { limit: '100' };
-      if (activeTab !== 'all') {
-        params.entity_type = activeTab;
-      }
-      const searchParams = new URLSearchParams(params);
-      const response = await fetch(`/api/v1/story-bibles/entities?${searchParams}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
+      const data = await apiClient.getStoryEntities({
+        limit: 100,
+        entity_type: activeTab !== 'all' ? activeTab : undefined,
       });
-      if (response.ok) {
-        const data = await response.json();
-        setEntities(Array.isArray(data) ? data : []);
-      }
+      setEntities(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('加载实体失败:', error);
+      setEntities([]);
     } finally {
       setLoading(false);
     }
@@ -137,18 +223,32 @@ export default function EntitiesPage() {
 
   const loadStats = async () => {
     try {
-      const response = await fetch('/api/v1/story-bibles/entities/stats', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setStats(data);
-      }
+      const data = await apiClient.getStoryEntityStats();
+      setStats(data || { total: 0, counts: {} });
     } catch (error) {
       console.error('加载统计失败:', error);
+      setStats({ total: 0, counts: {} });
     }
+  };
+
+  const loadEntityAssetPacks = async (items: StoryEntity[]) => {
+    const supported = items.filter((entity) => SUPPORTED_VIEW_ENTITY_TYPES.has(entity.entity_type));
+    if (supported.length === 0) {
+      setEntityAssetPacks({});
+      return;
+    }
+    const entries = await Promise.all(
+      supported.map(async (entity) => {
+        try {
+          const data = await apiClient.getEntityAssets(entity.id);
+          return [entity.id, data as EntityAssetsResponse] as const;
+        } catch (error) {
+          console.error(`加载实体资产失败: ${entity.name}`, error);
+          return [entity.id, { assets: [], locked_assets: [], total: 0 }] as const;
+        }
+      })
+    );
+    setEntityAssetPacks(Object.fromEntries(entries));
   };
 
   const filteredEntities = entities.filter((entity) => {
@@ -196,25 +296,16 @@ export default function EntitiesPage() {
   const handleSaveEdit = async () => {
     if (!editingEntity) return;
     try {
-      const response = await fetch(`/api/v1/story-bibles/entities/${editingEntity.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-        body: JSON.stringify({
-          name: editForm.name,
-          canonical_name: editForm.canonical_name || null,
-          description: editForm.description || null,
-          aliases: editForm.aliases.split(',').map((a) => a.trim()).filter(Boolean),
-          appearance: editForm.appearance || null,
-        }),
+      await apiClient.updateStoryEntity(editingEntity.id, {
+        name: editForm.name,
+        canonical_name: editForm.canonical_name || null,
+        description: editForm.description || null,
+        aliases: editForm.aliases.split(',').map((a) => a.trim()).filter(Boolean),
+        appearance: editForm.appearance || null,
       });
-      if (response.ok) {
-        setEditDialogOpen(false);
-        loadEntities();
-        loadStats();
-      }
+      setEditDialogOpen(false);
+      loadEntities();
+      loadStats();
     } catch (error) {
       console.error('更新实体失败:', error);
     }
@@ -223,16 +314,9 @@ export default function EntitiesPage() {
   const handleDeleteEntity = async (entityId: string) => {
     if (!confirm('确定要删除这个实体吗？')) return;
     try {
-      const response = await fetch(`/api/v1/story-bibles/entities/${entityId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-      });
-      if (response.ok) {
-        loadEntities();
-        loadStats();
-      }
+      await apiClient.deleteStoryEntity(entityId);
+      loadEntities();
+      loadStats();
     } catch (error) {
       console.error('删除实体失败:', error);
     }
@@ -241,48 +325,169 @@ export default function EntitiesPage() {
   const handleBulkApprove = async (approved: boolean) => {
     if (selectedEntities.size === 0) return;
     try {
-      const response = await fetch('/api/v1/story-bibles/entities/bulk-approve', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-        body: JSON.stringify({
-          entity_ids: Array.from(selectedEntities),
-          approved,
-        }),
+      await apiClient.bulkActionStoryEntities({
+        entity_ids: Array.from(selectedEntities),
+        action: 'approve',
+        approved,
       });
-      if (response.ok) {
-        setSelectedEntities(new Set());
-        loadEntities();
-        loadStats();
-      }
+      setSelectedEntities(new Set());
+      loadEntities();
+      loadStats();
     } catch (error) {
       console.error('批量确认失败:', error);
+    }
+  };
+
+  const parseTagsInput = (value: string) => value
+    .split(/[，,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const selectedEntityItems = () => entities.filter((entity) => selectedEntities.has(entity.id));
+
+  const singleScopeValue = (items: StoryEntity[], key: 'novel_id' | 'chapter_id' | 'script_id') => {
+    const values = Array.from(new Set(items.map((item) => item[key]).filter(Boolean)));
+    return values.length === 1 ? values[0] : '';
+  };
+
+  const handleBulkSetEntityTags = async () => {
+    if (selectedEntities.size === 0) return;
+    const raw = window.prompt('输入实体标签，多个标签用逗号分隔');
+    if (raw === null) return;
+    const tags = parseTagsInput(raw);
+    if (!tags.length) {
+      alert('请至少输入一个标签');
+      return;
+    }
+    try {
+      await apiClient.bulkActionStoryEntities({
+        entity_ids: Array.from(selectedEntities),
+        action: 'set_tags',
+        tags,
+      });
+      setSelectedEntities(new Set());
+      await loadEntities();
+      await loadStats();
+      alert(`已更新 ${tags.length} 个标签维度`);
+    } catch (error) {
+      console.error('批量更新实体标签失败:', error);
+      alert('批量更新实体标签失败，请稍后重试');
+    }
+  };
+
+  const handleBulkSetEntityScope = async () => {
+    if (selectedEntities.size === 0) return;
+    const scope = window.prompt('输入作用域：global、novel、chapter、script', 'novel');
+    if (scope === null) return;
+    if (!['global', 'novel', 'chapter', 'script'].includes(scope)) {
+      alert('作用域只支持 global、novel、chapter、script');
+      return;
+    }
+    const selected = selectedEntityItems();
+    const novelId = singleScopeValue(selected, 'novel_id');
+    const chapterId = singleScopeValue(selected, 'chapter_id');
+    const scriptId = singleScopeValue(selected, 'script_id');
+    if (scope === 'novel' && !novelId) {
+      alert('所选实体缺少共同小说来源，无法批量设为小说作用域');
+      return;
+    }
+    if (scope === 'chapter' && !chapterId) {
+      alert('所选实体缺少共同章节来源，无法批量设为章节作用域');
+      return;
+    }
+    if (scope === 'script' && !scriptId) {
+      alert('所选实体缺少共同剧本来源，无法批量设为剧本作用域');
+      return;
+    }
+    try {
+      const result = await apiClient.bulkActionStoryEntities({
+        entity_ids: Array.from(selectedEntities),
+        action: 'set_scope',
+        scope: scope as 'global' | 'novel' | 'chapter' | 'script',
+        novel_id: scope === 'novel' || scope === 'chapter' || scope === 'script' ? novelId || undefined : undefined,
+        chapter_id: scope === 'chapter' || scope === 'script' ? chapterId || undefined : undefined,
+        script_id: scope === 'script' ? scriptId || undefined : undefined,
+      });
+      setSelectedEntities(new Set());
+      await loadEntities();
+      await loadStats();
+      alert(`已调整 ${result?.updated_count || 0} 个实体作用域`);
+    } catch (error) {
+      console.error('批量调整实体作用域失败:', error);
+      alert('批量调整实体作用域失败，请检查所选实体来源');
+    }
+  };
+
+  const handleBulkDeleteEntities = async () => {
+    if (selectedEntities.size === 0) return;
+    if (!confirm('批量删除会同步归档未锁定的关联资产，锁定资产会保留并提示处理路径。确认继续？')) return;
+    try {
+      const result = await apiClient.bulkActionStoryEntities({
+        entity_ids: Array.from(selectedEntities),
+        action: 'delete',
+      });
+      const skippedText = Array.isArray(result?.skipped) && result.skipped.length
+        ? `，跳过 ${result.skipped.length} 个关联项：${result.skipped.slice(0, 2).map((item: any) => item.reason).join('；')}`
+        : '';
+      setSelectedEntities(new Set());
+      await loadEntities();
+      await loadStats();
+      alert(`已删除 ${result?.deleted_count || 0} 个实体${skippedText}`);
+    } catch (error) {
+      console.error('批量删除实体失败:', error);
+      alert('批量删除失败，请稍后重试');
+    }
+  };
+
+  const handleReextractSelectedScope = async () => {
+    if (selectedEntities.size === 0) return;
+    const selected = entities.filter((entity) => selectedEntities.has(entity.id));
+    const scriptId = selected.find((entity) => entity.script_id)?.script_id;
+    const chapterId = selected.find((entity) => entity.chapter_id)?.chapter_id;
+    const novelId = selected.find((entity) => entity.novel_id)?.novel_id;
+    if (!scriptId && !chapterId && !novelId) {
+      alert('选中的实体缺少小说、章节或剧本来源，无法重新抽取。请先调整实体作用域。');
+      return;
+    }
+    const mode = window.prompt('输入重抽模式：overwrite 覆盖更新、append 追加缺失、delete_then_extract 删除后重抽', 'overwrite');
+    if (mode === null) return;
+    if (!['overwrite', 'append', 'delete_then_extract'].includes(mode)) {
+      alert('重抽模式只支持 overwrite、append、delete_then_extract');
+      return;
+    }
+    if (mode === 'delete_then_extract' && !confirm('删除后重抽会先清理未锁定关联资产；锁定资产会阻断对应实体删除。确认继续？')) return;
+    const createAssets = confirm('是否在重抽后同步创建实体参考资产？测试验证可选择取消，生产建议先确认模型配置。');
+    try {
+      const result = await apiClient.reextractStoryEntities({
+        script_id: scriptId,
+        chapter_id: scriptId ? undefined : chapterId,
+        novel_id: scriptId || chapterId ? undefined : novelId,
+        entity_types: activeTab !== 'all' ? [activeTab] : ['character', 'scene', 'prop', 'event'],
+        mode: mode as 'append' | 'overwrite' | 'delete_then_extract',
+        create_assets: createAssets,
+      });
+      setSelectedEntities(new Set());
+      await loadEntities();
+      await loadStats();
+      alert(`重抽完成：更新 ${result?.updated_count || 0} 个，新增 ${result?.created_count || 0} 个`);
+    } catch (error) {
+      console.error('重新抽取实体失败:', error);
+      alert('重新抽取失败，请检查小说、章节或剧本内容是否可用');
     }
   };
 
   const handleMergeEntities = async () => {
     if (selectedEntities.size < 2 || !mergeTarget) return;
     try {
-      const response = await fetch('/api/v1/story-bibles/entities/merge', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
-        body: JSON.stringify({
-          source_entity_ids: Array.from(selectedEntities).filter((id) => id !== mergeTarget),
-          target_entity_id: mergeTarget,
-        }),
+      await apiClient.mergeStoryEntities({
+        source_entity_ids: Array.from(selectedEntities).filter((id) => id !== mergeTarget),
+        target_entity_id: mergeTarget,
       });
-      if (response.ok) {
-        setMergeDialogOpen(false);
-        setMergeTarget(null);
-        setSelectedEntities(new Set());
-        loadEntities();
-        loadStats();
-      }
+      setMergeDialogOpen(false);
+      setMergeTarget(null);
+      setSelectedEntities(new Set());
+      loadEntities();
+      loadStats();
     } catch (error) {
       console.error('合并实体失败:', error);
     }
@@ -293,6 +498,90 @@ export default function EntitiesPage() {
     setDetailDialogOpen(true);
   };
 
+  const assetViewKey = (asset?: Asset) => (
+    asset?.generation_params?.view_key || asset?.generation_params?.asset_subtype || ''
+  );
+
+  const assetWizardHref = (entity: StoryEntity) => {
+    const params = new URLSearchParams();
+    if (entity.novel_id) params.set('novel_id', entity.novel_id);
+    params.set('entity_type', entity.entity_type);
+    params.set('entity_id', entity.id);
+    return `/assets?${params.toString()}`;
+  };
+
+  const renderEntityAssetPack = (entity: StoryEntity) => {
+    if (!SUPPORTED_VIEW_ENTITY_TYPES.has(entity.entity_type)) return null;
+
+    const preset = viewPresets.find((item) => item.entity_type === entity.entity_type)
+      || FALLBACK_VIEW_PRESETS.find((item) => item.entity_type === entity.entity_type);
+    if (!preset) return null;
+
+    const pack = entityAssetPacks[entity.id] || { assets: [], locked_assets: [], total: 0 };
+    const lockedByKey = new Map<string, Asset>();
+    for (const asset of pack.locked_assets || []) {
+      const key = assetViewKey(asset);
+      if (key && !lockedByKey.has(key)) lockedByKey.set(key, asset);
+    }
+    const generatedByKey = new Map<string, Asset>();
+    for (const asset of pack.assets || []) {
+      const key = assetViewKey(asset);
+      if (key && !generatedByKey.has(key)) generatedByKey.set(key, asset);
+    }
+
+    const lockedCount = preset.views.filter((view) => lockedByKey.has(view.key)).length;
+    const generatedCount = preset.views.filter((view) => lockedByKey.has(view.key) || generatedByKey.has(view.key)).length;
+    const missingCount = Math.max(preset.views.length - generatedCount, 0);
+
+    return (
+      <div className="mt-3 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium text-white">
+              <ImageIcon className="h-4 w-4 text-violet-200" />
+              多视图定稿包
+            </div>
+            <div className="mt-1 text-xs text-white/50">
+              {preset.title} · {lockedCount}/{preset.views.length} 已定稿
+              {missingCount > 0 ? ` · ${missingCount} 个待补齐` : ''}
+            </div>
+          </div>
+          <Button asChild size="sm" variant="outline" className="h-8 border-violet-400/40 text-violet-100">
+            <Link href={assetWizardHref(entity)}>
+              补齐多视图
+            </Link>
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+          {preset.views.map((view) => {
+            const lockedAsset = lockedByKey.get(view.key);
+            const generatedAsset = generatedByKey.get(view.key);
+            const status = lockedAsset ? '已定稿' : generatedAsset?.url ? '已生成' : '待补齐';
+            const statusClass = lockedAsset
+              ? 'border-emerald-400/40 text-emerald-200'
+              : generatedAsset?.url
+                ? 'border-cyan-400/40 text-cyan-100'
+                : 'border-amber-400/40 text-amber-100';
+            return (
+              <div
+                key={view.key}
+                data-testid={`entity-view-${entity.id}-${view.key}`}
+                className="rounded-md border border-white/10 bg-black/20 px-2 py-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-xs text-white/75">{view.label}</span>
+                  <Badge variant="outline" className={`shrink-0 text-[10px] ${statusClass}`}>
+                    {status}
+                  </Badge>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const renderEntityCard = (entity: StoryEntity) => {
     const config = ENTITY_TYPE_CONFIG[entity.entity_type as keyof typeof ENTITY_TYPE_CONFIG] || ENTITY_TYPE_CONFIG.character;
     const Icon = config.icon;
@@ -300,6 +589,7 @@ export default function EntitiesPage() {
     return (
       <Card
         key={entity.id}
+        data-testid={`entity-card-${entity.id}`}
         className={`bg-white/5 border-white/10 transition-colors hover:border-white/20 ${
           selectedEntities.has(entity.id) ? 'border-violet-500 bg-violet-500/10' : ''
         }`}
@@ -353,6 +643,8 @@ export default function EntitiesPage() {
                   )}
                 </div>
               )}
+
+              {renderEntityAssetPack(entity)}
 
               <div className="flex items-center justify-between mt-3">
                 <div className="flex items-center gap-2 text-xs text-white/40">
@@ -528,6 +820,40 @@ export default function EntitiesPage() {
                 >
                   <XCircle className="w-4 h-4 mr-2" />
                   批量取消确认
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-blue-500/50 text-blue-300 hover:bg-blue-500/10"
+                  onClick={handleReextractSelectedScope}
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  重抽模式
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-cyan-500/50 text-cyan-300 hover:bg-cyan-500/10"
+                  onClick={handleBulkSetEntityScope}
+                >
+                  批量作用域
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-white/20 text-white hover:bg-white/10"
+                  onClick={handleBulkSetEntityTags}
+                >
+                  批量标签
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-red-500/50 text-red-300 hover:bg-red-500/10"
+                  onClick={handleBulkDeleteEntities}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  批量删除
                 </Button>
                 {selectedEntities.size >= 2 && (
                   <Button

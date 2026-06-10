@@ -21,12 +21,14 @@ import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/toast';
 import {
   activatePromptSkill,
+  bulkActionPromptSkills,
   clonePromptSkill,
   createPromptSkill,
   deletePromptSkill,
@@ -79,6 +81,7 @@ export default function PromptSkillsPage() {
   const [task, setTask] = useState('shot_video');
   const [skills, setSkills] = useState<PromptSkill[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState('');
+  const [selectedSkillIds, setSelectedSkillIds] = useState<Set<string>>(new Set());
   const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -100,6 +103,8 @@ export default function PromptSkillsPage() {
     () => skills.find((item) => item.id === selectedSkillId) || null,
     [selectedSkillId, skills]
   );
+
+  const selectedBulkSkillIds = useMemo(() => Array.from(selectedSkillIds), [selectedSkillIds]);
 
   const selectedTaskLabel = useMemo(
     () => taskOptions.find((item) => item.value === task)?.label || task,
@@ -197,6 +202,11 @@ export default function PromptSkillsPage() {
       const data = await listPromptSkills(nextTask);
       const nextItems = data.items || [];
       setSkills(nextItems);
+      setSelectedSkillIds((current) => {
+        const availableIds = new Set(nextItems.map((item) => item.id));
+        const next = new Set(Array.from(current).filter((id) => availableIds.has(id)));
+        return next.size === current.size ? current : next;
+      });
       if (nextSelectedId) {
         setSelectedSkillId(nextSelectedId);
         setFormMode('edit');
@@ -279,7 +289,87 @@ export default function PromptSkillsPage() {
 
   const handleTaskChange = (nextTask: string) => {
     setTask(nextTask);
+    setSelectedSkillIds(new Set());
     resetForm();
+  };
+
+  const summarizeBulkResult = (result: {
+    updated_count?: number;
+    deleted_count?: number;
+    created_count?: number;
+    skipped?: Array<{ id: string; reason: string; repair_action?: string | null }>;
+    warnings?: string[];
+  }) => {
+    const changedCount = (result.created_count || 0) + (result.deleted_count || 0) + (result.updated_count || 0);
+    const skipped = result.skipped || [];
+    const warnings = result.warnings || [];
+    const details = [
+      changedCount ? `处理 ${changedCount} 项` : '',
+      skipped.length ? `跳过 ${skipped.length} 项：${skipped.map((item) => item.reason).join('；')}` : '',
+      warnings.length ? warnings.join('；') : '',
+    ].filter(Boolean);
+    return details.join('；');
+  };
+
+  const handleSelectSkillForBulk = (skillId: string) => {
+    setSelectedSkillIds((current) => {
+      const next = new Set(current);
+      if (next.has(skillId)) {
+        next.delete(skillId);
+      } else {
+        next.add(skillId);
+      }
+      return next;
+    });
+  };
+
+  const parseTagsInput = (value: string) => value
+    .split(/[，,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const handleBulkSkillAction = async (action: 'clone' | 'delete' | 'set_tags') => {
+    if (!selectedBulkSkillIds.length) return;
+    if (action === 'delete') {
+      const confirmed = window.confirm(`确定批量删除已选择的 ${selectedBulkSkillIds.length} 个 Prompt 技能吗？内置或激活技能会由后端跳过并返回原因。`);
+      if (!confirmed) return;
+    }
+    let tags: string[] | undefined;
+    if (action === 'set_tags') {
+      const raw = window.prompt('输入 Prompt 技能标签，多个标签用逗号分隔');
+      if (raw === null) return;
+      tags = parseTagsInput(raw);
+      if (!tags.length) {
+        toast({ title: '请至少输入一个标签', type: 'error' });
+        return;
+      }
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const result = await bulkActionPromptSkills({
+        skill_ids: selectedBulkSkillIds,
+        action,
+        tags,
+      });
+      const skippedCount = result.skipped?.length || 0;
+      toast({
+        title:
+          action === 'clone'
+            ? '批量克隆已完成'
+            : action === 'delete'
+              ? '批量删除已完成'
+              : '批量标记已完成',
+        description: summarizeBulkResult(result) || undefined,
+        type: skippedCount ? 'info' : 'success',
+      });
+      setSelectedSkillIds(new Set());
+      await loadSkills(task);
+    } catch (err: any) {
+      setError(err.message || '批量维护 Prompt 技能失败');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const buildPayload = (isActive: boolean) => ({
@@ -557,6 +647,58 @@ export default function PromptSkillsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              {selectedSkillIds.size > 0 ? (
+                <div className="rounded-lg border border-cyan-300/25 bg-cyan-400/10 p-3">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                    <div className="text-sm font-medium text-cyan-50">已选择 {selectedSkillIds.size} 项</div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-white/20 text-white"
+                        onClick={() => handleBulkSkillAction('clone')}
+                        disabled={saving}
+                      >
+                        <Copy className="mr-2 h-4 w-4" />
+                        批量克隆
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-white/20 text-white"
+                        onClick={() => handleBulkSkillAction('set_tags')}
+                        disabled={saving}
+                      >
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        批量标签
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-red-300/30 text-red-100 hover:bg-red-500/10"
+                        onClick={() => handleBulkSkillAction('delete')}
+                        disabled={saving}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        批量删除
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="text-white/60 hover:text-white"
+                        onClick={() => setSelectedSkillIds(new Set())}
+                        disabled={saving}
+                      >
+                        清空
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               {loading && !skills.length ? (
                 <div className="rounded-lg border border-white/10 bg-black/20 p-6 text-center text-sm text-white/55">
                   <Loader2 className="mx-auto mb-2 h-4 w-4 animate-spin" />
@@ -565,11 +707,20 @@ export default function PromptSkillsPage() {
               ) : null}
               {skills.length ? (
                 skills.map((skill) => (
-                  <button
+                  <div
                     key={skill.id}
-                    type="button"
+                    role="button"
+                    tabIndex={0}
                     data-testid={`prompt-skill-card-${skill.id}`}
                     onClick={() => {
+                      setSelectedSkillId(skill.id);
+                      setFormMode('edit');
+                      setPreview('');
+                      setOptimization(null);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') return;
+                      event.preventDefault();
                       setSelectedSkillId(skill.id);
                       setFormMode('edit');
                       setPreview('');
@@ -578,11 +729,21 @@ export default function PromptSkillsPage() {
                     className={`w-full rounded-lg border p-3 text-left transition-colors ${
                       selectedSkill?.id === skill.id
                         ? 'border-cyan-400/50 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.15)]'
+                        : selectedSkillIds.has(skill.id)
+                          ? 'border-violet-400/40 bg-violet-500/10'
                         : 'border-white/10 bg-black/20 hover:border-white/20 hover:bg-white/10'
                     }`}
                   >
                     <div className="flex items-center justify-between gap-3">
-                      <div className="min-w-0 truncate text-sm font-medium text-white">{skill.name}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <Checkbox
+                          checked={selectedSkillIds.has(skill.id)}
+                          onCheckedChange={() => handleSelectSkillForBulk(skill.id)}
+                          onClick={(event) => event.stopPropagation()}
+                          aria-label={`选择${skill.name}`}
+                        />
+                        <div className="min-w-0 truncate text-sm font-medium text-white">{skill.name}</div>
+                      </div>
                       <div className="flex shrink-0 items-center gap-1">
                         {skill.is_active ? (
                           <Badge variant="outline" className="border-emerald-300/70 text-emerald-100">
@@ -611,7 +772,7 @@ export default function PromptSkillsPage() {
                       <span>·</span>
                       <span>{skill.content?.length || 0} 字符</span>
                     </div>
-                  </button>
+                  </div>
                 ))
               ) : (
                 <div className="rounded-lg border border-dashed border-white/15 bg-black/20 p-6 text-center">

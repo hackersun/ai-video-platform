@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
@@ -52,6 +53,16 @@ interface TemplateForm {
   is_public: boolean;
 }
 
+type BulkSkippedItem = { id: string; reason: string; repair_action?: string | null };
+type TemplateBulkActionResponse = {
+  updated_count?: number;
+  deleted_count?: number;
+  created_count?: number;
+  skipped?: BulkSkippedItem[];
+  warnings?: string[];
+  templates?: Template[];
+};
+
 const emptyForm: TemplateForm = {
   name: '',
   description: '',
@@ -72,6 +83,7 @@ export default function TemplatesPage() {
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [formData, setFormData] = useState<TemplateForm>(emptyForm);
+  const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(new Set());
 
   // 加载模板列表
   const loadTemplates = async () => {
@@ -88,6 +100,11 @@ export default function TemplatesPage() {
 
       const data = await apiClient.getTemplates(params);
       setTemplates(Array.isArray(data) ? data : []);
+      setSelectedTemplates((current) => {
+        const availableIds = new Set((Array.isArray(data) ? data : []).map((item: Template) => item.id));
+        const next = new Set(Array.from(current).filter((id) => availableIds.has(id)));
+        return next.size === current.size ? current : next;
+      });
     } catch (err: any) {
       toast({ title: '加载失败', description: err?.message || '请稍后重试', type: 'error' });
     } finally {
@@ -130,6 +147,103 @@ export default function TemplatesPage() {
     });
     return groups;
   }, [filteredTemplates]);
+
+  const selectedTemplateIds = useMemo(() => Array.from(selectedTemplates), [selectedTemplates]);
+
+  const selectedTemplateCount = selectedTemplates.size;
+
+  const summarizeBulkResult = (result: TemplateBulkActionResponse) => {
+    const changedCount = (result.created_count || 0) + (result.deleted_count || 0) + (result.updated_count || 0);
+    const skipped = result.skipped || [];
+    const warnings = result.warnings || [];
+    const details = [
+      changedCount ? `处理 ${changedCount} 项` : '',
+      skipped.length ? `跳过 ${skipped.length} 项：${skipped.map((item) => item.reason).join('；')}` : '',
+      warnings.length ? warnings.join('；') : '',
+    ].filter(Boolean);
+    return details.join('；');
+  };
+
+  const handleSelectTemplate = (templateId: string) => {
+    setSelectedTemplates((current) => {
+      const next = new Set(current);
+      if (next.has(templateId)) {
+        next.delete(templateId);
+      } else {
+        next.add(templateId);
+      }
+      return next;
+    });
+  };
+
+  const parseTagsInput = (value: string) => value
+    .split(/[，,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const bulkActionTitle = (action: 'clone' | 'delete' | 'set_category' | 'set_tags' | 'set_public') => {
+    if (action === 'clone') return '批量复制';
+    if (action === 'delete') return '批量删除';
+    if (action === 'set_category') return '批量分类';
+    if (action === 'set_tags') return '批量标签';
+    return '批量公开状态';
+  };
+
+  const handleBulkTemplates = async (action: 'clone' | 'delete' | 'set_category' | 'set_tags' | 'set_public') => {
+    if (!selectedTemplateIds.length) return;
+    const payload: {
+      template_ids: string[];
+      action: 'clone' | 'delete' | 'set_category' | 'set_tags' | 'set_public';
+      category?: string;
+      tags?: string[];
+      is_public?: boolean;
+    } = {
+      template_ids: selectedTemplateIds,
+      action,
+    };
+    if (action === 'delete') {
+      const confirmed = window.confirm(`确定批量删除已选择的 ${selectedTemplateIds.length} 个模板吗？预置模板会由后端跳过并返回原因。`);
+      if (!confirmed) return;
+    }
+    if (action === 'set_category') {
+      const category = window.prompt(`输入分类：${CATEGORY_CONFIG.map((item) => item.id).join('、')}`, activeCategory !== 'all' ? activeCategory : 'shot');
+      if (category === null) return;
+      if (!CATEGORY_CONFIG.some((item) => item.id === category)) {
+        toast({ title: '分类不存在', description: '请使用题材、镜头、提示词、角色或场景模板分类', type: 'error' });
+        return;
+      }
+      payload.category = category;
+    }
+    if (action === 'set_tags') {
+      const raw = window.prompt('输入模板标签，多个标签用逗号分隔');
+      if (raw === null) return;
+      const tags = parseTagsInput(raw);
+      if (!tags.length) {
+        toast({ title: '请至少输入一个标签', type: 'error' });
+        return;
+      }
+      payload.tags = tags;
+    }
+    if (action === 'set_public') {
+      payload.is_public = window.confirm('选择“确定”批量设为公开；选择“取消”批量设为私有。');
+    }
+    setSaving(true);
+    try {
+      const result = await apiClient.bulkActionTemplates(payload) as TemplateBulkActionResponse;
+      const skippedCount = result.skipped?.length || 0;
+      toast({
+        title: `${bulkActionTitle(action)}已完成`,
+        description: summarizeBulkResult(result) || undefined,
+        type: skippedCount ? 'info' : 'success',
+      });
+      setSelectedTemplates(new Set());
+      await loadTemplates();
+    } catch (err: any) {
+      toast({ title: `${bulkActionTitle(action)}失败`, description: err?.message || '请稍后重试', type: 'error' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   // 开始创建
   const handleStartCreate = () => {
@@ -255,10 +369,18 @@ export default function TemplatesPage() {
     return (
       <Card
         key={template.id}
-        className="bg-white/5 border-white/10 hover:bg-white/10 transition-colors"
+        className={`bg-white/5 border-white/10 hover:bg-white/10 transition-colors ${
+          selectedTemplates.has(template.id) ? 'border-violet-500 bg-violet-500/10' : ''
+        }`}
       >
         <CardHeader className="pb-2">
           <CardTitle className="text-white flex items-center gap-2 text-base">
+            <Checkbox
+              checked={selectedTemplates.has(template.id)}
+              onCheckedChange={() => handleSelectTemplate(template.id)}
+              aria-label={`选择${template.name}`}
+              className="mr-1"
+            />
             <IconComponent className={`w-5 h-5 ${
               categoryConfig?.color === 'violet' ? 'text-violet-400' :
               categoryConfig?.color === 'blue' ? 'text-blue-400' :
@@ -305,7 +427,7 @@ export default function TemplatesPage() {
                       size="sm"
                       className="text-white/60 hover:text-white"
                       onClick={() => handleEdit(template)}
-                      title="复制并编辑"
+                      title={`复制并编辑${template.name}`}
                     >
                       <Copy className="w-4 h-4 mr-1" />
                     </Button>
@@ -326,6 +448,7 @@ export default function TemplatesPage() {
                       size="sm"
                       className="text-white/60 hover:text-white"
                       onClick={() => handleEdit(template)}
+                      title={`编辑${template.name}`}
                     >
                       <Edit2 className="w-4 h-4 mr-1" />
                     </Button>
@@ -334,6 +457,7 @@ export default function TemplatesPage() {
                       size="sm"
                       className="text-red-300 hover:text-red-200"
                       onClick={() => handleDelete(template)}
+                      title={`删除${template.name}`}
                     >
                       <Trash2 className="w-4 h-4 mr-1" />
                     </Button>
@@ -502,6 +626,65 @@ export default function TemplatesPage() {
             );
           })}
         </div>
+
+        {/* 批量工具条 */}
+        {selectedTemplateCount > 0 && (
+          <div className="flex flex-col gap-3 rounded-lg border border-violet-400/25 bg-violet-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-medium text-violet-50">已选择 {selectedTemplateCount} 项</div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                className="border-white/20 text-white"
+                onClick={() => handleBulkTemplates('clone')}
+                disabled={saving}
+              >
+                <CopyIcon className="w-4 h-4 mr-2" />
+                批量复制
+              </Button>
+              <Button
+                variant="outline"
+                className="border-red-300/30 text-red-100 hover:bg-red-500/10"
+                onClick={() => handleBulkTemplates('delete')}
+                disabled={saving}
+              >
+                <Trash2 className="w-4 h-4 mr-2" />
+                批量删除
+              </Button>
+              <Button
+                variant="outline"
+                className="border-blue-300/30 text-blue-100 hover:bg-blue-500/10"
+                onClick={() => handleBulkTemplates('set_category')}
+                disabled={saving}
+              >
+                批量分类
+              </Button>
+              <Button
+                variant="outline"
+                className="border-white/20 text-white"
+                onClick={() => handleBulkTemplates('set_tags')}
+                disabled={saving}
+              >
+                批量标签
+              </Button>
+              <Button
+                variant="outline"
+                className="border-emerald-300/30 text-emerald-100 hover:bg-emerald-500/10"
+                onClick={() => handleBulkTemplates('set_public')}
+                disabled={saving}
+              >
+                批量公开状态
+              </Button>
+              <Button
+                variant="ghost"
+                className="text-white/60 hover:text-white"
+                onClick={() => setSelectedTemplates(new Set())}
+                disabled={saving}
+              >
+                清空选择
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* 搜索框 */}
         <div className="relative">

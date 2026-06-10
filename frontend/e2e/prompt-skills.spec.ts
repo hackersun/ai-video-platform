@@ -377,6 +377,10 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await expect(page.getByRole('button', { name: '打开资产设定菜单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开生产菜单' })).toBeVisible();
   await expect(page.getByRole('button', { name: '打开配置菜单' })).toBeVisible();
+  await page.getByLabel('选择冷蓝短剧一致性').check();
+  await expect(page.getByRole('button', { name: '批量克隆' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '批量标签' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '批量删除' })).toBeVisible();
 
   const taskLabels = await page.getByTestId('prompt-skill-task-select').locator('option').allTextContents();
   for (const label of expectedTaskLabels) {

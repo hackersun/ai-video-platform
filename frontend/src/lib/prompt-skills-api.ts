@@ -32,6 +32,15 @@ export type PromptSkillPayload = {
   tags?: string[];
 };
 
+export type PromptSkillBulkActionResponse = {
+  updated_count?: number;
+  deleted_count?: number;
+  created_count?: number;
+  skipped?: Array<{ id: string; reason: string; repair_action?: string | null }>;
+  warnings?: string[];
+  skills?: PromptSkill[];
+};
+
 export type PromptSkillVariableGuideItem = {
   name: string;
   label: string;
@@ -94,6 +103,17 @@ export async function activatePromptSkill(skillId: string) {
 export async function deletePromptSkill(skillId: string) {
   return fetchJsonWithAuth<{ deleted: boolean; id: string }>(`${API_BASE}/prompt-skills/${skillId}`, {
     method: 'DELETE',
+  });
+}
+
+export async function bulkActionPromptSkills(payload: {
+  skill_ids: string[];
+  action: 'delete' | 'clone' | 'set_tags';
+  tags?: string[];
+}) {
+  return fetchJsonWithAuth<PromptSkillBulkActionResponse>(`${API_BASE}/prompt-skills/bulk-action`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   });
 }
 

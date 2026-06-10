@@ -322,6 +322,62 @@ async def delete_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> 
     return {"deleted": True, "id": deleted_id}
 
 
+async def bulk_prompt_skill_action(db: AsyncSession, user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    action = data.get("action")
+    if action not in {"delete", "clone", "set_tags"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的 Prompt 技能批量动作")
+
+    skill_ids = [skill_id for skill_id in data.get("skill_ids", []) if skill_id]
+    if not skill_ids:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="请先选择 Prompt 技能")
+
+    updated: List[PromptSkill] = []
+    created: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, str]] = []
+    deleted_count = 0
+
+    for skill_id in skill_ids:
+        try:
+            skill = await get_prompt_skill(db, user_id, skill_id)
+        except HTTPException:
+            skipped.append({"id": skill_id, "reason": "Prompt 技能不存在", "repair_action": "刷新页面后重新选择"})
+            continue
+
+        if action == "clone":
+            created.append(await clone_prompt_skill(db, user_id, skill_id))
+            continue
+
+        if skill.is_builtin:
+            skipped.append({"id": skill.id, "reason": "内置 Prompt 技能不能直接维护", "repair_action": "先克隆为自定义版本"})
+            continue
+
+        if action == "delete":
+            if skill.is_active:
+                skipped.append({"id": skill.id, "reason": "激活中的 Prompt 技能正在使用", "repair_action": "先激活同任务下其它版本后再删除"})
+                continue
+            await db.delete(skill)
+            deleted_count += 1
+            continue
+
+        if action == "set_tags":
+            skill.tags = data.get("tags") or []
+            updated.append(skill)
+
+    if updated or deleted_count:
+        await db.commit()
+    for skill in updated:
+        await db.refresh(skill)
+
+    return {
+        "updated_count": len(updated),
+        "deleted_count": deleted_count,
+        "created_count": len(created),
+        "skipped": skipped,
+        "warnings": [],
+        "skills": [prompt_skill_payload(skill) for skill in updated] + created,
+    }
+
+
 async def clone_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
     source = await get_prompt_skill(db, user_id, skill_id)
     return await create_prompt_skill(

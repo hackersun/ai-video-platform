@@ -244,6 +244,59 @@ class EntityAssetExtractionResponse(BaseModel):
     assets: List[ExtractedAssetResponse] = Field(default_factory=list)
 
 
+class EntityBulkActionRequest(BaseModel):
+    entity_ids: List[str] = Field(..., min_length=1, description="要批量维护的实体ID")
+    action: str = Field(..., description="delete/approve/set_scope/set_tags")
+    approved: Optional[bool] = None
+    scope: Optional[str] = Field(None, description="global/novel/chapter/script")
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    allow_test_override: bool = Field(False, description="测试模式允许跳过生产限制")
+
+
+class EntityReextractRequest(BaseModel):
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    text: Optional[str] = None
+    entity_types: List[str] = Field(default_factory=lambda: sorted(ENTITY_TYPES))
+    mode: str = Field("overwrite", pattern="^(append|overwrite|delete_then_extract)$")
+    create_assets: bool = False
+    asset_scope: str = "entity"
+    model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
+    allow_test_override: bool = Field(False, description="测试模式允许跳过生产限制")
+
+
+class BulkSkippedItem(BaseModel):
+    id: str
+    reason: str
+    repair_action: Optional[str] = None
+
+
+class EntityBulkActionResponse(BaseModel):
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    updated_count: int = 0
+    deleted_count: int = 0
+    created_count: int = 0
+    skipped: List[BulkSkippedItem] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    entities: List[StoryEntityResponse] = Field(default_factory=list)
+    assets: List[ExtractedAssetResponse] = Field(default_factory=list)
+
+
+def ensure_entity_scope_payload(scope: Optional[str], payload: EntityBulkActionRequest | EntityReextractRequest | StoryEntityScopeUpdate) -> None:
+    if scope == "novel" and not payload.novel_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="小说作用域必须提供 novel_id")
+    if scope == "chapter" and not payload.chapter_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="章节作用域必须提供 chapter_id")
+    if scope == "script" and not payload.script_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="剧本作用域必须提供 script_id")
+
+
 class GenerateFromNovelRequest(BaseModel):
     novel_id: str = Field(..., min_length=1)
     title: Optional[str] = Field(None, max_length=200)
@@ -651,6 +704,59 @@ def _parse_entity_json(content: str) -> list[dict[str, Any]]:
             "source": "ai",
         })
     return normalize_extracted_entities(entities)
+
+
+def _entity_match_key(entity_type: str, name: Optional[str], canonical_name: Optional[str] = None) -> str:
+    clean_name = (canonical_name or name or "").strip().lower()
+    return f"{entity_type}:{clean_name}"
+
+
+def _apply_extracted_entity(entity: StoryEntity, item: dict[str, Any]) -> None:
+    attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+    entity.description = item.get("description") or entity.description
+    entity.canonical_name = item.get("canonical_name") or entity.canonical_name
+    entity.aliases = item.get("aliases") or entity.aliases or []
+    existing_attrs = entity.attributes if isinstance(entity.attributes, dict) else {}
+    entity.attributes = {**existing_attrs, **attrs}
+    entity.appearance = item.get("appearance") or attrs.get("appearance") or entity.appearance
+    entity.visual_prompt = item.get("visual_prompt") or attrs.get("visual_prompt") or entity.visual_prompt
+    entity.relations = item.get("relations") or attrs.get("relationships") or entity.relations or []
+    entity.state_changes = item.get("state_changes") or attrs.get("state_changes") or entity.state_changes or []
+    entity.evidence = item.get("evidence") or entity.evidence
+    entity.confidence = item.get("confidence") or entity.confidence or 100
+    entity.source = item.get("source") or entity.source or "deterministic"
+    entity.version = int(entity.version or 1) + 1
+    entity.updated_at = utc_now()
+
+
+def _new_story_entity_from_extracted(
+    *,
+    user_id: str,
+    novel_id: Optional[str],
+    chapter_id: Optional[str],
+    script_id: Optional[str],
+    item: dict[str, Any],
+) -> StoryEntity:
+    return StoryEntity(
+        id=str(uuid4()),
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        script_id=script_id,
+        entity_type=item["entity_type"],
+        name=item["name"],
+        description=item.get("description"),
+        canonical_name=item.get("canonical_name"),
+        aliases=item.get("aliases") or [],
+        appearance=item.get("appearance") or (item.get("attributes") or {}).get("appearance"),
+        visual_prompt=item.get("visual_prompt") or (item.get("attributes") or {}).get("visual_prompt"),
+        attributes=item.get("attributes") or {},
+        relations=item.get("relations") or (item.get("attributes") or {}).get("relationships") or [],
+        state_changes=item.get("state_changes") or (item.get("attributes") or {}).get("state_changes") or [],
+        evidence=item.get("evidence"),
+        confidence=item.get("confidence") or 100,
+        source=item.get("source") or "deterministic",
+    )
 
 
 async def _extract_story_entities_with_optional_ai(
@@ -1234,6 +1340,224 @@ async def check_entities_consistency(
     )
 
 
+@router.post("/entities/bulk-action", response_model=EntityBulkActionResponse)
+async def bulk_action_story_entities(
+    request: EntityBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    if request.action not in {"delete", "approve", "set_scope", "set_tags"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的实体批量动作")
+
+    updated_entities: list[StoryEntity] = []
+    deleted_count = 0
+    skipped: list[BulkSkippedItem] = []
+    warnings: list[str] = []
+    allow_test_override = request.allow_test_override and is_dev_mode()
+    if request.allow_test_override and not allow_test_override:
+        warnings.append("生产模式不允许使用测试跳过开关，请先解除锁定资产或切换到测试环境")
+
+    for entity_id in request.entity_ids:
+        try:
+            entity = await _get_story_entity_or_404(db, entity_id, user_id)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                skipped.append(BulkSkippedItem(id=entity_id, reason="实体不存在", repair_action="刷新实体库后重新选择"))
+                continue
+            raise
+
+        if request.action == "delete":
+            assets_result = await db.execute(
+                select(Asset).where(
+                    Asset.user_id == user_id,
+                    Asset.entity_id == entity.id,
+                    Asset.is_active == True,
+                )
+            )
+            entity_assets = list(assets_result.scalars().all())
+            blocked_assets = [asset for asset in entity_assets if asset.is_locked or asset.is_final]
+            if blocked_assets and not allow_test_override:
+                for asset in blocked_assets:
+                    skipped.append(
+                        BulkSkippedItem(
+                            id=asset.id,
+                            reason="关联资产已锁定或定稿",
+                            repair_action="先在资产库解锁该实体资产，或使用测试模式确认跳过",
+                        )
+                    )
+                continue
+            for asset in entity_assets:
+                if (asset.is_locked or asset.is_final) and allow_test_override:
+                    warnings.append(f"测试模式已跳过「{asset.name}」的锁定资产限制")
+                asset.is_active = False
+                asset.updated_at = utc_now()
+            await db.delete(entity)
+            deleted_count += 1
+            continue
+
+        if request.action == "approve":
+            entity.is_approved = request.approved if request.approved is not None else True
+            entity.updated_at = utc_now()
+            updated_entities.append(entity)
+            continue
+
+        if request.action == "set_tags":
+            entity.tags = request.tags or []
+            entity.updated_at = utc_now()
+            updated_entities.append(entity)
+            continue
+
+        if request.action == "set_scope":
+            if request.scope not in {"global", "novel", "chapter", "script"}:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的实体作用域")
+            if request.scope == "global":
+                resolved = {"novel_id": None, "chapter_id": None, "script_id": None}
+            else:
+                ensure_entity_scope_payload(request.scope, request)
+                resolved = await _resolve_entity_scope(
+                    db,
+                    user_id,
+                    novel_id=request.novel_id,
+                    chapter_id=request.chapter_id if request.scope in {"chapter", "script"} else None,
+                    script_id=request.script_id if request.scope == "script" else None,
+                )
+            entity.novel_id = resolved["novel_id"]
+            entity.chapter_id = resolved["chapter_id"]
+            entity.script_id = resolved["script_id"]
+            entity.updated_at = utc_now()
+            updated_entities.append(entity)
+
+    await db.commit()
+    for entity in updated_entities:
+        await db.refresh(entity)
+
+    return EntityBulkActionResponse(
+        updated_count=len(updated_entities),
+        deleted_count=deleted_count,
+        skipped=skipped,
+        warnings=warnings,
+        entities=[build_story_entity_response(entity) for entity in updated_entities],
+    )
+
+
+@router.post("/entities/reextract", response_model=EntityBulkActionResponse)
+async def reextract_story_entities(
+    request: EntityReextractRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    novel_id, chapter_id, script_id, text = await _resolve_extraction_text(
+        db, user_id, request.novel_id, request.chapter_id, request.script_id, request.text
+    )
+    try:
+        extracted = await _extract_story_entities_with_optional_ai(
+            db,
+            user_id,
+            text,
+            request.entity_types,
+            request.model_config_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    query = select(StoryEntity).where(StoryEntity.user_id == user_id)
+    if novel_id:
+        query = query.where(StoryEntity.novel_id == novel_id)
+    if chapter_id:
+        query = query.where(StoryEntity.chapter_id == chapter_id)
+    if script_id:
+        query = query.where(StoryEntity.script_id == script_id)
+    query = query.where(StoryEntity.entity_type.in_(request.entity_types))
+    existing_entities = list((await db.execute(query)).scalars().all())
+    existing_by_key = {
+        _entity_match_key(entity.entity_type, entity.name, entity.canonical_name): entity
+        for entity in existing_entities
+    }
+
+    deleted_count = 0
+    updated_entities: list[StoryEntity] = []
+    created_entities: list[StoryEntity] = []
+    skipped: list[BulkSkippedItem] = []
+    warnings: list[str] = []
+    allow_test_override = request.allow_test_override and is_dev_mode()
+    if request.allow_test_override and not allow_test_override:
+        warnings.append("生产模式不允许使用测试跳过开关，请先解除锁定资产或切换到测试环境")
+
+    if request.mode == "delete_then_extract":
+        for entity in existing_entities:
+            assets_result = await db.execute(
+                select(Asset).where(
+                    Asset.user_id == user_id,
+                    Asset.entity_id == entity.id,
+                    Asset.is_active == True,
+                )
+            )
+            entity_assets = list(assets_result.scalars().all())
+            blocked_assets = [asset for asset in entity_assets if asset.is_locked or asset.is_final]
+            if blocked_assets and not allow_test_override:
+                for asset in blocked_assets:
+                    skipped.append(
+                        BulkSkippedItem(
+                            id=asset.id,
+                            reason="关联资产已锁定或定稿",
+                            repair_action="先解锁资产，或改用覆盖更新模式保留实体ID",
+                        )
+                    )
+                continue
+            for asset in entity_assets:
+                if (asset.is_locked or asset.is_final) and allow_test_override:
+                    warnings.append(f"测试模式已跳过「{asset.name}」的锁定资产限制")
+                asset.is_active = False
+                asset.updated_at = utc_now()
+            await db.delete(entity)
+            deleted_count += 1
+        existing_by_key = {}
+
+    requested_types = set(request.entity_types)
+    for item in extracted:
+        if item["entity_type"] not in requested_types:
+            continue
+        key = _entity_match_key(item["entity_type"], item.get("name"))
+        existing = existing_by_key.get(key)
+        if existing and request.mode == "append":
+            skipped.append(BulkSkippedItem(id=existing.id, reason="同名实体已存在", repair_action="如需刷新内容，请使用覆盖更新模式"))
+            continue
+        if existing and request.mode == "overwrite":
+            _apply_extracted_entity(existing, item)
+            updated_entities.append(existing)
+            continue
+        entity = _new_story_entity_from_extracted(
+            user_id=user_id,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            script_id=script_id,
+            item=item,
+        )
+        db.add(entity)
+        created_entities.append(entity)
+
+    await db.commit()
+    for entity in [*updated_entities, *created_entities]:
+        await db.refresh(entity)
+
+    assets: list[Asset] = []
+    if request.create_assets and (updated_entities or created_entities):
+        assets = await _create_assets_for_entities(db, user_id, [*updated_entities, *created_entities], request.asset_scope)
+
+    return EntityBulkActionResponse(
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        script_id=script_id,
+        updated_count=len(updated_entities),
+        deleted_count=deleted_count,
+        created_count=len(created_entities),
+        skipped=skipped,
+        warnings=warnings,
+        entities=[build_story_entity_response(entity) for entity in [*updated_entities, *created_entities]],
+        assets=[_build_extracted_asset_response(asset) for asset in assets],
+    )
+
+
 @router.post("/entities", response_model=StoryEntityResponse, status_code=status.HTTP_201_CREATED)
 async def create_story_entity(
     request: StoryEntityCreateRequest,
@@ -1323,12 +1647,7 @@ async def update_story_entity_scope(
             chapter_id=request.chapter_id if request.scope in {"chapter", "script"} else None,
             script_id=request.script_id if request.scope == "script" else None,
         )
-        if request.scope == "novel" and not resolved["novel_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="小说作用域必须提供 novel_id")
-        if request.scope == "chapter" and not resolved["chapter_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="章节作用域必须提供 chapter_id")
-        if request.scope == "script" and not resolved["script_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="剧本作用域必须提供 script_id")
+        ensure_entity_scope_payload(request.scope, request)
     entity.novel_id = resolved["novel_id"]
     entity.chapter_id = resolved["chapter_id"]
     entity.script_id = resolved["script_id"]

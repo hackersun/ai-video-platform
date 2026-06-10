@@ -1615,6 +1615,24 @@ class ApiClient {
     });
   }
 
+  async bulkActionAssets(data: {
+    asset_ids: string[];
+    action: 'archive' | 'lock' | 'unlock' | 'set_scope' | 'set_tags';
+    scope?: 'global' | 'project' | 'novel' | 'chapter' | 'script' | 'entity';
+    project_id?: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    entity_id?: string;
+    tags?: string[];
+    allow_test_override?: boolean;
+  }) {
+    return this.request<any>('/assets/bulk-action', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateAssetScope(assetId: string, data: {
     scope: 'global' | 'project' | 'novel' | 'chapter' | 'script' | 'entity';
     project_id?: string;
@@ -1698,6 +1716,19 @@ class ApiClient {
     });
   }
 
+  async bulkActionTemplates(data: {
+    template_ids: string[];
+    action: 'delete' | 'clone' | 'set_category' | 'set_tags' | 'set_public';
+    category?: string;
+    tags?: string[];
+    is_public?: boolean;
+  }) {
+    return this.request<any>('/templates/bulk-action', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   // ========== 资产生成和版本锁定 ==========
 
   async generateCharacterAssets(data: {
@@ -1765,10 +1796,8 @@ class ApiClient {
   }
 
   async batchLockAssets(assetIds: string[]) {
-    return this.request<any>('/assets/batch-lock', {
-      method: 'POST',
-      body: JSON.stringify(assetIds),
-    });
+    const result = await this.bulkActionAssets({ asset_ids: assetIds, action: 'lock' });
+    return { ...result, locked_count: result?.updated_count || 0 };
   }
 
   // ========== AI 生成相关 ==========
@@ -1872,6 +1901,24 @@ class ApiClient {
     });
   }
 
+  async reextractStoryEntities(data: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    text?: string;
+    entity_types?: string[];
+    mode?: 'append' | 'overwrite' | 'delete_then_extract';
+    create_assets?: boolean;
+    asset_scope?: 'global' | 'novel' | 'chapter' | 'script' | 'entity';
+    model_config_id?: string;
+    allow_test_override?: boolean;
+  }) {
+    return this.request<any>('/story-bibles/entities/reextract', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async getStoryEntities(params: {
     novel_id?: string;
     chapter_id?: string;
@@ -1960,6 +2007,23 @@ class ApiClient {
   async deleteStoryEntity(entityId: string) {
     return this.request<any>(`/story-bibles/entities/${entityId}`, {
       method: 'DELETE',
+    });
+  }
+
+  async bulkActionStoryEntities(data: {
+    entity_ids: string[];
+    action: 'delete' | 'approve' | 'set_scope' | 'set_tags';
+    approved?: boolean;
+    scope?: 'global' | 'novel' | 'chapter' | 'script';
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    tags?: string[];
+    allow_test_override?: boolean;
+  }) {
+    return this.request<any>('/story-bibles/entities/bulk-action', {
+      method: 'POST',
+      body: JSON.stringify(data),
     });
   }
 

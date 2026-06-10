@@ -13,6 +13,7 @@ from sqlalchemy import and_, desc, or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
 from app.models.asset import Asset, AssetCategory
 from app.models.asset import DEFAULT_CATEGORIES
@@ -241,6 +242,34 @@ class AssetVisualConsistencyRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class AssetBulkActionRequest(BaseModel):
+    asset_ids: List[str] = Field(..., min_length=1, description="要批量维护的资产ID")
+    action: str = Field(..., description="archive/lock/unlock/set_scope/set_tags")
+    scope: Optional[str] = Field(None, description="global/project/novel/chapter/script/entity")
+    project_id: Optional[str] = None
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    entity_id: Optional[str] = None
+    tags: Optional[List[str]] = None
+    allow_test_override: bool = Field(False, description="测试模式允许跳过生产限制")
+
+
+class BulkSkippedItem(BaseModel):
+    id: str
+    reason: str
+    repair_action: Optional[str] = None
+
+
+class AssetBulkActionResponse(BaseModel):
+    updated_count: int = 0
+    deleted_count: int = 0
+    created_count: int = 0
+    skipped: List[BulkSkippedItem] = Field(default_factory=list)
+    warnings: List[str] = Field(default_factory=list)
+    assets: List[AssetResponse] = Field(default_factory=list)
+
+
 async def ensure_default_categories(db: AsyncSession) -> None:
     """Ensure production-oriented asset categories exist for the current DB."""
     changed = False
@@ -393,6 +422,19 @@ def _asset_upload_limit(media_type: str) -> int:
         "audio": 80 * 1024 * 1024,
         "artifact": 20 * 1024 * 1024,
     }.get(media_type, 20 * 1024 * 1024)
+
+
+def ensure_bulk_asset_scope_payload(scope: Optional[str], payload: AssetScopeUpdate | AssetBulkActionRequest) -> None:
+    if scope == "project" and not payload.project_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="项目作用域必须提供 project_id")
+    if scope == "novel" and not payload.novel_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="小说作用域必须提供 novel_id")
+    if scope == "chapter" and not payload.chapter_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="章节作用域必须提供 chapter_id")
+    if scope == "script" and not payload.script_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="剧本作用域必须提供 script_id")
+    if scope == "entity" and not payload.entity_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="实体作用域必须提供 entity_id")
 
 
 async def validate_asset_scope(
@@ -695,6 +737,115 @@ async def generate_entity_view_assets(
     )
 
 
+@router.post("/bulk-action", response_model=AssetBulkActionResponse)
+async def bulk_action_assets(
+    request: AssetBulkActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """批量维护资产，生产模式默认保护锁定、定稿和已引用资产。"""
+    if request.action not in {"archive", "lock", "unlock", "set_scope", "set_tags"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的资产批量动作")
+
+    updated_assets: list[Asset] = []
+    skipped: list[BulkSkippedItem] = []
+    warnings: list[str] = []
+    allow_test_override = request.allow_test_override and is_dev_mode()
+    if request.allow_test_override and not allow_test_override:
+        warnings.append("生产模式不允许使用测试跳过开关，请先解除锁定、替换引用或切换到测试环境")
+
+    for asset_id in request.asset_ids:
+        result = await db.execute(
+            select(Asset).where(and_(Asset.id == asset_id, Asset.user_id == user_id))
+        )
+        asset = result.scalar_one_or_none()
+        if not asset:
+            skipped.append(BulkSkippedItem(id=asset_id, reason="资产不存在", repair_action="刷新资产库后重新选择"))
+            continue
+
+        if request.action == "archive":
+            blocked_reasons = []
+            if asset.is_locked or asset.is_final:
+                blocked_reasons.append("资产已锁定或定稿")
+            if (asset.usage_count or 0) > 0:
+                blocked_reasons.append(f"资产已被引用 {asset.usage_count} 次")
+            if blocked_reasons and not allow_test_override:
+                skipped.append(
+                    BulkSkippedItem(
+                        id=asset.id,
+                        reason="；".join(blocked_reasons),
+                        repair_action="先解锁资产或替换引用后再归档",
+                    )
+                )
+                continue
+            if blocked_reasons and allow_test_override:
+                warnings.append(f"测试模式已跳过「{asset.name}」的生产限制：{'；'.join(blocked_reasons)}")
+            asset.is_active = False
+            asset.updated_at = utc_now()
+            updated_assets.append(asset)
+            continue
+
+        if request.action == "lock":
+            asset.is_locked = True
+            asset.is_final = True
+            asset.locked_at = utc_now()
+            asset.locked_by = user_id
+            asset.updated_at = utc_now()
+            updated_assets.append(asset)
+            continue
+
+        if request.action == "unlock":
+            asset.is_locked = False
+            asset.is_final = False
+            asset.updated_at = utc_now()
+            updated_assets.append(asset)
+            continue
+
+        if request.action == "set_tags":
+            asset.tags = request.tags or []
+            asset.updated_at = utc_now()
+            updated_assets.append(asset)
+            continue
+
+        if request.action == "set_scope":
+            scope = request.scope
+            if scope not in {"global", "project", "novel", "chapter", "script", "entity"}:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的资产作用域")
+            if scope == "global":
+                resolved = {"project_id": None, "novel_id": None, "chapter_id": None, "script_id": None, "entity_id": None}
+            else:
+                ensure_bulk_asset_scope_payload(scope, request)
+                resolved = await validate_asset_scope(
+                    db,
+                    user_id,
+                    project_id=request.project_id if scope == "project" else None,
+                    novel_id=request.novel_id,
+                    chapter_id=request.chapter_id if scope in {"chapter", "script", "entity"} else None,
+                    script_id=request.script_id if scope in {"script", "entity"} else None,
+                    entity_id=request.entity_id if scope == "entity" else None,
+                )
+            asset.project_id = resolved["project_id"]
+            asset.novel_id = resolved["novel_id"]
+            asset.chapter_id = resolved["chapter_id"]
+            asset.script_id = resolved["script_id"]
+            asset.entity_id = resolved["entity_id"]
+            asset.updated_at = utc_now()
+            updated_assets.append(asset)
+
+    if updated_assets:
+        await db.commit()
+        for asset in updated_assets:
+            await db.refresh(asset)
+
+    return AssetBulkActionResponse(
+        updated_count=len(updated_assets),
+        deleted_count=len([asset for asset in updated_assets if request.action == "archive"]),
+        skipped=skipped,
+        warnings=warnings,
+        assets=[build_asset_response(asset) for asset in updated_assets],
+    )
+
+
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: str,
@@ -856,15 +1007,15 @@ async def update_asset_scope(
             entity_id=request.entity_id if scope == "entity" else None,
         )
         if scope == "project" and not resolved["project_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="项目作用域必须提供 project_id")
+            ensure_bulk_asset_scope_payload(scope, request)
         if scope == "novel" and not resolved["novel_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="小说作用域必须提供 novel_id")
+            ensure_bulk_asset_scope_payload(scope, request)
         if scope == "chapter" and not resolved["chapter_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="章节作用域必须提供 chapter_id")
+            ensure_bulk_asset_scope_payload(scope, request)
         if scope == "script" and not resolved["script_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="剧本作用域必须提供 script_id")
+            ensure_bulk_asset_scope_payload(scope, request)
         if scope == "entity" and not resolved["entity_id"]:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="实体作用域必须提供 entity_id")
+            ensure_bulk_asset_scope_payload(scope, request)
 
     asset.project_id = resolved["project_id"]
     asset.novel_id = resolved["novel_id"]
