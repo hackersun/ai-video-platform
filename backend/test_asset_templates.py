@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.core.time_utils import utc_now
 from app.core.database import AsyncSessionLocal
-from app.models.asset import Asset
+from app.models.asset import Asset, AssetCategory
 from init_db import init_db
 from main import app
 
@@ -58,6 +58,29 @@ def _insert_duplicate_starter_assets(user_id: str) -> None:
     asyncio.run(_insert())
 
 
+def _insert_duplicate_asset_categories() -> None:
+    import asyncio
+
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            now = utc_now()
+            for index in range(2):
+                session.add(
+                    AssetCategory(
+                        id=str(uuid4()),
+                        name="style",
+                        name_cn=f"风格重复 {index}",
+                        icon="Palette",
+                        sort_order=99 + index,
+                        is_system=True,
+                        created_at=now,
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(_insert())
+
+
 def test_custom_template_asset_crud_exposes_shot_template(client: TestClient) -> None:
     user_id = "template-asset-user"
     shot_template = {
@@ -96,11 +119,18 @@ def test_custom_template_asset_crud_exposes_shot_template(client: TestClient) ->
 
     update_resp = client.put(
         f"/api/v1/assets/{asset_id}",
-        json={"name": "悬疑三镜头模板", "shot_template": {"shot_count": 3, "shots": shot_template["shots"]}},
+        json={
+            "name": "悬疑三镜头模板",
+            "category": "prompt",
+            "asset_type": "image",
+            "shot_template": {"shot_count": 3, "shots": shot_template["shots"]},
+        },
         headers=auth_headers(user_id),
     )
     assert update_resp.status_code == 200
     assert update_resp.json()["name"] == "悬疑三镜头模板"
+    assert update_resp.json()["category"] == "prompt"
+    assert update_resp.json()["asset_type"] == "image"
     assert update_resp.json()["shot_template"]["shot_count"] == 3
 
     delete_resp = client.delete(f"/api/v1/assets/{asset_id}", headers=auth_headers(user_id))
@@ -129,10 +159,35 @@ def test_default_anime_starter_assets_are_seeded_and_editable(client: TestClient
     assert "玄幻血脉觉醒提示词" in names
     assert "都市异能场景包" in names
     assert "都市异能觉醒提示词" in names
+    assert "角色三视图定稿模板" in names
+    assert "场景四视图空间模板" in names
+    assert "道具多视图视觉 DNA 模板" in names
+    assert "2D 动画风格图实例" in names
+    assert "3D 玄幻风格图实例" in names
+    assert "短视频画面比例预设" in names
 
     template = next(item for item in assets if item["name"] == "9:16 短剧三段式镜头模板")
     assert template["shot_template"]["shot_count"] == 5
     assert template["is_public"] is False
+
+    multiview = next(item for item in assets if item["name"] == "角色三视图定稿模板")
+    assert multiview["category"] == "character"
+    assert multiview["prompt_template"]
+    assert {view["name"] for view in multiview["variables"]} >= {"front_view", "side_view", "back_view"}
+
+    scene_view = next(item for item in assets if item["name"] == "场景四视图空间模板")
+    assert scene_view["category"] == "scene"
+    assert scene_view["prompt_template"]
+    assert scene_view["shot_template"]["view_count"] == 4
+
+    style_example = next(item for item in assets if item["name"] == "2D 动画风格图实例")
+    assert style_example["category"] == "style"
+    assert "style-reference" in style_example["style_tags"]
+    assert style_example["prompt_template"]
+
+    aspect_ratio = next(item for item in assets if item["name"] == "短视频画面比例预设")
+    ratios = {item["ratio"] for item in aspect_ratio["shot_template"]["aspect_ratios"]}
+    assert {"9:16", "16:9", "1:1"} <= ratios
 
     update_resp = client.put(
         f"/api/v1/assets/{template['id']}",
@@ -216,6 +271,8 @@ def test_asset_categories_count_visible_assets_and_novel_filter_includes_global(
 
     category_resp = client.get("/api/v1/assets/categories?include_public=false", headers=auth_headers(user_id))
     assert category_resp.status_code == 200
+    category_names = {item["name"] for item in category_resp.json()}
+    assert {"style", "aspect_ratio", "pose", "expression", "effect", "voice"} <= category_names
     prop_category = next(item for item in category_resp.json() if item["name"] == "prop")
     assert prop_category["asset_count"] >= 3
     assert prop_category["asset_count"] < 20
@@ -238,3 +295,15 @@ def test_asset_categories_count_visible_assets_and_novel_filter_includes_global(
     scoped_ids = {item["id"] for item in scoped_resp.json()}
     assert novel_asset_id in scoped_ids
     assert global_asset_id not in scoped_ids
+
+
+def test_asset_categories_are_deduplicated_by_name(client: TestClient) -> None:
+    user_id = f"asset-category-dedup-user-{uuid4()}"
+    _insert_duplicate_asset_categories()
+
+    category_resp = client.get("/api/v1/assets/categories?include_public=false", headers=auth_headers(user_id))
+    assert category_resp.status_code == 200
+    style_categories = [item for item in category_resp.json() if item["name"] == "style"]
+    assert len(style_categories) == 1
+    assert style_categories[0]["name_cn"] == "风格"
+    assert style_categories[0]["sort_order"] == 7

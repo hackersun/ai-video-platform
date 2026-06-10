@@ -516,6 +516,28 @@ def init_llm_providers_and_models():
 
         # MiniMax - 文本生成模型
         {
+            "id": "minimax-m3",
+            "provider_id": "minimax",
+            "model_id": "MiniMax-M3",
+            "model_name": "MiniMax-M3",
+            "model_name_cn": "MiniMax-M3",
+            "model_type": "chat",
+            "capabilities": ["chat", "completion", "function_calling", "json_mode", "reasoning", "vision", "multimodal", "long_context"],
+            "context_window": 1000000,
+            "max_tokens": 8192,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": True,
+            "supports_function_calling": True,
+            "supports_vision": True,
+            "supports_json_mode": True,
+            "is_recommended": True,
+            "is_active": True,
+            "description": "MiniMax M3 最新文本/多模态模型，1M 上下文，适合小说、剧本、角色提取、分镜规划和多模态理解",
+            "version": "M3",
+            "base_url": "https://api.minimaxi.com/v1"
+        },
+        {
             "id": "minimax-m2-7",
             "provider_id": "minimax",
             "model_id": "MiniMax-M2.7",
@@ -529,7 +551,7 @@ def init_llm_providers_and_models():
             "output_cost_per_1k": 0,
             "supports_streaming": True,
             "supports_function_calling": True,
-            "is_recommended": True,
+            "is_recommended": False,
             "is_active": True,
             "description": "MiniMax 最新旗舰模型，超长上下文，支持函数调用和推理"
         },

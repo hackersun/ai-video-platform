@@ -263,6 +263,121 @@ def test_extract_characters_dedupes_within_same_novel_scope(
     assert names.count("苏晚") == 1
 
 
+def test_extract_characters_can_auto_generate_avatar_without_async_lazy_load(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"character-extract-avatar-user-{uuid4()}"
+    novel_id = _create_novel(client, user_id, "雪城档案")
+    chapter_id = _create_chapter(
+        client,
+        user_id,
+        novel_id,
+        "苏晚是女性法医，银灰短发，深蓝制服。她在雪城档案中负责尸检线索与现场判断。",
+    )
+
+    class _FakeTextService:
+        async def safe_chat_completion(self, *args, **kwargs):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            [
+                              {"name":"苏晚","description":"女性法医","appearance":"银灰短发，深蓝制服","personality":"冷静敏锐","voice":"清亮克制","tags":["女主角","女性"]}
+                            ]
+                            """
+                        }
+                    }
+                ]
+            }
+
+    async def _fake_key(*args, **kwargs):
+        return "test-key", "qwen", "qwen-plus", None
+
+    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_qwen_api_key", _fake_key)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.characters.create_text_generation_service",
+        lambda *args, **kwargs: _FakeTextService(),
+    )
+
+    response = client.post(
+        "/api/v1/characters/extract",
+        json={"chapter_id": chapter_id, "character_count": 3, "auto_generate_avatar": True},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["name"] == "苏晚"
+    assert payload[0]["avatar"]
+
+
+def test_extract_characters_continues_after_one_avatar_generation_failure(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"character-extract-avatar-rollback-user-{uuid4()}"
+    novel_id = _create_novel(client, user_id, "星灯案")
+    chapter_id = _create_chapter(
+        client,
+        user_id,
+        novel_id,
+        "沈砚是男性侦探，穿青色长风衣。苏晚是女性法医，银灰短发，深蓝制服。",
+    )
+
+    class _FakeTextService:
+        async def safe_chat_completion(self, *args, **kwargs):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": """
+                            [
+                              {"name":"沈砚","description":"男性侦探","appearance":"青色长风衣","personality":"冷静","voice":"低沉","tags":["男主角","男性"]},
+                              {"name":"苏晚","description":"女性法医","appearance":"银灰短发，深蓝制服","personality":"敏锐","voice":"清亮","tags":["女主角","女性"]}
+                            ]
+                            """
+                        }
+                    }
+                ]
+            }
+
+    async def _fake_key(*args, **kwargs):
+        return "test-key", "qwen", "qwen-plus", None
+
+    calls: list[str] = []
+
+    async def _flaky_avatar(db, user_id, character, **kwargs):
+        calls.append(character.name)
+        if len(calls) == 1:
+            character.avatar = "/static/dev/temporary-failed-avatar.png"
+            db.add(character)
+            raise RuntimeError("temporary image provider failure")
+        character.avatar = f"/static/dev/{character.name}.png"
+        db.add(character)
+        return f"job-{character.name}", character.avatar, "ok"
+
+    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_qwen_api_key", _fake_key)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.characters.create_text_generation_service",
+        lambda *args, **kwargs: _FakeTextService(),
+    )
+    monkeypatch.setattr("app.api.v1.endpoints.characters._generate_avatar_for_character", _flaky_avatar)
+
+    response = client.post(
+        "/api/v1/characters/extract",
+        json={"chapter_id": chapter_id, "character_count": 5, "auto_generate_avatar": True},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert {item["name"] for item in payload} == {"沈砚", "苏晚"}
+    assert calls == ["沈砚", "苏晚"]
+
+
 def test_character_avatar_generation_uses_dev_fallback_and_updates_character(client: TestClient) -> None:
     user_id = f"character-avatar-user-{uuid4()}"
     novel_id = _create_novel(client, user_id, "雪城档案")

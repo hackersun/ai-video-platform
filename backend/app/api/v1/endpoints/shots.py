@@ -13,11 +13,22 @@ from sqlalchemy import select, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
+from app.core.api_key_utils import create_image_generation_service, get_user_image_model_config
 from app.core.dev_generation import dev_image_url, is_dev_mode
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
 from app.core.security import get_current_user_id
 from app.models import Asset, Chapter, Script, Shot, StoryEntity, Storyboard
-from app.services.consistency_context import build_consistency_prompt, build_shot_entity_context
+from app.services.consistency_context import auto_fill_shot_entity_refs, build_consistency_prompt, build_shot_entity_context
+from app.services.chapter_naming import normalize_duplicate_chapter_label_text
+from app.services.image_generation_pipeline import (
+    call_image_generation_provider,
+    missing_image_result_message,
+    provider_task_id,
+)
+from app.services.image_prompt_policy import append_global_image_constraints
+from app.services.image_result_parser import extract_image_urls_from_provider_result
+from app.services.media_persistence import persist_remote_media_url
+from app.services.asset_generation_service import style_keywords_for
 
 router = APIRouter(tags=["镜头管理"])
 
@@ -80,6 +91,12 @@ class ShotUpdate(BaseModel):
 class ShotReorderRequest(BaseModel):
     """重排镜头请求"""
     shot_ids: List[str] = Field(..., min_length=1, description="按新顺序排列的镜头ID")
+
+
+class ShotImageGenerateRequest(BaseModel):
+    """镜头参考图生成请求"""
+    style: Optional[str] = Field(default="anime", description="画面风格模板")
+    model_config_id: Optional[str] = Field(default=None, description="指定图像模型配置ID")
 
 
 class ShotResponse(BaseModel):
@@ -321,24 +338,46 @@ async def _resolve_entity_reference_bindings(
     return resolved
 
 
+def _image_generation_is_stale(shot: Shot, timeout_seconds: int = 300) -> bool:
+    if shot.image_status != "generating" or shot.image_url or not shot.updated_at:
+        return False
+    try:
+        now = utc_now()
+        updated_at = shot.updated_at
+        if getattr(now, "tzinfo", None) is not None and getattr(updated_at, "tzinfo", None) is None:
+            now = now.replace(tzinfo=None)
+        return (now - updated_at).total_seconds() > timeout_seconds
+    except Exception:
+        return False
+
+
 def build_shot_response(shot: Shot, storyboard_title: Optional[str] = None) -> ShotResponse:
+    image_status = shot.image_status
+    extra_data = shot.extra_data if isinstance(shot.extra_data, dict) else {}
+    if _image_generation_is_stale(shot):
+        image_status = "failed"
+        extra_data = {
+            **extra_data,
+            "image_generation_error": extra_data.get("image_generation_error")
+            or "参考图生成超时：任务已提交但超过 5 分钟未返回图片URL，请重新生成或更换图像模型。",
+        }
     return ShotResponse(
         id=str(shot.id),
         storyboard_id=str(shot.storyboard_id),
         user_id=str(shot.user_id),
-        storyboard_title=storyboard_title,
+        storyboard_title=normalize_duplicate_chapter_label_text(storyboard_title),
         shot_number=shot.shot_number or 1,
         duration=shot.duration or 4,
-        prompt=shot.prompt,
+        prompt=normalize_duplicate_chapter_label_text(shot.prompt),
         dialogue=shot.dialogue,
-        visual_description=shot.visual_description,
+        visual_description=normalize_duplicate_chapter_label_text(shot.visual_description),
         camera_angle=shot.camera_angle,
         video_url=shot.video_url,
         audio_url=shot.audio_url,
         video_status=shot.video_status or "pending",
         audio_status=shot.audio_status or "pending",
         image_url=shot.image_url,
-        image_status=shot.image_status,
+        image_status=image_status,
         image_asset_id=str(shot.image_asset_id) if shot.image_asset_id else None,
         camera_movement=shot.camera_movement,
         movement_speed=shot.movement_speed,
@@ -356,10 +395,40 @@ def build_shot_response(shot: Shot, storyboard_title: Optional[str] = None) -> S
         parent_shot_id=str(shot.parent_shot_id) if shot.parent_shot_id else None,
         version_note=shot.version_note,
         character_refs=shot.character_refs,
-        extra_data=shot.extra_data,
+        extra_data=extra_data,
         created_at=str(shot.created_at),
         updated_at=str(shot.updated_at),
     )
+
+
+def _build_shot_reference_image_prompt(base_prompt: str, style_prompt: str) -> str:
+    """Wrap consistency context with shot-reference-specific image rules."""
+    prompt = "\n".join(
+        part
+        for part in [
+            "生成类型：镜头参考图，用于后续图生视频保持同一小说镜头画面一致。",
+            (
+                "构图目标：生成整镜头构图，不是角色头像，不是单独人物立绘，不是角色三视图，"
+                "不是道具孤立产品图；人物、场景、道具和事件关系都要同时服务当前镜头。"
+            ),
+            base_prompt,
+            f"画面风格要求：{style_prompt}" if style_prompt else "",
+            (
+                "人物一致性：如果镜头中出现人物，必须保持小说/角色/实体中记录的性别、年龄感、脸型、发型、"
+                "服装、身份和气质；不得把女性生成为男性，不得把男性生成为女性。"
+            ),
+            (
+                "场景与道具一致性：如果镜头中出现场景或道具，必须让场景空间结构、时代氛围、光线方向、"
+                "天气、关键道具外观和道具位置与剧本/镜头/实体设定一致。"
+            ),
+            (
+                "镜头画面硬约束：单张完整动漫镜头画面；不要只生成局部身体特写，不要只生成衣服胸口或无头人物，"
+                "不要生成无关人物，不要拼贴多张小图，不要丢失关键场景和道具。"
+            ),
+        ]
+        if part
+    )
+    return append_global_image_constraints(prompt)
 
 
 def _refresh_shot_quality_payload(shot: Shot) -> tuple[dict, dict]:
@@ -785,15 +854,11 @@ async def create_shots_batch(
 @router.post("/{shot_id}/generate-image")
 async def generate_shot_image(
     shot_id: str,
+    request: Optional[ShotImageGenerateRequest] = Body(None),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
     """为指定镜头生成参考图"""
-    from sqlalchemy import select, and_
-    from app.services.volcano_service import VolcanoService
-    from app.core.api_key_utils import get_user_volcano_api_key
-    from app.models.asset import Asset
-
     result = await db.execute(
         select(Shot).where(and_(Shot.id == shot_id, Shot.user_id == user_id))
     )
@@ -801,6 +866,25 @@ async def generate_shot_image(
     if not shot:
         raise HTTPException(status_code=404, detail="镜头不存在")
 
+    storyboard = None
+    script = None
+    storyboard_result = await db.execute(
+        select(Storyboard).where(and_(Storyboard.id == shot.storyboard_id, Storyboard.user_id == user_id))
+    )
+    storyboard = storyboard_result.scalar_one_or_none()
+    if storyboard and storyboard.script_id:
+        script_result = await db.execute(
+            select(Script).where(and_(Script.id == storyboard.script_id, Script.user_id == user_id))
+        )
+        script = script_result.scalar_one_or_none()
+    inferred_novel_id = getattr(storyboard, "novel_id", None) or getattr(script, "novel_id", None)
+    inferred_chapter_id = getattr(storyboard, "chapter_id", None) or getattr(script, "chapter_id", None)
+    if inferred_novel_id:
+        shot = await auto_fill_shot_entity_refs(db, shot, inferred_novel_id, inferred_chapter_id)
+        await db.flush()
+
+    image_style = (request.style if request else None) or "anime"
+    style_prompt = style_keywords_for(image_style)
     context = await build_consistency_prompt(
         db,
         user_id,
@@ -808,41 +892,75 @@ async def generate_shot_image(
         base_prompt=shot.visual_description or shot.prompt or "cinematic scene",
         shot_id=shot_id,
         extra_context={
+            "画面风格": style_prompt,
+            "style": image_style,
             "camera": shot.camera_angle,
             "emotion": shot.emotion,
             "lighting": shot.lighting,
             "color_grading": shot.color_grading,
         },
     )
-    prompt = context["prompt"]
+    prompt = _build_shot_reference_image_prompt(context["prompt"], style_prompt)
 
-    # Get API key and call image generation service
+    provider_name = "dev_mode"
+    model_id = ""
+    task_id = None
+    result = {}
+
     try:
-        api_key = await get_user_volcano_api_key(db, user_id)
-        volcano = VolcanoService(api_key)
-        result = await volcano.generate_image(prompt=prompt)
-        task_id = result.get("id") or result.get("task_id", str(uuid.uuid4()))
+        api_key, provider_name, model_id, base_url = await get_user_image_model_config(
+            db,
+            user_id,
+            config_id=request.model_config_id if request else None,
+        )
+        service = create_image_generation_service(api_key or "", provider_name or "", base_url)
+        result = await call_image_generation_provider(
+            service,
+            provider_name=provider_name or "",
+            model_id=model_id or "",
+            prompt=prompt,
+            num=1,
+            size="2K",
+            aspect_ratio="1:1",
+            openai_size="1024x1024",
+        )
+        task_id = provider_task_id(result, provider_name=provider_name)
     except HTTPException:
         if not is_dev_mode():
             raise
         task_id = f"dev-shot-image-{shot_id}"
         result = {"data": [{"url": dev_image_url(shot_id, f"shot-{shot.shot_number}")}]}
+        provider_name = "dev_mode"
+        model_id = "dev-image"
+    except Exception as exc:
+        shot.image_status = "failed"
+        shot.extra_data = {
+            **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+            "image_generation_error": f"参考图生成失败: {str(exc)}",
+        }
+        shot.updated_at = utc_now()
+        await db.commit()
+        raise HTTPException(status_code=500, detail=f"参考图生成失败: {str(exc)}")
 
-    # Parse image URL from response
-    image_url = None
-    if "data" in result and result["data"]:
-        items = result["data"]
-        if isinstance(items, list) and len(items) > 0:
-            first = items[0]
-            if isinstance(first, dict) and first.get("url"):
-                image_url = first.get("url")
+    image_urls = extract_image_urls_from_provider_result(result)
+    image_url = image_urls[0] if image_urls else None
 
-    # Update shot status immediately
     if image_url:
+        try:
+            image_url = await persist_remote_media_url(
+                image_url,
+                media_type="image",
+                subdir="images",
+                prefix=f"shot-{shot_id[:8]}",
+                max_bytes=20 * 1024 * 1024,
+            ) or image_url
+        except Exception:
+            pass
+
         shot.image_url = image_url
         shot.image_status = "succeeded"
+        shot.updated_at = utc_now()
 
-        # Create asset
         asset = Asset(
             id=str(uuid.uuid4()),
             user_id=user_id,
@@ -853,21 +971,76 @@ async def generate_shot_image(
             generation_params={
                 "shot_id": shot_id,
                 "prompt": prompt,
+                "style": image_style,
+                "style_prompt": style_prompt,
                 "consistency": context["metadata"],
+                "provider": provider_name,
+                "model": model_id,
             },
         )
         db.add(asset)
         shot.image_asset_id = asset.id
         await db.commit()
-    else:
-        # API returned but no image URL yet (edge case for async models)
-        shot.image_status = "generating"
-        await db.commit()
-        # Start background poll with user_id - creates its own DB session
-        from app.services.image_poll_service import poll_and_update_shot_image
-        asyncio.create_task(poll_and_update_shot_image(shot_id, task_id, user_id))
 
-    return {"shot_id": shot_id, "task_id": task_id, "status": shot.image_status}
+        return {
+            "shot_id": shot_id,
+            "task_id": task_id,
+            "status": "succeeded",
+            "image_url": image_url,
+            "image_asset_id": asset.id,
+            "provider": provider_name,
+            "model": model_id,
+            "message": "参考图已生成",
+        }
+
+    if not task_id:
+        shot.image_status = "failed"
+        shot.extra_data = {
+            **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+            "image_generation_error": "模型未返回图片URL或任务ID",
+        }
+        shot.updated_at = utc_now()
+        await db.commit()
+        raise HTTPException(status_code=500, detail="参考图生成失败: 模型未返回图片URL或任务ID")
+
+    if provider_name not in ("volcano", "volcano_agent_plan", "dev_mode"):
+        detail = f"参考图生成失败: {missing_image_result_message(provider_name, task_id)}"
+        shot.image_status = "failed"
+        shot.extra_data = {
+            **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+            "image_generation_error": detail,
+            "image_generation_provider": provider_name,
+            "image_generation_model": model_id,
+            "image_generation_task_id": task_id,
+        }
+        shot.updated_at = utc_now()
+        await db.commit()
+        raise HTTPException(status_code=500, detail=detail)
+
+    shot.extra_data = {
+        **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+        "image_generation_style": image_style,
+        "image_generation_style_prompt": style_prompt,
+        "image_generation_prompt": prompt,
+        "image_generation_provider": provider_name,
+        "image_generation_model": model_id,
+        "image_generation_task_id": task_id,
+    }
+    shot.image_status = "generating"
+    shot.updated_at = utc_now()
+    await db.commit()
+
+    from app.services.image_poll_service import poll_and_update_shot_image
+    asyncio.create_task(poll_and_update_shot_image(shot_id, task_id, user_id))
+
+    return {
+        "shot_id": shot_id,
+        "task_id": task_id,
+        "status": shot.image_status,
+        "provider": provider_name,
+        "model": model_id,
+        "message": "参考图任务已提交，正在等待模型返回图片URL",
+    }
 
 
 # ============== 镜头质量检查 & 重试API ==============

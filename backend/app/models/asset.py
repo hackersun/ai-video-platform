@@ -34,10 +34,16 @@ DEFAULT_CATEGORIES = [
     {"name": "scene", "name_cn": "场景", "icon": "Landscape", "sort_order": 2},
     {"name": "prop", "name_cn": "道具", "icon": "Box", "sort_order": 3},
     {"name": "costume", "name_cn": "服装", "icon": "Shirt", "sort_order": 4},
-    {"name": "music", "name_cn": "音乐", "icon": "Music", "sort_order": 5},
-    {"name": "sfx", "name_cn": "音效", "icon": "Volume2", "sort_order": 6},
-    {"name": "template", "name_cn": "模板", "icon": "Layout", "sort_order": 7},
-    {"name": "prompt", "name_cn": "提示词", "icon": "MessageSquare", "sort_order": 8},
+    {"name": "pose", "name_cn": "姿势", "icon": "PersonStanding", "sort_order": 5},
+    {"name": "expression", "name_cn": "表情", "icon": "Smile", "sort_order": 6},
+    {"name": "style", "name_cn": "风格", "icon": "Palette", "sort_order": 7},
+    {"name": "aspect_ratio", "name_cn": "画面比例", "icon": "PanelsTopLeft", "sort_order": 8},
+    {"name": "effect", "name_cn": "特效", "icon": "Sparkles", "sort_order": 9},
+    {"name": "voice", "name_cn": "音色", "icon": "Mic", "sort_order": 10},
+    {"name": "music", "name_cn": "音乐", "icon": "Music", "sort_order": 11},
+    {"name": "sfx", "name_cn": "音效", "icon": "Volume2", "sort_order": 12},
+    {"name": "template", "name_cn": "模板", "icon": "Layout", "sort_order": 13},
+    {"name": "prompt", "name_cn": "提示词", "icon": "MessageSquare", "sort_order": 14},
 ]
 
 
@@ -113,8 +119,10 @@ class Asset(Base):
     replaced_by_id = Column(String(36), nullable=True)  # 被哪个版本替代
 
     # === 来源追踪 ===
+    source_url = Column(Text, nullable=True)  # 外部来源或系统预置唯一来源键
     source_job_id = Column(String(36), nullable=True)  # 生成此资产的job ID
     source_prompt = Column(Text, nullable=True)  # 生成时的prompt
+    generation_params = Column(JSON, nullable=True)  # 生成参数和系统预置信息
 
     # === 时间戳 ===
     created_at = Column(DateTime, default=utc_now)

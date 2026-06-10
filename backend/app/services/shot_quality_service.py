@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Any, Dict, List, Optional
 from app.core.model_registry import get_task_default
 from app.services.ai_generation_feedback import build_ai_generation_feedback
@@ -33,6 +34,8 @@ class IssueType(str, Enum):
     MISSING_EVENT_REFS = "missing_event_refs"
     MISSING_KEYFRAMES = "missing_keyframes"
     MISSING_DIALOGUE = "missing_dialogue"
+    PLACEHOLDER_DIALOGUE_SPEAKER = "placeholder_dialogue_speaker"
+    UNKNOWN_DIALOGUE_SPEAKER = "unknown_dialogue_speaker"
     NO_REVIEW_APPROVED = "no_review_approved"
 
 
@@ -129,6 +132,44 @@ def _names_from_refs(refs: Any) -> List[str]:
     return names
 
 
+def _extract_dialogue_speaker(dialogue: Optional[str], extra_data: Dict[str, Any]) -> Optional[str]:
+    explicit = extra_data.get("dialogue_speaker") or extra_data.get("speaker_name")
+    if explicit:
+        return str(explicit).strip()
+    text = str(dialogue or extra_data.get("subtitle_text") or "").strip()
+    if not text:
+        return None
+    narrator_match = re.match(r"^（\s*([^）]{1,12})\s*）", text)
+    if narrator_match:
+        return narrator_match.group(1).strip()
+    match = re.match(r"^\s*[-—]?\s*([^：:（）()，。！？\n]{1,24})\s*[：:]", text)
+    return match.group(1).strip() if match else None
+
+
+def _known_character_names(character_refs: Any, entity_refs: Dict[str, Any]) -> List[str]:
+    names = _names_from_refs(character_refs)
+    for name in _names_from_refs(entity_refs.get("characters")):
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def _dialogue_speaker_issue(dialogue: Optional[str], extra_data: Dict[str, Any], character_refs: Any, entity_refs: Dict[str, Any]) -> Optional[str]:
+    speaker = _extract_dialogue_speaker(dialogue, extra_data)
+    if not speaker:
+        return None
+    if speaker in {"角色A", "角色B", "某人"}:
+        return "对白仍使用占位说话人，请替换为小说角色名"
+    if speaker in {"旁白", "画外音", "解说", "系统"}:
+        return None
+    known_names = _known_character_names(character_refs, entity_refs)
+    if known_names and speaker not in known_names:
+        return f"对白说话人未绑定到当前镜头角色：{speaker}"
+    if not known_names:
+        return "对白已有说话人，但镜头缺少角色引用，配音和人物口型可能不稳定"
+    return None
+
+
 class ShotQualityService:
     """镜头质量检查服务"""
 
@@ -195,6 +236,7 @@ class ShotQualityService:
         # 4. 台词过长警告 - WARNING
         dialogue = getattr(shot, "dialogue", None) or ""
         extra_data = getattr(shot, "extra_data", None) or {}
+        entity_refs = extra_data.get("entity_refs") if isinstance(extra_data.get("entity_refs"), dict) else {}
         subtitle_text = extra_data.get("subtitle_text") if isinstance(extra_data, dict) else dialogue
         if len(dialogue) > MAX_DIALOGUE_CHARS:
             warnings.append(f"对白过长（{len(dialogue)}字），可能影响配音节奏")
@@ -215,6 +257,21 @@ class ShotQualityService:
                 severity=IssueSeverity.INFO,
                 message="当前镜头没有台词或字幕文本",
                 field="dialogue"
+            ))
+
+        speaker_issue = _dialogue_speaker_issue(dialogue, extra_data, getattr(shot, "character_refs", None) or [], entity_refs)
+        if speaker_issue:
+            warnings.append(speaker_issue)
+            issue_type = (
+                IssueType.PLACEHOLDER_DIALOGUE_SPEAKER
+                if "占位" in speaker_issue
+                else IssueType.UNKNOWN_DIALOGUE_SPEAKER
+            )
+            issues.append(QualityIssue(
+                type=issue_type,
+                severity=IssueSeverity.WARNING,
+                message=speaker_issue,
+                field="dialogue",
             ))
 
         # 6. 关键帧检查 - WARNING
@@ -245,7 +302,6 @@ class ShotQualityService:
             ))
 
         # 8. 场景/道具/事件引用检查
-        entity_refs = extra_data.get("entity_refs") if isinstance(extra_data.get("entity_refs"), dict) else {}
         if not _names_from_refs(entity_refs.get("scenes")):
             warnings.append("缺少场景引用，场景一致性较弱")
             issues.append(QualityIssue(
@@ -563,6 +619,10 @@ def build_shot_quality_report(shot: Any) -> Dict[str, Any]:
         warnings.append("未显式绑定角色引用，可能退化为通用角色生成")
 
     entity_refs = extra_data.get("entity_refs") if isinstance(extra_data.get("entity_refs"), dict) else {}
+    speaker_issue = _dialogue_speaker_issue(getattr(shot, "dialogue", None), extra_data, character_refs, entity_refs)
+    if speaker_issue:
+        warnings.append(speaker_issue)
+
     if not _names_from_refs(entity_refs.get("scenes")):
         warnings.append("缺少场景引用，场景一致性较弱")
     if not _names_from_refs(entity_refs.get("props")):

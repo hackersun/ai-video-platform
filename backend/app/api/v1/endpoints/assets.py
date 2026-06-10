@@ -4,10 +4,10 @@
 """
 from app.core.time_utils import utc_now
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, desc, or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,13 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models.asset import Asset, AssetCategory
+from app.models.asset import DEFAULT_CATEGORIES
 from app.models.project import Project
 from app.models import Chapter, Novel, Script, StoryEntity
 from app.models.character import Character
 from app.services.default_anime_library import ensure_default_anime_assets
-from app.services.asset_generation_service import AssetGenerationService
-from app.services.volcano_service import VolcanoService
-from app.core.volcano_config import DEFAULT_IMAGE_MODEL
+from app.services.asset_generation_service import AssetGenerationService, get_asset_view_presets, get_image_style_templates
+from app.services.media_persistence import persist_uploaded_media_bytes
 
 router = APIRouter(tags=["资产库"])
 
@@ -40,11 +40,14 @@ class AssetCreate(BaseModel):
     chapter_id: Optional[str] = None
     script_id: Optional[str] = None
     entity_id: Optional[str] = None
+    entity_type: Optional[str] = None
     tags: Optional[List[str]] = None
     style_tags: Optional[List[str]] = None
     prompt_template: Optional[str] = None
     variables: Optional[List[dict]] = None
     shot_template: Optional[dict] = None
+    source_prompt: Optional[str] = None
+    generation_params: Optional[dict] = None
     character_id: Optional[str] = None
     expressions: Optional[List[dict]] = None
     poses: Optional[List[dict]] = None
@@ -52,6 +55,8 @@ class AssetCreate(BaseModel):
 
 
 class AssetUpdate(BaseModel):
+    category: Optional[str] = None
+    asset_type: Optional[str] = None
     name: Optional[str] = None
     description: Optional[str] = None
     url: Optional[str] = None
@@ -61,11 +66,15 @@ class AssetUpdate(BaseModel):
     chapter_id: Optional[str] = None
     script_id: Optional[str] = None
     entity_id: Optional[str] = None
+    entity_type: Optional[str] = None
     tags: Optional[List[str]] = None
     style_tags: Optional[List[str]] = None
     prompt_template: Optional[str] = None
     variables: Optional[List[dict]] = None
     shot_template: Optional[dict] = None
+    source_prompt: Optional[str] = None
+    generation_params: Optional[dict] = None
+    character_id: Optional[str] = None
     expressions: Optional[List[dict]] = None
     poses: Optional[List[dict]] = None
     is_public: Optional[bool] = None
@@ -103,8 +112,20 @@ class AssetResponse(BaseModel):
     is_final: bool = False
     locked_at: Optional[str] = None
     locked_by: Optional[str] = None
+    source_url: Optional[str] = None
+    source_prompt: Optional[str] = None
+    generation_params: Optional[dict] = None
     created_at: str
     updated_at: str
+
+
+class AssetUploadResponse(BaseModel):
+    url: str
+    filename: str
+    content_type: str
+    size: int
+    media_type: str
+    kind: str
 
 
 class AssetScopeUpdate(BaseModel):
@@ -149,6 +170,18 @@ class PropAssetGenerateRequest(BaseModel):
     model_config_id: Optional[str] = None
 
 
+class EntityViewGenerateRequest(BaseModel):
+    entity_id: str
+    view_keys: Optional[List[str]] = Field(None, description="可选视图 key，不传则生成该实体类型全部必备视图")
+    style: str = Field("anime", description="anime/xianxia/wuxia/fantasy/urban/cartoon/realistic")
+    model_config_id: Optional[str] = None
+
+
+class AssetRegenerateRequest(BaseModel):
+    style: Optional[str] = Field(None, description="可选风格；不传则沿用原资产生成风格")
+    model_config_id: Optional[str] = None
+
+
 class AssetGenerateResponse(BaseModel):
     asset_id: str
     name: str
@@ -175,12 +208,71 @@ class PropAssetsResponse(BaseModel):
     total: int
 
 
+class AssetViewPresetResponse(BaseModel):
+    presets: List[dict]
+
+
+class AssetStyleTemplatesResponse(BaseModel):
+    default_style: str = "anime"
+    templates: List[dict]
+
+
+class EntityViewAssetsResponse(BaseModel):
+    entity_type: str
+    entity_id: str
+    assets: Dict[str, AssetResponse]
+    total: int
+    failures: List[AssetResponse] = []
+
+
 class EntityAssetsResponse(BaseModel):
     entity_type: str
     entity_id: str
     assets: List[AssetResponse]
     locked_assets: List[AssetResponse]
     total: int
+
+
+class AssetVisualConsistencyRequest(BaseModel):
+    score: float = Field(..., ge=0, le=100)
+    model: Optional[str] = None
+    reference_asset_ids: Optional[List[str]] = None
+    issues: Optional[List[str]] = None
+    notes: Optional[str] = None
+
+
+async def ensure_default_categories(db: AsyncSession) -> None:
+    """Ensure production-oriented asset categories exist for the current DB."""
+    changed = False
+    for cat_data in DEFAULT_CATEGORIES:
+        result = await db.execute(select(AssetCategory).where(AssetCategory.name == cat_data["name"]))
+        existing_categories = result.scalars().all()
+        if existing_categories:
+            updates = {
+                "name_cn": cat_data["name_cn"],
+                "icon": cat_data["icon"],
+                "sort_order": cat_data["sort_order"],
+                "is_system": True,
+            }
+            for existing in existing_categories:
+                for key, value in updates.items():
+                    if getattr(existing, key) != value:
+                        setattr(existing, key, value)
+                        changed = True
+            continue
+        db.add(
+            AssetCategory(
+                id=str(uuid4()),
+                name=cat_data["name"],
+                name_cn=cat_data["name_cn"],
+                icon=cat_data["icon"],
+                sort_order=cat_data["sort_order"],
+                is_system=True,
+            )
+        )
+        changed = True
+    if changed:
+        await db.commit()
 
 
 def build_asset_response(asset: Asset) -> AssetResponse:
@@ -216,9 +308,91 @@ def build_asset_response(asset: Asset) -> AssetResponse:
         is_final=getattr(asset, 'is_final', False) or False,
         locked_at=str(asset.locked_at) if getattr(asset, 'locked_at', None) else None,
         locked_by=getattr(asset, 'locked_by', None),
+        source_url=getattr(asset, 'source_url', None),
+        source_prompt=getattr(asset, 'source_prompt', None),
+        generation_params=getattr(asset, 'generation_params', None),
         created_at=str(asset.created_at),
         updated_at=str(asset.updated_at),
     )
+
+
+def story_entity_visual_description(entity: StoryEntity) -> str:
+    attributes = entity.attributes if isinstance(entity.attributes, dict) else {}
+    description_parts = [
+        getattr(entity, "appearance", None),
+        getattr(entity, "visual_prompt", None),
+        entity.description,
+        attributes.get("appearance"),
+        attributes.get("visual_prompt"),
+        attributes.get("mood"),
+    ]
+    return "；".join(str(item).strip() for item in description_parts if item) or entity.evidence or ""
+
+
+def _story_entity_name_candidates(entity: StoryEntity) -> List[str]:
+    candidates = [
+        getattr(entity, "name", None),
+        getattr(entity, "canonical_name", None),
+    ]
+    aliases = entity.aliases if isinstance(entity.aliases, list) else []
+    candidates.extend(aliases)
+    seen = set()
+    result = []
+    for item in candidates:
+        text = str(item or "").strip()
+        if text and text not in seen:
+            seen.add(text)
+            result.append(text)
+    return result
+
+
+async def resolve_character_for_story_entity(
+    db: AsyncSession,
+    user_id: str,
+    entity: Optional[StoryEntity],
+) -> Optional[Character]:
+    """Resolve a story character entity to the editable Character record used by video consistency."""
+    if not entity or entity.entity_type != "character":
+        return None
+    names = _story_entity_name_candidates(entity)
+    if not names:
+        return None
+    filters = [Character.user_id == user_id, Character.name.in_(names)]
+    if entity.novel_id:
+        filters.append(or_(Character.novel_id == entity.novel_id, Character.novel_id.is_(None)))
+    result = await db.execute(
+        select(Character)
+        .where(and_(*filters))
+        .order_by(desc(Character.updated_at))
+    )
+    characters = list(result.scalars().all())
+    if not characters:
+        return None
+
+    def rank(character: Character) -> tuple[int, int, int]:
+        exact_name = 0 if character.name == entity.name else 1
+        same_novel = 0 if entity.novel_id and character.novel_id == entity.novel_id else 1
+        global_fallback = 0 if character.novel_id is None else 1
+        return (exact_name, same_novel, global_fallback)
+
+    return sorted(characters, key=rank)[0]
+
+
+def _asset_upload_media_type(asset_type: str, kind: str) -> str:
+    if kind == "thumbnail":
+        return "image"
+    if asset_type in {"image", "video", "audio"}:
+        return asset_type
+    return "artifact"
+
+
+def _asset_upload_limit(media_type: str) -> int:
+    return {
+        "image": 20 * 1024 * 1024,
+        "video": 300 * 1024 * 1024,
+        "audio": 80 * 1024 * 1024,
+        "artifact": 20 * 1024 * 1024,
+    }.get(media_type, 20 * 1024 * 1024)
 
 
 async def validate_asset_scope(
@@ -297,9 +471,13 @@ async def list_categories(
     user_id: str = Depends(get_current_user_id),
 ):
     """获取所有资产分类"""
+    await ensure_default_categories(db)
     await ensure_default_anime_assets(db, user_id)
     result = await db.execute(select(AssetCategory).order_by(AssetCategory.sort_order))
-    categories = result.scalars().all()
+    categories_by_name = {}
+    for category in result.scalars().all():
+        categories_by_name.setdefault(category.name, category)
+    categories = list(categories_by_name.values())
 
     responses = []
     for cat in categories:
@@ -340,6 +518,7 @@ async def list_assets(
     user_id: str = Depends(get_current_user_id),
 ):
     """获取资产列表"""
+    await ensure_default_categories(db)
     await ensure_default_anime_assets(db, user_id)
 
     conditions = [Asset.is_active == True]
@@ -373,10 +552,7 @@ async def list_assets(
         else:
             conditions.append(Asset.script_id == script_id)
     if entity_id:
-        if include_global_with_lineage:
-            conditions.append(or_(Asset.entity_id == entity_id, Asset.entity_id.is_(None)))
-        else:
-            conditions.append(Asset.entity_id == entity_id)
+        conditions.append(Asset.entity_id == entity_id)
     if scope == "global":
         conditions.extend([
             Asset.project_id.is_(None),
@@ -417,6 +593,108 @@ async def list_assets(
     return [build_asset_response(a) for a in assets]
 
 
+@router.post("/upload", response_model=AssetUploadResponse)
+async def upload_asset_file(
+    asset_type: str = Query("image", description="资源类型：image/video/audio/text/lora/ipadapter"),
+    kind: str = Query("resource", description="resource/thumbnail"),
+    file: UploadFile = File(...),
+    user_id: str = Depends(get_current_user_id),
+):
+    """上传资产资源或缩略图，并返回稳定的 /static 路径。"""
+    if kind not in {"resource", "thumbnail"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传类型仅支持 resource 或 thumbnail")
+
+    media_type = _asset_upload_media_type(asset_type, kind)
+    data = await file.read()
+    try:
+        url = persist_uploaded_media_bytes(
+            data,
+            media_type=media_type,
+            content_type=file.content_type or "",
+            subdir=f"assets/{media_type}s",
+            prefix=f"{kind}-{user_id[:8]}",
+            max_bytes=_asset_upload_limit(media_type),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+    return AssetUploadResponse(
+        url=url,
+        filename=file.filename or "",
+        content_type=file.content_type or "",
+        size=len(data),
+        media_type=media_type,
+        kind=kind,
+    )
+
+
+@router.get("/view-presets", response_model=AssetViewPresetResponse)
+async def list_asset_view_presets(
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取创作者可理解的多视图资产预设。"""
+    return AssetViewPresetResponse(presets=get_asset_view_presets())
+
+
+@router.get("/style-templates", response_model=AssetStyleTemplatesResponse)
+async def list_asset_style_templates(
+    user_id: str = Depends(get_current_user_id),
+):
+    """获取统一图片生成风格模板，用于封面、头像、参考图和镜头图。"""
+    return AssetStyleTemplatesResponse(templates=get_image_style_templates())
+
+
+@router.post("/generate-entity-views", response_model=EntityViewAssetsResponse)
+async def generate_entity_view_assets(
+    request: EntityViewGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """按小说实体生成角色三视图、场景四视图或道具多视图。"""
+    entity_result = await db.execute(
+        select(StoryEntity).where(and_(StoryEntity.id == request.entity_id, StoryEntity.user_id == user_id))
+    )
+    entity = entity_result.scalar_one_or_none()
+    if not entity:
+        raise HTTPException(status_code=404, detail="实体不存在")
+    if entity.entity_type not in {"character", "scene", "prop"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持角色、场景、道具生成多视图资产")
+
+    description = story_entity_visual_description(entity)
+    character = await resolve_character_for_story_entity(db, user_id, entity)
+
+    service = AssetGenerationService(db, user_id)
+    if request.model_config_id:
+        await service.configure_image_model(request.model_config_id)
+    try:
+        generated = await service.generate_entity_view_assets(
+            entity_id=entity.id,
+            entity_type=entity.entity_type,
+            entity_name=entity.name,
+            entity_description=description,
+            style=request.style,
+            novel_id=entity.novel_id,
+            chapter_id=entity.chapter_id,
+            script_id=getattr(entity, "script_id", None),
+            character_id=character.id if character else None,
+            view_keys=request.view_keys,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"多视图资产生成失败: {str(exc)}") from exc
+
+    return EntityViewAssetsResponse(
+        entity_type=entity.entity_type,
+        entity_id=entity.id,
+        assets={key: build_asset_response(asset) for key, asset in generated.items()},
+        total=len(generated),
+        failures=[build_asset_response(asset) for asset in service.last_generation_failures],
+    )
+
+
 @router.get("/{asset_id}", response_model=AssetResponse)
 async def get_asset(
     asset_id: str,
@@ -452,6 +730,18 @@ async def create_asset(
         script_id=request.script_id,
         entity_id=request.entity_id,
     )
+    resolved_character_id = request.character_id
+    resolved_entity_type = request.entity_type
+    if not resolved_character_id and scope["entity_id"] and request.category == "character":
+        entity_result = await db.execute(
+            select(StoryEntity).where(and_(StoryEntity.id == scope["entity_id"], StoryEntity.user_id == user_id))
+        )
+        entity = entity_result.scalar_one_or_none()
+        if entity:
+            resolved_entity_type = resolved_entity_type or entity.entity_type
+            character = await resolve_character_for_story_entity(db, user_id, entity)
+            if character:
+                resolved_character_id = character.id
 
     asset = Asset(
         id=str(uuid4()),
@@ -467,12 +757,15 @@ async def create_asset(
         chapter_id=scope["chapter_id"],
         script_id=scope["script_id"],
         entity_id=scope["entity_id"],
+        entity_type=resolved_entity_type,
         tags=request.tags or [],
         style_tags=request.style_tags or [],
         prompt_template=request.prompt_template,
         variables=request.variables,
         shot_template=request.shot_template,
-        character_id=request.character_id,
+        source_prompt=request.source_prompt,
+        generation_params=request.generation_params,
+        character_id=resolved_character_id,
         expressions=request.expressions,
         poses=request.poses,
         is_public=request.is_public,
@@ -510,6 +803,19 @@ async def update_asset(
             entity_id=update_data.get("entity_id", asset.entity_id),
         )
         update_data.update(scope)
+    next_category = update_data.get("category", asset.category)
+    next_entity_id = update_data.get("entity_id", asset.entity_id)
+    next_character_id = update_data.get("character_id", asset.character_id)
+    if next_category == "character" and next_entity_id and not next_character_id:
+        entity_result = await db.execute(
+            select(StoryEntity).where(and_(StoryEntity.id == next_entity_id, StoryEntity.user_id == user_id))
+        )
+        entity = entity_result.scalar_one_or_none()
+        if entity:
+            update_data["entity_type"] = update_data.get("entity_type") or getattr(asset, "entity_type", None) or entity.entity_type
+            character = await resolve_character_for_story_entity(db, user_id, entity)
+            if character:
+                update_data["character_id"] = character.id
     for key, value in update_data.items():
         setattr(asset, key, value)
     asset.updated_at = utc_now()
@@ -571,6 +877,174 @@ async def update_asset_scope(
     return build_asset_response(asset)
 
 
+@router.post("/{asset_id}/retry-generation", response_model=EntityViewAssetsResponse)
+async def retry_asset_generation(
+    asset_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """重试一条失败的实体多视图生成记录。"""
+    result = await db.execute(
+        select(Asset).where(and_(Asset.id == asset_id, Asset.user_id == user_id))
+    )
+    failure_asset = result.scalar_one_or_none()
+    if not failure_asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+
+    params = failure_asset.generation_params if isinstance(failure_asset.generation_params, dict) else {}
+    if params.get("source") != "entity_multiview" or params.get("status") != "failed":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="只有多视图生成失败记录可以重试")
+
+    entity_id = failure_asset.entity_id or params.get("entity_id")
+    entity_type = getattr(failure_asset, "entity_type", None) or params.get("entity_type")
+    view_key = params.get("view_key")
+    if not entity_id or not entity_type or not view_key:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="失败记录缺少实体或视图信息")
+
+    entity_result = await db.execute(
+        select(StoryEntity).where(and_(StoryEntity.id == entity_id, StoryEntity.user_id == user_id))
+    )
+    entity = entity_result.scalar_one_or_none()
+    if not entity:
+        raise HTTPException(status_code=404, detail="实体不存在")
+
+    character = await resolve_character_for_story_entity(db, user_id, entity)
+    service = AssetGenerationService(db, user_id)
+    generated = await service.generate_entity_view_assets(
+        entity_id=entity.id,
+        entity_type=str(entity_type),
+        entity_name=entity.name,
+        entity_description=story_entity_visual_description(entity),
+        style=params.get("style") or "anime",
+        novel_id=failure_asset.novel_id or entity.novel_id,
+        chapter_id=failure_asset.chapter_id or entity.chapter_id,
+        script_id=failure_asset.script_id or getattr(entity, "script_id", None),
+        character_id=failure_asset.character_id or (character.id if character else None),
+        view_keys=[str(view_key)],
+    )
+
+    if generated:
+        next_params = dict(params)
+        next_params["status"] = "retried"
+        next_params["retried_at"] = utc_now().isoformat()
+        next_params["retried_asset_ids"] = [asset.id for asset in generated.values()]
+        failure_asset.generation_params = next_params
+        failure_asset.is_active = False
+        failure_asset.updated_at = utc_now()
+        await db.commit()
+
+    return EntityViewAssetsResponse(
+        entity_type=str(entity_type),
+        entity_id=str(entity_id),
+        assets={key: build_asset_response(asset) for key, asset in generated.items()},
+        total=len(generated),
+        failures=[build_asset_response(asset) for asset in service.last_generation_failures],
+    )
+
+
+@router.post("/{asset_id}/regenerate", response_model=AssetResponse)
+async def regenerate_asset(
+    asset_id: str,
+    request: AssetRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """按原资产绑定的小说对象、视图和视觉约束重新生成一个新版本。"""
+    result = await db.execute(
+        select(Asset).where(and_(Asset.id == asset_id, Asset.user_id == user_id))
+    )
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    entity_id = asset.entity_id or params.get("entity_id")
+    entity_type = getattr(asset, "entity_type", None) or params.get("entity_type") or asset.category
+    view_key = params.get("view_key") or params.get("asset_subtype") or params.get("view_angle")
+    if not entity_id or entity_type not in {"character", "scene", "prop"} or not view_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="当前资产缺少小说对象或视图信息，暂不支持按一致性约束重新生成",
+        )
+
+    entity_result = await db.execute(
+        select(StoryEntity).where(and_(StoryEntity.id == entity_id, StoryEntity.user_id == user_id))
+    )
+    entity = entity_result.scalar_one_or_none()
+    if not entity:
+        raise HTTPException(status_code=404, detail="实体不存在")
+
+    character = await resolve_character_for_story_entity(db, user_id, entity)
+    service = AssetGenerationService(db, user_id)
+    if request.model_config_id:
+        await service.configure_image_model(request.model_config_id)
+    style = request.style or params.get("style") or "anime"
+    generated = await service.generate_entity_view_assets(
+        entity_id=entity.id,
+        entity_type=str(entity_type),
+        entity_name=entity.name,
+        entity_description=story_entity_visual_description(entity),
+        style=style,
+        project_id=asset.project_id,
+        novel_id=asset.novel_id or entity.novel_id,
+        chapter_id=asset.chapter_id or entity.chapter_id,
+        script_id=asset.script_id or getattr(entity, "script_id", None),
+        character_id=asset.character_id or (character.id if character else None),
+        view_keys=[str(view_key)],
+    )
+    regenerated = generated.get(str(view_key))
+    if not regenerated:
+        raise HTTPException(status_code=500, detail="重新生成未返回有效资产，请检查图像模型配置")
+
+    next_params = regenerated.generation_params if isinstance(regenerated.generation_params, dict) else {}
+    next_params["regenerated_from_asset_id"] = asset.id
+    next_params["regenerated_at"] = utc_now().isoformat()
+    next_params["style"] = style
+    regenerated.generation_params = next_params
+    regenerated.version = (asset.version or 1) + 1
+    asset.replaced_by_id = regenerated.id
+    asset.updated_at = utc_now()
+    await db.commit()
+    await db.refresh(regenerated)
+    return build_asset_response(regenerated)
+
+
+@router.post("/{asset_id}/visual-consistency", response_model=AssetResponse)
+async def record_asset_visual_consistency(
+    asset_id: str,
+    request: AssetVisualConsistencyRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """记录人工或外部视觉检测模型的一致性评分。"""
+    result = await db.execute(
+        select(Asset).where(and_(Asset.id == asset_id, Asset.user_id == user_id))
+    )
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+
+    params = dict(asset.generation_params) if isinstance(asset.generation_params, dict) else {}
+    record = {
+        "score": request.score,
+        "model": request.model or "manual-review",
+        "reference_asset_ids": request.reference_asset_ids or [],
+        "issues": request.issues or [],
+        "notes": request.notes or "",
+        "checked_at": utc_now().isoformat(),
+    }
+    history = list(params.get("visual_consistency_history") or [])
+    history.insert(0, record)
+    params["visual_consistency"] = record
+    params["visual_consistency_history"] = history[:20]
+    asset.generation_params = params
+    asset.updated_at = utc_now()
+
+    await db.commit()
+    await db.refresh(asset)
+    return build_asset_response(asset)
+
+
 @router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_asset(
     asset_id: str,
@@ -624,17 +1098,6 @@ async def use_asset(
     return {"usage_count": asset.usage_count}
 
 
-# ========== 资产生成 API ==========
-
-def _get_volcano_service() -> Optional[VolcanoService]:
-    """获取火山引擎服务实例"""
-    import os
-    api_key = os.environ.get("VOLCENGINE_API_KEY")
-    if not api_key:
-        return None
-    return VolcanoService(api_key)
-
-
 @router.post("/generate-character", response_model=CharacterAssetsResponse)
 async def generate_character_assets(
     request: CharacterAssetGenerateRequest,
@@ -650,31 +1113,20 @@ async def generate_character_assets(
 
     # 创建资产生成服务
     service = AssetGenerationService(db, user_id)
-
-    # 设置火山引擎服务
-    volcano_service = _get_volcano_service()
-    if not volcano_service:
-        raise HTTPException(status_code=503, detail="图像生成服务未配置 (VOLCENGINE_API_KEY)")
-
-    # 检查VOLCENGINE_API_KEY是否有效
-    test_result = await volcano_service.generate_image(
-        prompt="test",
-        size="1k",
-    )
-    if not test_result or not test_result.get("data"):
-        raise HTTPException(status_code=503, detail="图像生成服务不可用")
-
-    service.set_volcano_service(volcano_service)
+    await service.configure_image_model(request.model_config_id)
 
     # 生成角色资产
-    assets_result = await service.generate_character_assets(
-        character_id=character.id,
-        character_name=character.name,
-        character_description=character.description or character.appearance or "",
-        style=request.style,
-        project_id=character.project_id,
-        novel_id=character.novel_id,
-    )
+    try:
+        assets_result = await service.generate_character_assets(
+            character_id=character.id,
+            character_name=character.name,
+            character_description=character.description or character.appearance or "",
+            style=request.style,
+            project_id=character.project_id,
+            novel_id=character.novel_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"角色资产生成失败: {str(exc)}")
 
     # 构建响应
     assets_dict = {}
@@ -701,19 +1153,18 @@ async def generate_scene_assets(
     user_id: str = Depends(get_current_user_id),
 ):
     """生成场景资产：主场景、细节图"""
-    volcano_service = _get_volcano_service()
-    if not volcano_service:
-        raise HTTPException(status_code=503, detail="图像生成服务未配置 (VOLCENGINE_API_KEY)")
-
     service = AssetGenerationService(db, user_id)
-    service.set_volcano_service(volcano_service)
+    await service.configure_image_model(request.model_config_id)
 
-    assets_result = await service.generate_scene_assets(
-        scene_id=request.scene_id,
-        scene_name=request.scene_name,
-        scene_description=request.scene_description,
-        style=request.style,
-    )
+    try:
+        assets_result = await service.generate_scene_assets(
+            scene_id=request.scene_id,
+            scene_name=request.scene_name,
+            scene_description=request.scene_description,
+            style=request.style,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"场景资产生成失败: {str(exc)}")
 
     assets_dict = {}
     for key, asset in assets_result.items():
@@ -739,19 +1190,18 @@ async def generate_prop_assets(
     user_id: str = Depends(get_current_user_id),
 ):
     """生成道具资产"""
-    volcano_service = _get_volcano_service()
-    if not volcano_service:
-        raise HTTPException(status_code=503, detail="图像生成服务未配置 (VOLCENGINE_API_KEY)")
-
     service = AssetGenerationService(db, user_id)
-    service.set_volcano_service(volcano_service)
+    await service.configure_image_model(request.model_config_id)
 
-    assets_result = await service.generate_prop_assets(
-        prop_id=request.prop_id,
-        prop_name=request.prop_name,
-        prop_description=request.prop_description,
-        style=request.style,
-    )
+    try:
+        assets_result = await service.generate_prop_assets(
+            prop_id=request.prop_id,
+            prop_name=request.prop_name,
+            prop_description=request.prop_description,
+            style=request.style,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"道具资产生成失败: {str(exc)}")
 
     assets_dict = {}
     for key, asset in assets_result.items():

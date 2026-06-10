@@ -42,7 +42,7 @@ PROVIDERS: List[Dict[str, Any]] = [
         "display_name": "MiniMax",
         "base_url": "https://api.minimaxi.com/v1",
         "auth_type": "bearer",
-        "endpoints": {"tts": "/t2a_v2"},
+        "endpoints": {"chat": "/text/chatcompletion_v2", "tts": "/t2a_v2"},
     },
     {
         "id": "openai",
@@ -227,6 +227,17 @@ MODELS: List[Dict[str, Any]] = [
         "capabilities": ["text_to_speech", "dialogue_tts", "voice_consistency"],
         "endpoint_key": "tts",
         "limits": {"speed": {"min": 0.5, "max": 2.0}},
+        "status": {"active": True, "recommended": True, "verified": False},
+    },
+    {
+        "id": "minimax.m3",
+        "provider_id": "minimax",
+        "api_model_id": "MiniMax-M3",
+        "display_name": "MiniMax M3",
+        "modality": "text",
+        "capabilities": ["chat", "text_generation", "json_mode", "structured_output", "vision", "multimodal", "long_context"],
+        "endpoint_key": "chat",
+        "limits": {"context_window": 1_000_000, "max_output_tokens": 8192},
         "status": {"active": True, "recommended": True, "verified": False},
     },
     {

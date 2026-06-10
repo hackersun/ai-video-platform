@@ -9,6 +9,7 @@ from app.core.database import AsyncSessionLocal
 from app.models import PromptSkill
 from app.services.consistency_context import build_consistency_prompt
 from app.services.prompt_composer import compose_generation_prompt
+from app.services.prompt_skill_service import apply_active_prompt_skill_template
 from init_db import init_db
 from main import app
 from test_short_video_production import _auth_headers
@@ -116,3 +117,77 @@ async def test_build_consistency_prompt_injects_active_prompt_skill_blocks() -> 
     assert context["metadata"]["prompt_skill_count"] == 1
     assert context["metadata"]["prompt_skills"][0]["id"] == skill_id
     assert context["metadata"]["prompt_skills"][0]["version"] == 4
+
+
+@pytest.mark.asyncio
+async def test_apply_active_prompt_skill_template_wraps_internal_prompt() -> None:
+    user_id = f"prompt-skill-apply-user-{uuid4()}"
+    skill_id = f"skill-{uuid4()}"
+    async with AsyncSessionLocal() as db:
+        db.add(
+            PromptSkill(
+                id=skill_id,
+                user_id=user_id,
+                name="小说创作技能",
+                task="novel_generation",
+                stage="draft",
+                content="用户小说模板：围绕{主题}强化人物动机。",
+                variables={},
+                priority=10,
+                inject_position="before_constraints",
+                version=2,
+                is_active=True,
+            )
+        )
+        await db.commit()
+
+        result = await apply_active_prompt_skill_template(
+            db,
+            user_id,
+            task="novel_generation",
+            internal_prompt="内部小说生成逻辑：输出 JSON。",
+            context={"主题": "星海试炼"},
+        )
+
+    assert result["used_prompt_skill"] is True
+    assert result["prompt_skill_count"] == 1
+    assert result["prompt_skills"][0]["id"] == skill_id
+    assert "【激活提示词模板】" in result["prompt"]
+    assert "用户小说模板：围绕星海试炼强化人物动机。" in result["prompt"]
+    assert "【内部逻辑提示词】" in result["prompt"]
+    assert "内部小说生成逻辑：输出 JSON。" in result["prompt"]
+    assert result["prompt"].index("用户小说模板") < result["prompt"].index("内部小说生成逻辑")
+
+
+@pytest.mark.asyncio
+async def test_apply_active_prompt_skill_template_falls_back_when_rendered_empty() -> None:
+    user_id = f"prompt-skill-empty-user-{uuid4()}"
+    async with AsyncSessionLocal() as db:
+        db.add(
+            PromptSkill(
+                id=f"skill-{uuid4()}",
+                user_id=user_id,
+                name="空内容技能",
+                task="script_generation",
+                stage="assist",
+                content="   ",
+                variables={},
+                priority=10,
+                inject_position="before_constraints",
+                version=1,
+                is_active=True,
+            )
+        )
+        await db.commit()
+
+        result = await apply_active_prompt_skill_template(
+            db,
+            user_id,
+            task="script_generation",
+            internal_prompt="内部剧本润色逻辑。",
+            context={"title": "雾港铜铃"},
+        )
+
+    assert result["used_prompt_skill"] is False
+    assert result["prompt_skill_count"] == 0
+    assert result["prompt"] == "内部剧本润色逻辑。"

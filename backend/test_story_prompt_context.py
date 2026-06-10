@@ -160,6 +160,85 @@ def test_existing_novel_cover_prompt_uses_story_entities_and_user_prompt(client:
     assert "强烈雨雾氛围" in prompt
 
 
+def test_existing_novel_cover_prompt_uses_active_prompt_skill(client: TestClient) -> None:
+    user_id = f"cover-prompt-skill-user-{uuid4()}"
+    novel_id, _chapter_id = _create_story_source(client, user_id)
+
+    skill_resp = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "封面强约束",
+            "task": "novel_cover",
+            "stage": "image",
+            "content": "用户封面模板：标题《{title}》，必须突出{genre}质感。",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert skill_resp.status_code == 201, skill_resp.text
+
+    cover_resp = client.post(
+        f"/api/v1/novels/{novel_id}/generate-cover",
+        json={"prompt": "画面需要有强烈雨雾氛围", "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+    assert cover_resp.status_code == 200
+    job_id = cover_resp.json()["job_id"]
+
+    job_resp = client.get(f"/api/v1/images/jobs/{job_id}", headers=_auth_headers(user_id))
+    assert job_resp.status_code == 200
+    prompt = job_resp.json()["prompt"]
+    assert "用户封面模板：标题《雾港铜铃》，必须突出悬疑质感。" in prompt
+    assert "【内部逻辑提示词】" in prompt
+    assert "用户补充要求" in prompt
+
+
+def test_character_avatar_prompt_uses_active_prompt_skill(client: TestClient) -> None:
+    user_id = f"avatar-prompt-skill-user-{uuid4()}"
+    novel_id, _chapter_id = _create_story_source(client, user_id)
+    character_resp = client.post(
+        "/api/v1/characters",
+        json={
+            "novel_id": novel_id,
+            "name": "沈砚",
+            "description": "调查密信失踪的男主角",
+            "appearance": "黑色风衣，冷峻眉眼，手持铜铃线索",
+            "tags": ["男主角", "调查者"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert character_resp.status_code == 201, character_resp.text
+    character_id = character_resp.json()["id"]
+
+    skill_resp = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "头像强约束",
+            "task": "character_image",
+            "stage": "image",
+            "content": "用户头像模板：角色{character_name}必须保持{style}设定图质感。",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert skill_resp.status_code == 201, skill_resp.text
+
+    avatar_resp = client.post(
+        f"/api/v1/characters/{character_id}/generate-avatar",
+        json={"style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+    assert avatar_resp.status_code == 200, avatar_resp.text
+    job_id = avatar_resp.json()["job_id"]
+
+    job_resp = client.get(f"/api/v1/images/jobs/{job_id}", headers=_auth_headers(user_id))
+    assert job_resp.status_code == 200
+    prompt = job_resp.json()["prompt"]
+    assert "用户头像模板：角色沈砚必须保持anime设定图质感。" in prompt
+    assert "【内部逻辑提示词】" in prompt
+    assert "动漫角色头像生成任务" in prompt
+
+
 def test_dev_chapter_generation_carries_story_context(client: TestClient) -> None:
     user_id = f"chapter-context-user-{uuid4()}"
     novel_id, _chapter_id = _create_story_source(client, user_id)
@@ -201,6 +280,53 @@ def test_script_generate_context_uses_story_entities_and_neighbors(client: TestC
     assert "沈砚" in payload["summary"]["characters"]
     assert "铜铃" in payload["summary"]["props"]
     assert payload["summary"]["relationships"]
+
+
+def test_script_generation_uses_text_extracted_entities_without_story_bible(client: TestClient) -> None:
+    user_id = f"script-context-text-entity-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={
+            "title": "青云试炼",
+            "genre": "修仙",
+            "description": "角色：云澈。场景：青云宗山门。道具：祖传玉佩。事件：宗门试炼开启。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第一章 山门试炼",
+            "chapter_number": 1,
+            "content": "角色：云澈。场景：青云宗山门。道具：祖传玉佩。事件：宗门试炼开启。云澈握着祖传玉佩踏入山门。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+    chapter_id = chapter_resp.json()["id"]
+
+    context_resp = client.get(f"/api/v1/scripts/generate-context/{chapter_id}", headers=_auth_headers(user_id))
+    assert context_resp.status_code == 200
+    context = context_resp.json()
+    assert "云澈" in context["summary"]["characters"]
+    assert "青云宗山门" in context["summary"]["scenes"]
+    assert "祖传玉佩" in context["summary"]["props"]
+    assert "宗门试炼开启" in context["summary"]["events"]
+
+    script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_id, "style": "anime", "genre": "修仙短剧"},
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    script = script_resp.json()
+    assert "云澈" in script["content"]
+    assert "青云宗山门" in script["content"]
+    assert "祖传玉佩" in script["content"]
+    assert script["chapter_id"] == chapter_id
 
 
 def test_dev_script_generation_keeps_middle_chapter_continuity_and_metadata(client: TestClient) -> None:

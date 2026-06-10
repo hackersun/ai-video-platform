@@ -134,7 +134,7 @@ async def ensure_default_categories(db: AsyncSession):
         result = await db.execute(
             select(AssetCategory).where(AssetCategory.name == cat_data["name"])
         )
-        existing = result.scalar_one_or_none()
+        existing = result.scalars().first()
         if not existing:
             category = AssetCategory(
                 id=str(uuid4()),

@@ -3,7 +3,7 @@
 """
 
 from app.core.time_utils import utc_now
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from uuid import uuid4
 import json
@@ -25,8 +25,13 @@ from app.core.security import get_current_user_id
 from app.models import Chapter, ImageJob, Novel
 from app.models.character import Character
 from app.api.v1.endpoints.dashboard import log_activity
+from app.services.image_generation_pipeline import call_image_generation_provider, provider_task_id
+from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
+from app.services.image_prompt_policy import GLOBAL_IMAGE_NEGATIVE_CONSTRAINT
+from app.services.prompt_skill_service import apply_active_prompt_skill_template
 from app.services.story_prompt_context import compact_text, load_story_prompt_context
+from app.services.chapter_naming import format_chapter_label
 
 router = APIRouter(tags=["角色管理"])
 
@@ -105,7 +110,7 @@ class CharacterExtractRequest(BaseModel):
     novel_id: Optional[str] = Field(None, description="小说ID（优先使用，会自动获取小说和章节内容）")
     chapter_id: Optional[str] = Field(None, description="章节ID（可选，单独提取某章角色）")
     text: Optional[str] = Field(None, description="待分析文本（直接传入文本时使用）")
-    character_count: int = Field(default=10, ge=1, le=30, description="提取角色数量")
+    character_count: Optional[int] = Field(default=None, ge=1, le=500, description="兼容旧字段；默认不限制角色提取数量")
     auto_generate_avatar: bool = Field(default=True, description="提取后自动生成头像图片")
     model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
     image_model_config_id: Optional[str] = Field(None, description="已保存的图像模型配置ID")
@@ -193,6 +198,126 @@ def _json_tags(value) -> List[str]:
         except json.JSONDecodeError:
             return [item.strip() for item in value.split(",") if item.strip()]
     return []
+
+
+def _chunk_analysis_text(text: str, *, max_chars: int = 24000, overlap: int = 1200) -> List[str]:
+    """Split long source text without silently dropping later chapters."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return []
+    if len(cleaned) <= max_chars:
+        return [cleaned]
+
+    chunks: List[str] = []
+    start = 0
+    text_len = len(cleaned)
+    while start < text_len:
+        end = min(start + max_chars, text_len)
+        if end < text_len:
+            split_candidates = [
+                cleaned.rfind("\n===", start, end),
+                cleaned.rfind("\n\n", start, end),
+                cleaned.rfind("。", start, end),
+                cleaned.rfind("\n", start, end),
+            ]
+            split_at = max(split_candidates)
+            if split_at > start + max_chars // 2:
+                end = split_at + 1
+        if end <= start:
+            end = min(start + max_chars, text_len)
+        chunks.append(cleaned[start:end].strip())
+        if end >= text_len:
+            break
+        start = max(0, end - overlap)
+    return [chunk for chunk in chunks if chunk]
+
+
+def _parse_character_json(content: str) -> List[Dict[str, Any]]:
+    json_str = (content or "").strip()
+    if "```json" in json_str:
+        json_str = json_str.split("```json", 1)[1]
+    elif "```" in json_str:
+        json_str = json_str.split("```", 1)[1]
+    if "```" in json_str:
+        json_str = json_str.split("```", 1)[0]
+    parsed = json.loads(json_str.strip())
+    if isinstance(parsed, dict):
+        parsed = parsed.get("characters") or parsed.get("data") or [parsed]
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict) and str(item.get("name") or "").strip()]
+
+
+def _merge_text_value(existing: Optional[str], incoming: Optional[str], *, limit: int = 1500) -> Optional[str]:
+    current = str(existing or "").strip()
+    value = str(incoming or "").strip()
+    if not value:
+        return current or None
+    if not current:
+        return value[:limit]
+    if value in current:
+        return current[:limit]
+    return f"{current}；{value}"[:limit]
+
+
+def _merge_unique_list(existing: Any, incoming: Any, *, limit: int = 40) -> List[str]:
+    values: List[str] = []
+    for source in (existing, incoming):
+        for item in _json_tags(source):
+            if item and item not in values:
+                values.append(item)
+            if len(values) >= limit:
+                return values
+    return values
+
+
+def _merge_character_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Merge AI character rows by normalized name while preserving the full cast."""
+    merged: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for record in records:
+        name = str(record.get("name") or "").strip()
+        key = _character_name_key(name)
+        if not key:
+            continue
+        if key not in merged:
+            merged[key] = {
+                "name": name,
+                "description": str(record.get("description") or "").strip(),
+                "appearance": str(record.get("appearance") or "").strip(),
+                "personality": str(record.get("personality") or "").strip(),
+                "voice": str(record.get("voice") or "").strip(),
+                "tags": _json_tags(record.get("tags")),
+                "aliases": _json_tags(record.get("aliases")),
+            }
+            order.append(key)
+            continue
+        target = merged[key]
+        for field in ("description", "appearance", "personality", "voice"):
+            target[field] = _merge_text_value(target.get(field), record.get(field)) or ""
+        target["tags"] = _merge_unique_list(target.get("tags"), record.get("tags"))
+        target["aliases"] = _merge_unique_list(target.get("aliases"), record.get("aliases"))
+    return [merged[key] for key in order]
+
+
+def _build_character_extraction_user_prompt(text: str, *, chunk_index: int, chunk_total: int) -> str:
+    scope_line = f"这是第 {chunk_index}/{chunk_total} 个文本片段，请只依据当前片段抽取，后续系统会自动合并去重。"
+    return f"""请从以下小说文本中提取所有角色信息，直接输出 JSON 数组。
+
+【抽取范围】
+{scope_line}
+- 提取所有有剧情作用、视觉出场、对白、被称呼、被描述或影响事件推进的人物。
+- 包括主角、配角、反派、师父、亲属、门派成员、妖兽、器灵、旁白明确点名的路人角色。
+- 不得因为数量较多而省略有效角色；不要只抽主角团。
+- 不要把纯情绪、身体部位、天气、普通道具或抽象概念当作角色。
+- 同一角色只输出一次，可把别名写入 aliases。
+
+【输出要求】
+字段必须包含 name、description、appearance、personality、voice、tags、aliases。
+必须输出 JSON 数组，不要输出 Markdown、解释或推理过程。
+
+小说文本：
+{text}"""
 
 
 async def _find_character_by_name_scope(
@@ -328,7 +453,7 @@ async def _build_character_avatar_prompt(
     if context.get("description"):
         story_lines.append(f"简介：{compact_text(context.get('description'), 220)}")
 
-    return "\n".join(
+    internal_prompt = "\n".join(
         part
         for part in [
             "动漫角色头像生成任务。",
@@ -348,29 +473,35 @@ async def _build_character_avatar_prompt(
                 "硬约束：不要生成多人，不要改变角色性别、年龄、身份、服装气质，"
                 "不要添加小说无关角色、文字、水印、logo 或现代摄影棚背景。"
             ),
+            GLOBAL_IMAGE_NEGATIVE_CONSTRAINT,
         ]
         if part
     )
+    prompt_result = await apply_active_prompt_skill_template(
+        db,
+        user_id,
+        task="character_image",
+        internal_prompt=internal_prompt,
+        context={
+            "character_name": character.name,
+            "角色姓名": character.name,
+            "description": character.description or "",
+            "character_description": character.description or "",
+            "appearance": character.appearance or "",
+            "personality": character.personality or "",
+            "voice": character.voice or "",
+            "tags": "、".join(_json_tags(character.tags)),
+            "style": style,
+            "title": context.get("title") or "",
+            "genre": context.get("genre") or "",
+        },
+    )
+    return prompt_result["prompt"]
 
 
 def _extract_first_image_url(result: dict) -> Optional[str]:
-    if "data" in result and result["data"]:
-        item = result["data"][0]
-        if isinstance(item, dict):
-            return item.get("url") or item.get("image_url")
-        if isinstance(item, str):
-            return item
-    items = result.get("images") or result.get("image_urls") or []
-    if isinstance(items, dict):
-        items = items.get("items") or items.get("images") or items.get("image_urls") or []
-    if items:
-        first = items[0]
-        if isinstance(first, dict):
-            return first.get("url") or first.get("image_url")
-        if isinstance(first, str):
-            return first
-    local_urls = result.get("local_urls") or []
-    return local_urls[0] if local_urls else None
+    urls = extract_image_urls_from_provider_result(result)
+    return urls[0] if urls else None
 
 
 async def _generate_avatar_for_character(
@@ -394,27 +525,17 @@ async def _generate_avatar_for_character(
             config_id=model_config_id,
         )
         service = create_image_generation_service(api_key or "", provider_name or "", base_url)
-        if provider_name in ("volcano", "volcano_agent_plan"):
-            result = await service.generate_image(prompt=prompt, model=model_id, size="2K", num=1)
-        elif provider_name == "minimax":
-            result = await service.generate_image(
-                prompt=prompt,
-                model=model_id,
-                aspect_ratio="1:1",
-                n=1,
-                response_format="url",
-            )
-        elif provider_name == "openai":
-            result = await service.generate_image(
-                prompt=prompt,
-                model=model_id,
-                size="1024x1024",
-                n=1,
-                save_local=False,
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"不支持的图像模型服务商: {provider_name}")
-        task_id = result.get("id") or result.get("task_id")
+        result = await call_image_generation_provider(
+            service,
+            provider_name=provider_name or "",
+            model_id=model_id or "",
+            prompt=prompt,
+            num=1,
+            size="2K",
+            aspect_ratio="1:1",
+            openai_size="1024x1024",
+        )
+        task_id = provider_task_id(result, provider_name=provider_name)
         image_url = _extract_first_image_url(result)
     except HTTPException:
         if not is_dev_mode():
@@ -733,7 +854,7 @@ async def extract_characters(
         parts = []
         if novel.description:
             parts.append(f"【小说简介】{novel.description}")
-        parts.append(f"\n=== 第{chapter.chapter_number}章《{chapter.title}》 ===\n{chapter.content or ''}")
+        parts.append(f"\n=== {format_chapter_label(chapter.title, chapter.chapter_number)} ===\n{chapter.content or ''}")
         analysis_text = "\n".join(parts)
 
     elif not analysis_text and scoped_novel_id:
@@ -770,7 +891,7 @@ async def extract_characters(
 
         for ch in chapters:
             if ch.content:
-                parts.append(f"\n=== 第{ch.chapter_number}章《{ch.title}》 ===\n{ch.content}")
+                parts.append(f"\n=== {format_chapter_label(ch.title, ch.chapter_number)} ===\n{ch.content}")
 
         analysis_text = "\n".join(parts)
 
@@ -814,42 +935,29 @@ async def extract_characters(
 【输出格式】
 直接输出JSON数组，不要用markdown代码块包裹："""
 
-    # 截断过长的文本（模型上下文有限）
-    max_chars = 30000
-    if len(analysis_text) > max_chars:
-        analysis_text = analysis_text[:max_chars] + "\n\n[内容已截断]"
-
     try:
-        response = await service.safe_chat_completion(
-            model=model_id,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请从以下文本中提取角色信息（最多{request.character_count}个重要角色），直接输出JSON数组：\n\n{analysis_text}"}
-            ],
-            temperature=0.3,
-            max_tokens=4000
-        )
+        chunks = _chunk_analysis_text(analysis_text)
+        raw_characters: List[Dict[str, Any]] = []
+        for chunk_index, chunk in enumerate(chunks, start=1):
+            response = await service.safe_chat_completion(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": _build_character_extraction_user_prompt(
+                            chunk,
+                            chunk_index=chunk_index,
+                            chunk_total=len(chunks),
+                        ),
+                    },
+                ],
+                temperature=0.25,
+                max_tokens=6000,
+            )
+            raw_characters.extend(_parse_character_json(response["choices"][0]["message"]["content"]))
 
-        content = response["choices"][0]["message"]["content"]
-
-        # 解析JSON
-        import json
-        json_str = content.strip()
-        # 去掉可能的markdown代码块
-        if "```json" in json_str:
-            json_str = json_str.split("```json")[1]
-        elif "```" in json_str:
-            json_str = json_str.split("```")[1]
-        if "```" in json_str:
-            json_str = json_str.split("```")[0]
-        json_str = json_str.strip()
-
-        characters_data = json.loads(json_str)
-
-        # 限制数量
-        if not isinstance(characters_data, list):
-            characters_data = [characters_data]
-        characters_data = characters_data[:request.character_count]
+        characters_data = _merge_character_records(raw_characters)
 
     except json.JSONDecodeError as e:
         raise HTTPException(
@@ -879,11 +987,18 @@ async def extract_characters(
         )
         created_characters.append(character)
 
+    created_character_ids = [character.id for character in created_characters]
     await db.commit()
 
     # 自动生成头像。失败不阻断角色提取，但角色详情页仍可手动重试。
-    if request.auto_generate_avatar and created_characters:
-        for char in created_characters:
+    if request.auto_generate_avatar and created_character_ids:
+        for character_id in created_character_ids:
+            result = await db.execute(
+                select(Character).where(and_(Character.id == character_id, Character.user_id == user_id))
+            )
+            char = result.scalar_one_or_none()
+            if not char:
+                continue
             if char.avatar:
                 continue
             try:
@@ -898,8 +1013,14 @@ async def extract_characters(
             except Exception:
                 await db.rollback()
 
-    # 刷新并返回
-    for char in created_characters:
-        await db.refresh(char)
+    result = await db.execute(
+        select(Character).where(and_(Character.user_id == user_id, Character.id.in_(created_character_ids)))
+    )
+    characters_by_id = {character.id: character for character in result.scalars().all()}
+    created_characters = [
+        characters_by_id[character_id]
+        for character_id in created_character_ids
+        if character_id in characters_by_id
+    ]
 
     return [CharacterResponse.from_orm(char) for char in created_characters]

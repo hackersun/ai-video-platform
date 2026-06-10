@@ -295,6 +295,27 @@ def test_workflow_short_video_readiness_and_refresh_contracts(client: TestClient
     assert readiness["contracts"][0]["role"]["code"] == "opening_hook"
     assert readiness["contracts"][-1]["role"]["code"] == "cliffhanger"
     assert readiness["model_route"]["subtitle_generation"]["default_model_id"]
+    presets = readiness["production_presets"]
+    assert presets["selected"]["aspect_ratio"] == "9:16"
+    assert any(item["ratio"] == "9:16" and item["selected"] for item in presets["aspect_ratios"])
+    assert len({item["ratio"] for item in presets["aspect_ratios"]}) == len(presets["aspect_ratios"])
+    style_names = {item["name"] for item in presets["style_references"]}
+    assert "2D 动画风格图实例" in style_names
+    assert "3D 玄幻风格图实例" in style_names
+    assert presets["consistency_templates"]["character_three_view"]["prompt_template"]
+    assert presets["consistency_templates"]["scene_multi_view"]["view_count"] == 4
+    assert presets["consistency_templates"]["prop_multi_view"]["view_count"] == 4
+    selected_style_id = presets["style_references"][0]["id"]
+
+    selected_resp = client.get(
+        f"/api/v1/short-video/workflow/{fixture['workflow_id']}/readiness?target_duration_seconds=60&aspect_ratio=16:9&style_asset_id={selected_style_id}",
+        headers=_auth_headers(user_id),
+    )
+    assert selected_resp.status_code == 200
+    selected_presets = selected_resp.json()["production_presets"]
+    assert selected_presets["selected"]["aspect_ratio"] == "16:9"
+    assert selected_presets["selected"]["style_asset_id"] == selected_style_id
+    assert any(item["id"] == selected_style_id and item["selected"] for item in selected_presets["style_references"])
 
     refresh_resp = client.post(
         f"/api/v1/short-video/workflow/{fixture['workflow_id']}/refresh-contracts",
@@ -308,3 +329,84 @@ def test_workflow_short_video_readiness_and_refresh_contracts(client: TestClient
     first_shot = client.get(f"/api/v1/shots/{fixture['shot_ids'][0]}", headers=_auth_headers(user_id))
     assert first_shot.status_code == 200
     assert first_shot.json()["extra_data"]["production_context"]["production_contract"]["contract_version"] == "short-video-v1"
+
+
+def test_workflow_short_video_readiness_blocks_empty_storyboard(client: TestClient) -> None:
+    user_id = "short-empty-storyboard-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={
+            "title": f"空分镜短视频小说 {uuid4()}",
+            "genre": "修仙",
+            "description": "少年在宗门山门前准备突破。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第一章 山门雷声",
+            "chapter_number": 1,
+            "content": "少年站在宗门山门前，雷声逼近。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+    chapter_id = chapter_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "title": "第一集剧本",
+            "content": "少年抬头看向雷云。",
+            "extra_data": {"chapter_id": chapter_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    script_id = script_resp.json()["id"]
+
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_id,
+            "title": "空分镜",
+            "description": "尚未创建镜头",
+            "style": "anime",
+            "genre": "修仙",
+            "content": {"chapter_id": chapter_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_id = storyboard_resp.json()["id"]
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "空分镜工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    response = client.get(
+        f"/api/v1/short-video/workflow/{workflow_id}/readiness",
+        headers=_auth_headers(user_id),
+    )
+    assert response.status_code == 200
+    readiness = response.json()
+    assert readiness["summary"]["ready"] is False
+    assert readiness["summary"]["blocking_issue_count"] == 1
+    assert readiness["blocking_issues"][0]["code"] == "missing_shots"
+    assert "先生成或创建镜头" in readiness["recommendations"][0]

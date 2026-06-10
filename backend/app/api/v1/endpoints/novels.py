@@ -23,8 +23,17 @@ from app.core.api_key_utils import (
 from app.core.security import get_current_user_id
 from app.models import Novel, Chapter, NovelImportJob
 from app.api.v1.endpoints.dashboard import log_activity
+from app.services.image_generation_pipeline import (
+    call_image_generation_provider,
+    missing_image_result_message,
+    provider_task_id,
+)
+from app.services.image_result_parser import extract_image_urls_from_provider_result
+from app.services.asset_generation_service import style_keywords_for
+from app.services.image_prompt_policy import append_global_image_constraints
 from app.services.media_persistence import persist_remote_media_url
 from app.services.novel_import_service import parse_novel_import, validate_import_filename
+from app.services.prompt_skill_service import apply_active_prompt_skill_template
 from app.services.series_production import build_series_plan, get_series_plan
 from app.services.story_prompt_context import build_cover_prompt, load_story_prompt_context
 
@@ -278,6 +287,7 @@ async def generate_cover_image_for_user(
     message = "封面生成成功"
     task_id = None
     model_id = ""
+    provider_name = "dev_mode"
 
     try:
         api_key, provider_name, model_id, base_url = await get_user_image_model_config(
@@ -286,44 +296,24 @@ async def generate_cover_image_for_user(
             config_id=model_config_id,
         )
         service = create_image_generation_service(api_key or "", provider_name or "", base_url)
-        final_prompt = f"{style} style, {prompt}" if style else prompt
-
-        if provider_name in ("volcano", "volcano_agent_plan"):
-            result_img = await service.generate_image(
-                prompt=final_prompt,
-                model=model_id,
-                size="2K",
-                num=1,
-            )
-        elif provider_name == "minimax":
-            result_img = await service.generate_image(
-                prompt=final_prompt,
-                model=model_id,
-                aspect_ratio="3:4",
-                n=1,
-                response_format="url",
-            )
-        elif provider_name == "openai":
-            result_img = await service.generate_image(
-                prompt=final_prompt,
-                model=model_id,
-                size="1024x1792",
-                n=1,
-                save_local=False,
-            )
-        else:
-            raise HTTPException(status_code=400, detail=f"不支持的图像模型服务商: {provider_name}")
-
-        task_id = result_img.get("id") or result_img.get("task_id")
-        items = result_img.get("data") or result_img.get("images") or result_img.get("image_urls") or []
-        if isinstance(items, dict):
-            items = items.get("items") or items.get("images") or items.get("image_urls") or []
-        if items and isinstance(items[0], dict):
-            image_url = items[0].get("url") or items[0].get("image_url")
-        elif items and isinstance(items[0], str):
-            image_url = items[0]
-        if not image_url and result_img.get("local_urls"):
-            image_url = result_img["local_urls"][0]
+        style_prompt = style_keywords_for(style) if style else ""
+        final_prompt = prompt
+        if style_prompt and style_prompt not in final_prompt:
+            final_prompt = f"{final_prompt}\n\n封面画风要求：{style_prompt}"
+        final_prompt = append_global_image_constraints(final_prompt)
+        result_img = await call_image_generation_provider(
+            service,
+            provider_name=provider_name or "",
+            model_id=model_id or "",
+            prompt=final_prompt,
+            num=1,
+            size="2K",
+            aspect_ratio="3:4",
+            openai_size="1024x1792",
+        )
+        task_id = provider_task_id(result_img, provider_name=provider_name)
+        image_urls = extract_image_urls_from_provider_result(result_img)
+        image_url = image_urls[0] if image_urls else None
     except HTTPException:
         if not is_dev_mode():
             raise
@@ -333,7 +323,7 @@ async def generate_cover_image_for_user(
         message = "DEV_MODE 本地封面已生成，未调用云端图像模型"
 
     if not image_url:
-        raise HTTPException(status_code=500, detail="封面生成失败：未获取到图片URL")
+        raise HTTPException(status_code=500, detail=f"封面生成失败：{missing_image_result_message(provider_name, task_id)}")
 
     original_image_url = image_url
     persistence_error = None
@@ -829,6 +819,21 @@ async def generate_standalone_novel_cover(
         limit_chapters=0,
     )
     prompt = build_cover_prompt(context, user_prompt=request.prompt, style=request.style)
+    prompt_result = await apply_active_prompt_skill_template(
+        db,
+        user_id,
+        task="novel_cover",
+        internal_prompt=prompt,
+        context={
+            "title": context.get("title") or title,
+            "genre": context.get("genre") or request.genre or "通用",
+            "style": request.style,
+            "description": context.get("description") or request.description or "",
+            "prompt": request.prompt or "",
+            "user_prompt": request.prompt or "",
+        },
+    )
+    prompt = prompt_result["prompt"]
 
     try:
         job_id, image_url, _task_id, status_value, message = await generate_cover_image_for_user(
@@ -876,6 +881,21 @@ async def generate_novel_cover(
         style=request.style,
     )
     prompt = build_cover_prompt(context, user_prompt=request.prompt, style=request.style)
+    prompt_result = await apply_active_prompt_skill_template(
+        db,
+        user_id,
+        task="novel_cover",
+        internal_prompt=prompt,
+        context={
+            "title": context.get("title") or db_novel.title,
+            "genre": context.get("genre") or db_novel.genre or "通用",
+            "style": request.style,
+            "description": context.get("description") or db_novel.description or "",
+            "prompt": request.prompt or "",
+            "user_prompt": request.prompt or "",
+        },
+    )
+    prompt = prompt_result["prompt"]
 
     try:
         job_id, image_url, _task_id, status_value, message = await generate_cover_image_for_user(
@@ -931,6 +951,21 @@ async def generate_novel_intro(
 2. 交代主角处境、核心冲突、故事钩子
 3. 不要输出章节正文、标题、Markdown 或解释
 4. 只输出简介正文"""
+    prompt_result = await apply_active_prompt_skill_template(
+        db,
+        user_id,
+        task="novel_generation",
+        internal_prompt=prompt,
+        context={
+            "title": request.title,
+            "genre": request.genre,
+            "style": request.style or "",
+            "description": request.description or "",
+            "prompt": request.description or request.title,
+            "主题": request.description or request.title,
+        },
+    )
+    prompt = prompt_result["prompt"]
 
     try:
         response = await service.safe_chat_completion(
@@ -997,6 +1032,21 @@ async def generate_novel(
         {{"title": "第二章标题", "content": "第二章内容"}}
     ]
 }}"""
+    prompt_result = await apply_active_prompt_skill_template(
+        db,
+        user_id,
+        task="novel_generation",
+        internal_prompt=generation_prompt,
+        context={
+            "prompt": request.prompt,
+            "主题": request.prompt,
+            "genre": request.genre,
+            "style": request.style or "",
+            "chapter_count": request.chapter_count,
+            "章节数量": request.chapter_count,
+        },
+    )
+    generation_prompt = prompt_result["prompt"]
 
     # 调用LLM生成小说
     try:

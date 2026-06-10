@@ -22,6 +22,7 @@ from app.services.entity_extraction_service import (
     ENTITY_TYPES,
     build_story_bible_sections,
     extract_story_entities,
+    normalize_extracted_entities,
 )
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.prompt_composer import compose_generation_prompt
@@ -649,7 +650,7 @@ def _parse_entity_json(content: str) -> list[dict[str, Any]]:
             "confidence": item.get("confidence") or 90,
             "source": "ai",
         })
-    return entities
+    return normalize_extracted_entities(entities)
 
 
 async def _extract_story_entities_with_optional_ai(
@@ -679,6 +680,18 @@ async def _extract_story_entities_with_optional_ai(
 - attributes: 对象，可包含人物关系、场景标签、道具状态、事件参与者等
 - evidence: 来自原文的依据
 - confidence: 0-100
+
+分类规则：
+- character：明确命名的单个人物、妖兽、可持续追踪的个体，通常有动作、台词、身份或关系。
+- scene：可复用的地点、空间、环境，如宗门、石屋、街巷、洞府、城门、战场。
+- prop：可见且需要前后一致的物件、装备、法器、服饰、钥匙、令牌、武器等。
+- event：情节动作或状态变化，不要把事件短句当作人物/场景/道具。
+
+负面规则：
+- 不要把地点、房间、建筑、道具、装备分类为 character。
+- 不要把“外门弟子们、众人、守卫们、路人”等群体背景分类为 character，除非原文明确给出单个姓名。
+- 不要把人物姓名分类为 scene/prop；如果人物有“说、问、低声道、醒来、发现”等行为，应归为 character。
+- 道具与场景必须来自小说文本或剧本证据，不要凭题材臆造无关资产。
 
 不要输出 Markdown、解释或推理过程。
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import math
 import os
 import struct
 import zlib
@@ -86,6 +87,31 @@ def _ensure_dev_audio_file(filename: str) -> None:
         audio_path.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00")
 
 
+def _ensure_dev_wav_file(filename: str, frequency: int = 440, duration_seconds: float = 1.0) -> None:
+    DEV_DIR.mkdir(parents=True, exist_ok=True)
+    audio_path = DEV_DIR / filename
+    if audio_path.exists() and audio_path.stat().st_size > 1024:
+        return
+    sample_rate = 16_000
+    sample_count = int(sample_rate * duration_seconds)
+    frames = bytearray()
+    for index in range(sample_count):
+        envelope = min(1.0, index / 800, (sample_count - index) / 800)
+        sample = int(18000 * envelope * math.sin(2 * math.pi * frequency * index / sample_rate))
+        frames.extend(struct.pack("<h", sample))
+
+    data_size = len(frames)
+    header = (
+        b"RIFF"
+        + struct.pack("<I", 36 + data_size)
+        + b"WAVEfmt "
+        + struct.pack("<IHHIIHH", 16, 1, 1, sample_rate, sample_rate * 2, 2, 16)
+        + b"data"
+        + struct.pack("<I", data_size)
+    )
+    audio_path.write_bytes(header + frames)
+
+
 def _safe_token(value: str, fallback: str = "media") -> str:
     token = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in str(value))
     token = token.strip("-_")[:80]
@@ -156,6 +182,12 @@ def dev_image_url(job_id: str, label: str = "AI Video") -> str:
 def dev_audio_url(job_id: str) -> str:
     _ensure_dev_audio_file(f"audio-{job_id}.mp3")
     return f"/static/dev/audio-{job_id}.mp3"
+
+
+def dev_tts_audio_url(job_id: str) -> str:
+    token = _safe_token(job_id, "tts")
+    _ensure_dev_wav_file(f"tts-{token}.wav")
+    return f"/static/dev/tts-{token}.wav"
 
 
 def dev_video_url(job_id: str) -> str:

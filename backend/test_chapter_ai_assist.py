@@ -4,9 +4,14 @@ Tests for chapter AI-assisted editing and persistence.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.core.database import AsyncSessionLocal
+from app.models.llm_config import LLMConfig
 from init_db import init_db
 from main import app
 
@@ -24,6 +29,17 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
+
+
+def clear_llm_configs(user_id: str) -> None:
+    async def _clear() -> None:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+            for config in result.scalars().all():
+                await db.delete(config)
+            await db.commit()
+
+    asyncio.run(_clear())
 
 
 def test_generate_chapter_uses_story_context_and_persists_entities(client: TestClient) -> None:
@@ -96,6 +112,7 @@ def test_generate_chapter_uses_story_context_and_persists_entities(client: TestC
 
 def test_ai_assist_rewrite_extend_polish_are_persisted(client: TestClient) -> None:
     user_id = "chapter-ai-assist-user"
+    clear_llm_configs(user_id)
     novel_resp = client.post(
         "/api/v1/novels",
         json={
@@ -163,6 +180,136 @@ def test_ai_assist_rewrite_extend_polish_are_persisted(client: TestClient) -> No
     persisted = client.get(f"/api/v1/chapters/{chapter_id}", headers=auth_headers(user_id))
     assert persisted.status_code == 200
     assert persisted.json()["content"] == polished["content"]
+
+
+def test_ai_assist_rewrite_accepts_minimax_reply_response(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = "chapter-ai-minimax-reply-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={
+            "title": "逆天续章",
+            "genre": "玄幻",
+            "description": "角色：谭云\n场景：宗门刑台\n道具：祖传玉简\n事件：少年重生后逆转危局",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_resp.json()["id"],
+            "title": "第二章 逆转",
+            "chapter_number": 2,
+            "content": "",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+    chapter_id = chapter_resp.json()["id"]
+
+    class _MiniMaxReplyService:
+        async def safe_chat_completion(self, *args, **kwargs):
+            return {
+                "reply": "<think>先分析剧情</think>\n谭云握紧祖传玉简，刑台上的风声像刀一样掠过。他没有再退，抬眼看向宗门长老。"
+            }
+
+    async def _fake_config(*args, **kwargs):
+        return "sk-test", "minimax", "MiniMax-M3", "https://api.minimaxi.com/v1"
+
+    def _fake_factory(api_key: str, provider_name: str, base_url: str | None):
+        assert provider_name == "minimax"
+        return _MiniMaxReplyService()
+
+    monkeypatch.setattr("app.api.v1.endpoints.chapters.get_user_text_model_config", _fake_config)
+    monkeypatch.setattr("app.api.v1.endpoints.chapters.create_text_generation_service", _fake_factory)
+
+    response = client.post(
+        f"/api/v1/chapters/{chapter_id}/ai-assist",
+        json={"mode": "rewrite", "target_word_count": 600, "instruction": "重新生成完整章节"},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "completed"
+    assert data["ai_generation"]["provider"] == "minimax"
+    assert "<think>" not in data["content"]
+    assert "谭云握紧祖传玉简" in data["content"]
+
+    persisted = client.get(f"/api/v1/chapters/{chapter_id}", headers=auth_headers(user_id))
+    assert persisted.status_code == 200
+    assert persisted.json()["content"] == data["content"]
+
+
+def test_ai_assist_rewrite_summarizes_title_for_generic_chapter(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = "chapter-ai-title-summary-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={
+            "title": "星港追踪",
+            "genre": "科幻",
+            "description": "角色：林澈\n场景：星港暗巷\n道具：星门钥匙\n事件：追兵逼近",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_resp.json()["id"],
+            "title": "第二章",
+            "chapter_number": 2,
+            "content": "",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+    chapter_id = chapter_resp.json()["id"]
+
+    class _TitleReplyService:
+        async def safe_chat_completion(self, *args, **kwargs):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "星门钥匙的追击在暗巷中爆发。林澈听见追兵脚步贴近，掌心的星门钥匙忽然亮起。"
+                        }
+                    }
+                ]
+            }
+
+    async def _fake_config(*args, **kwargs):
+        return "sk-test", "minimax", "MiniMax-M3", "https://api.minimaxi.com/v1"
+
+    def _fake_factory(api_key: str, provider_name: str, base_url: str | None):
+        return _TitleReplyService()
+
+    monkeypatch.setattr("app.api.v1.endpoints.chapters.get_user_text_model_config", _fake_config)
+    monkeypatch.setattr("app.api.v1.endpoints.chapters.create_text_generation_service", _fake_factory)
+
+    response = client.post(
+        f"/api/v1/chapters/{chapter_id}/ai-assist",
+        json={"mode": "rewrite", "target_word_count": 600},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["title"] == "第2章 星门钥匙的追击在暗巷中爆发"
+    assert data["ai_generation"]["title_suggested"] == data["title"]
+    assert data["ai_generation"]["title_updated"] is True
+
+    persisted = client.get(f"/api/v1/chapters/{chapter_id}", headers=auth_headers(user_id))
+    assert persisted.status_code == 200
+    assert persisted.json()["title"] == data["title"]
 
 
 def test_ai_assist_rejects_unknown_mode(client: TestClient) -> None:

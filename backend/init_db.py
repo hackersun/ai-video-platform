@@ -262,6 +262,17 @@ def migrate_add_entity_asset_scope_fields():
             "chapter_id": "VARCHAR(36)",
             "script_id": "VARCHAR(36)",
             "entity_id": "VARCHAR(36)",
+            "entity_type": "VARCHAR(20)",
+            "source_url": "TEXT",
+            "generation_params": "JSON",
+            "version": "INTEGER DEFAULT 1",
+            "is_locked": "BOOLEAN DEFAULT 0",
+            "locked_at": "DATETIME",
+            "locked_by": "VARCHAR(36)",
+            "is_final": "BOOLEAN DEFAULT 0",
+            "replaced_by_id": "VARCHAR(36)",
+            "source_job_id": "VARCHAR(36)",
+            "source_prompt": "TEXT",
         },
     }
 
@@ -541,6 +552,17 @@ async def migrate_add_entity_asset_scope_fields_async():
             "chapter_id": "VARCHAR(36)",
             "script_id": "VARCHAR(36)",
             "entity_id": "VARCHAR(36)",
+            "entity_type": "VARCHAR(20)",
+            "source_url": "TEXT",
+            "generation_params": "JSON",
+            "version": "INTEGER DEFAULT 1",
+            "is_locked": "BOOLEAN DEFAULT 0",
+            "locked_at": "DATETIME",
+            "locked_by": "VARCHAR(36)",
+            "is_final": "BOOLEAN DEFAULT 0",
+            "replaced_by_id": "VARCHAR(36)",
+            "source_job_id": "VARCHAR(36)",
+            "source_prompt": "TEXT",
         },
     }
 
@@ -684,6 +706,85 @@ async def migrate_add_project_id_fields_async():
         print("✅ Project ID fields migration completed (async).")
 
 
+def migrate_add_publication_fields():
+    """Add current Publication ORM columns to older SQLite databases."""
+    from sqlalchemy import text, inspect
+
+    column_specs = {
+        "description": "TEXT",
+        "video_url": "VARCHAR(500)",
+        "cover_url": "VARCHAR(500)",
+        "duration_seconds": "FLOAT",
+        "format": "VARCHAR(20) DEFAULT 'mp4'",
+        "resolution": "VARCHAR(20) DEFAULT '1080p'",
+        "orientation": "VARCHAR(20) DEFAULT 'landscape'",
+        "status": "VARCHAR(20) DEFAULT 'succeeded'",
+        "visibility": "VARCHAR(20) DEFAULT 'private'",
+        "tags": "JSON",
+        "view_count": "INTEGER DEFAULT 0",
+        "like_count": "INTEGER DEFAULT 0",
+        "export_url": "TEXT",
+        "artifact_path": "TEXT",
+        "provider": "VARCHAR(50) DEFAULT 'local'",
+        "metadata": "JSON",
+        "created_at": "DATETIME",
+        "updated_at": "DATETIME",
+    }
+
+    conn = sync_engine.connect()
+    try:
+        inspector = inspect(sync_engine)
+        if not inspector.has_table("publications"):
+            return
+        existing = {col["name"] for col in inspector.get_columns("publications")}
+        for col, sql_type in column_specs.items():
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE publications ADD COLUMN {col} {sql_type}"))
+        conn.commit()
+        print("✅ Publication fields migration completed.")
+    finally:
+        conn.close()
+
+
+async def migrate_add_publication_fields_async():
+    """Add current Publication ORM columns to older SQLite databases (async)."""
+    from sqlalchemy import text, inspect
+
+    column_specs = {
+        "description": "TEXT",
+        "video_url": "VARCHAR(500)",
+        "cover_url": "VARCHAR(500)",
+        "duration_seconds": "FLOAT",
+        "format": "VARCHAR(20) DEFAULT 'mp4'",
+        "resolution": "VARCHAR(20) DEFAULT '1080p'",
+        "orientation": "VARCHAR(20) DEFAULT 'landscape'",
+        "status": "VARCHAR(20) DEFAULT 'succeeded'",
+        "visibility": "VARCHAR(20) DEFAULT 'private'",
+        "tags": "JSON",
+        "view_count": "INTEGER DEFAULT 0",
+        "like_count": "INTEGER DEFAULT 0",
+        "export_url": "TEXT",
+        "artifact_path": "TEXT",
+        "provider": "VARCHAR(50) DEFAULT 'local'",
+        "metadata": "JSON",
+        "created_at": "DATETIME",
+        "updated_at": "DATETIME",
+    }
+
+    async with engine.begin() as conn:
+        def _inspect(sync_conn):
+            inspector = inspect(sync_conn)
+            if not inspector.has_table("publications"):
+                return set()
+            return {col["name"] for col in inspector.get_columns("publications")}
+
+        existing = await conn.run_sync(_inspect)
+        for col, sql_type in column_specs.items():
+            if col not in existing:
+                await conn.execute(text(f"ALTER TABLE publications ADD COLUMN {col} {sql_type}"))
+        print("✅ Publication fields migration completed (async).")
+
+
 def init_db():
     """同步方式创建所有表"""
     from app.models.character import Character
@@ -732,6 +833,7 @@ def init_db():
     migrate_add_entity_asset_scope_fields()
     migrate_add_story_entity_extended_fields()
     migrate_add_project_id_fields()
+    migrate_add_publication_fields()
     migrate_add_version_tables()
 
 
@@ -833,6 +935,7 @@ async def init_db_async():
     await migrate_add_entity_asset_scope_fields_async()
     await migrate_add_story_entity_extended_fields_async()
     await migrate_add_project_id_fields_async()
+    await migrate_add_publication_fields_async()
     await migrate_add_version_tables_async()
 
 

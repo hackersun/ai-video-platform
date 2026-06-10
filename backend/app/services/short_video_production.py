@@ -7,12 +7,13 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.model_registry import get_task_default
 from app.core.time_utils import utc_now
-from app.models import Chapter, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard, Workflow
+from app.models import Asset, Chapter, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard, Workflow
+from app.services.default_anime_library import ensure_default_anime_assets
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
 from app.services.story_prompt_context import compact_text, load_story_prompt_context
 
@@ -28,6 +29,15 @@ SHORT_VIDEO_TASKS = [
     "tts_dialogue",
     "subtitle_generation",
     "final_synthesis",
+]
+
+FALLBACK_SHORT_VIDEO_ASPECT_RATIOS = [
+    {"ratio": "9:16", "label": "竖屏短剧", "use_case": "红果短剧、抖音、快手、小红书"},
+    {"ratio": "16:9", "label": "横屏预告", "use_case": "B站、YouTube、横屏宣传片"},
+    {"ratio": "1:1", "label": "方形参考", "use_case": "角色头像、道具设定、社媒封面"},
+    {"ratio": "3:4", "label": "竖构图参考", "use_case": "角色立绘、封面草图"},
+    {"ratio": "4:3", "label": "经典镜头", "use_case": "复古、纪录感、场景设定"},
+    {"ratio": "21:9", "label": "影院宽屏", "use_case": "电影感预告、大场景横移"},
 ]
 
 
@@ -623,6 +633,150 @@ def _summarize_contract(contract: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _asset_matches_key(asset: Asset, key: str) -> bool:
+    source_url = str(asset.source_url or "")
+    params = _json_dict(asset.generation_params)
+    return source_url == f"starter:{key}" or params.get("starter_library_key") == key
+
+
+def _asset_base_summary(asset: Optional[Asset]) -> Optional[Dict[str, Any]]:
+    if not asset:
+        return None
+    shot_template = _json_dict(asset.shot_template)
+    views = _json_list(shot_template.get("views"))
+    return {
+        "id": asset.id,
+        "name": asset.name,
+        "category": asset.category,
+        "asset_type": asset.asset_type,
+        "description": asset.description,
+        "url": asset.url,
+        "thumbnail_url": asset.thumbnail_url or asset.url,
+        "source_url": asset.source_url,
+        "tags": _json_list(asset.tags),
+        "style_tags": _json_list(asset.style_tags),
+        "prompt_template": asset.prompt_template,
+        "variables": _json_list(asset.variables),
+        "shot_template": shot_template,
+        "view_count": shot_template.get("view_count") or len(views),
+        "views": views,
+        "recommended_aspect_ratio": shot_template.get("recommended_aspect_ratio"),
+        "locked_fields": _json_list(shot_template.get("locked_fields")),
+    }
+
+
+def _build_aspect_ratio_options(aspect_asset: Optional[Asset], selected_aspect_ratio: str) -> List[Dict[str, Any]]:
+    shot_template = _json_dict(aspect_asset.shot_template) if aspect_asset else {}
+    raw_ratios = _json_list(shot_template.get("aspect_ratios")) or FALLBACK_SHORT_VIDEO_ASPECT_RATIOS
+    selected_ratio = selected_aspect_ratio or shot_template.get("default_ratio") or "9:16"
+    options: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw_ratios:
+        if isinstance(item, dict):
+            ratio = str(item.get("ratio") or "").strip()
+            label = str(item.get("label") or ratio).strip()
+            use_case = str(item.get("use_case") or "").strip()
+        else:
+            ratio = str(item or "").strip()
+            label = ratio
+            use_case = ""
+        if not ratio or ratio in seen:
+            continue
+        seen.add(ratio)
+        options.append({
+            "ratio": ratio,
+            "label": label,
+            "use_case": use_case,
+            "selected": ratio == selected_ratio,
+        })
+    if selected_ratio and selected_ratio not in seen:
+        options.insert(0, {
+            "ratio": selected_ratio,
+            "label": selected_ratio,
+            "use_case": "当前自定义画幅",
+            "selected": True,
+        })
+    return options
+
+
+def _style_reference_summary(asset: Asset, selected_style_asset_id: Optional[str]) -> Dict[str, Any]:
+    shot_template = _json_dict(asset.shot_template)
+    return {
+        "id": asset.id,
+        "name": asset.name,
+        "description": asset.description,
+        "url": asset.url,
+        "thumbnail_url": asset.thumbnail_url or asset.url,
+        "prompt_template": asset.prompt_template,
+        "prompt_summary": compact_text(asset.prompt_template or asset.description or "", 120),
+        "tags": _json_list(asset.tags),
+        "style_tags": _json_list(asset.style_tags),
+        "recommended_aspect_ratios": _json_list(shot_template.get("recommended_aspect_ratios")),
+        "best_for": _json_list(shot_template.get("best_for")),
+        "avoid": _json_list(shot_template.get("avoid")),
+        "selected": bool(selected_style_asset_id and asset.id == selected_style_asset_id),
+    }
+
+
+async def build_short_video_production_presets(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    selected_aspect_ratio: str = "9:16",
+    selected_style_asset_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Load editable starter assets that guide short-video consistency work."""
+    await ensure_default_anime_assets(db, user_id)
+    result = await db.execute(
+        select(Asset)
+        .where(
+            Asset.is_active.is_(True),
+            Asset.category.in_(["style", "aspect_ratio", "character", "scene", "prop"]),
+            or_(Asset.user_id == user_id, Asset.is_public.is_(True)),
+        )
+        .order_by(Asset.category, desc(Asset.updated_at))
+    )
+    assets = list(result.scalars().all())
+
+    character_template = next((asset for asset in assets if _asset_matches_key(asset, "asset-character-three-view-template")), None)
+    scene_template = next((asset for asset in assets if _asset_matches_key(asset, "asset-scene-four-view-template")), None)
+    prop_template = next((asset for asset in assets if _asset_matches_key(asset, "asset-prop-multiview-dna-template")), None)
+    aspect_asset = next((asset for asset in assets if _asset_matches_key(asset, "asset-short-video-aspect-ratio-preset")), None)
+    style_assets = [
+        asset
+        for asset in assets
+        if asset.category == "style"
+        and (
+            "style-reference" in _json_list(asset.style_tags)
+            or str(asset.source_url or "").startswith("starter:asset-style-")
+        )
+    ]
+
+    style_references = [_style_reference_summary(asset, selected_style_asset_id) for asset in style_assets]
+    selected_style = next((item for item in style_references if item["selected"]), None)
+    return {
+        "selected": {
+            "aspect_ratio": selected_aspect_ratio or "9:16",
+            "style_asset_id": selected_style_asset_id,
+            "style_name": selected_style.get("name") if selected_style else None,
+            "style_prompt": selected_style.get("prompt_template") if selected_style else None,
+        },
+        "aspect_ratios": _build_aspect_ratio_options(aspect_asset, selected_aspect_ratio),
+        "style_references": style_references,
+        "consistency_templates": {
+            "character_three_view": _asset_base_summary(character_template),
+            "scene_multi_view": _asset_base_summary(scene_template),
+            "prop_multi_view": _asset_base_summary(prop_template),
+        },
+        "guidance": [
+            "先为主角、反派和重要配角生成三视图定稿，再进入分镜和视频生成。",
+            "核心场景使用四视图锁定入口、主视角、反打和俯视关系，减少跨镜头空间漂移。",
+            "关键道具用多视图视觉 DNA 记录材质、纹路、状态变化和归属。",
+            "整集选择一张风格图作为画面锚点，所有镜头共享风格提示词和画幅安全区。",
+        ],
+    }
+
+
 async def build_workflow_short_video_readiness(
     db: AsyncSession,
     user_id: str,
@@ -630,12 +784,19 @@ async def build_workflow_short_video_readiness(
     *,
     target_duration_seconds: int = 60,
     aspect_ratio: str = "9:16",
+    style_asset_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     result = await db.execute(select(Workflow).where(and_(Workflow.id == workflow_id, Workflow.user_id == user_id)))
     workflow = result.scalar_one_or_none()
     if workflow is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工作流不存在")
 
+    production_presets = await build_short_video_production_presets(
+        db,
+        user_id,
+        selected_aspect_ratio=aspect_ratio,
+        selected_style_asset_id=style_asset_id,
+    )
     episode_plan = None
     if workflow.novel_id:
         episode_plan = await build_short_episode_plan(
@@ -645,6 +806,7 @@ async def build_workflow_short_video_readiness(
             chapter_id=workflow.chapter_id,
             target_duration_seconds=target_duration_seconds,
             aspect_ratio=aspect_ratio,
+            style=production_presets.get("selected", {}).get("style_name"),
         )
 
     shots = await _workflow_shots(db, workflow, user_id)
@@ -652,6 +814,11 @@ async def build_workflow_short_video_readiness(
     total_duration = sum(int(getattr(shot, "duration", 0) or 0) for shot in shots)
     blockers = [issue for contract in contracts for issue in contract.get("blocking_issues") or []]
     warnings = [issue for contract in contracts for issue in contract.get("warnings") or []]
+    if workflow.storyboard_id and not shots:
+        blockers.append({
+            "code": "missing_shots",
+            "message": "当前分镜下没有镜头，无法进入短视频生成和连续成片。",
+        })
     missing_contract_count = 0
     for shot in shots:
         production_context = _json_dict(_json_dict(shot.extra_data).get("production_context"))
@@ -661,6 +828,8 @@ async def build_workflow_short_video_readiness(
     recommendations = []
     if not workflow.novel_id or not workflow.chapter_id or not workflow.storyboard_id:
         recommendations.append("先绑定小说、章节和分镜，短视频一致性检查才能完整执行。")
+    if workflow.storyboard_id and not shots:
+        recommendations.append("先生成或创建镜头，再刷新生产合约并进入批量视频/音频生成。")
     if missing_contract_count:
         recommendations.append("刷新镜头生产合约，把人物、场景、道具、事件、字幕和模型路线锁到每个镜头。")
     if blockers:
@@ -688,6 +857,7 @@ async def build_workflow_short_video_readiness(
         "warnings": warnings[:50],
         "recommendations": recommendations,
         "model_route": build_short_video_model_route(),
+        "production_presets": production_presets,
     }
 
 

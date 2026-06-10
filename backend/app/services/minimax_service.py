@@ -3,7 +3,8 @@ MiniMax API 服务
 支持文本生成、图像生成、TTS语音合成
 
 API调用规范:
-- 文本模型: POST /v1/chat/completions  → model_id = MiniMax-M2.7
+- M3文本/多模态: POST /v1/text/chatcompletion_v2 → model_id = MiniMax-M3
+- 旧文本模型: POST /v1/chat/completions  → model_id = MiniMax-M2.7
 - 图像模型: POST /v1/image_generation → model_id = image-01
 - TTS模型:   POST /v1/t2a_v2          → model_id = speech-2.6-hd
 """
@@ -26,6 +27,67 @@ from app.core.minimax_config import (
     DEFAULT_TTS_VOICE,
     TTS_VOICES,
 )
+
+
+def _normalize_tts_model_id(model: str) -> str:
+    """Convert local MiniMax catalog IDs to the API model ID used by /t2a_v2."""
+    model_config = get_minimax_model(model)
+    if model_config.get("type") == "tts" and model_config.get("api_model_id"):
+        return model_config["api_model_id"]
+    return model
+
+
+def _normalize_image_model_id(model: str) -> str:
+    """Convert local MiniMax catalog IDs to the API model ID used by /image_generation."""
+    model_config = get_minimax_model(model)
+    if model_config.get("type") == "image-generation" and model_config.get("api_model_id"):
+        return model_config["api_model_id"]
+    return model
+
+
+def _raise_for_minimax_base_resp(result: Any, operation: str) -> None:
+    if not isinstance(result, dict):
+        return
+    base_resp = result.get("base_resp") or result.get("baseResponse")
+    if not isinstance(base_resp, dict):
+        return
+    status_code = base_resp.get("status_code")
+    if status_code in (None, 0, "0"):
+        return
+    message = base_resp.get("status_msg") or base_resp.get("message") or "未知错误"
+    raise Exception(f"MiniMax {operation}失败 [{status_code}]: {message}")
+
+
+def _chat_endpoint_for_model(model: str) -> str:
+    model_config = get_minimax_model(model)
+    endpoint = model_config.get("endpoint")
+    if endpoint and model_config.get("api_model_id") == "MiniMax-M3":
+        return endpoint.replace("/v1/", "/")
+    if model == "MiniMax-M3":
+        return "/text/chatcompletion_v2"
+    return "/chat/completions"
+
+
+def _join_minimax_url(base_url: str, value: str, *, allow_plain: bool = True) -> Optional[str]:
+    clean_value = value.strip()
+    if not clean_value:
+        return None
+    if clean_value.startswith(("http://", "https://")):
+        return clean_value
+    if clean_value.startswith("/"):
+        return base_url.rstrip("/") + clean_value
+    return clean_value if allow_plain else None
+
+
+def _extract_audio_url(value: Any, base_url: str, *, allow_plain: bool = True) -> Optional[str]:
+    if isinstance(value, str):
+        return _join_minimax_url(base_url, value, allow_plain=allow_plain)
+    if isinstance(value, dict):
+        for key in ("audio_url", "url", "file_url", "audio_file"):
+            audio_url = _extract_audio_url(value.get(key), base_url, allow_plain=allow_plain)
+            if audio_url:
+                return audio_url
+    return None
 
 
 class MiniMaxService:
@@ -52,10 +114,10 @@ class MiniMaxService:
     ) -> Dict[str, Any]:
         """
         文本生成（对话补全）
-        端点: POST /v1/chat/completions
-        模型: MiniMax-M2.7, MiniMax-M2
+        端点: M3 使用 /v1/text/chatcompletion_v2；旧文本模型使用 /v1/chat/completions
+        模型: MiniMax-M3, MiniMax-M2.7, MiniMax-M2
         """
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}{_chat_endpoint_for_model(model)}"
         payload = {
             "model": model,
             "messages": messages,
@@ -93,9 +155,10 @@ class MiniMaxService:
         模型: image-01
         支持比例: 1:1, 16:9, 4:3, 3:2, 2:3, 3:4, 9:16, 21:9
         """
+        api_model = _normalize_image_model_id(model)
         url = f"{self.base_url}/image_generation"
         payload = {
-            "model": model,
+            "model": api_model,
             "prompt": prompt,
             "aspect_ratio": aspect_ratio,
             "n": min(n, 9),
@@ -111,7 +174,9 @@ class MiniMaxService:
                 if resp.status != 200:
                     text = await resp.text()
                     raise Exception(f"MiniMax 图像生成失败 [{resp.status}]: {text}")
-                return await resp.json()
+                result = await resp.json()
+        _raise_for_minimax_base_resp(result, "图像生成")
+        return result
 
     # ============== TTS语音合成 ==============
 
@@ -134,9 +199,10 @@ class MiniMaxService:
         模型: speech-2.6-hd, speech-2.6-turbo
         返回: 音频 URL 或 base64
         """
+        api_model = _normalize_tts_model_id(model)
         speech_url = f"{self.base_url}/t2a_v2"
         payload = {
-            "model": model,
+            "model": api_model,
             "text": text,
             "stream": False,
             "output_format": output_format,
@@ -160,6 +226,8 @@ class MiniMaxService:
                     raise Exception(f"MiniMax TTS失败 [{resp.status}]: {text}")
                 result = await resp.json()
 
+        _raise_for_minimax_base_resp(result, "TTS")
+
         # 解析响应
         # 同步返回: { "audio_content": "base64..." } 或
         # MiniMax v2: { "data": { "audio": "hex..." } } 或 { "data": { "audio_file": "url" } }
@@ -173,26 +241,33 @@ class MiniMaxService:
             task_id = result.get("task_id", task_id)
         elif "data" in result and isinstance(result["data"], dict):
             data = result["data"]
-            # 支持多种字段名
-            audio_content = data.get("audio") or data.get("audio_content")
-            audio_file = data.get("audio_file")
-            # audio_file 可能是 URL 或相对路径
-            if audio_file and isinstance(audio_file, str):
-                if audio_file.startswith("http"):
-                    audio_url = audio_file
-                elif audio_file.startswith("/"):
-                    # 相对路径，拼接到 base_url
-                    audio_url = self.base_url.rstrip("/") + audio_file
+            audio_url = (
+                _extract_audio_url(data.get("audio_url"), self.base_url)
+                or _extract_audio_url(data.get("url"), self.base_url)
+                or _extract_audio_url(data.get("file_url"), self.base_url)
+                or _extract_audio_url(data.get("audio_file"), self.base_url)
+            )
+            audio_value = data.get("audio")
+            if not audio_url:
+                audio_url = _extract_audio_url(audio_value, self.base_url, allow_plain=False)
+            if not audio_url:
+                if isinstance(audio_value, dict):
+                    audio_content = audio_value.get("audio") or audio_value.get("audio_content") or audio_value.get("content")
                 else:
-                    audio_url = audio_file
-                audio_content = None  # 不需要编码转换
+                    audio_content = audio_value
+                audio_content = audio_content or data.get("audio_content")
+            else:
+                audio_content = None
             task_id = result.get("task_id") or data.get("task_id") or task_id
         elif isinstance(result, dict):
             audio_content = result.get("audio_content") or result.get("audio")
-            # 也可能直接返回 audio_file URL
-            audio_file = result.get("audio_file")
-            if audio_file and isinstance(audio_file, str) and audio_file.startswith("http"):
-                audio_url = audio_file
+            audio_url = (
+                _extract_audio_url(result.get("audio_url"), self.base_url)
+                or _extract_audio_url(result.get("url"), self.base_url)
+                or _extract_audio_url(result.get("file_url"), self.base_url)
+                or _extract_audio_url(result.get("audio_file"), self.base_url)
+            )
+            if audio_url:
                 audio_content = None
 
         if audio_content:
@@ -224,7 +299,7 @@ class MiniMaxService:
                         "audio_url": audio_url,
                         "status": "succeeded",
                         "duration": estimated_duration,
-                        "model": model,
+                        "model": api_model,
                         "voice": voice_id,
                         "speed": speed,
                         "message": "TTS 转换成功"
@@ -242,7 +317,7 @@ class MiniMaxService:
                 "audio_url": audio_url,
                 "status": "succeeded",
                 "duration": estimated_duration,
-                "model": model,
+                "model": api_model,
                 "voice": voice_id,
                 "speed": speed,
                 "message": "TTS 转换成功"

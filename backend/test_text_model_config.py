@@ -11,8 +11,10 @@ from sqlalchemy import select
 from app.core.api_key_utils import (
     create_image_generation_service,
     create_text_generation_service,
+    extract_chat_content,
     get_user_image_model_config,
     get_user_text_model_config,
+    get_user_vision_model_config,
     sanitize_chat_response,
     strip_thinking_blocks,
 )
@@ -20,7 +22,10 @@ from app.core.database import AsyncSessionLocal
 from app.api.v1.endpoints.coding_plan import resolve_text_service
 from app.services.ai_service_base import truncate_context
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
-from app.api.v1.endpoints.llm_config import test_volcano_agent_plan_api as _test_volcano_agent_plan_api
+from app.api.v1.endpoints.llm_config import (
+    test_minimax_api as _test_minimax_api,
+    test_volcano_agent_plan_api as _test_volcano_agent_plan_api,
+)
 from init_db import init_db
 from main import app
 
@@ -83,6 +88,280 @@ async def test_default_minimax_chat_model_is_resolved_as_text_config() -> None:
     assert base_url == "https://api.minimaxi.com/v1"
 
 
+@pytest.mark.asyncio
+async def test_default_minimax_m3_model_uses_model_specific_base_url() -> None:
+    user_id = "text-default-minimax-m3-user"
+
+    async with AsyncSessionLocal() as db:
+        from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+        await ensure_default_providers(db)
+        await ensure_default_models(db)
+
+        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+        for config in existing.scalars().all():
+            await db.delete(config)
+
+        config = LLMConfig(
+            id="text-default-minimax-m3-config",
+            user_id=user_id,
+            model_id="minimax-m3",
+            name="MiniMax M3 default text",
+            is_active=True,
+            is_default=True,
+        )
+        config.set_api_key_encrypted("sk-test-minimax-m3")
+        db.add(config)
+        await db.commit()
+
+        api_key, provider_name, model_id, base_url = await get_user_text_model_config(db, user_id)
+
+    assert api_key == "sk-test-minimax-m3"
+    assert provider_name == "minimax"
+    assert model_id == "MiniMax-M3"
+    assert base_url == "https://api.minimaxi.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_stale_minimax_m3_model_base_url_uses_key_region_route() -> None:
+    user_id = "text-stale-minimax-m3-base-url-user"
+
+    async with AsyncSessionLocal() as db:
+        provider = await db.get(LLMProvider, "minimax")
+        if provider is None:
+            provider = LLMProvider(
+                id="minimax",
+                name="minimax",
+                name_cn="MiniMax",
+                base_url="https://api.minimaxi.com/v1",
+                is_active=True,
+            )
+            db.add(provider)
+
+        model = await db.get(LLMModel, "stale-minimax-m3-route")
+        if model is None:
+            model = LLMModel(
+                id="stale-minimax-m3-route",
+                provider_id="minimax",
+                model_id="MiniMax-M3",
+                model_name="MiniMax-M3",
+                model_type="chat",
+                capabilities=["chat", "vision", "multimodal"],
+                is_active=True,
+                base_url="https://api.minimax.io/v1",
+            )
+            db.add(model)
+
+        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+        for config in existing.scalars().all():
+            await db.delete(config)
+
+        config = LLMConfig(
+            id="text-stale-minimax-m3-base-url-config",
+            user_id=user_id,
+            model_id="stale-minimax-m3-route",
+            name="Stale MiniMax M3 default text",
+            is_active=True,
+            is_default=True,
+        )
+        config.set_api_key_encrypted("sk-cp-valid-minimax-m3")
+        db.add(config)
+        await db.commit()
+
+        api_key, provider_name, model_id, base_url = await get_user_text_model_config(db, user_id)
+
+    assert api_key == "sk-cp-valid-minimax-m3"
+    assert provider_name == "minimax"
+    assert model_id == "MiniMax-M3"
+    assert base_url == "https://api.minimaxi.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_unreadable_encrypted_api_key_requires_reconfiguration() -> None:
+    user_id = "text-unreadable-key-user"
+
+    async with AsyncSessionLocal() as db:
+        provider = await db.get(LLMProvider, "minimax")
+        if provider is None:
+            provider = LLMProvider(
+                id="minimax",
+                name="minimax",
+                name_cn="MiniMax",
+                base_url="https://api.minimaxi.com/v1",
+                is_active=True,
+            )
+            db.add(provider)
+
+        model = await db.get(LLMModel, "minimax-m2-7")
+        if model is None:
+            model = LLMModel(
+                id="minimax-m2-7",
+                provider_id="minimax",
+                model_id="MiniMax-M2.7",
+                model_name="MiniMax-M2.7",
+                model_type="chat",
+                capabilities=["chat", "completion", "json_mode"],
+                is_active=True,
+            )
+            db.add(model)
+
+        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+        for config in existing.scalars().all():
+            await db.delete(config)
+
+        config = LLMConfig(
+            id="text-unreadable-key-config",
+            user_id=user_id,
+            model_id="minimax-m2-7",
+            name="旧加密配置",
+            is_active=True,
+            is_default=True,
+            api_key="gAAAAABold-unreadable-fernet-token",
+        )
+        db.add(config)
+        await db.commit()
+
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_user_text_model_config(db, user_id)
+
+    assert exc_info.value.status_code == 400
+    assert "重新保存" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_default_unreadable_text_config_falls_back_to_verified_available_config() -> None:
+    user_id = "text-default-fallback-available-user"
+
+    async with AsyncSessionLocal() as db:
+        from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+        await ensure_default_providers(db)
+        await ensure_default_models(db)
+
+        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+        for config in existing.scalars().all():
+            await db.delete(config)
+
+        stale_default = LLMConfig(
+            id="text-stale-default-m3-config",
+            user_id=user_id,
+            model_id="minimax-m3",
+            name="旧 MiniMax-M3 默认",
+            is_active=True,
+            is_default=True,
+            test_status="success",
+            api_key="gAAAAABold-unreadable-fernet-token",
+        )
+        available_fallback = LLMConfig(
+            id="text-available-fallback-m27-config",
+            user_id=user_id,
+            model_id="minimax-m2-7",
+            name="可用 MiniMax-2.7",
+            is_active=True,
+            is_default=False,
+            test_status="success",
+        )
+        available_fallback.set_api_key_encrypted("sk-cp-valid-fallback")
+        db.add(stale_default)
+        db.add(available_fallback)
+        await db.commit()
+
+        api_key, provider_name, model_id, base_url = await get_user_text_model_config(db, user_id)
+
+    assert api_key == "sk-cp-valid-fallback"
+    assert provider_name == "minimax"
+    assert model_id == "MiniMax-M2.7"
+    assert base_url == "https://api.minimaxi.com/v1"
+
+
+def test_llm_config_list_marks_unreadable_success_config_as_failed() -> None:
+    client = TestClient(app)
+    user_id = "config-list-unreadable-key-user"
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    async def _setup() -> None:
+        async with AsyncSessionLocal() as db:
+            from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+            await ensure_default_providers(db)
+            await ensure_default_models(db)
+            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+            for config in existing.scalars().all():
+                await db.delete(config)
+            db.add(
+                LLMConfig(
+                    id="config-list-unreadable-key-config",
+                    user_id=user_id,
+                    model_id="minimax-m3",
+                    name="旧成功配置",
+                    is_active=True,
+                    is_default=True,
+                    test_status="success",
+                    test_message="MiniMax API 连接成功！",
+                    api_key="gAAAAABold-unreadable-fernet-token",
+                )
+            )
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_setup())
+
+    response = client.get("/api/v1/llm/configs", headers=headers)
+
+    assert response.status_code == 200
+    config = response.json()[0]
+    assert config["test_status"] == "failed"
+    assert config["key_available"] is False
+    assert "重新保存" in config["test_message"]
+
+
+def test_llm_config_test_unreadable_key_returns_reconfigure_message() -> None:
+    client = TestClient(app)
+    user_id = "config-test-unreadable-key-user"
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    async def _setup() -> None:
+        async with AsyncSessionLocal() as db:
+            from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+            await ensure_default_providers(db)
+            await ensure_default_models(db)
+            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+            for config in existing.scalars().all():
+                await db.delete(config)
+            db.add(
+                LLMConfig(
+                    id="config-test-unreadable-key-config",
+                    user_id=user_id,
+                    model_id="minimax-m3",
+                    name="旧测试配置",
+                    is_active=True,
+                    is_default=True,
+                    test_status="success",
+                    api_key="gAAAAABold-unreadable-fernet-token",
+                )
+            )
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_setup())
+
+    response = client.post(
+        "/api/v1/llm/configs/config-test-unreadable-key-config/test",
+        json={"message": "你好"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is False
+    assert "重新保存" in data["message"]
+
+
 def test_minimax_text_service_factory_exposes_safe_generation_helpers() -> None:
     service = create_text_generation_service("sk-test-minimax", "minimax", None)
 
@@ -103,6 +382,21 @@ def test_llm_model_catalog_backfills_seedance_20_models() -> None:
     assert models["doubao-seedance-2-0-260128"]["model_type"] in {"video", "video-generation"}
     assert models["doubao-seedance-2-0-fast-260128"]["model_type"] in {"video", "video-generation"}
     assert models["Doubao-Seed-2.0-pro"]["model_type"] == "chat"
+
+
+def test_llm_model_catalog_backfills_minimax_m3_model() -> None:
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer minimax-m3-catalog-user"}
+
+    response = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
+
+    assert response.status_code == 200
+    models = {item["model_id"]: item for item in response.json()}
+    assert "MiniMax-M3" in models
+    assert models["MiniMax-M3"]["model_type"] == "chat"
+    assert models["MiniMax-M3"]["context_window"] == 1000000
+    assert models["MiniMax-M3"]["is_recommended"] is True
+    assert "vision" in models["MiniMax-M3"]["capabilities"]
 
 
 def test_llm_model_catalog_backfills_volcano_agent_plan_models() -> None:
@@ -179,6 +473,49 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
     assert other_models["minimax-m2-7"]["user_config_id"] is None
 
 
+def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias_visible() -> None:
+    client = TestClient(app)
+    user_id = "model-alias-dedupe-user"
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    async def _cleanup() -> None:
+        async with AsyncSessionLocal() as db:
+            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+            for config in existing.scalars().all():
+                await db.delete(config)
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_cleanup())
+
+    response = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
+    assert response.status_code == 200
+    models = response.json()
+    keys = [(item["provider_id"], item["model_id"], item["model_type"]) for item in models]
+    assert len(keys) == len(set(keys))
+    ids = {item["id"] for item in models}
+    assert "minimax-m2-7" in ids
+    assert "minimax-m2.7" not in ids
+
+    create_resp = client.post(
+        "/api/v1/llm/configs",
+        json={"model_id": "minimax-speech-2.6-hd", "name": "历史语音配置", "api_key": "sk-audio"},
+        headers=headers,
+    )
+    assert create_resp.status_code == 201
+
+    configured_resp = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
+    assert configured_resp.status_code == 200
+    configured_models = configured_resp.json()
+    configured_ids = {item["id"] for item in configured_models}
+    assert "minimax-speech-2.6-hd" in configured_ids
+    assert "minimax-speech-2-6-hd" not in configured_ids
+    speech_model = next(item for item in configured_models if item["id"] == "minimax-speech-2.6-hd")
+    assert speech_model["user_configured"] is True
+    assert speech_model["user_config_name"] == "历史语音配置"
+
+
 def test_llm_create_config_updates_same_user_same_model_instead_of_duplicate() -> None:
     client = TestClient(app)
     user_id = "dedupe-config-user"
@@ -216,6 +553,59 @@ def test_llm_create_config_updates_same_user_same_model_instead_of_duplicate() -
     assert configs_resp.status_code == 200
     configs = [item for item in configs_resp.json() if item["config_model_id"] == "minimax-m2-7"]
     assert len(configs) == 1
+
+
+def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> None:
+    client = TestClient(app)
+    user_id = "llm-config-update-preserve-key-user"
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    async def _setup() -> None:
+        async with AsyncSessionLocal() as db:
+            from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+            await ensure_default_providers(db)
+            await ensure_default_models(db)
+            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+            for config in existing.scalars().all():
+                await db.delete(config)
+            config = LLMConfig(
+                id="llm-config-update-preserve-key-config",
+                user_id=user_id,
+                model_id="minimax-m2-7",
+                name="已验证配置",
+                is_active=True,
+                is_default=True,
+                test_status="success",
+                test_message="MiniMax API 连接成功！",
+            )
+            config.set_api_key_encrypted("sk-existing-key")
+            db.add(config)
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_setup())
+
+    response = client.put(
+        "/api/v1/llm/configs/llm-config-update-preserve-key-config",
+        json={
+            "model_id": "minimax-m2-7",
+            "name": "只改名称和参数",
+            "temperature": 0.6,
+            "top_p": 0.8,
+            "max_tokens": 4096,
+            "is_default": True,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "只改名称和参数"
+    assert data["test_status"] == "success"
+    assert data["test_message"] == "MiniMax API 连接成功！"
+    assert data["key_available"] is True
 
 
 def test_llm_defaults_are_scoped_by_model_capability() -> None:
@@ -323,6 +713,55 @@ def test_llm_set_default_only_replaces_same_capability() -> None:
     assert default_names == {"文本候选", "图像默认"}
 
 
+def test_llm_visual_default_does_not_replace_text_default() -> None:
+    client = TestClient(app)
+    user_id = "vision-default-scope-user"
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    async def _cleanup() -> None:
+        async with AsyncSessionLocal() as db:
+            from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+            await ensure_default_providers(db)
+            await ensure_default_models(db)
+            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+            for config in existing.scalars().all():
+                await db.delete(config)
+            await db.commit()
+
+    import asyncio
+
+    asyncio.run(_cleanup())
+
+    text_resp = client.post(
+        "/api/v1/llm/configs",
+        json={"model_id": "minimax-m2-7", "name": "默认文本", "api_key": "sk-text", "is_default": True},
+        headers=headers,
+    )
+    assert text_resp.status_code == 201
+
+    vision_resp = client.post(
+        "/api/v1/llm/configs",
+        json={"model_id": "minimax-m3", "name": "默认视觉多模态", "api_key": "sk-vision", "is_default": True},
+        headers=headers,
+    )
+    assert vision_resp.status_code == 201
+
+    configs_resp = client.get("/api/v1/llm/configs", headers=headers)
+    assert configs_resp.status_code == 200
+    default_names = {item["name"] for item in configs_resp.json() if item["is_default"]}
+    assert default_names == {"默认文本", "默认视觉多模态"}
+
+    async def _assert_default_resolution() -> None:
+        async with AsyncSessionLocal() as db:
+            _, _, text_model_id, _ = await get_user_text_model_config(db, user_id)
+            _, _, vision_model_id, _ = await get_user_vision_model_config(db, user_id)
+            assert text_model_id == "MiniMax-M2.7"
+            assert vision_model_id == "MiniMax-M3"
+
+    asyncio.run(_assert_default_resolution())
+
+
 @pytest.mark.asyncio
 async def test_volcano_agent_plan_video_test_uses_readonly_task_list(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict = {}
@@ -423,6 +862,49 @@ async def test_volcano_agent_plan_image_test_does_not_generate_image(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_minimax_m3_test_uses_domestic_endpoint_for_cn_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+
+    class _FakeElapsed:
+        @staticmethod
+        def total_seconds() -> float:
+            return 0.01
+
+    class _FakeResponse:
+        status_code = 200
+        elapsed = _FakeElapsed()
+        text = "{}"
+
+        @staticmethod
+        def json() -> dict:
+            return {"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 1}}
+
+    class _FakeClient:
+        def __init__(self, timeout: float):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self) -> "_FakeClient":
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, json: dict, headers: dict) -> _FakeResponse:
+            captured["url"] = url
+            captured["json"] = json
+            captured["headers"] = headers
+            return _FakeResponse()
+
+    monkeypatch.setattr("app.api.v1.endpoints.llm_config.httpx.AsyncClient", _FakeClient)
+
+    result = await _test_minimax_api("sk-cp-valid-key", "MiniMax-M3", "你好")
+
+    assert result["success"] is True
+    assert captured["url"] == "https://api.minimaxi.com/v1/text/chatcompletion_v2"
+    assert captured["json"]["model"] == "MiniMax-M3"
+
+
+@pytest.mark.asyncio
 async def test_default_minimax_image_model_is_resolved_as_image_config() -> None:
     user_id = "image-default-minimax-user"
 
@@ -472,6 +954,43 @@ async def test_default_minimax_image_model_is_resolved_as_image_config() -> None
     assert api_key == "sk-test-minimax-image"
     assert provider_name == "minimax"
     assert model_id == "image-01"
+    assert base_url == "https://api.minimaxi.com/v1"
+
+
+@pytest.mark.asyncio
+async def test_minimax_m3_can_be_selected_as_default_visual_multimodal_config() -> None:
+    user_id = "vision-default-minimax-m3-user"
+
+    async with AsyncSessionLocal() as db:
+        from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+
+        await ensure_default_providers(db)
+        await ensure_default_models(db)
+
+        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
+        for config in existing.scalars().all():
+            await db.delete(config)
+
+        config = LLMConfig(
+            id="vision-default-minimax-m3-config",
+            user_id=user_id,
+            model_id="minimax-m3",
+            name="MiniMax M3 visual default",
+            is_active=True,
+            is_default=True,
+        )
+        config.set_api_key_encrypted("sk-test-minimax-m3-visual")
+        db.add(config)
+        await db.commit()
+
+        api_key, provider_name, model_id, base_url = await get_user_vision_model_config(db, user_id)
+
+        with pytest.raises(Exception):
+            await get_user_image_model_config(db, user_id)
+
+    assert api_key == "sk-test-minimax-m3-visual"
+    assert provider_name == "minimax"
+    assert model_id == "MiniMax-M3"
     assert base_url == "https://api.minimaxi.com/v1"
 
 
@@ -662,6 +1181,19 @@ def test_sanitize_chat_response_strips_thinking_blocks() -> None:
     sanitized = sanitize_chat_response(response)
 
     assert sanitized["choices"][0]["message"]["content"] == "简介正文"
+
+
+def test_extract_chat_content_accepts_provider_native_shapes() -> None:
+    assert extract_chat_content({"reply": "<think>分析</think>\n章节正文"}) == "章节正文"
+    assert (
+        extract_chat_content(
+            {"output": {"choices": [{"message": {"content": [{"type": "text", "text": "分镜正文"}]}}]}}
+        )
+        == "分镜正文"
+    )
+
+    sanitized = sanitize_chat_response({"reply": "角色提取结果"})
+    assert sanitized["choices"][0]["message"]["content"] == "角色提取结果"
 
 
 def test_generate_intro_uses_default_text_service_without_creating_novel(

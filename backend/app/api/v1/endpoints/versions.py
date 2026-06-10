@@ -78,6 +78,15 @@ RESOURCE_MODELS = {
 }
 
 
+@router.get("")
+async def get_version_api_info():
+    """Return version API capabilities for route discovery and health checks."""
+    return {
+        "enabled": True,
+        "resource_types": list(RESOURCE_MODELS.keys()),
+    }
+
+
 async def get_resource(db: AsyncSession, resource_type: str, resource_id: str, user_id: str):
     """获取资源并验证权限"""
     if resource_type not in RESOURCE_MODELS:

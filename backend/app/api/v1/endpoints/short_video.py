@@ -82,6 +82,7 @@ async def get_workflow_short_video_readiness(
     workflow_id: str,
     target_duration_seconds: int = Query(60, ge=30, le=90),
     aspect_ratio: str = Query("9:16"),
+    style_asset_id: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
@@ -92,6 +93,7 @@ async def get_workflow_short_video_readiness(
         workflow_id,
         target_duration_seconds=target_duration_seconds,
         aspect_ratio=aspect_ratio,
+        style_asset_id=style_asset_id,
     )
 
 

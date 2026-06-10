@@ -8,7 +8,9 @@ platform stable history playback and cover display.
 
 from __future__ import annotations
 
+import base64
 import mimetypes
+import re
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -102,6 +104,63 @@ def _safe_static_path(subdir: str, filename: str) -> Path:
     return target_path
 
 
+def persist_uploaded_media_bytes(
+    data: bytes,
+    *,
+    media_type: str,
+    content_type: str,
+    subdir: str,
+    prefix: str = "upload",
+    max_bytes: int = 100 * 1024 * 1024,
+) -> str:
+    """Save uploaded media bytes into local static storage."""
+    if media_type not in ALLOWED_CONTENT_TYPES:
+        raise ValueError(f"不支持的媒体类型: {media_type}")
+    if not data:
+        raise ValueError("媒体文件为空")
+    if len(data) > max_bytes:
+        raise ValueError("媒体文件超过本地持久化大小限制")
+
+    clean_type = (content_type or "").split(";", 1)[0].strip().lower()
+    if clean_type and clean_type not in ALLOWED_CONTENT_TYPES[media_type]:
+        raise ValueError(f"媒体类型不匹配: {clean_type}")
+
+    safe_subdir = subdir.strip("/")
+    ext = _extension_from_content_type(clean_type, media_type)
+    filename = f"{prefix}-{uuid4().hex}{ext}"
+    target_path = _safe_static_path(safe_subdir, filename)
+    target_path.write_bytes(data)
+    return f"/static/generated/{safe_subdir}/{filename}"
+
+
+def _persist_data_url(
+    url: str,
+    *,
+    media_type: str,
+    subdir: str,
+    prefix: str,
+    max_bytes: int,
+) -> Optional[str]:
+    match = re.match(r"^data:([^;,]+);base64,(.+)$", url, flags=re.DOTALL)
+    if not match:
+        return url
+    content_type, encoded = match.groups()
+    clean_type = content_type.split(";", 1)[0].strip().lower()
+    if media_type not in ALLOWED_CONTENT_TYPES:
+        raise ValueError(f"不支持的媒体类型: {media_type}")
+    if clean_type not in ALLOWED_CONTENT_TYPES[media_type]:
+        raise ValueError(f"媒体类型不匹配: {clean_type}")
+    data = base64.b64decode(re.sub(r"\s+", "", encoded), validate=True)
+    return persist_uploaded_media_bytes(
+        data,
+        media_type=media_type,
+        content_type=clean_type,
+        subdir=subdir,
+        prefix=prefix,
+        max_bytes=max_bytes,
+    )
+
+
 async def persist_remote_media_url(
     url: Optional[str],
     *,
@@ -119,8 +178,16 @@ async def persist_remote_media_url(
     """
     if not url:
         return None
-    if is_local_static_url(url) or url.startswith("data:"):
+    if is_local_static_url(url):
         return url
+    if url.startswith("data:"):
+        return _persist_data_url(
+            url,
+            media_type=media_type,
+            subdir=subdir,
+            prefix=prefix,
+            max_bytes=max_bytes,
+        )
 
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"}:

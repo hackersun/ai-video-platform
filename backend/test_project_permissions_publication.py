@@ -147,11 +147,41 @@ def test_publish_creates_local_export_without_cloud_keys(client: TestClient) -> 
     payload = publish_response.json()
     assert payload["provider"] == "local"
     assert payload["synthesis_job_id"] == synthesis_job_id
+    assert payload["video_url"] == synthesis_response.json()["output_url"]
+    assert payload["visibility"] == "private"
     assert payload["export_url"].startswith("/static/exports/")
 
     artifact_path = Path(__file__).resolve().parent / payload["export_url"].lstrip("/")
     assert artifact_path.exists()
     assert "local-test" in artifact_path.read_text(encoding="utf-8")
+
+
+def test_execute_synthesis_persists_source_and_output_video_urls(client: TestClient) -> None:
+    owner_id = "publish-execute-owner"
+    response = client.post(
+        "/api/v1/synthesis/execute",
+        json={
+            "video_urls": ["https://example.com/input.mp4"],
+            "audio_urls": ["https://example.com/input.mp3"],
+            "title": "Execute Synthesis Source",
+            "output_format": "mp4",
+            "quality": "medium",
+        },
+        headers=_auth_headers(owner_id),
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "succeeded"
+    assert payload["video_url"].startswith("/static/")
+
+    job_response = client.get(
+        f"/api/v1/synthesis/jobs/{payload['job_id']}",
+        headers=_auth_headers(owner_id),
+    )
+    assert job_response.status_code == 200
+    job = job_response.json()
+    assert job["video_url"] == "https://example.com/input.mp4"
+    assert job["output_url"] == payload["video_url"]
 
 
 def test_publication_list_update_revoke_and_archive(client: TestClient) -> None:

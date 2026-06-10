@@ -3,7 +3,8 @@ MiniMax 模型配置
 支持文本生成、图像生成、TTS语音合成
 
 API调用规范:
-- 文本模型: POST /v1/chat/completions      → model_id 传模型名（如 MiniMax-M2.7）
+- M3文本/多模态: POST /v1/text/chatcompletion_v2 → model_id = MiniMax-M3
+- 旧文本模型: POST /v1/chat/completions      → model_id 传模型名（如 MiniMax-M2.7）
 - 图像模型: POST /v1/image_generation     → model_id 传 image-01
 - TTS模型:   POST /v1/t2a_v2              → model_id 传 speech-2.6-hd
 """
@@ -53,6 +54,23 @@ def get_minimax_base_url(api_key: str = "") -> str:
 MINIMAX_MODELS = [
 
     # ========== 文本生成模型 ==========
+    {
+        "id": "MiniMax-M3",
+        "name": "MiniMax-M3",
+        "name_cn": "MiniMax-M3",
+        "type": "text-generation",
+        "endpoint": "/v1/text/chatcompletion_v2",
+        "api_model_id": "MiniMax-M3",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode", "reasoning", "vision", "multimodal", "long_context"],
+        "context_window": 1000000,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "description": "MiniMax M3 最新文本/多模态模型，1M 上下文，适合小说、剧本、分镜和多模态理解",
+        "use_cases": ["小说生成", "剧本改编", "角色/实体提取", "分镜规划", "多模态理解"],
+        "version": "M3",
+        "is_verified": False,
+    },
     {
         "id": "MiniMax-M2.7",
         "name": "MiniMax-M2.7",
@@ -161,7 +179,7 @@ TTS_VOICES = [
 
 # ============== 默认模型 ==============
 
-DEFAULT_TEXT_MODEL  = "MiniMax-M2.7"
+DEFAULT_TEXT_MODEL  = "MiniMax-M3"
 DEFAULT_IMAGE_MODEL = "MiniMax-image-01"
 DEFAULT_TTS_MODEL   = "MiniMax-speech-2.6-hd"
 DEFAULT_TTS_VOICE   = "female-shaonv"

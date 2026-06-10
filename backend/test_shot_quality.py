@@ -74,6 +74,36 @@ def test_dialogue_too_long_warning():
     print(f"[PASS] 台词过长检测: {report.warnings}")
 
 
+def test_placeholder_dialogue_speaker_warning():
+    """测试占位说话人警告"""
+    shot = MockShot(
+        prompt="A scene",
+        dialogue="角色A：我会查清楚。",
+        character_refs=[{"name": "林澈"}],
+        extra_data={"entity_refs": {"characters": [{"name": "林澈"}]}},
+    )
+    service = ShotQualityService()
+    report = service.check_shot_quality(shot)
+
+    assert any(i.type == IssueType.PLACEHOLDER_DIALOGUE_SPEAKER for i in report.issues)
+    assert any("占位说话人" in warning for warning in report.warnings)
+
+
+def test_unknown_dialogue_speaker_warning():
+    """测试未知说话人警告"""
+    shot = MockShot(
+        prompt="A scene",
+        dialogue="陌生人：我会查清楚。",
+        character_refs=[{"name": "林澈"}],
+        extra_data={"entity_refs": {"characters": [{"name": "林澈"}]}},
+    )
+    service = ShotQualityService()
+    report = service.check_shot_quality(shot)
+
+    assert any(i.type == IssueType.UNKNOWN_DIALOGUE_SPEAKER for i in report.issues)
+    assert any("未绑定到当前镜头角色" in warning for warning in report.warnings)
+
+
 def test_missing_character_refs_warning():
     """测试无角色引用警告"""
     shot = MockShot(prompt="A scene", character_refs=None)
@@ -108,8 +138,8 @@ def test_good_shot_ready_status():
         extra_data={
             "entity_refs": {
                 "scenes": [{"name": "Mountain"}],
-                "props": [],
-                "events": []
+                "props": [{"name": "Compass"}],
+                "events": [{"name": "Sunset reveal"}]
             }
         }
     )
@@ -135,7 +165,23 @@ def test_quality_score_calculation():
 def test_storyboard_quality_summary():
     """测试分镜质量汇总"""
     shots = [
-        MockShot(id="shot-1", prompt="Scene 1", duration=5),
+        MockShot(
+            id="shot-1",
+            prompt="Scene 1",
+            duration=5,
+            image_url="https://example.com/scene-1.jpg",
+            keyframes=[{"time": 0, "prompt": "wide shot"}, {"time": 4, "prompt": "close up"}],
+            character_refs=[{"character_id": "char-001", "name": "Hero"}],
+            dialogue="We made it.",
+            extra_data={
+                "entity_refs": {
+                    "scenes": [{"name": "Mountain"}],
+                    "props": [{"name": "Compass"}],
+                    "events": [{"name": "Arrival"}]
+                },
+                "production_context": {"review_state": "approved"},
+            },
+        ),
         MockShot(id="shot-2", prompt="", duration=20),  # blocked
         MockShot(id="shot-3", prompt="Scene 3", image_url=None),  # warning
     ]

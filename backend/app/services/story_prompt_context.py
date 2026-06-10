@@ -14,6 +14,7 @@ from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Chapter, Character, Novel, StoryBible, StoryEntity
+from app.services.image_prompt_policy import GLOBAL_IMAGE_NEGATIVE_CONSTRAINT
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
 from app.services.story_state_machine import format_state_machine_summary
 
@@ -322,6 +323,8 @@ def build_cover_prompt(context: Dict[str, Any], *, user_prompt: Optional[str] = 
     ]
     if user_prompt:
         parts.append(f"用户补充要求：{compact_text(user_prompt, 260)}")
+    if style:
+        parts.append(f"画风标签：{compact_text(style, 80)} style")
     parts.append(
         "封面画面要求：竖版海报构图，主体清晰，优先呈现主要人物与核心场景，"
         "把关键事件或道具作为视觉钩子，画面应符合题材气质并能暗示故事冲突。"
@@ -330,6 +333,7 @@ def build_cover_prompt(context: Dict[str, Any], *, user_prompt: Optional[str] = 
         "一致性硬约束：不要新增与小说无关的主角，不要改变人物身份、年龄感、服装气质、"
         "关键道具外观和主要场景时代氛围；封面画面不要生成可读文字排版。"
     )
+    parts.append(GLOBAL_IMAGE_NEGATIVE_CONSTRAINT)
     if context.get("negative_prompt"):
         parts.append(f"负面约束：{compact_text(context.get('negative_prompt'), 240)}")
     return "\n".join(part for part in parts if part).strip()

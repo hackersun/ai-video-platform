@@ -3,6 +3,7 @@
 """
 from app.core.time_utils import utc_now
 import uuid
+import re
 from typing import Any, List, Optional
 from datetime import datetime
 
@@ -12,7 +13,7 @@ from sqlalchemy import select, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.api_key_utils import create_text_generation_service, extract_chat_content, get_user_text_model_config
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
 from app.models import Novel, Chapter, StoryBible, StoryEntity, Script, Storyboard, Shot
@@ -26,6 +27,7 @@ from app.services.story_prompt_context import (
     build_chapter_continuity_block,
     load_story_prompt_context,
 )
+from app.services.chapter_naming import format_chapter_label
 
 router = APIRouter(tags=["章节管理"])
 
@@ -144,6 +146,82 @@ def clean_generated_content(content: str) -> str:
     return "\n".join(clean_lines).strip()
 
 
+def suggest_generated_chapter_title(
+    *,
+    content: str,
+    chapter_number: int,
+    instruction: Optional[str] = None,
+    fallback: Optional[str] = None,
+) -> str:
+    """Create a readable Chinese chapter title when the user did not provide one."""
+    explicit = re.search(r"(?:章节标题|标题|题目)\s*[：:]\s*《?([^》\n。！？!?；;]{2,24})", instruction or "")
+    if explicit:
+        title = explicit.group(1).strip(" 《》“”\"'")
+        if title:
+            return f"第{chapter_number}章 {title[:18]}"
+
+    skip_prefixes = (
+        "这是《",
+        "小说类型",
+        "上一段剧情",
+        "当前核心内容",
+        "本章中段",
+        "本章结尾",
+        "目标字数",
+        "额外要求",
+        "请作为",
+        "用户提供",
+    )
+    for raw_line in (content or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith(skip_prefixes):
+            continue
+        if any(marker in line for marker in ("AI", "草稿", "任务", "要求", "小说信息", "Story Bible")):
+            continue
+        candidate = re.sub(r"^第[一二三四五六七八九十百千万\d]+\s*[章节卷集回]?[：:、.\s-]*", "", line)
+        candidate = re.split(r"[。！？!?；;，,]", candidate)[0]
+        candidate = candidate.strip(" #【】[]《》“”\"'")
+        if 2 <= len(candidate) <= 28:
+            return f"第{chapter_number}章 {candidate[:18]}"
+
+    return fallback or f"第{chapter_number}章 新的转折"
+
+
+_CHAPTER_NUMERAL_PATTERN = r"[一二三四五六七八九十百千万两\d]+"
+
+
+def is_generic_chapter_title(title: Optional[str]) -> bool:
+    """Return true when a title is only a chapter number or placeholder."""
+    value = (title or "").strip()
+    if not value:
+        return True
+    normalized = re.sub(r"\s+", "", value)
+    if normalized in {"新章节", "未命名章节", "待命名章节", "章节", "草稿章节"}:
+        return True
+    return bool(re.fullmatch(rf"第{_CHAPTER_NUMERAL_PATTERN}[章节卷集回]?", normalized))
+
+
+def apply_generated_chapter_title(
+    chapter: Chapter,
+    *,
+    content: str,
+    instruction: Optional[str] = None,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Suggest a content-aware chapter title and update generic titles only."""
+    suggested_title = suggest_generated_chapter_title(
+        content=content,
+        chapter_number=chapter.chapter_number or 1,
+        instruction=instruction,
+        fallback=chapter.title or f"第{chapter.chapter_number or 1}章",
+    )
+    should_update = force or is_generic_chapter_title(chapter.title)
+    if should_update and suggested_title and suggested_title != chapter.title:
+        chapter.title = suggested_title
+        return {"title_suggested": suggested_title, "title_updated": True}
+    return {"title_suggested": suggested_title, "title_updated": False}
+
+
 def compact_text(value: Optional[str], limit: int = 800) -> str:
     text_value = " ".join((value or "").split())
     if len(text_value) <= limit:
@@ -178,7 +256,7 @@ def build_chapter_outline(chapters: list[Chapter], current_chapter_id: Optional[
     for chapter in chapters:
         marker = "（当前章节）" if chapter.id == current_chapter_id else ""
         preview = compact_text(chapter.content, 420) if chapter.content else "暂无正文"
-        lines.append(f"第{chapter.chapter_number}章《{chapter.title}》{marker}：{preview}")
+        lines.append(f"{format_chapter_label(chapter.title, chapter.chapter_number)}{marker}：{preview}")
     return "\n".join(lines)
 
 
@@ -321,8 +399,15 @@ async def generate_chapter_text(
             config_id=model_config_id,
         )
         service = create_text_generation_service(api_key or "", provider_name or "", base_url)
-    except HTTPException:
-        if not is_dev_mode():
+    except HTTPException as exc:
+        detail = str(exc.detail)
+        if (
+            not is_dev_mode()
+            or model_config_id
+            or "无法解密" in detail
+            or "为空" in detail
+            or "缺少 API Key" in detail
+        ):
             raise
         content = build_dev_chapter_content(
             novel=novel,
@@ -397,7 +482,7 @@ async def generate_chapter_text(
             temperature=0.78 if mode != "polish" else 0.45,
             max_tokens=min(max(target_word_count * 3, 2400), 12000),
         )
-        content = clean_generated_content(response["choices"][0]["message"]["content"])
+        content = clean_generated_content(extract_chat_content(response))
     except HTTPException:
         raise
     except Exception as exc:
@@ -638,7 +723,8 @@ async def generate_chapter(
     novel = await get_novel_for_user(db, request.novel_id, user_id)
     existing_chapters = await list_chapters_for_novel(db, request.novel_id, user_id)
     next_chapter_number = (existing_chapters[-1].chapter_number + 1) if existing_chapters else 1
-    chapter_title = request.chapter_title or f"第{next_chapter_number}章"
+    provided_chapter_title = request.chapter_title.strip() if request.chapter_title else None
+    chapter_title = provided_chapter_title or f"第{next_chapter_number}章"
     if request.prev_chapter_content:
         virtual_prev = Chapter(
             id=f"provided-prev-{uuid.uuid4()}",
@@ -663,13 +749,21 @@ async def generate_chapter(
         target_word_count=request.target_word_count,
         model_config_id=request.model_config_id,
     )
+    final_chapter_title = provided_chapter_title or suggest_generated_chapter_title(
+        content=chapter_content,
+        chapter_number=next_chapter_number,
+        instruction=request.instruction,
+    )
+    metadata["title_suggested"] = final_chapter_title
+    metadata["title_updated"] = not bool(provided_chapter_title)
+    metadata["chapter_title"] = final_chapter_title
 
     now = utc_now()
     db_chapter = Chapter(
         id=str(uuid.uuid4()),
         novel_id=request.novel_id,
         user_id=user_id,
-        title=chapter_title,
+        title=final_chapter_title,
         content=chapter_content,
         chapter_number=next_chapter_number,
         word_count=len(chapter_content),
@@ -694,6 +788,8 @@ async def generate_chapter(
             "mode": metadata.get("mode"),
             "entity_count": metadata.get("entity_count"),
             "story_bible_count": metadata.get("story_bible_count"),
+            "title_suggested": metadata.get("title_suggested"),
+            "title_updated": metadata.get("title_updated"),
         },
     )
     return build_chapter_response(db_chapter, novel.title, ai_generation=ai_generation)
@@ -738,6 +834,7 @@ async def ai_assist_chapter(
         new_content = generated_content
 
     chapter.content = new_content
+    metadata.update(apply_generated_chapter_title(chapter, content=new_content, instruction=request.instruction))
     chapter.word_count = len(new_content)
     chapter.status = "completed"
     chapter.updated_at = utc_now()
@@ -757,6 +854,8 @@ async def ai_assist_chapter(
             "mode": metadata.get("mode"),
             "entity_count": sync_result.get("entity_count"),
             "story_bible_count": sync_result.get("story_bible_count"),
+            "title_suggested": metadata.get("title_suggested"),
+            "title_updated": metadata.get("title_updated"),
         },
     )
     return build_chapter_response(chapter, novel.title, ai_generation=ai_generation)
@@ -788,6 +887,46 @@ class ProductionStatusResponse(BaseModel):
     storyboard_shot_count: int = 0
 
 
+async def get_latest_chapter_script(
+    db: AsyncSession,
+    user_id: str,
+    chapter_id: str,
+) -> Optional[Script]:
+    """Return the latest script version for a chapter without assuming uniqueness."""
+    result = await db.execute(
+        select(Script)
+        .where(
+            and_(
+                Script.chapter_id == chapter_id,
+                Script.user_id == user_id,
+            )
+        )
+        .order_by(desc(Script.updated_at), desc(Script.created_at))
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
+async def get_latest_script_storyboard(
+    db: AsyncSession,
+    user_id: str,
+    script_id: str,
+) -> Optional[Storyboard]:
+    """Return the latest storyboard for a script without assuming uniqueness."""
+    result = await db.execute(
+        select(Storyboard)
+        .where(
+            and_(
+                Storyboard.script_id == script_id,
+                Storyboard.user_id == user_id,
+            )
+        )
+        .order_by(desc(Storyboard.updated_at), desc(Storyboard.created_at))
+        .limit(1)
+    )
+    return result.scalars().first()
+
+
 @router.get("/{chapter_id}/production-status", response_model=ProductionStatusResponse)
 async def get_chapter_production_status(
     chapter_id: str,
@@ -802,30 +941,13 @@ async def get_chapter_production_status(
     if not chapter:
         raise HTTPException(status_code=404, detail="章节不存在")
 
-    # 查询剧本
-    script_result = await db.execute(
-        select(Script).where(
-            and_(
-                Script.chapter_id == chapter_id,
-                Script.user_id == user_id
-            )
-        )
-    )
-    script = script_result.scalar_one_or_none()
+    script = await get_latest_chapter_script(db, user_id, chapter_id)
 
     # 查询分镜
     storyboard = None
     shot_count = 0
     if script:
-        storyboard_result = await db.execute(
-            select(Storyboard).where(
-                and_(
-                    Storyboard.script_id == script.id,
-                    Storyboard.user_id == user_id
-                )
-            )
-        )
-        storyboard = storyboard_result.scalar_one_or_none()
+        storyboard = await get_latest_script_storyboard(db, user_id, script.id)
         if storyboard:
             shot_result = await db.execute(
                 select(Shot).where(
@@ -931,16 +1053,7 @@ async def generate_chapter_storyboard(
     if not chapter.content:
         raise HTTPException(status_code=400, detail="章节内容为空，无法生成")
 
-    # 检查是否已有剧本
-    script_result = await db.execute(
-        select(Script).where(
-            and_(
-                Script.chapter_id == chapter_id,
-                Script.user_id == user_id
-            )
-        )
-    )
-    script = script_result.scalar_one_or_none()
+    script = await get_latest_chapter_script(db, user_id, chapter_id)
 
     if not script:
         # 先生成剧本
@@ -979,6 +1092,7 @@ async def generate_chapter_storyboard(
         def __init__(self, novel_id, chapter_id, shot_count, style, model_config_id):
             self.novel_id = novel_id
             self.chapter_id = chapter_id
+            self.script_id = script_id
             self.shot_count = shot_count
             self.style = style
             self.story_bible_id = None
@@ -1034,15 +1148,7 @@ async def generate_chapter_all(
         raise HTTPException(status_code=400, detail="章节内容为空，无法生成")
 
     # 第一步：生成剧本（如果不存在）
-    script_result = await db.execute(
-        select(Script).where(
-            and_(
-                Script.chapter_id == chapter_id,
-                Script.user_id == user_id
-            )
-        )
-    )
-    script = script_result.scalar_one_or_none()
+    script = await get_latest_chapter_script(db, user_id, chapter_id)
 
     if not script:
         from app.api.v1.endpoints.scripts import ScriptGenerateRequest as ScriptRequest
@@ -1082,6 +1188,7 @@ async def generate_chapter_all(
         def __init__(self, novel_id, chapter_id, shot_count, style, model_config_id):
             self.novel_id = novel_id
             self.chapter_id = chapter_id
+            self.script_id = script_id
             self.shot_count = shot_count
             self.style = style
             self.story_bible_id = None
@@ -1183,6 +1290,7 @@ async def regenerate_chapter_content(
         instruction=request.prompt,
     )
     chapter.content = new_content
+    metadata.update(apply_generated_chapter_title(chapter, content=new_content, instruction=request.prompt))
     chapter.word_count = len(new_content)
     chapter.status = "completed"
     chapter.updated_at = utc_now()
@@ -1201,6 +1309,8 @@ async def regenerate_chapter_content(
             "mode": metadata.get("mode"),
             "entity_count": sync_result.get("entity_count"),
             "story_bible_count": sync_result.get("story_bible_count"),
+            "title_suggested": metadata.get("title_suggested"),
+            "title_updated": metadata.get("title_updated"),
         },
     )
     return build_chapter_response(chapter, novel.title, ai_generation=ai_generation)

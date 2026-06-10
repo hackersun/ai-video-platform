@@ -28,6 +28,9 @@ IMAGE_CAPABILITIES = (
     "character_reference",
     "scene_reference",
 )
+VISION_PROVIDER_ALIASES = ("dashscope", "qianlian", "qwen", "minimax", "volcano", "volcano_agent_plan", "openai", "baidu")
+VISION_MODEL_TYPES = ("vision",)
+VISION_CAPABILITIES = ("vision", "multimodal", "image_understanding")
 
 
 def normalize_provider_base_url(provider_name: str, base_url: Optional[str]) -> Optional[str]:
@@ -75,6 +78,29 @@ def _model_supports_image(model: Any) -> bool:
     return _model_supports_any(model, IMAGE_MODEL_TYPES, IMAGE_CAPABILITIES)
 
 
+def _row_api_key(row: Any) -> str:
+    config = row[0]
+    try:
+        return config.get_api_key_decrypted()
+    except Exception:
+        return ""
+
+
+def _row_base_url(row: Any, api_key: str = "") -> Optional[str]:
+    config, model, provider = row
+    extra = config.extra_params or {}
+    provider_name = _provider_key(provider)
+    explicit_base_url = extra.get("base_url")
+    if explicit_base_url:
+        return normalize_provider_base_url(provider_name, explicit_base_url)
+    if provider_name == "minimax":
+        from app.core.minimax_config import get_minimax_base_url
+
+        return normalize_provider_base_url(provider_name, get_minimax_base_url(api_key))
+    base_url = model.base_url or provider.base_url
+    return normalize_provider_base_url(provider_name, base_url)
+
+
 def strip_thinking_blocks(content: str) -> str:
     """Remove model reasoning blocks from user-facing text."""
     if not content:
@@ -88,14 +114,105 @@ def strip_thinking_blocks(content: str) -> str:
     return cleaned.strip()
 
 
+def _content_to_text(value: Any) -> str:
+    """Coerce common multimodal/text content shapes to plain text."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            text = _content_to_text(item)
+            if text:
+                parts.append(text)
+        return "\n".join(parts).strip()
+    if isinstance(value, dict):
+        for key in (
+            "text",
+            "content",
+            "reply",
+            "message",
+            "output_text",
+            "result",
+            "value",
+        ):
+            text = _content_to_text(value.get(key))
+            if text:
+                return text
+    return ""
+
+
+def extract_chat_content(response: Any) -> str:
+    """Extract assistant text from OpenAI-compatible and provider-native responses."""
+    if isinstance(response, str):
+        return strip_thinking_blocks(response)
+    if not isinstance(response, dict):
+        return ""
+
+    choices = response.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if isinstance(choice, dict):
+                message = choice.get("message") or choice.get("delta")
+                if isinstance(message, dict):
+                    text = _content_to_text(message.get("content"))
+                    if text:
+                        return strip_thinking_blocks(text)
+                text = _content_to_text(choice.get("text") or choice.get("content"))
+                if text:
+                    return strip_thinking_blocks(text)
+            else:
+                text = _content_to_text(choice)
+                if text:
+                    return strip_thinking_blocks(text)
+
+    output = response.get("output")
+    if isinstance(output, dict):
+        output_choices = output.get("choices")
+        if isinstance(output_choices, list):
+            text = extract_chat_content({"choices": output_choices})
+            if text:
+                return text
+        for key in ("text", "content", "message", "reply"):
+            text = _content_to_text(output.get(key))
+            if text:
+                return strip_thinking_blocks(text)
+    elif isinstance(output, str):
+        return strip_thinking_blocks(output)
+
+    data = response.get("data")
+    if isinstance(data, dict):
+        for key in ("text", "content", "message", "reply", "result"):
+            text = _content_to_text(data.get(key))
+            if text:
+                return strip_thinking_blocks(text)
+    elif isinstance(data, list):
+        text = _content_to_text(data)
+        if text:
+            return strip_thinking_blocks(text)
+
+    for key in ("reply", "content", "text", "message", "output_text", "result"):
+        text = _content_to_text(response.get(key))
+        if text:
+            return strip_thinking_blocks(text)
+    return ""
+
+
 def sanitize_chat_response(response: dict) -> dict:
-    """Strip reasoning markers from OpenAI-compatible chat responses."""
+    """Strip reasoning markers and normalize common native text responses."""
     try:
         for choice in response.get("choices", []):
             message = choice.get("message") or {}
             content = message.get("content")
             if isinstance(content, str):
                 message["content"] = strip_thinking_blocks(content)
+        if not response.get("choices"):
+            content = extract_chat_content(response)
+            if content:
+                response["choices"] = [{"message": {"role": "assistant", "content": content}}]
     except AttributeError:
         return response
     return response
@@ -442,10 +559,11 @@ async def get_user_task_model_config(
 
         api_key = config.get_api_key_decrypted()
         if not api_key:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="所选模型配置缺少 API Key，请在大模型配置页面补全")
-        extra = config.extra_params or {}
-        base_url = extra.get("base_url") or model.base_url or provider.base_url
-        return api_key, provider_key, model.model_id, normalize_provider_base_url(provider_key, base_url)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="所选模型配置的 API Key 为空或无法解密，请在 AI 模型配置页面重新保存并验证该配置",
+            )
+        return api_key, provider_key, model.model_id, _row_base_url(row, api_key)
 
     result = await db.execute(
         select(LLMConfig, LLMModel, LLMProvider)
@@ -520,20 +638,42 @@ async def get_user_task_model_config(
         return None, None, None, None
 
     config, model, provider = row
-    api_key = config.get_api_key_decrypted()
+    api_key = _row_api_key(row)
     if not api_key:
+        fallback_result = await db.execute(
+            select(LLMConfig, LLMModel, LLMProvider)
+            .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+            .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+            .where(
+                and_(
+                    LLMConfig.user_id == user_id,
+                    LLMConfig.is_active == True,
+                    LLMConfig.id != config.id,
+                    LLMModel.is_active == True,
+                    LLMProvider.is_active == True,
+                    or_(LLMProvider.name.in_(provider_ids), LLMProvider.id.in_(provider_ids)),
+                    model_filter,
+                )
+            )
+            .order_by(desc(LLMConfig.test_status == "success"), desc(LLMConfig.last_used_at), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
+        )
+        for fallback_row in fallback_result.all():
+            fallback_key = _row_api_key(fallback_row)
+            if fallback_key:
+                fallback_config, fallback_model, fallback_provider = fallback_row
+                fallback_provider_name = _provider_key(fallback_provider)
+                return fallback_key, fallback_provider_name, fallback_model.model_id, _row_base_url(fallback_row, fallback_key)
+
         if raise_if_missing:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="大模型API密钥未设置，请在LLM配置中填入有效的API Key",
+                detail=f"默认模型配置“{config.name}”的 API Key 为空或无法解密，请在 AI 模型配置页面重新保存并验证该配置",
             )
         provider_name = _provider_key(provider)
         return None, provider_name, model.model_id, model.base_url or provider.base_url
 
-    extra = config.extra_params or {}
-    base_url = extra.get("base_url") or model.base_url or provider.base_url
     provider_name = _provider_key(provider)
-    return api_key, provider_name, model.model_id, normalize_provider_base_url(provider_name, base_url)
+    return api_key, provider_name, model.model_id, _row_base_url(row, api_key)
 
 
 async def get_user_text_model_config(
@@ -570,6 +710,25 @@ async def get_user_image_model_config(
         model_types=IMAGE_MODEL_TYPES,
         capabilities=IMAGE_CAPABILITIES,
         missing_detail="请先配置图像生成模型API密钥（LLM配置页面）",
+        config_id=config_id,
+    )
+
+
+async def get_user_vision_model_config(
+    db: AsyncSession,
+    user_id: str,
+    raise_if_missing: bool = True,
+    config_id: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """获取视觉理解/多模态默认配置，不用于直接文生图。"""
+    return await get_user_task_model_config(
+        db=db,
+        user_id=user_id,
+        provider_ids=VISION_PROVIDER_ALIASES,
+        raise_if_missing=raise_if_missing,
+        model_types=VISION_MODEL_TYPES,
+        capabilities=VISION_CAPABILITIES,
+        missing_detail="请先配置视觉多模态模型API密钥（LLM配置页面）",
         config_id=config_id,
     )
 

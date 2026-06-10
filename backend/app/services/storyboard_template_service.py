@@ -590,6 +590,17 @@ def _build_template_dialogue(
     return None
 
 
+def _extract_template_dialogue_speaker(dialogue: Optional[str]) -> Optional[str]:
+    text = (dialogue or "").strip()
+    if not text:
+        return None
+    narrator_match = re.match(r"^（\s*([^）]{1,12})\s*）", text)
+    if narrator_match:
+        return narrator_match.group(1).strip()
+    match = re.match(r"^\s*([^：:（）()，。！？\n]{1,24})\s*[：:]", text)
+    return match.group(1).strip() if match else None
+
+
 def build_template_shots(
     *,
     template: Dict[str, Any],
@@ -647,6 +658,9 @@ def build_template_shots(
                     "template_id": template["id"],
                     "template_name": template["name"],
                     "source_beat": beat,
+                    "dialogue_speaker": _extract_template_dialogue_speaker(dialogue),
+                    "dialogue_source": "template_story_beat",
+                    "dialogue_intent": dialogue_role,
                     "review_status": "pending_review",
                     "automation_level": "template_draft",
                 },

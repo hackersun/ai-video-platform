@@ -139,7 +139,7 @@ def _event_tail(state_machine: Dict[str, Any], *, chapter_number: Optional[int],
     ]
 
 
-def _entity_locks(entities: List[StoryEntity], *, limit: int = 10) -> Dict[str, List[Dict[str, Any]]]:
+def _entity_locks(entities: List[StoryEntity], *, limit: int = 32) -> Dict[str, List[Dict[str, Any]]]:
     grouped = {"characters": [], "scenes": [], "props": [], "events": []}
     mapping = {
         "character": "characters",

@@ -94,6 +94,7 @@ class LLMModelResponse(BaseModel):
     user_is_default: bool = False
     user_test_status: Optional[str] = None
     user_test_message: Optional[str] = None
+    user_key_available: bool = False
 
 
 class LLMConfigCreateRequest(BaseModel):
@@ -101,6 +102,19 @@ class LLMConfigCreateRequest(BaseModel):
     model_id: str = Field(..., description="模型ID")
     name: str = Field(..., min_length=1, max_length=100, description="配置名称")
     api_key: str = Field(..., description="API密钥")
+    api_secret: Optional[str] = Field(None, description="API Secret")
+    temperature: float = Field(0.7, ge=0, le=2)
+    top_p: float = Field(0.9, ge=0, le=1)
+    max_tokens: Optional[int] = Field(None, ge=1, le=32000)
+    extra_params: Optional[dict] = Field({}, description="额外参数")
+    is_default: bool = Field(False, description="设为默认")
+
+
+class LLMConfigUpdateRequest(BaseModel):
+    """更新配置请求。API Key 不传或传空时保留原密钥。"""
+    model_id: str = Field(..., description="模型ID")
+    name: str = Field(..., min_length=1, max_length=100, description="配置名称")
+    api_key: Optional[str] = Field(None, description="API密钥")
     api_secret: Optional[str] = Field(None, description="API Secret")
     temperature: float = Field(0.7, ge=0, le=2)
     top_p: float = Field(0.9, ge=0, le=1)
@@ -129,6 +143,7 @@ class LLMConfigResponse(BaseModel):
     is_default: bool
     test_status: Optional[str]
     test_message: Optional[str]
+    key_available: bool = False
     usage_count: int
     created_at: datetime
     updated_at: datetime
@@ -153,6 +168,12 @@ class LLMTestResponse(BaseModel):
 
 def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Optional[LLMProvider]) -> dict:
     provider_id = provider.name if provider else model.provider_id
+    key_available = bool(config.get_api_key_decrypted())
+    test_status = config.test_status
+    test_message = config.test_message
+    if not key_available:
+        test_status = "failed"
+        test_message = "API Key 为空或无法解密，请重新保存并验证该配置"
     return {
         "id": config.id,
         "user_id": config.user_id,
@@ -170,8 +191,9 @@ def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Opti
         "max_tokens": config.max_tokens,
         "is_active": config.is_active,
         "is_default": config.is_default,
-        "test_status": config.test_status,
-        "test_message": config.test_message,
+        "test_status": test_status,
+        "test_message": test_message,
+        "key_available": key_available,
         "usage_count": config.usage_count,
         "created_at": config.created_at,
         "updated_at": config.updated_at,
@@ -205,7 +227,10 @@ def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
 
 def _model_capability_group(model: LLMModel) -> str:
     model_type = (model.model_type or "").lower()
-    if model_type in {"chat", "completion", "text-generation", "text_generation", "llm", "vision"}:
+    model_capabilities = {str(item).lower() for item in (model.capabilities or [])}
+    if model_type == "vision" or model_capabilities.intersection({"vision", "multimodal", "image_understanding"}):
+        return "vision"
+    if model_type in {"chat", "completion", "text-generation", "text_generation", "llm"}:
         return "text"
     if model_type in {"image", "image-generation", "image_generation"}:
         return "image"
@@ -216,6 +241,51 @@ def _model_capability_group(model: LLMModel) -> str:
     if model_type == "embedding":
         return "embedding"
     return model_type or "other"
+
+
+def _model_display_key(model: LLMModel) -> tuple[str, str, str]:
+    """Group legacy catalog aliases that call the same API model."""
+    api_model_id = (model.model_id or model.id or "").strip().lower()
+    return (model.provider_id or "", api_model_id, _model_capability_group(model))
+
+
+def _model_display_rank(model: LLMModel, configs_by_model: dict[str, list[LLMConfig]]) -> tuple:
+    configs = configs_by_model.get(model.id, [])
+    primary = configs[0] if configs else None
+    primary_updated = primary.updated_at.timestamp() if primary and primary.updated_at else 0
+    return (
+        bool(primary and primary.is_default),
+        bool(primary),
+        bool(primary and primary.test_status == "success"),
+        "." not in (model.id or ""),
+        bool(model.is_recommended),
+        primary_updated,
+    )
+
+
+def _dedupe_models_for_display(
+    models: list[LLMModel],
+    configs_by_model: dict[str, list[LLMConfig]],
+) -> list[LLMModel]:
+    """Return one visible model per provider/API-model/capability.
+
+    Historical seed scripts used both dotted and hyphenated ids for a few
+    MiniMax models. Keep a user's configured alias visible when it exists;
+    otherwise prefer the newer hyphenated id so the UI does not show duplicate
+    choices for the same remote model.
+    """
+    selected: dict[tuple[str, str, str], LLMModel] = {}
+    order: list[tuple[str, str, str]] = []
+    for model in models:
+        key = _model_display_key(model)
+        current = selected.get(key)
+        if current is None:
+            selected[key] = model
+            order.append(key)
+            continue
+        if _model_display_rank(model, configs_by_model) > _model_display_rank(current, configs_by_model):
+            selected[key] = model
+    return [selected[key] for key in order]
 
 
 async def clear_default_configs_for_model_group(
@@ -926,6 +996,29 @@ DEFAULT_MODELS = [
     },
     # MiniMax - 文本生成模型
     {
+        "id": "minimax-m3",
+        "provider_id": "minimax",
+        "model_id": "MiniMax-M3",
+        "model_name": "MiniMax-M3",
+        "model_name_cn": "MiniMax-M3",
+        "model_type": "chat",
+        "capabilities": ["chat", "completion", "function_calling", "json_mode", "reasoning", "vision", "multimodal", "long_context"],
+        "context_window": 1000000,
+        "max_tokens": 8192,
+        "input_cost_per_1k": 0,
+        "output_cost_per_1k": 0,
+        "supports_streaming": True,
+        "supports_function_calling": True,
+        "supports_vision": True,
+        "supports_json_mode": True,
+        "is_active": True,
+        "is_recommended": True,
+        "description": "MiniMax M3 最新文本/多模态模型，1M 上下文，适合小说、剧本、角色提取、分镜规划和多模态理解",
+        "version": "M3",
+        "release_date": "2026-06-01",
+        "base_url": "https://api.minimaxi.com/v1"
+    },
+    {
         "id": "minimax-m2.7",
         "provider_id": "minimax",
         "model_id": "MiniMax-M2.7",
@@ -942,7 +1035,7 @@ DEFAULT_MODELS = [
         "supports_vision": False,
         "supports_json_mode": True,
         "is_active": True,
-        "is_recommended": True,
+        "is_recommended": False,
         "description": "MiniMax 最新旗舰模型，超长上下文，支持函数调用和推理",
         "version": "M2.7",
         "release_date": "2025-01-01"
@@ -1054,6 +1147,10 @@ async def ensure_default_providers(db: AsyncSession) -> None:
 async def ensure_default_models(db: AsyncSession) -> None:
     """Insert/update built-in models so new catalog entries appear in existing databases."""
     changed = False
+    legacy_recommendation_overrides = {
+        ("minimax", "MiniMax-M2.7"): False,
+        ("minimax", "MiniMax-M2"): False,
+    }
     for model_data in DEFAULT_MODELS:
         model_copy = _prepare_model_seed(model_data)
         model = await db.get(LLMModel, model_copy["id"])
@@ -1065,6 +1162,12 @@ async def ensure_default_models(db: AsyncSession) -> None:
             if key != "id" and getattr(model, key, None) != value:
                 setattr(model, key, value)
                 changed = True
+    result = await db.execute(select(LLMModel).where(LLMModel.provider_id == "minimax"))
+    for model in result.scalars().all():
+        override = legacy_recommendation_overrides.get((model.provider_id, model.model_id))
+        if override is not None and model.is_recommended != override:
+            model.is_recommended = override
+            changed = True
     if changed:
         await db.commit()
 
@@ -1612,8 +1715,11 @@ async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
             }
         }
     else:
-        # 文本生成模型 → POST /v1/chat/completions
-        url = f"{base_url}/chat/completions"
+        # 文本生成模型：M3 使用新端点，旧 MiniMax 文本模型保留 OpenAI-compatible 端点
+        if actual_model == "MiniMax-M3":
+            url = f"{base_url}/text/chatcompletion_v2"
+        else:
+            url = f"{base_url}/chat/completions"
         data = {
             "model": actual_model,
             "messages": [{"role": "user", "content": message}],
@@ -1741,10 +1847,18 @@ async def list_models(
     for config in config_result.scalars().all():
         configs_by_model.setdefault(config.model_id, []).append(config)
 
+    visible_models = _dedupe_models_for_display(models, configs_by_model)
+
     responses = []
-    for model in models:
+    for model in visible_models:
         configs = configs_by_model.get(model.id, [])
         primary = configs[0] if configs else None
+        primary_key_available = bool(primary and primary.get_api_key_decrypted())
+        primary_test_status = primary.test_status if primary else None
+        primary_test_message = primary.test_message if primary else None
+        if primary and not primary_key_available:
+            primary_test_status = "failed"
+            primary_test_message = "API Key 为空或无法解密，请重新保存并验证该配置"
         responses.append({
             "id": model.id,
             "provider_id": model.provider_id,
@@ -1766,8 +1880,9 @@ async def list_models(
             "user_configured": bool(primary),
             "user_config_count": len(configs),
             "user_is_default": bool(primary and primary.is_default),
-            "user_test_status": primary.test_status if primary else None,
-            "user_test_message": primary.test_message if primary else None,
+            "user_test_status": primary_test_status,
+            "user_test_message": primary_test_message,
+            "user_key_available": primary_key_available,
         })
 
     return responses
@@ -1976,6 +2091,19 @@ async def test_config(
     provider_id = provider.id if provider else model.provider_id
     
     api_key = config.get_api_key_decrypted()
+    if not api_key:
+        test_result = {
+            "success": False,
+            "message": "API Key 为空或无法解密，请重新保存并验证该配置",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0,
+        }
+        config.test_status = "failed"
+        config.test_message = test_result["message"]
+        config.tested_at = utc_now()
+        await db.commit()
+        return test_result
 
     # 根据提供商调用测试
     if provider_id == "volcano":
@@ -2013,7 +2141,7 @@ async def test_config(
 @router.put("/configs/{config_id}", response_model=LLMConfigResponse)
 async def update_config(
     config_id: str,
-    request: LLMConfigCreateRequest,
+    request: LLMConfigUpdateRequest,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
@@ -2042,20 +2170,23 @@ async def update_config(
         await clear_default_configs_for_model_group(db, user_id, target_model, exclude_config_id=config_id)
 
     existing_plain_key = config.get_api_key_decrypted()
-    api_key_changed = request.api_key != existing_plain_key
+    next_api_key = request.api_key.strip() if isinstance(request.api_key, str) else None
+    api_key_changed = bool(next_api_key) and next_api_key != existing_plain_key
+    model_changed = request.model_id != config.model_id
 
     config.name = request.name
     config.model_id = request.model_id
-    config.api_key = encrypt_key(request.api_key)
+    if next_api_key:
+        config.api_key = encrypt_key(next_api_key)
     config.api_secret = request.api_secret
     config.temperature = request.temperature
     config.top_p = request.top_p
     config.max_tokens = request.max_tokens
     config.extra_params = request.extra_params
     config.is_default = request.is_default
-    config.test_status = "pending" if api_key_changed else config.test_status
-    if api_key_changed:
-        config.test_message = "配置已更新，请重新测试连接"
+    if api_key_changed or model_changed:
+        config.test_status = "pending"
+        config.test_message = "模型或 API Key 已更新，请重新测试连接"
     
     await db.commit()
     await db.refresh(config)

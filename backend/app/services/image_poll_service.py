@@ -4,8 +4,6 @@ Background image generation polling service.
 import uuid
 import asyncio
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.core.database import AsyncSessionLocal
 from app.models.shot import Shot
 from app.models.asset import Asset
@@ -41,6 +39,20 @@ async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
 
                     shot = await session.get(Shot, shot_id)
                     if shot:
+                        try:
+                            from app.services.media_persistence import persist_remote_media_url
+
+                            image_url = await persist_remote_media_url(
+                                image_url,
+                                media_type="image",
+                                subdir="images",
+                                prefix=f"shot-{shot_id[:8]}",
+                                max_bytes=20 * 1024 * 1024,
+                            ) or image_url
+                        except Exception:
+                            pass
+
+                        extra_data = shot.extra_data if isinstance(shot.extra_data, dict) else {}
                         shot.image_url = image_url
                         shot.image_status = "succeeded"
 
@@ -53,6 +65,15 @@ async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
                             asset_type="image",
                             url=image_url,
                             extra_data={"shot_id": shot_id},
+                            generation_params={
+                                "shot_id": shot_id,
+                                "prompt": extra_data.get("image_generation_prompt"),
+                                "style": extra_data.get("image_generation_style"),
+                                "style_prompt": extra_data.get("image_generation_style_prompt"),
+                                "provider": extra_data.get("image_generation_provider"),
+                                "model": extra_data.get("image_generation_model"),
+                                "task_id": task_id,
+                            },
                         )
                         session.add(asset)
                         shot.image_asset_id = asset.id
@@ -68,6 +89,17 @@ async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
 
         except Exception:
             continue
+
+    async with AsyncSessionLocal() as session:
+        shot = await session.get(Shot, shot_id)
+        if shot and shot.image_status == "generating":
+            shot.image_status = "failed"
+            shot.extra_data = {
+                **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+                "image_generation_error": "参考图生成超时：后台轮询未拿到图片URL，请重新生成或更换图像模型。",
+                "image_generation_task_id": task_id,
+            }
+            await session.commit()
 
 
 async def _get_image_status(volcano_service, task_id: str) -> dict:

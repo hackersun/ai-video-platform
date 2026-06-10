@@ -7,6 +7,7 @@ import os
 import base64
 import warnings
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON, Float
 from sqlalchemy.sql import func
@@ -23,6 +24,21 @@ def get_encryption_key() -> bytes:
     重要：生产环境必须设置 FERNET_KEY 环境变量。
     """
     key = os.getenv("FERNET_KEY")
+    if not key:
+        for env_path in (Path(__file__).resolve().parents[2] / ".env", Path(__file__).resolve().parents[3] / ".env"):
+            if not env_path.exists():
+                continue
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                env_key, env_value = line.split("=", 1)
+                if env_key.strip() == "FERNET_KEY":
+                    key = env_value.strip().strip("\"'")
+                    os.environ.setdefault("FERNET_KEY", key)
+                    break
+            if key:
+                break
     if key:
         return key.encode() if isinstance(key, str) else key
 
@@ -68,6 +84,8 @@ def decrypt_key(encrypted_key: str) -> str:
         fernet = _get_fernet()
         return fernet.decrypt(encrypted_key.encode()).decode()
     except Exception:
+        if encrypted_key.startswith("gAAAAA"):
+            return ""
         # 可能是明文存储的旧数据
         return encrypted_key
 

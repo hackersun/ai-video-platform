@@ -394,6 +394,48 @@ async def active_prompt_skill_blocks(
     return [entry["content"] for entry in entries]
 
 
+async def apply_active_prompt_skill_template(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    task: str,
+    internal_prompt: str,
+    context: Optional[Dict[str, Any]] = None,
+    template_title: str = "激活提示词模板",
+    internal_title: str = "内部逻辑提示词",
+) -> Dict[str, Any]:
+    """Wrap an existing internal prompt with the active Prompt skill template."""
+    entries = await active_prompt_skill_entries(db, user_id, task=task, context=context)
+    entries = [entry for entry in entries if str(entry.get("content") or "").strip()]
+    internal = (internal_prompt or "").strip()
+    if not entries:
+        return {
+            "prompt": internal,
+            "skill_blocks": [],
+            "prompt_skills": [],
+            "prompt_skill_count": 0,
+            "used_prompt_skill": False,
+        }
+
+    skill_blocks = [str(entry["content"]).strip() for entry in entries]
+    template_block = "\n\n".join(skill_blocks).strip()
+    if internal:
+        prompt = f"【{template_title}】\n{template_block}\n\n【{internal_title}】\n{internal}"
+    else:
+        prompt = f"【{template_title}】\n{template_block}"
+
+    return {
+        "prompt": prompt.strip(),
+        "skill_blocks": skill_blocks,
+        "prompt_skills": [
+            {key: entry[key] for key in ("id", "name", "task", "stage", "version")}
+            for entry in entries
+        ],
+        "prompt_skill_count": len(entries),
+        "used_prompt_skill": True,
+    }
+
+
 async def optimize_prompt_skill_content(
     db: AsyncSession,
     user_id: str,
