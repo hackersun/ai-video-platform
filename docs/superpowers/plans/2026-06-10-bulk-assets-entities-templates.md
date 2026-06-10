@@ -4,11 +4,40 @@
 
 **Goal:** 为资产、实体、创作模板、提示词/技能模板补齐批量维护能力，并支持资产/实体按小说或剧本重新抽取。
 
-**Status:** 已落地并通过后端回归、前端构建、组合 E2E 验证。
+**Status:** 已落地并通过后端回归、前端构建、组合 E2E 验证。2026-06-10 续做已补齐资产按小说/剧本/选中实体重建资产包能力。
 
 **Architecture:** 后端新增轻量批量动作接口，复用现有 ORM、实体抽取、资产生成和提示词模板服务。前端复用现有列表页选择态和 toast/message 反馈，避免新增独立批量任务系统。
 
 **Tech Stack:** FastAPI、SQLAlchemy AsyncSession、Pydantic、Next.js 14、React、TypeScript、Playwright。
+
+---
+
+## 2026-06-10 续做收口：资产包重建与视频参考图风险
+
+### 已补能力
+
+- 新增 `POST /api/v1/assets/reextract`，支持按 `entity_ids`、`novel_id`、`chapter_id`、`script_id` 重建角色/场景/道具资产包。
+- 资产重建支持 `append`、`overwrite`、`delete_then_extract` 三种模式：
+  - `append`：只补缺失视图。
+  - `overwrite`：归档未锁定旧视图后重建。
+  - `delete_then_extract`：按选中范围归档未锁定旧资产并重建。
+- 生产保护：锁定、定稿或已有引用的资产默认跳过，并返回修复路径；测试环境可通过 `allow_test_override` 临时跳过并返回 warning。
+- 前端资产库新增：
+  - 向导侧 `重建当前资产包`。
+  - 选中资产后的批量工具条 `重建资产包`。
+  - 选中资产时优先按资产绑定实体重建；未选中资产时按当前小说/章节/剧本/实体筛选范围重建。
+
+### 视频参考图风险结论
+
+- 当前普通火山视频生成链路结构化 provider payload 只传 1 张 `image_url`，其余角色、场景、道具、多视图资产主要进入 prompt、metadata、`extra_data` 和资产锁记录。
+- 多实体镜头已经可以保留多条资产锁和多视图参考，但并不等于火山视频模型会同时消费多张实体参考图。
+- 生产提示应明确：火山链路会选择 primary reference image，其余资产作为文本一致性约束；后续若接多图能力模型，需要新增统一 `reference_assets` 数组和 provider `max_reference_images` 能力声明。
+
+### 本轮验证
+
+- `cd backend && pytest tests/test_bulk_maintenance_actions.py tests/test_entity_extraction_classification.py -q` -> `14 passed`
+- `cd frontend && npm run build` -> PASS
+- `cd frontend && npx playwright test e2e/assets.spec.ts e2e/entities-multiview.spec.ts e2e/templates.spec.ts e2e/prompt-skills.spec.ts --project=chromium --workers=1` -> `13 passed`
 
 ---
 

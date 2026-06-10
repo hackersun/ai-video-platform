@@ -97,6 +97,68 @@ test('资产库选中资产后展示批量范围和标签入口', async ({ page 
 
   await expect(page.getByRole('button', { name: '批量设为当前范围' })).toBeVisible();
   await expect(page.getByRole('button', { name: '批量标签' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '重建资产包', exact: true })).toBeVisible();
+});
+
+test('资产库可按选中资产绑定实体重建资产包', async ({ page }) => {
+  const stamp = Date.now();
+  await page.goto('/assets');
+  const novel = await apiPost(page, '/novels', {
+    title: `资产重建小说-${stamp}`,
+    genre: '玄幻',
+    description: '用于资产包重建。',
+  });
+  const entity = await apiPost(page, '/story-bibles/entities', {
+    novel_id: novel.id,
+    entity_type: 'prop',
+    name: `青铜铃-${stamp}`,
+    description: '带裂纹的青铜铃关键道具。',
+  });
+  const asset = await apiPost(page, '/assets', {
+    category: 'prop',
+    asset_type: 'image',
+    name: `青铜铃旧主视图-${stamp}`,
+    url: '/static/dev/reference.png',
+    novel_id: novel.id,
+    entity_id: entity.id,
+    entity_type: 'prop',
+    generation_params: { source: 'entity_multiview', view_key: 'main' },
+  });
+
+  let receivedPayload: any = null;
+  await page.route('**/api/v1/assets/reextract', async (route) => {
+    receivedPayload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        updated_count: 1,
+        deleted_count: 1,
+        created_count: 1,
+        skipped: [],
+        warnings: [],
+        assets: [],
+      }),
+    });
+  });
+
+  await page.goto('/assets');
+  const card = page.getByTestId('asset-card').filter({ hasText: asset.name });
+  await expect(card).toBeVisible();
+  await card.locator('input[type="checkbox"]').check();
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.type()).toBe('prompt');
+    await dialog.accept('overwrite');
+  });
+  await page.getByRole('button', { name: '重建资产包', exact: true }).click();
+
+  await expect(page.getByText(/资产包重建完成：新建 1 个/)).toBeVisible();
+  expect(receivedPayload).toMatchObject({
+    entity_ids: [entity.id],
+    entity_types: ['prop'],
+    mode: 'overwrite',
+  });
 });
 
 test('资产库提供小说实体多视图 AI 制片向导', async ({ page }) => {

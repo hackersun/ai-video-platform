@@ -66,6 +66,35 @@ def _create_asset(client: TestClient, user_id: str, name: str, **overrides) -> d
     return response.json()
 
 
+def _create_story_entity(
+    client: TestClient,
+    user_id: str,
+    *,
+    novel_id: str,
+    chapter_id: str | None = None,
+    script_id: str | None = None,
+    entity_type: str = "character",
+    name: str = "测试实体",
+) -> dict:
+    response = client.post(
+        "/api/v1/story-bibles/entities",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_id,
+            "entity_type": entity_type,
+            "name": name,
+            "description": f"{name} 的视觉设定",
+            "appearance": f"{name} 外观明确，便于生成参考图",
+            "visual_prompt": f"{name} 动漫设定稿",
+            "source": "manual",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert response.status_code == 201
+    return response.json()
+
+
 def test_asset_bulk_archive_skips_locked_assets_and_test_override_warns(client: TestClient) -> None:
     user_id = f"bulk-asset-user-{uuid4()}"
     free_asset = _create_asset(client, user_id, "可归档资产")
@@ -157,6 +186,128 @@ def test_bulk_set_scope_requires_scope_identifier(client: TestClient) -> None:
     )
     assert entity_resp.status_code == 422
     assert "chapter_id" in entity_resp.json()["detail"]
+
+
+def test_asset_reextract_by_novel_generates_entity_view_assets(client: TestClient) -> None:
+    user_id = f"asset-reextract-novel-{uuid4()}"
+    novel_id, chapter_id = _create_novel_and_chapter(client, user_id, "林澈握着玉符走进青石大殿。")
+    entity = _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="character",
+        name="林澈",
+    )
+
+    response = client.post(
+        "/api/v1/assets/reextract",
+        json={"novel_id": novel_id, "entity_types": ["character"], "mode": "append", "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 3
+    assert payload["deleted_count"] == 0
+    assert payload["updated_count"] == 1
+    assert {asset["entity_id"] for asset in payload["assets"]} == {entity["id"]}
+    assert {asset["generation_params"]["view_key"] for asset in payload["assets"]} == {"front", "side", "back"}
+
+
+def test_asset_reextract_delete_then_extract_archives_unlocked_and_skips_locked_assets(client: TestClient) -> None:
+    user_id = f"asset-reextract-lock-{uuid4()}"
+    novel_id, chapter_id = _create_novel_and_chapter(client, user_id, "银钥落在阵台上，符文亮起。")
+    entity = _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="prop",
+        name="银钥",
+    )
+    unlocked = _create_asset(
+        client,
+        user_id,
+        "银钥 · 主视图旧版",
+        category="prop",
+        asset_type="image",
+        entity_id=entity["id"],
+        entity_type="prop",
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        generation_params={"source": "entity_multiview", "view_key": "main"},
+    )
+    locked = _create_asset(
+        client,
+        user_id,
+        "银钥 · 细节定稿",
+        category="prop",
+        asset_type="image",
+        entity_id=entity["id"],
+        entity_type="prop",
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        generation_params={"source": "entity_multiview", "view_key": "detail"},
+    )
+    assert client.post(f"/api/v1/assets/{locked['id']}/lock", headers=_auth_headers(user_id)).status_code == 200
+
+    response = client.post(
+        "/api/v1/assets/reextract",
+        json={
+            "entity_ids": [entity["id"]],
+            "entity_types": ["prop"],
+            "mode": "delete_then_extract",
+            "style": "anime",
+            "view_keys": ["main", "detail"],
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 1
+    assert payload["deleted_count"] == 1
+    assert any(item["id"] == locked["id"] and "锁定" in item["reason"] for item in payload["skipped"])
+    assert {asset["generation_params"]["view_key"] for asset in payload["assets"]} == {"main"}
+
+    old_unlocked = client.get(f"/api/v1/assets/{unlocked['id']}", headers=_auth_headers(user_id)).json()
+    old_locked = client.get(f"/api/v1/assets/{locked['id']}", headers=_auth_headers(user_id)).json()
+    assert old_unlocked["is_active"] is False
+    assert old_locked["is_active"] is True
+
+
+def test_asset_reextract_selected_entity_ids_only(client: TestClient) -> None:
+    user_id = f"asset-reextract-selected-{uuid4()}"
+    novel_id, chapter_id = _create_novel_and_chapter(client, user_id, "顾青在茶铺看见铜镜和灯笼。")
+    selected = _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="scene",
+        name="茶铺",
+    )
+    ignored = _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="prop",
+        name="铜镜",
+    )
+
+    response = client.post(
+        "/api/v1/assets/reextract",
+        json={"entity_ids": [selected["id"]], "entity_types": ["scene"], "mode": "append", "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 4
+    assert {asset["entity_id"] for asset in payload["assets"]} == {selected["id"]}
+    assert ignored["id"] not in {asset["entity_id"] for asset in payload["assets"]}
 
 
 def test_entity_reextract_overwrite_preserves_entity_id_and_updates_content(client: TestClient) -> None:

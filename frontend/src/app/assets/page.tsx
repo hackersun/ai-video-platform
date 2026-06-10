@@ -661,6 +661,7 @@ export default function AssetsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [generatingViews, setGeneratingViews] = useState(false);
+  const [reextractingAssets, setReextractingAssets] = useState(false);
   const [retryingAssetId, setRetryingAssetId] = useState<string | null>(null);
   const [regeneratingAssetId, setRegeneratingAssetId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -1390,6 +1391,71 @@ export default function AssetsPage() {
     }
   };
 
+  const rebuildAssetPack = async () => {
+    const supportedTypes = new Set(['character', 'scene', 'prop']);
+    const selectedAssetItems = assets.filter((asset) => selectedAssets.has(asset.id));
+    const entityIdsFromAssets = Array.from(new Set(
+      selectedAssetItems.map((asset) => asset.entity_id).filter(Boolean) as string[]
+    ));
+    const typesFromAssets = Array.from(new Set(
+      selectedAssetItems
+        .map((asset) => asset.entity_type || asset.category)
+        .filter((value): value is string => Boolean(value && supportedTypes.has(value)))
+    ));
+    const targetEntityIds = entityIdsFromAssets.length
+      ? entityIdsFromAssets
+      : selectedEntityId
+        ? [selectedEntityId]
+        : undefined;
+    const targetTypes = typesFromAssets.length
+      ? typesFromAssets
+      : selectedEntityId && selectedWizardEntity?.entity_type && supportedTypes.has(selectedWizardEntity.entity_type)
+        ? [selectedWizardEntity.entity_type]
+        : selectedCategory !== 'all' && supportedTypes.has(selectedCategory)
+          ? [selectedCategory]
+          : [selectedEntityType].filter((value) => supportedTypes.has(value));
+
+    if (!targetEntityIds?.length && !selectedScriptId && !selectedChapterId && !selectedNovelId) {
+      setMessage('请先选择要重建的资产，或在向导中选择小说、剧本、章节、实体');
+      return;
+    }
+
+    const modeInput = window.prompt('选择资产重建模式：append 补缺失、overwrite 覆盖未锁视图、delete_then_extract 删除后重建', 'overwrite');
+    if (modeInput === null) return;
+    if (!['append', 'overwrite', 'delete_then_extract'].includes(modeInput)) {
+      setMessage('资产重建模式只支持 append、overwrite、delete_then_extract');
+      return;
+    }
+    if (modeInput === 'delete_then_extract' && !confirm('删除后重建会归档未锁定的旧资产；锁定、定稿或已引用资产会保留并提示处理路径。确认继续？')) {
+      return;
+    }
+
+    setReextractingAssets(true);
+    setMessage('正在重建资产包，请稍候...');
+    try {
+      const result = await apiClient.reextractAssets({
+        entity_ids: targetEntityIds,
+        novel_id: targetEntityIds?.length ? undefined : selectedNovelId || undefined,
+        chapter_id: targetEntityIds?.length || selectedScriptId ? undefined : selectedChapterId || undefined,
+        script_id: targetEntityIds?.length ? undefined : selectedScriptId || undefined,
+        entity_types: targetTypes.length ? targetTypes : ['character', 'scene', 'prop'],
+        mode: modeInput as 'append' | 'overwrite' | 'delete_then_extract',
+        style: selectedGenerationStyle,
+      });
+      setSelectedAssets(new Set());
+      await loadAssets();
+      const skippedText = Array.isArray(result?.skipped) && result.skipped.length
+        ? `，跳过 ${result.skipped.length} 项：${result.skipped.slice(0, 2).map((item: any) => item.reason).join('；')}`
+        : '';
+      const deletedText = result?.deleted_count ? `，归档旧资产 ${result.deleted_count} 个` : '';
+      setMessage(`资产包重建完成：新建 ${result?.created_count || 0} 个${deletedText}${skippedText}`);
+    } catch (err: any) {
+      setMessage(err?.message || '资产包重建失败，请检查实体范围和图像模型配置');
+    } finally {
+      setReextractingAssets(false);
+    }
+  };
+
   const loadVersionHistory = async (entityId: string, entityType: string) => {
     setMessage(null);
     try {
@@ -1627,6 +1693,16 @@ export default function AssetsPage() {
                 >
                   {generatingViews ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
                   生成缺失视图
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full border-cyan-300/40 text-cyan-100"
+                  disabled={reextractingAssets || selectedWizardEntityInvalid || (!selectedEntityId && !selectedNovelId)}
+                  onClick={rebuildAssetPack}
+                >
+                  {reextractingAssets ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                  重建当前资产包
                 </Button>
               </div>
 
@@ -1888,6 +1964,10 @@ export default function AssetsPage() {
                 <Button variant="outline" size="sm" className="border-red-300/40 text-red-200" onClick={batchArchiveAssets}>
                   <Trash2 className="mr-1 h-3 w-3" />
                   批量归档
+                </Button>
+                <Button variant="outline" size="sm" className="border-violet-300/40 text-violet-100" onClick={rebuildAssetPack} disabled={reextractingAssets}>
+                  {reextractingAssets ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
+                  重建资产包
                 </Button>
                 <Button variant="outline" size="sm" className="border-cyan-300/40 text-cyan-100" onClick={batchSetAssetsToCurrentScope}>
                   批量设为当前范围

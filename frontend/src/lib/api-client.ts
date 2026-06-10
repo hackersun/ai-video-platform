@@ -1633,6 +1633,24 @@ class ApiClient {
     });
   }
 
+  async reextractAssets(data: {
+    entity_ids?: string[];
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    entity_types?: string[];
+    mode?: 'append' | 'overwrite' | 'delete_then_extract';
+    style?: string;
+    view_keys?: string[];
+    model_config_id?: string;
+    allow_test_override?: boolean;
+  }) {
+    return this.request<any>('/assets/reextract', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateAssetScope(assetId: string, data: {
     scope: 'global' | 'project' | 'novel' | 'chapter' | 'script' | 'entity';
     project_id?: string;

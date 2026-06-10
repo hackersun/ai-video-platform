@@ -255,6 +255,20 @@ class AssetBulkActionRequest(BaseModel):
     allow_test_override: bool = Field(False, description="测试模式允许跳过生产限制")
 
 
+class AssetReextractRequest(BaseModel):
+    entity_ids: Optional[List[str]] = Field(None, description="可选：只重建指定实体的资产包")
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    entity_types: List[str] = Field(default_factory=lambda: ["character", "scene", "prop"])
+    mode: str = Field("append", description="append/overwrite/delete_then_extract")
+    style: str = Field("anime", description="生成风格")
+    view_keys: Optional[List[str]] = Field(None, description="可选：只重建指定视图 key")
+    model_config_id: Optional[str] = None
+    allow_test_override: bool = Field(False, description="测试模式允许跳过锁定/引用限制")
+    limit: int = Field(30, ge=1, le=100)
+
+
 class BulkSkippedItem(BaseModel):
     id: str
     reason: str
@@ -435,6 +449,26 @@ def ensure_bulk_asset_scope_payload(scope: Optional[str], payload: AssetScopeUpd
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="剧本作用域必须提供 script_id")
     if scope == "entity" and not payload.entity_id:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="实体作用域必须提供 entity_id")
+
+
+def asset_view_key(asset: Asset) -> Optional[str]:
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    value = params.get("view_key") or params.get("asset_subtype") or params.get("view_angle")
+    return str(value) if value else None
+
+
+def entity_view_keys(entity_type: str, requested: Optional[List[str]] = None) -> List[str]:
+    presets = {preset["entity_type"]: preset for preset in get_asset_view_presets()}
+    preset = presets.get(entity_type)
+    if not preset:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"不支持的实体资产类型：{entity_type}")
+    allowed = [view["key"] for view in preset.get("views", [])]
+    if not requested:
+        return allowed
+    unknown = [key for key in requested if key not in allowed]
+    if unknown:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"不支持的资产视图：{', '.join(unknown)}")
+    return requested
 
 
 async def validate_asset_scope(
@@ -843,6 +877,171 @@ async def bulk_action_assets(
         skipped=skipped,
         warnings=warnings,
         assets=[build_asset_response(asset) for asset in updated_assets],
+    )
+
+
+@router.post("/reextract", response_model=AssetBulkActionResponse)
+async def reextract_assets(
+    request: AssetReextractRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """按小说、剧本或选中实体重建角色/场景/道具资产包。"""
+    if request.mode not in {"append", "overwrite", "delete_then_extract"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="重建模式只支持 append、overwrite、delete_then_extract")
+    supported_types = {"character", "scene", "prop"}
+    entity_types = [item for item in request.entity_types if item in supported_types]
+    if not entity_types:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="资产重建只支持角色、场景和道具实体")
+    if not request.entity_ids and not any([request.novel_id, request.chapter_id, request.script_id]):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="请提供 entity_ids、novel_id、chapter_id 或 script_id")
+
+    if any([request.novel_id, request.chapter_id, request.script_id]):
+        await validate_asset_scope(
+            db,
+            user_id,
+            novel_id=request.novel_id,
+            chapter_id=request.chapter_id,
+            script_id=request.script_id,
+        )
+
+    conditions = [StoryEntity.user_id == user_id, StoryEntity.entity_type.in_(entity_types)]
+    if request.entity_ids:
+        conditions.append(StoryEntity.id.in_(request.entity_ids))
+    else:
+        if request.script_id:
+            conditions.append(StoryEntity.script_id == request.script_id)
+        elif request.chapter_id:
+            conditions.append(StoryEntity.chapter_id == request.chapter_id)
+        elif request.novel_id:
+            conditions.append(StoryEntity.novel_id == request.novel_id)
+
+    entity_result = await db.execute(
+        select(StoryEntity)
+        .where(and_(*conditions))
+        .order_by(StoryEntity.entity_type, StoryEntity.name)
+        .limit(request.limit)
+    )
+    entities = list(entity_result.scalars().all())
+    if not entities:
+        return AssetBulkActionResponse(
+            skipped=[
+                BulkSkippedItem(
+                    id=request.script_id or request.chapter_id or request.novel_id or ",".join(request.entity_ids or []),
+                    reason="当前范围没有可重建资产的角色、场景或道具实体",
+                    repair_action="先在实体库按小说/剧本重新抽取实体",
+                )
+            ]
+        )
+
+    allow_test_override = request.allow_test_override and is_dev_mode()
+    warnings: list[str] = []
+    if request.allow_test_override and not allow_test_override:
+        warnings.append("生产模式不允许使用测试跳过开关，请先解除资产锁、替换引用或切换测试环境")
+
+    service = AssetGenerationService(db, user_id)
+    if request.model_config_id:
+        await service.configure_image_model(request.model_config_id)
+
+    generated_assets: list[Asset] = []
+    skipped: list[BulkSkippedItem] = []
+    archived_count = 0
+    processed_count = 0
+
+    for entity in entities:
+        try:
+            requested_view_keys = entity_view_keys(entity.entity_type, request.view_keys)
+        except HTTPException:
+            raise
+        entity_asset_result = await db.execute(
+            select(Asset).where(
+                and_(
+                    Asset.user_id == user_id,
+                    Asset.entity_id == entity.id,
+                    Asset.entity_type == entity.entity_type,
+                    Asset.is_active == True,
+                )
+            )
+        )
+        active_assets = list(entity_asset_result.scalars().all())
+        assets_by_key: dict[str, list[Asset]] = {}
+        for asset in active_assets:
+            key = asset_view_key(asset)
+            if key:
+                assets_by_key.setdefault(key, []).append(asset)
+
+        view_keys_to_generate: list[str] = []
+        for key in requested_view_keys:
+            existing_for_key = assets_by_key.get(key, [])
+            blocked_assets = [
+                asset for asset in existing_for_key
+                if asset.is_locked or asset.is_final or (asset.usage_count or 0) > 0
+            ]
+            if request.mode == "append" and existing_for_key:
+                continue
+            if blocked_assets and not allow_test_override:
+                for asset in blocked_assets:
+                    skipped.append(
+                        BulkSkippedItem(
+                            id=asset.id,
+                            reason="资产已锁定、定稿或正在被引用",
+                            repair_action="先解锁资产或替换引用后再重建该视图",
+                        )
+                    )
+                continue
+            if blocked_assets and allow_test_override:
+                warnings.append(f"测试模式已重建「{entity.name}」的 {key} 视图，并跳过锁定/引用限制")
+            if request.mode in {"overwrite", "delete_then_extract"}:
+                for asset in existing_for_key:
+                    if asset.is_locked or asset.is_final or (asset.usage_count or 0) > 0:
+                        if not allow_test_override:
+                            continue
+                    asset.is_active = False
+                    asset.updated_at = utc_now()
+                    archived_count += 1
+            view_keys_to_generate.append(key)
+
+        if not view_keys_to_generate:
+            continue
+
+        character = await resolve_character_for_story_entity(db, user_id, entity)
+        try:
+            generated = await service.generate_entity_view_assets(
+                entity_id=entity.id,
+                entity_type=entity.entity_type,
+                entity_name=entity.name,
+                entity_description=story_entity_visual_description(entity),
+                style=request.style,
+                novel_id=entity.novel_id,
+                chapter_id=entity.chapter_id,
+                script_id=getattr(entity, "script_id", None),
+                character_id=character.id if character else None,
+                view_keys=view_keys_to_generate,
+            )
+        except ValueError as exc:
+            skipped.append(
+                BulkSkippedItem(
+                    id=entity.id,
+                    reason=str(exc),
+                    repair_action="先拆分复合实体或调整实体类型后再生成资产",
+                )
+            )
+            continue
+        generated_assets.extend(generated.values())
+        processed_count += 1
+
+    if archived_count:
+        await db.commit()
+    for asset in generated_assets:
+        await db.refresh(asset)
+
+    return AssetBulkActionResponse(
+        updated_count=processed_count,
+        deleted_count=archived_count,
+        created_count=len(generated_assets),
+        skipped=skipped,
+        warnings=warnings,
+        assets=[build_asset_response(asset) for asset in generated_assets],
     )
 
 
