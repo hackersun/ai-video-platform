@@ -28,6 +28,7 @@ const expectedTaskLabels = [
   '章节创建',
   '剧本创建',
   '分镜创建',
+  '实体/资产抽取',
   '镜头创建',
   '镜头视频',
   '头像/角色图',
@@ -128,6 +129,34 @@ const variableGuides: Record<string, any> = {
       subtitle_text: '沈砚：铜铃又响了。',
       tone: '冷蓝月光',
       bad_case: '脸型变化',
+    },
+  },
+  entity_extraction: {
+    task: 'entity_extraction',
+    task_label: '实体/资产抽取',
+    items: [
+      {
+        name: 'source_content',
+        label: '来源正文',
+        description: '用于抽取实体和资产候选的小说、章节、剧本或分镜文本。',
+        example: '沈砚在雨夜旧码头听见铜铃声。',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+      {
+        name: 'entity_types',
+        label: '实体类型',
+        description: '本次允许抽取的实体类型中文列表。',
+        example: 'character、scene、prop、event',
+        source: '系统上下文',
+        system_fill: true,
+        required: false,
+      },
+    ],
+    sample_context: {
+      source_content: '沈砚在雨夜旧码头听见铜铃声。',
+      entity_types: 'character、scene、prop、event',
     },
   },
   storyboard_generation: {
@@ -358,6 +387,10 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await expect(page.getByText('分镜创建变量')).toBeVisible();
   await expect(page.getByText('镜头数量', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('建议使用“角色名：台词”格式')).toBeVisible();
+  await page.getByTestId('prompt-skill-task-select').selectOption('entity_extraction');
+  await expect(page.getByText('实体/资产抽取变量')).toBeVisible();
+  await expect(page.getByText('来源正文', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('实体类型', { exact: true }).first()).toBeVisible();
   await page.getByTestId('prompt-skill-task-select').selectOption('shot_video');
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
 

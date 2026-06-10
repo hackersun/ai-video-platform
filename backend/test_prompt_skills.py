@@ -16,6 +16,7 @@ EXPECTED_STANDARD_TASKS = {
     "chapter_writing",
     "script_generation",
     "storyboard_generation",
+    "entity_extraction",
     "shot_prompt",
     "shot_video",
     "character_image",
@@ -131,6 +132,40 @@ def test_prompt_skill_variable_guides_cover_storyboard_dialogue_context(client: 
     assert "沈砚：铜铃又响了。" in prompt
     assert "字幕为沈砚：铜铃又响了。" in prompt
     assert "{dialogue}" not in prompt
+
+
+def test_prompt_skill_variable_guides_cover_entity_asset_extraction(client: TestClient) -> None:
+    user_id = f"prompt-skill-entity-variable-user-{uuid4()}"
+
+    guide_response = client.get(
+        "/api/v1/prompt-skills/variables",
+        params={"task": "entity_extraction"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert guide_response.status_code == 200
+    guide = guide_response.json()
+    assert guide["task"] == "entity_extraction"
+    assert guide["task_label"] == "实体/资产抽取"
+    variable_by_name = {item["name"]: item for item in guide["items"]}
+
+    for name in ("source_content", "entity_types", "allowed_entity_types", "output_format"):
+        assert name in variable_by_name
+        assert variable_by_name[name]["example"]
+
+    preview_response = client.post(
+        "/api/v1/prompt-skills/preview",
+        json={
+            "task": "entity_extraction",
+            "context": guide["sample_context"],
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert preview_response.status_code == 200
+    prompt = preview_response.json()["prompt"]
+    assert "实体/资产抽取" in prompt or "实体" in prompt
+    assert "JSON 数组" in prompt
 
 
 def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:

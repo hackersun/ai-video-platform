@@ -43,3 +43,24 @@ def test_ai_entity_json_is_normalized_before_persistence():
     assert "青阳宗外门石屋" in by_type.get("scene", set())
     assert "旧铜钩" in by_type.get("prop", set())
     assert "外门弟子们" not in by_type.get("character", set())
+
+
+def test_extraction_filters_composite_groups_and_action_phrases():
+    text = (
+        "角色：孙剑（逆天至尊）、外门弟子们。"
+        "场景：青阳宗广场。"
+        "道具：孙剑背负古剑、裂纹令牌。"
+        "事件：孙剑发现令牌裂开。"
+    )
+
+    entities = extract_story_entities(text, {"character", "scene", "prop", "event"})
+
+    by_type = _names_by_type(entities)
+    assert "孙剑" in by_type.get("character", set())
+    assert "外门弟子们" not in by_type.get("character", set())
+    assert "孙剑（逆天至尊）" not in by_type.get("character", set())
+    assert "青阳宗广场" in by_type.get("scene", set())
+    assert "古剑" in by_type.get("prop", set())
+    assert "裂纹令牌" in by_type.get("prop", set())
+    assert "孙剑背负古剑" not in by_type.get("prop", set())
+    assert "孙剑发现令牌裂开" in by_type.get("event", set())

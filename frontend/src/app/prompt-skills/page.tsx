@@ -52,6 +52,7 @@ const taskOptions = [
   { value: 'chapter_writing', label: '章节创建' },
   { value: 'script_generation', label: '剧本创建' },
   { value: 'storyboard_generation', label: '分镜创建' },
+  { value: 'entity_extraction', label: '实体/资产抽取' },
   { value: 'shot_prompt', label: '镜头创建' },
   { value: 'shot_video', label: '镜头视频' },
   { value: 'character_image', label: '头像/角色图' },

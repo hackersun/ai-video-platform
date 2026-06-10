@@ -1023,3 +1023,14 @@
 - 验证通过：失败单测先红后绿；后端全量 `DEV_MODE=true PYTHONPATH=. pytest -q` 451 passed、1 skipped；`DEV_MODE=true PYTHONPATH=. python3 -m compileall app` 通过。
 - 验证通过：前端使用 bundled Node 执行 `npm run build` 通过；构建后 `npx tsc --noEmit` 通过。
 - 验证通过：关键前端 E2E `history-preflight-evidence.spec.ts`、`workflow-step-generation-evidence.spec.ts`、`workflow-media-preflight.spec.ts` 共 6 passed。
+
+## 2026-06-10 Phase 273 RC 收口与资产抽取优化
+
+- 已把实体/资产抽取接入 Prompt 技能体系：新增 `entity_extraction` 内置技能、变量说明、前端任务选项，并让 `/story-bibles/entities/extract` 在有激活模板时先套用 Prompt 技能模板，再拼内部抽取规则。
+- 已收紧抽取过滤：组合角色名如 `孙剑（逆天至尊）` 会归一为 `孙剑`；群体、过长短语、情绪/状态词不再进入角色；`背负/手持/携带/佩着/戴着` 等动作前缀会从道具候选中剥离；明显动作短语会转为事件候选。
+- 发现并修复镜头生产上下文持久化问题：`/shots/{shot_id}/production-context` 原先原地修改 JSON，可能返回成功但数据库没有记录 `production_context`；已改为复制 dict 后重新赋值，并用视频多视图回归验证。
+- 视频参考图结论：当前火山视频生成路径只支持一个 `image_url` 进入供应商 content。多视图和资产锁必须作为文本一致性约束、任务 metadata 与预检提示存在；本轮新增 metadata 字段和回归，避免把多实体参考图误认为已全部直传。
+- 已通过初步聚焦验证：`backend/test_workflow_routes.py::test_video_generation_records_multiview_refs_but_sends_single_provider_image` 1 passed；`backend/tests/test_entity_extraction_classification.py backend/test_prompt_skills.py backend/test_prompt_skill_ai_entrypoints.py` 20 passed。
+- 后端组合回归通过：`python3 -m compileall backend/app`；`python3 -m pytest backend/tests/test_entity_extraction_classification.py backend/test_prompt_skills.py backend/test_prompt_skill_ai_entrypoints.py backend/test_prompt_skill_prompt_composer.py backend/test_studio_mode.py backend/test_studio_snapshot.py backend/test_studio_actions.py backend/test_workflow_routes.py -q`，80 passed。
+- 前端组合回归通过：`PATH=/Users/sunqinyue/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH npm run build`；`PLAYWRIGHT_PORT=3100 npx playwright test e2e/prompt-skills.spec.ts e2e/studio-workspace.spec.ts e2e/studio-mode-gates.spec.ts e2e/studio-full-flow.spec.ts --project=chromium`，5 passed。
+- `git diff --check` 已通过；本轮准备精确暂存并提交候选稳定点，便于后续回退。

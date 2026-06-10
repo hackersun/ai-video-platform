@@ -521,7 +521,7 @@ async def get_shot_production_context(
     shot = result.scalar_one_or_none()
     if not shot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
-    extra_data = _json_dict(shot.extra_data)
+    extra_data = dict(_json_dict(shot.extra_data))
     return ShotProductionContextResponse(
         shot_id=shot.id,
         production_context=extra_data.get("production_context") or {},
@@ -617,7 +617,7 @@ async def update_shot_production_context(
     if not shot:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
 
-    extra_data = _json_dict(shot.extra_data)
+    extra_data = dict(_json_dict(shot.extra_data))
     production_context = dict(extra_data.get("production_context") or {})
     if request.asset_version_locks is not None:
         production_context["asset_version_locks"] = await _resolve_asset_locks(db, user_id, request.asset_version_locks)

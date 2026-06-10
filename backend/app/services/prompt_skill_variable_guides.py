@@ -11,6 +11,7 @@ TASK_LABELS: Dict[str, str] = {
     "chapter_writing": "章节创建",
     "script_generation": "剧本创建",
     "storyboard_generation": "分镜创建",
+    "entity_extraction": "实体/资产抽取",
     "shot_prompt": "镜头创建",
     "shot_video": "镜头视频",
     "character_image": "头像/角色图",
@@ -96,6 +97,13 @@ TASK_VARIABLES: Dict[str, List[Dict[str, Any]]] = {
         ),
         _var("dialogue_speaker", "说话人", "分镜 extra_data.dialogue_speaker，用于配音人声和字幕绑定。", "沈砚"),
         _var("template_name", "分镜模板", "智能分镜匹配到的模板名称。", "雨夜悬疑对白模板"),
+    ],
+    "entity_extraction": [
+        _var("source_content", "来源正文", "用于抽取实体和资产候选的小说、章节、剧本或分镜文本。", "沈砚在雨夜旧码头听见铜铃声。"),
+        _var("entity_types", "实体类型", "本次允许抽取的实体类型中文列表。", "character、scene、prop、event"),
+        _var("allowed_entity_types", "允许类型", "本次允许抽取的实体类型英文列表。", "character, scene, prop, event"),
+        _var("output_format", "输出格式", "抽取模型必须遵守的输出格式。", "JSON 数组"),
+        _var("classification_rules", "分类规则", "可在自定义模板中补充角色、场景、道具、事件的分类边界。", "角色必须是单一个体，群体和情绪词不能作为角色。", source="模板默认值", system_fill=False),
     ],
     "shot_prompt": [
         _var("shot_number", "镜头编号", "当前镜头序号。", 3),

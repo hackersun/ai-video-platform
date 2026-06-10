@@ -26,7 +26,7 @@ from app.services.entity_extraction_service import (
 )
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.prompt_composer import compose_generation_prompt
-from app.services.prompt_skill_service import active_prompt_skill_blocks
+from app.services.prompt_skill_service import active_prompt_skill_blocks, apply_active_prompt_skill_template
 from app.services.story_state_machine import (
     build_story_state_machine,
     check_story_state_machine,
@@ -697,11 +697,25 @@ async def _extract_story_entities_with_optional_ai(
 
 小说文本：
 {text[:30000]}"""
+            prompt_result = await apply_active_prompt_skill_template(
+                db,
+                user_id,
+                task="entity_extraction",
+                internal_prompt=prompt,
+                context={
+                    "source_content": text[:30000],
+                    "entity_types": "、".join(sorted(requested)),
+                    "allowed_entity_types": ", ".join(sorted(requested)),
+                    "output_format": "JSON 数组",
+                },
+                template_title="激活实体/资产抽取提示词模板",
+                internal_title="内部实体抽取规则",
+            )
             response = await service.safe_chat_completion(
                 model=model_id or "",
                 messages=[
                     {"role": "system", "content": "你是小说动漫制作的实体抽取专家，输出必须可被 JSON 解析。"},
-                    {"role": "user", "content": prompt},
+                    {"role": "user", "content": prompt_result["prompt"]},
                 ],
                 temperature=0.2,
                 max_tokens=5000,

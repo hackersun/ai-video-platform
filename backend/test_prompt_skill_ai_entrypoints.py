@@ -297,3 +297,82 @@ def test_storyboard_generation_uses_active_prompt_skill_template_without_consist
     assert "必须保留对白" in system_prompt
     assert "【内部逻辑提示词】" in system_prompt
     assert "dialogue: 台词/配音" in system_prompt
+
+
+def test_entity_extraction_uses_active_prompt_skill_template(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"entity-extraction-skill-user-{uuid4()}"
+    calls: list[dict] = []
+
+    async def _fake_text_config(*args, **kwargs):
+        return "fake-key", "qwen", "qwen-plus", None
+
+    class _FakeTextService:
+        async def safe_chat_completion(self, **kwargs) -> dict:
+            calls.append(kwargs)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                [
+                                    {
+                                        "entity_type": "character",
+                                        "name": "沈砚",
+                                        "description": "年轻密探，追查铜铃线索。",
+                                        "evidence": "沈砚在旧码头听见铜铃声。",
+                                        "confidence": 96,
+                                    },
+                                    {
+                                        "entity_type": "prop",
+                                        "name": "铜铃",
+                                        "description": "旧码头的关键线索。",
+                                        "evidence": "铜铃声从雨幕里传来。",
+                                        "confidence": 94,
+                                    },
+                                ],
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    monkeypatch.setattr("app.api.v1.endpoints.story_bible.get_user_text_model_config", _fake_text_config)
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.story_bible.create_text_generation_service",
+        lambda *args, **kwargs: _FakeTextService(),
+    )
+
+    skill_resp = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "资产抽取强过滤",
+            "task": "entity_extraction",
+            "stage": "analysis",
+            "content": "用户抽取模板：只抽取{entity_types}，群体和情绪词不能进入资产库。来源：{source_content}",
+            "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert skill_resp.status_code == 201, skill_resp.text
+
+    response = client.post(
+        "/api/v1/story-bibles/entities/extract",
+        json={
+            "text": "沈砚在旧码头听见铜铃声。路人们围观。",
+            "entity_types": ["character", "prop"],
+            "persist": False,
+            "model_config_id": "text-config-001",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert calls
+    user_prompt = calls[0]["messages"][1]["content"]
+    assert "用户抽取模板：只抽取character、prop，群体和情绪词不能进入资产库。" in user_prompt
+    assert "【内部实体抽取规则】" in user_prompt
+    assert "严格输出 JSON 数组" in user_prompt

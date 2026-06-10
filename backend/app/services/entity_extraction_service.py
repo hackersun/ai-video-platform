@@ -147,11 +147,27 @@ NON_CHARACTER_WORDS = {
     "画面",
     "镜头",
 }
+EVENT_LIKE_MARKERS = (
+    "醒来",
+    "发现",
+    "遭遇",
+    "决定",
+    "战斗",
+    "逃离",
+    "抵达",
+    "失踪",
+    "爆发",
+    "追查",
+    "寻找",
+    "打开",
+    "进入",
+)
 
 
 def _clean_name(value: str) -> str:
     cleaned = re.sub(r"\s+", " ", value).strip(" ：:，。；;、“”\"'\t\n")
     cleaned = re.split(r"[。！？!?]|\b(?:角色|人物|主角|配角|场景|地点|场地|道具|物品|装备|事件|剧情|发生)[:：]", cleaned)[0]
+    cleaned = re.sub(r"^([\u4e00-\u9fff]{2,6})[（(][^）)]{1,30}[）)]$", r"\1", cleaned)
     return cleaned.strip(" ：:，。；;、“”\"'\t\n")
 
 
@@ -178,7 +194,14 @@ def _is_group_or_non_character_name(name: str) -> bool:
         return True
     if text in NON_CHARACTER_WORDS:
         return True
+    if len(text) > 8:
+        return True
     return _contains_any(text, GROUP_CHARACTER_WORDS)
+
+
+def _is_event_like_name(name: str) -> bool:
+    text = name.strip()
+    return len(text) >= 4 and _contains_any(text, EVENT_LIKE_MARKERS)
 
 
 def _looks_like_chinese_person_name(name: str) -> bool:
@@ -190,7 +213,7 @@ def _looks_like_chinese_person_name(name: str) -> bool:
 def _normalize_name_for_type(entity_type: str, name: str) -> str:
     cleaned = _clean_name(name)
     if entity_type == "prop":
-        cleaned = re.sub(r"^.*(?:别碰|触碰|拿起|拿着|握着|取出|举起|发现|佩戴|拔出|听见|把|将)", "", cleaned)
+        cleaned = re.sub(r"^.*(?:别碰|触碰|拿起|拿着|握着|取出|举起|发现|佩戴|佩着|戴着|背负|手持|携带|悬挂|挂着|拔出|听见|把|将)", "", cleaned)
     if entity_type == "scene":
         cleaned = re.sub(r"^(?:在|到|至|抵达|进入|离开|前往|来到|走进)", "", cleaned)
     return _clean_name(cleaned)
@@ -205,6 +228,8 @@ def _infer_entity_type(
     context = f"{name} {description or ''} {evidence or ''}"
     if _is_group_or_non_character_name(name) and declared_type == "character":
         return None
+    if declared_type == "character" and _is_event_like_name(name):
+        return "event"
     has_character_context = (
         _endswith_any(name, CHARACTER_TITLE_SUFFIXES)
         or (

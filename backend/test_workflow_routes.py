@@ -556,6 +556,124 @@ def test_video_generation_maps_local_reference_image_through_public_storage(
     assert job["prompt_parameters"]["image_delivery_config_id"] == storage_config_id
 
 
+def test_video_generation_records_multiview_refs_but_sends_single_provider_image(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured.update(kwargs)
+
+            class _CreateResult:
+                id = "video-task-single-image-multiview"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = "video-multiview-single-image-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "雨夜追踪", "description": "沈砚在雨夜追查铜铃线索。"},
+        headers=_auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+    character_resp = client.post(
+        "/api/v1/characters",
+        json={
+            "novel_id": novel_id,
+            "name": "沈砚",
+            "description": "年轻密探",
+            "appearance": "青衣长发，眼神冷静",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert character_resp.status_code == 201
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "title": "雨夜追踪剧本",
+            "content": "沈砚在旧码头停步，铜铃在雨中轻晃。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={"script_id": script_resp.json()["id"], "title": "旧码头发现", "description": "多视图参考验证"},
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_resp.json()["id"],
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "沈砚在旧码头回头，青衣被雨水打湿。",
+            "dialogue": "沈砚：铜铃声就在这里。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+    shot_id = shot_resp.json()["id"]
+    multiview_refs = [
+        {
+            "character_name": "沈砚",
+            "view_angle": "front",
+            "url": "https://cdn.example.com/assets/shenyan-front.png",
+        },
+        {
+            "character_name": "沈砚",
+            "view_angle": "side",
+            "url": "https://cdn.example.com/assets/shenyan-side.png",
+        },
+    ]
+    context_resp = client.put(
+        f"/api/v1/shots/{shot_id}/production-context",
+        json={"character_multiview_refs": multiview_refs},
+        headers=_auth_headers(user_id),
+    )
+    assert context_resp.status_code == 200, context_resp.text
+
+    create_resp = client.post(
+        "/api/v1/video/generate",
+        json={
+            "prompt": "按多视图参考生成沈砚雨夜镜头",
+            "api_key": "test-key",
+            "model": "Doubao-Seedance-1.0-pro-fast",
+            "shot_id": shot_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert create_resp.status_code == 200, create_resp.text
+    provider_images = [item for item in captured["content"] if item["type"] == "image_url"]
+    assert len(provider_images) == 1
+    assert provider_images[0]["image_url"]["url"] == "https://cdn.example.com/assets/shenyan-front.png"
+
+    job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
+    assert job_resp.status_code == 200
+    job = job_resp.json()
+    assert job["character_multiview_refs"] == multiview_refs
+    assert job["prompt_parameters"]["reference_image_source"] == "character_multiview"
+    assert job["prompt_parameters"]["provider_reference_image_limit"] == 1
+    assert job["prompt_parameters"]["reference_image_strategy"] == "single_provider_image_with_textual_asset_constraints"
+    assert job["prompt_parameters"]["supplemental_reference_image_count"] == 2
+    assert job["prompt_parameters"]["image_url_sent"] is True
+
+
 def test_video_generation_accepts_seedance_20_fast_model(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict = {}
 

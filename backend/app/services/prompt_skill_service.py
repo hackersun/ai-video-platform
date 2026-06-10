@@ -94,6 +94,7 @@ def _task_label(task: str) -> str:
         "chapter_writing": "章节创建",
         "script_generation": "剧本创建",
         "storyboard_generation": "分镜创建",
+        "entity_extraction": "实体/资产抽取",
         "shot_prompt": "镜头创建",
         "shot_video": "镜头视频",
         "character_image": "头像/角色图",

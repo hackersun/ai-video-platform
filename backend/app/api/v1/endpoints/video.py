@@ -1558,6 +1558,14 @@ async def generate_video(
             image_delivery["image_delivery"],
         )
         prompt_parameters["reference_image_source"] = reference_image_source
+        supplemental_refs = shot_context.get("character_multiview_refs") or []
+        prompt_parameters["provider_reference_image_limit"] = 1
+        prompt_parameters["reference_image_strategy"] = (
+            "single_provider_image_with_textual_asset_constraints"
+            if supplemental_refs or (shot_context.get("asset_version_locks") or [])
+            else "single_provider_image"
+        )
+        prompt_parameters["supplemental_reference_image_count"] = len(supplemental_refs)
 
         # 使用请求提供的 API key、所选视频模型配置或同 provider 的可用 Key。
         if request.api_key:

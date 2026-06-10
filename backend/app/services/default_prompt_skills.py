@@ -94,6 +94,21 @@ STANDARD_PROMPT_SKILLS: List[Dict[str, Any]] = [
 """,
     ),
     _skill(
+        task="entity_extraction",
+        name="标准实体/资产抽取技能",
+        description="从小说、章节或剧本中抽取可用于资产和分镜生产的角色、场景、道具和事件。",
+        stage="analysis",
+        priority=45,
+        variables={"entity_types": "character、scene、prop、event", "output_format": "JSON 数组"},
+        content="""
+标准实体/资产抽取技能：只抽取原文中有明确证据、后续能用于分镜、资产或视频一致性的对象。
+允许的实体类型为：{entity_types}，输出格式必须是「{output_format}」。
+角色必须是可持续追踪的单一个体；群体背景、情绪词、身体部位、动作短语不能当作角色。
+场景必须是可复用空间；道具必须是可见且需要前后一致的物件；事件必须是剧情变化，不要和人物、场景、道具混淆。
+每个实体都要带 evidence 和 confidence；没有证据就不要凭题材臆造资产。
+""",
+    ),
+    _skill(
         task="shot_prompt",
         name="标准镜头创建技能",
         description="把分镜字段整理为可进入图像/视频模型的镜头提示词。",
