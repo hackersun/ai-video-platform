@@ -169,6 +169,8 @@ def test_prompt_skill_create_list_and_preview(client: TestClient) -> None:
     assert created["id"] in by_id
     assert "builtin-shot_video-standard" in by_id
     assert by_id["builtin-shot_video-standard"]["is_builtin"] is True
+    assert by_id["builtin-shot_video-standard"]["is_active"] is False
+    assert [item["id"] for item in items if item["is_active"]] == [created["id"]]
 
     preview_response = client.post(
         "/api/v1/prompt-skills/preview",

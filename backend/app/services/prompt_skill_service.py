@@ -43,6 +43,30 @@ def prompt_skill_payload(skill: PromptSkill) -> Dict[str, Any]:
     }
 
 
+def _effective_prompt_skill_payloads(skills: List[PromptSkill], user_id: str) -> List[Dict[str, Any]]:
+    user_active_by_task: Dict[str, str] = {}
+    builtin_active_by_task: Dict[str, str] = {}
+    for skill in skills:
+        if not skill.is_active:
+            continue
+        if skill.is_builtin:
+            builtin_active_by_task.setdefault(skill.task, skill.id)
+        elif skill.user_id == user_id:
+            user_active_by_task.setdefault(skill.task, skill.id)
+
+    effective_ids = set(user_active_by_task.values())
+    for task, skill_id in builtin_active_by_task.items():
+        if task not in user_active_by_task:
+            effective_ids.add(skill_id)
+
+    payloads = []
+    for skill in skills:
+        payload = prompt_skill_payload(skill)
+        payload["is_active"] = skill.id in effective_ids
+        payloads.append(payload)
+    return payloads
+
+
 def render_prompt_skill(skill: PromptSkill, context: Optional[Dict[str, Any]] = None) -> str:
     values = _SafeFormatDict({**(skill.variables or {}), **(context or {})})
     try:
@@ -185,31 +209,17 @@ async def list_prompt_skills(
     active: Optional[bool] = None,
 ) -> Dict[str, Any]:
     await ensure_standard_prompt_skills(db)
-    if active is True and task:
-        user_query = (
-            select(PromptSkill)
-            .where(
-                PromptSkill.user_id == user_id,
-                PromptSkill.task == task,
-                PromptSkill.is_active == True,
-                PromptSkill.is_builtin == False,
-            )
-            .order_by(PromptSkill.priority, PromptSkill.created_at)
-        )
-        user_skills = list((await db.execute(user_query)).scalars().all())
-        if user_skills:
-            return {"items": [prompt_skill_payload(skill) for skill in user_skills], "count": len(user_skills)}
-
     query = select(PromptSkill).where(or_(PromptSkill.user_id == user_id, PromptSkill.is_builtin == True))
     if task:
         query = query.where(PromptSkill.task == task)
     if stage:
         query = query.where(PromptSkill.stage == stage)
-    if active is not None:
-        query = query.where(PromptSkill.is_active == active)
     query = query.order_by(PromptSkill.priority, PromptSkill.created_at)
     skills = list((await db.execute(query)).scalars().all())
-    return {"items": [prompt_skill_payload(skill) for skill in skills], "count": len(skills)}
+    items = _effective_prompt_skill_payloads(skills, user_id)
+    if active is not None:
+        items = [item for item in items if item["is_active"] is active]
+    return {"items": items, "count": len(items)}
 
 
 async def _deactivate_user_task_skills(
@@ -368,7 +378,7 @@ async def active_prompt_skill_entries(
     user_skills = list(user_result.scalars().all())
     if user_skills:
         entries = [rendered_prompt_skill_entry(skill, context) for skill in user_skills]
-        return [entry for entry in entries if entry["content"]]
+        return [entry for entry in entries if entry["content"]][:1]
 
     builtin_result = await db.execute(
         select(PromptSkill)
@@ -380,7 +390,7 @@ async def active_prompt_skill_entries(
         .order_by(PromptSkill.priority, PromptSkill.created_at)
     )
     entries = [rendered_prompt_skill_entry(skill, context) for skill in builtin_result.scalars().all()]
-    return [entry for entry in entries if entry["content"]]
+    return [entry for entry in entries if entry["content"]][:1]
 
 
 async def active_prompt_skill_blocks(
