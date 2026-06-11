@@ -5,6 +5,7 @@ Tests for default text model resolution.
 from __future__ import annotations
 
 import pytest
+from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -33,6 +34,78 @@ from main import app
 @pytest.fixture(scope="module", autouse=True)
 def _init_database() -> None:
     init_db()
+
+
+@pytest.mark.asyncio
+async def test_llm_catalog_hides_preflight_test_provider_data() -> None:
+    user_id = f"llm-catalog-user-{uuid4()}"
+    provider_id = f"provider-{uuid4()}"
+    model_id = f"model-{uuid4()}"
+    config_id = f"config-{uuid4()}"
+
+    async with AsyncSessionLocal() as db:
+        db.add(
+            LLMProvider(
+                id=provider_id,
+                name=f"preflight-provider-{uuid4()}",
+                name_cn="预检供应商",
+                base_url="https://example.invalid/preflight",
+                is_active=True,
+            )
+        )
+        db.add(
+            LLMModel(
+                id=model_id,
+                provider_id=provider_id,
+                model_id="preflight-video-model",
+                model_name="Preflight Video Model",
+                model_type="video",
+                capabilities=["text_to_video", "image_to_video"],
+                is_active=True,
+            )
+        )
+        config = LLMConfig(
+            id=config_id,
+            user_id=user_id,
+            model_id=model_id,
+            name="预检视频模型配置",
+            is_active=True,
+            is_default=True,
+            test_status="pending",
+        )
+        config.set_api_key_encrypted("sk-preflight")
+        db.add(config)
+        await db.commit()
+
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    try:
+        providers_response = client.get("/api/v1/llm/providers")
+        assert providers_response.status_code == 200
+        provider_names = {provider["name_cn"] for provider in providers_response.json()}
+        provider_ids = {provider["id"] for provider in providers_response.json()}
+        assert "预检供应商" not in provider_names
+        assert provider_id not in provider_ids
+
+        models_response = client.get("/api/v1/llm/models", headers=headers)
+        assert models_response.status_code == 200
+        assert all(model["provider_id"] != provider_id for model in models_response.json())
+        assert all(model["model_id"] != "preflight-video-model" for model in models_response.json())
+
+        configs_response = client.get("/api/v1/llm/configs", headers=headers)
+        assert configs_response.status_code == 200
+        assert all(config["id"] != config_id for config in configs_response.json())
+    finally:
+        async with AsyncSessionLocal() as db:
+            for config in (await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))).scalars().all():
+                await db.delete(config)
+            for model in (await db.execute(select(LLMModel).where(LLMModel.provider_id == provider_id))).scalars().all():
+                await db.delete(model)
+            provider = await db.get(LLMProvider, provider_id)
+            if provider is not None:
+                await db.delete(provider)
+            await db.commit()
 
 
 @pytest.mark.asyncio

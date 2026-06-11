@@ -205,6 +205,7 @@ def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
         return False
     values = [
         getattr(model, "id", None),
+        getattr(model, "provider_id", None),
         getattr(model, "model_id", None),
         getattr(model, "model_name", None),
         getattr(model, "model_name_cn", None),
@@ -219,9 +220,32 @@ def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
         or "test-image-" in text
         or "test-text-" in text
         or text.startswith("test-")
+        or "preflight-" in text
+        or "preflight video model" in text
         or "doubao-seedance-test" in text
         or "doubao-seedance-consistency-test" in text
         or "speech-test" in text
+    )
+
+
+def _is_internal_test_provider(provider: Optional[LLMProvider]) -> bool:
+    if provider is None:
+        return False
+    name_cn = (getattr(provider, "name_cn", None) or "").strip()
+    if name_cn in {"预检供应商", "测试供应商", "占位供应商"}:
+        return True
+    values = [
+        getattr(provider, "id", None),
+        getattr(provider, "name", None),
+        getattr(provider, "name_en", None),
+        getattr(provider, "base_url", None),
+        getattr(provider, "description", None),
+    ]
+    text = " ".join(str(value or "").lower() for value in values)
+    return (
+        "preflight-provider-" in text
+        or "test-provider-" in text
+        or "placeholder-provider-" in text
     )
 
 
@@ -1797,7 +1821,10 @@ async def list_providers(
     result = await db.execute(
         select(LLMProvider).where(LLMProvider.is_active == True)
     )
-    providers = result.scalars().all()
+    providers = [
+        provider for provider in result.scalars().all()
+        if not _is_internal_test_provider(provider)
+    ]
     return [
         LLMProviderResponse(
             id=provider.id,
@@ -1822,13 +1849,26 @@ async def list_models(
 ):
     """获取大模型列表"""
     await ensure_default_models(db)
+    provider_result = await db.execute(
+        select(LLMProvider).where(LLMProvider.is_active == True)
+    )
+    internal_provider_ids = {
+        item.id for item in provider_result.scalars().all()
+        if _is_internal_test_provider(item)
+    }
+    if provider and provider in internal_provider_ids:
+        return []
+
     query = select(LLMModel).where(LLMModel.is_active == True)
     
     if provider:
         query = query.where(LLMModel.provider_id == provider)
     
     result = await db.execute(query)
-    models = [model for model in result.scalars().all() if not _is_internal_test_model(model)]
+    models = [
+        model for model in result.scalars().all()
+        if model.provider_id not in internal_provider_ids and not _is_internal_test_model(model)
+    ]
     if not models:
         return []
 
@@ -1916,6 +1956,8 @@ async def list_configs(
             select(LLMProvider).where(LLMProvider.id == model.provider_id)
         )
         provider = provider_result.scalar_one_or_none()
+        if _is_internal_test_provider(provider):
+            continue
         
         configs.append(build_llm_config_response(config, model, provider))
     
