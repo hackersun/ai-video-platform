@@ -87,6 +87,15 @@ const styleOptions = [
   { value: 'cyberpunk', label: '赛博霓虹' },
 ];
 
+const sampleStory = {
+  title: '星灯邮差',
+  premise:
+    '十二岁的林澈在山城旧邮局发现一盏会说话的星灯。星灯告诉他，夜空中有一列只在雨后出现的云上列车，列车会把遗失的愿望送回主人身边。林澈决定成为临时邮差，帮沉默的转学生安禾找回她写给妈妈却从未寄出的信。',
+  chapterTitle: '第一章 雨后的旧邮局',
+  chapterContent:
+    '暴雨停下时，山城的石阶像被星光洗过一样发亮。林澈抱着被雨打湿的书包，躲进街角那间早已停业的旧邮局。柜台后面忽然亮起一盏蓝色小灯，灯芯里传来细小的声音：“第七百二十一任邮差，你终于来了。”林澈吓得后退一步，却看见灯光照出一封没有地址的银色信封。信封上写着安禾的名字。窗外，一声悠长的汽笛从云层深处传来。',
+};
+
 const QUICK_START_DRAFT_KEY = 'ai-video-platform:quick-start-draft';
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(/\/api\/v1\/?$/, '');
 
@@ -213,6 +222,19 @@ export default function QuickStartPage() {
     if (showMessage) {
       setError(null);
     }
+  };
+
+  const fillSampleStory = () => {
+    setForm((current) => ({
+      ...current,
+      ...sampleStory,
+      genre: 'fantasy',
+      style: 'anime',
+      shotCount: 4,
+      createStoryBible: true,
+      autoProducePreview: true,
+    }));
+    setError(null);
   };
 
   const runQuickStart = async () => {
@@ -405,51 +427,81 @@ export default function QuickStartPage() {
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Card id="quick-start-form" className="bg-white/5 border-white/10">
             <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-violet-400" />
-                故事输入
-              </CardTitle>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <BookOpen className="h-5 w-5 text-violet-400" />
+                    故事输入
+                  </CardTitle>
+                  <p className="mt-1 text-sm text-white/50">只填故事信息即可；类型、风格和镜头数都有默认值。</p>
+                </div>
+                <Button type="button" variant="outline" className="border-white/20 text-white" onClick={fillSampleStory}>
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  填入示例故事
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Input
-                  value={form.title}
-                  onChange={(event) => setForm({ ...form, title: event.target.value })}
-                  placeholder="作品名"
-                  className="bg-white/5 border-white/10 text-white"
-                />
-                <Input
-                  value={form.chapterTitle}
-                  onChange={(event) => setForm({ ...form, chapterTitle: event.target.value })}
-                  placeholder="章节名"
-                  className="bg-white/5 border-white/10 text-white"
-                />
+                <div className="space-y-1.5">
+                  <div className="text-xs text-white/50">作品名</div>
+                  <Input
+                    value={form.title}
+                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                    placeholder="例如：星灯邮差"
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-xs text-white/50">首集章节名</div>
+                  <Input
+                    value={form.chapterTitle}
+                    onChange={(event) => setForm({ ...form, chapterTitle: event.target.value })}
+                    placeholder="例如：第一章 雨后的旧邮局"
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </div>
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_160px]">
-                <Select value={form.genre} onChange={(event) => setForm({ ...form, genre: event.target.value })} options={genreOptions} />
-                <Select value={form.style} onChange={(event) => setForm({ ...form, style: event.target.value })} options={styleOptions} />
-                <Input
-                  type="number"
-                  min={1}
-                  max={12}
-                  value={form.shotCount}
-                  onChange={(event) => setForm({ ...form, shotCount: Number(event.target.value) })}
-                  aria-label="首集镜头数"
-                  className="bg-white/5 border-white/10 text-white"
+                <div className="space-y-1.5">
+                  <div className="text-xs text-white/50">故事类型</div>
+                  <Select value={form.genre} onChange={(event) => setForm({ ...form, genre: event.target.value })} options={genreOptions} />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-xs text-white/50">画面风格</div>
+                  <Select value={form.style} onChange={(event) => setForm({ ...form, style: event.target.value })} options={styleOptions} />
+                </div>
+                <div className="space-y-1.5">
+                  <div className="text-xs text-white/50">首集镜头数</div>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={form.shotCount}
+                    onChange={(event) => setForm({ ...form, shotCount: Number(event.target.value) })}
+                    aria-label="首集镜头数"
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <div className="text-xs text-white/50">故事梗概：告诉 AI 主角、目标、冲突和世界观</div>
+                <Textarea
+                  value={form.premise}
+                  onChange={(event) => setForm({ ...form, premise: event.target.value })}
+                  placeholder="写 2-5 句话即可，例如：主角是谁、遇到什么事件、这一季要完成什么目标。"
+                  className="min-h-[100px]"
                 />
               </div>
-              <Textarea
-                value={form.premise}
-                onChange={(event) => setForm({ ...form, premise: event.target.value })}
-                placeholder="故事梗概"
-                className="min-h-[100px]"
-              />
-              <Textarea
-                value={form.chapterContent}
-                onChange={(event) => setForm({ ...form, chapterContent: event.target.value })}
-                placeholder="首章正文"
-                className="min-h-[180px]"
-              />
+              <div className="space-y-1.5">
+                <div className="text-xs text-white/50">首章正文：可粘贴完整第一章，也可先写一段用于几秒草片验证</div>
+                <Textarea
+                  value={form.chapterContent}
+                  onChange={(event) => setForm({ ...form, chapterContent: event.target.value })}
+                  placeholder="粘贴首章正文。没有完整章节时，也可以先粘贴 1-3 段关键剧情。"
+                  className="min-h-[180px]"
+                />
+              </div>
               <label className="flex items-center gap-2 text-sm text-white/70">
                 <input
                   type="checkbox"
@@ -556,7 +608,7 @@ export default function QuickStartPage() {
                 ))}
                 {!isReady && (
                   <div className="rounded border border-yellow-500/20 bg-yellow-500/10 p-3 text-xs text-yellow-100">
-                    作品名必填，故事梗概和章节内容至少 8 个字，镜头数需在 1-12 之间。点击“生成首集工程”会提示还缺哪些内容。
+                    作品名必填，故事梗概和章节内容至少 8 个字，镜头数需在 1-12 之间。点击“生成第一集”会提示还缺哪些内容。
                   </div>
                 )}
               </CardContent>

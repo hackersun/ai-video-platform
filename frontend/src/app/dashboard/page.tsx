@@ -34,7 +34,8 @@ import {
   Workflow,
   Captions,
   Images,
-  Wand2
+  Wand2,
+  ChevronDown
 } from 'lucide-react';
 
 // API基础URL
@@ -105,6 +106,7 @@ export default function DashboardPage() {
   const [novels, setNovels] = useState<Novel[]>([]);
   const [recentVideos, setRecentVideos] = useState<VideoJob[]>([]);
   const [recentAudios, setRecentAudios] = useState<TTSJob[]>([]);
+  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [stats, setStats] = useState({
     novels_count: 0,
     scripts_count: 0,
@@ -274,70 +276,121 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          <Link href="/assets">
-            <Card className="bg-white/5 border-white/10 hover:border-amber-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <Images className="w-6 h-6 text-amber-300 mb-3" />
-                <div className="text-white font-medium">资产库</div>
-                <div className="text-white/50 text-sm mt-1">管理角色、场景、道具、关键帧、音效和参考资产</div>
+        <div className="space-y-4">
+          <div>
+            <h2 className="mb-3 text-lg font-semibold text-white">常用入口</h2>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <Link href="/quick-start">
+                <Card className="h-full border-cyan-400/30 bg-cyan-500/10 transition-colors hover:border-cyan-300/60">
+                  <CardContent className="p-5">
+                    <Wand2 className="mb-3 h-6 w-6 text-cyan-300" />
+                    <div className="font-medium text-white">连续动漫向导</div>
+                    <div className="mt-1 text-sm text-white/55">从小说开始，一次生成设定本、分镜和第一集草片</div>
+                  </CardContent>
+                </Card>
+              </Link>
+              <Link href="/novels">
+                <Card className="h-full border-white/10 bg-white/5 transition-colors hover:border-violet-400/40">
+                  <CardContent className="p-5">
+                    <BookOpen className="mb-3 h-6 w-6 text-violet-300" />
+                    <div className="font-medium text-white">我的作品</div>
+                    <div className="mt-1 text-sm text-white/55">查看小说、章节、分集计划和已有制作进度</div>
+                  </CardContent>
+                </Card>
+              </Link>
+              <Link href="/studio">
+                <Card className="h-full border-white/10 bg-white/5 transition-colors hover:border-emerald-400/40">
+                  <CardContent className="p-5">
+                    <Workflow className="mb-3 h-6 w-6 text-emerald-300" />
+                    <div className="font-medium text-white">继续制作</div>
+                    <div className="mt-1 text-sm text-white/55">进入工作台，继续审核镜头、声音、字幕和成片质量</div>
+                  </CardContent>
+                </Card>
+              </Link>
+            </div>
+          </div>
+
+          <Card className="border-white/10 bg-white/5">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedTools((value) => !value)}
+              className="flex w-full items-center justify-between gap-3 p-5 text-left"
+              aria-expanded={showAdvancedTools}
+            >
+              <div>
+                <div className="font-medium text-white">高级制作工具</div>
+                <div className="mt-1 text-sm text-white/50">资产、字幕、生产适配、镜头上下文和质量巡检，首集跑通后再用。</div>
+              </div>
+              <ChevronDown className={`h-5 w-5 text-white/50 transition-transform ${showAdvancedTools ? 'rotate-180' : ''}`} />
+            </button>
+            {showAdvancedTools && (
+              <CardContent className="grid grid-cols-1 gap-4 border-t border-white/10 p-5 md:grid-cols-2 xl:grid-cols-4">
+                <Link href="/assets">
+                  <Card className="bg-white/5 border-white/10 hover:border-amber-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <Images className="w-6 h-6 text-amber-300 mb-3" />
+                      <div className="text-white font-medium">资产库</div>
+                      <div className="text-white/50 text-sm mt-1">管理角色、场景、道具、关键帧、音效和参考资产</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/entities">
+                  <Card className="bg-white/5 border-white/10 hover:border-violet-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <Users className="w-6 h-6 text-violet-300 mb-3" />
+                      <div className="text-white font-medium">实体审阅台</div>
+                      <div className="text-white/50 text-sm mt-1">角色、场景、道具、事件实体的统一管理和审阅</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/production-adapters">
+                  <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <PlugZap className="w-6 h-6 text-cyan-300 mb-3" />
+                      <div className="text-white font-medium">生产适配</div>
+                      <div className="text-white/50 text-sm mt-1">配置视频模型、云渲染、口型和音视频合成服务</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/subtitles">
+                  <Card className="bg-white/5 border-white/10 hover:border-blue-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <Captions className="w-6 h-6 text-blue-300 mb-3" />
+                      <div className="text-white font-medium">字幕工作台</div>
+                      <div className="text-white/50 text-sm mt-1">编辑字幕段、审阅对白时间码并导出 SRT/VTT/ASS</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/shots">
+                  <Card className="bg-white/5 border-white/10 hover:border-emerald-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <ShieldCheck className="w-6 h-6 text-emerald-300 mb-3" />
+                      <div className="text-white font-medium">镜头生产上下文</div>
+                      <div className="text-white/50 text-sm mt-1">维护资产锁、关键帧、多视图参考、口型和审核状态</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/workflow">
+                  <Card className="bg-white/5 border-white/10 hover:border-violet-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <Workflow className="w-6 h-6 text-violet-300 mb-3" />
+                      <div className="text-white font-medium">批量直生与云渲染</div>
+                      <div className="text-white/50 text-sm mt-1">在制作流程中批量生成音视频、字幕轨和渲染包</div>
+                    </CardContent>
+                  </Card>
+                </Link>
+                <Link href="/producer">
+                  <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
+                    <CardContent className="p-5">
+                      <Sparkles className="w-6 h-6 text-cyan-300 mb-3" />
+                      <div className="text-white font-medium">一键成片中心</div>
+                      <div className="text-white/50 text-sm mt-1">查看状态机、定稿包、媒体巡检、质量检查和安全补齐</div>
+                    </CardContent>
+                  </Card>
+                </Link>
               </CardContent>
-            </Card>
-          </Link>
-          <Link href="/entities">
-            <Card className="bg-white/5 border-white/10 hover:border-violet-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <Users className="w-6 h-6 text-violet-300 mb-3" />
-                <div className="text-white font-medium">实体审阅台</div>
-                <div className="text-white/50 text-sm mt-1">角色、场景、道具、事件实体的统一管理和审阅</div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/production-adapters">
-            <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <PlugZap className="w-6 h-6 text-cyan-300 mb-3" />
-                <div className="text-white font-medium">生产适配</div>
-                <div className="text-white/50 text-sm mt-1">配置 Sora/Veo、ComfyUI、FFmpeg 云渲染和口型服务</div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/subtitles">
-            <Card className="bg-white/5 border-white/10 hover:border-blue-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <Captions className="w-6 h-6 text-blue-300 mb-3" />
-                <div className="text-white font-medium">字幕工作台</div>
-                <div className="text-white/50 text-sm mt-1">编辑字幕段、审阅对白时间码并导出 SRT/VTT/ASS</div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/shots">
-            <Card className="bg-white/5 border-white/10 hover:border-emerald-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <ShieldCheck className="w-6 h-6 text-emerald-300 mb-3" />
-                <div className="text-white font-medium">镜头生产上下文</div>
-                <div className="text-white/50 text-sm mt-1">维护资产锁、关键帧、多视图参考、口型和审核状态</div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/workflow">
-            <Card className="bg-white/5 border-white/10 hover:border-violet-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <Workflow className="w-6 h-6 text-violet-300 mb-3" />
-                <div className="text-white font-medium">批量直生与云渲染</div>
-                <div className="text-white/50 text-sm mt-1">在工作流中批量生成音视频、字幕轨和渲染包</div>
-              </CardContent>
-            </Card>
-          </Link>
-          <Link href="/producer">
-            <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
-              <CardContent className="p-5">
-                <Sparkles className="w-6 h-6 text-cyan-300 mb-3" />
-                <div className="text-white font-medium">AI制片中心</div>
-                <div className="text-white/50 text-sm mt-1">查看状态机、定稿包、媒体巡检、质量检查和安全补齐</div>
-              </CardContent>
-            </Card>
-          </Link>
+            )}
+          </Card>
         </div>
 
         {/* 我的作品 */}
