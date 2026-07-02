@@ -16,31 +16,31 @@ import {
 const features = [
   {
     icon: Sparkles,
-    title: "AI智能创作",
-    description: "基于大语言模型，自动生成精彩剧本",
+    title: "导入小说",
+    description: "粘贴完整小说或首章内容，AI先整理故事主线",
   },
   {
     icon: Palette,
-    title: "精美视觉",
-    description: "现代化UI设计，流畅动画效果",
+    title: "统一角色与世界观",
+    description: "自动生成动漫设定本，锁定人物、场景、道具和风格",
   },
   {
     icon: Zap,
-    title: "高效工作流",
-    description: "从小说到视频，一站式创作体验",
+    title: "制作第一集",
+    description: "自动生成剧本、分镜、配音、字幕和可预览草片",
   },
   {
     icon: Film,
-    title: "视频生成",
-    description: "AI驱动，一键生成高质量视频",
+    title: "连续多集一致",
+    description: "后续集数复用同一套设定，减少反复调提示词",
   },
 ];
 
 const highlights = [
-  "支持多种小说格式导入",
-  "智能角色管理系统",
-  "可视化剧本编辑器",
-  "AI辅助视频生成",
+  "适合完整小说改编",
+  "自动维护角色与声线一致性",
+  "支持首集几秒草片验证",
+  "保留高级模型与提示词配置",
 ];
 
 export default function HomePage() {
@@ -60,26 +60,26 @@ export default function HomePage() {
         <div className="max-w-6xl mx-auto text-center relative z-10">
           <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-violet-500/10 border border-violet-500/20 mb-8">
             <Sparkles className="w-4 h-4 text-violet-400" />
-            <span className="text-sm text-violet-300">AI驱动的视频创作平台</span>
+            <span className="text-sm text-violet-300">小说一键变连续动漫</span>
           </div>
 
           <h1 className="text-5xl md:text-7xl font-bold mb-6 leading-tight">
-            让创意
+            把完整小说
             <span className="bg-gradient-to-r from-violet-400 via-purple-400 to-blue-400 bg-clip-text text-transparent">
-              无限可能
+              做成连续动漫
             </span>
           </h1>
 
           <p className="text-xl text-white/60 max-w-2xl mx-auto mb-10">
-            从小说到视频，AI助力您的创作之旅。
+            不用先学分镜、提示词和模型参数。
             <br />
-            简单、高效、专业。
+            先导入故事，AI帮你统一风格、角色、场景、道具和声音，再生成第一集草片。
           </p>
 
           <div className="flex items-center justify-center gap-4">
             <Button asChild size="lg">
               <Link href={startHref}>
-                开始创作
+                开始连续动漫向导
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Link>
             </Button>
@@ -106,8 +106,8 @@ export default function HomePage() {
       <section id="features" className="py-20 px-4">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
-            <h2 className="text-3xl font-bold mb-4">强大功能</h2>
-            <p className="text-white/60">为您的创作提供全方位支持</p>
+            <h2 className="text-3xl font-bold mb-4">从第一章到第一集</h2>
+            <p className="text-white/60">把专业制作流程收进一个向导里，必要时再进入高级工具精修</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
@@ -133,14 +133,13 @@ export default function HomePage() {
           <Card className="p-12 relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-r from-violet-500/10 to-blue-500/10" />
             <div className="relative z-10">
-              <h2 className="text-3xl font-bold mb-4">准备好开始了吗？</h2>
+              <h2 className="text-3xl font-bold mb-4">先做一集，验证风格</h2>
               <p className="text-white/60 mb-8 max-w-xl mx-auto">
-                立即加入，开启您的AI视频创作之旅。
-                无需信用卡，免费开始使用。
+                用一段小说生成几秒草片，确认人物、场景、声音和节奏后，再扩展到多集连续制作。
               </p>
               <Button asChild size="lg">
                 <Link href={startHref}>
-                  免费开始
+                  进入向导
                   <ArrowRight className="w-4 h-4 ml-2" />
                 </Link>
               </Button>

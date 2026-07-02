@@ -133,11 +133,11 @@ export function StudioShell() {
         <div>
           <div className="flex items-center gap-2 text-sm text-cyan-200">
             <BookOpen className="h-4 w-4" />
-            统一创作工作台 · Series Studio
+            连续动漫工作台
           </div>
-          <h1 className="mt-2 text-2xl font-semibold text-white">系列动漫工作室：从小说章节到本集草片</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-white">从小说章节到本集草片</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-            选择小说/章节生成本集工程后，这里会聚合 Production Bible、剧本分镜、资产/声音锁、草片任务和质量门禁，继续兼容已有 workflow。
+            选择小说/章节生成本集工程后，这里会聚合动漫设定本、剧本分镜、资产/声音锁、草片任务和质量门禁；高级制作流程仍保留给精修使用。
           </p>
         </div>
         <div className="w-full lg:w-80">
@@ -165,14 +165,14 @@ export function StudioShell() {
           <CardContent className="p-8 text-center">
             <div className="text-lg font-medium text-white">先从小说创建本集工程</div>
             <div className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/55">
-              还没有可继续制作的本集工程。先导入或选择小说章节，生成 Production Bible 和首集工程；完成后会带着 workflow 回到这里继续一键草片、资产锁和质量门禁。
+              还没有可继续制作的本集工程。建议先打开连续动漫向导，导入小说章节并生成动漫设定本和第一集；完成后会带着本集工程回到这里继续一键草片、资产锁和质量门禁。
             </div>
             <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
               <Button className="bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/quick-start')}>
-                极速向导：小说到首集
+                连续动漫向导：小说到第一集
               </Button>
               <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/producer')}>
-                AI 制片：创建本集工程
+                一键成片：创建本集工程
               </Button>
             </div>
           </CardContent>

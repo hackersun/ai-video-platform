@@ -44,7 +44,7 @@ type NavigationGroup = {
 // 高频入口：按个人/小团队最快创作路径保留在顶部
 const mainMenuItems = [
   { label: '工作台', path: '/studio', icon: MonitorPlay },
-  { label: '极速向导', path: '/quick-start', icon: Wand2 },
+  { label: '连续动漫向导', path: '/quick-start', icon: Wand2 },
   { label: '作品', path: '/novels', icon: BookOpen },
 ] satisfies NavigationItem[];
 
@@ -57,7 +57,7 @@ const contentMenuItems = [
 ] satisfies NavigationItem[];
 
 const assetMenuItems = [
-  { label: 'Story Bible', path: '/story-bibles', icon: Sparkles },
+  { label: '动漫设定本', path: '/story-bibles', icon: Sparkles },
   { label: '角色', path: '/characters', icon: Users },
   { label: '实体库', path: '/entities', icon: Boxes },
   { label: '资产库', path: '/assets', icon: Images },
@@ -65,8 +65,8 @@ const assetMenuItems = [
 ] satisfies NavigationItem[];
 
 const productionMenuItems = [
-  { label: '工作流', path: '/workflow', icon: Workflow },
-  { label: 'AI制片', path: '/producer', icon: Bot },
+  { label: '制作流程', path: '/workflow', icon: Workflow },
+  { label: '一键成片', path: '/producer', icon: Bot },
   { label: '视频生成', path: '/video-generation', icon: Video },
   { label: '语音合成', path: '/tts', icon: Mic },
   { label: '字幕工作台', path: '/subtitles', icon: Captions },
@@ -76,18 +76,18 @@ const productionMenuItems = [
 ] satisfies NavigationItem[];
 
 const configMenuItems = [
-  { label: 'Prompt 技能', path: '/prompt-skills', icon: MessageSquare },
-  { label: 'AI模型', path: '/llm-config', icon: Cpu },
+  { label: 'AI提示词模板', path: '/prompt-skills', icon: MessageSquare },
+  { label: '模型与密钥', path: '/llm-config', icon: Cpu },
   { label: '生产适配', path: '/production-adapters', icon: PlugZap },
   { label: '设置', path: '/settings', icon: Settings },
   { label: '数据分析', path: '/analytics', icon: BarChart3 },
 ] satisfies NavigationItem[];
 
 const groupedMenuItems: NavigationGroup[] = [
-  { label: '内容创作', ariaLabel: '打开内容创作菜单', icon: FileText, items: contentMenuItems },
-  { label: '资产设定', ariaLabel: '打开资产设定菜单', icon: Boxes, items: assetMenuItems },
-  { label: '生产出片', ariaLabel: '打开生产菜单', icon: Video, items: productionMenuItems },
-  { label: '配置', ariaLabel: '打开配置菜单', icon: Cpu, items: configMenuItems },
+  { label: '故事创作', ariaLabel: '打开故事创作菜单', icon: FileText, items: contentMenuItems },
+  { label: '角色与世界观', ariaLabel: '打开角色与世界观菜单', icon: Boxes, items: assetMenuItems },
+  { label: '生成与成片', ariaLabel: '打开生成与成片菜单', icon: Video, items: productionMenuItems },
+  { label: '高级工具', ariaLabel: '打开高级工具菜单', icon: Cpu, items: configMenuItems },
 ];
 
 const teamMenuItem = { label: '团队', path: '/teams', icon: Users } satisfies NavigationItem;

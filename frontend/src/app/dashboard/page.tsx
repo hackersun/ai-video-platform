@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton, DashboardSkeleton } from '@/components/ui/skeleton';
 import { MainLayout } from '@/components/layout/main-layout';
+import { NextStepGuide } from '@/components/production/next-step-guide';
 import Link from 'next/link';
 import { 
   BookOpen, 
@@ -32,7 +33,8 @@ import {
   ShieldCheck,
   Workflow,
   Captions,
-  Images
+  Images,
+  Wand2
 } from 'lucide-react';
 
 // API基础URL
@@ -218,22 +220,31 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-bold text-white mb-2">
               欢迎回来，{user.username} 👋
             </h1>
-            <p className="text-white/60">开始您的AI视频创作之旅</p>
+            <p className="text-white/60">从小说开始，把角色、世界观、声音和镜头统一成连续动漫</p>
           </div>
           <Button asChild className="bg-violet-600 hover:bg-violet-700">
-            <Link href="/novels/new">
-              <Plus className="w-4 h-4 mr-2" />
-              创建小说
+            <Link href="/quick-start">
+              <Sparkles className="w-4 h-4 mr-2" />
+              开始连续动漫向导
             </Link>
           </Button>
         </div>
+
+        <NextStepGuide
+          current={novels.length ? `已有 ${novels.length} 个作品，可继续制作下一集` : '还没有作品，适合先用一段小说跑通首集'}
+          next={novels.length ? '进入连续动漫向导或工作台，选择作品继续生成分集' : '粘贴小说梗概和第一章，让 AI 生成首集工程'}
+          reason="先锁定设定本，后续多集才能保持人物、场景、道具和声线一致。"
+          href="/quick-start"
+          actionLabel="打开连续动漫向导"
+          checklist={['AI自动生成动漫设定本', 'AI自动生成剧本分镜', '可一键产出首集草片']}
+        />
 
         {/* 创作流程引导 - 时间线样式 */}
         <Card className="bg-gradient-to-r from-violet-600/10 to-indigo-600/10 border-violet-500/20">
           <CardContent className="p-6">
             <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-violet-400" />
-              创作流程
+              推荐制作路径
             </h2>
             <div className="relative">
               {/* 时间线连接线 */}
@@ -241,12 +252,12 @@ export default function DashboardPage() {
               
               <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4">
                 {[
-                  { step: 1, label: '创建小说', href: '/novels/new', icon: BookOpen, color: 'from-violet-500 to-violet-600' },
-                  { step: 2, label: '添加章节', href: '/novels', icon: FileText, color: 'from-purple-500 to-purple-600' },
-                  { step: 3, label: '创建角色', href: '/characters', icon: Users, color: 'from-blue-500 to-blue-600' },
-                  { step: 4, label: '编写剧本', href: '/scripts', icon: FileText, color: 'from-cyan-500 to-cyan-600' },
-                  { step: 5, label: '设计分镜', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
-                  { step: 6, label: '完整工作流', href: '/workflow', icon: Workflow, color: 'from-pink-500 to-pink-600' },
+                  { step: 1, label: '开始连续动漫', href: '/quick-start', icon: Wand2, color: 'from-violet-500 to-violet-600' },
+                  { step: 2, label: '完善角色设定', href: '/characters', icon: Users, color: 'from-purple-500 to-purple-600' },
+                  { step: 3, label: '生成分集计划', href: '/novels', icon: BookOpen, color: 'from-blue-500 to-blue-600' },
+                  { step: 4, label: '一键制作首集', href: '/producer', icon: Sparkles, color: 'from-cyan-500 to-cyan-600' },
+                  { step: 5, label: '审核分镜声音', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
+                  { step: 6, label: '连续成片', href: '/studio', icon: Workflow, color: 'from-pink-500 to-pink-600' },
                 ].map((item, index) => (
                   <div key={item.step} className="flex flex-col items-center relative z-10">
                     <Link
@@ -425,13 +436,13 @@ export default function DashboardPage() {
                 </div>
                 <h3 className="text-xl font-semibold text-white mb-2">开始您的创作之旅</h3>
                 <p className="text-white/60 mb-6 max-w-md mx-auto">
-                  创建一个小说项目，AI将帮助您完成从剧本到视频的完整创作流程
+                  从连续动漫向导开始，AI会帮您把小说整理成设定本、分镜和首集草片
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
                   <Button asChild className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
-                    <Link href="/novels/new">
-                      <Plus className="w-4 h-4 mr-2" />
-                      创建小说
+                    <Link href="/quick-start">
+                      <Sparkles className="w-4 h-4 mr-2" />
+                      开始向导
                     </Link>
                   </Button>
                   <Button asChild variant="outline" className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20 px-8">

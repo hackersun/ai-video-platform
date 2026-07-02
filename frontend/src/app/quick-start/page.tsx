@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { NextStepGuide } from '@/components/production/next-step-guide';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -25,6 +26,7 @@ import {
 import {
   BookOpen,
   Captions,
+  ChevronDown,
   CheckCircle,
   Clapperboard,
   Download,
@@ -96,7 +98,7 @@ const toMediaUrl = (url?: string) => {
 const buildProgressSteps = (createStoryBible: boolean, autoProducePreview: boolean): QuickStartProgressStep[] => [
   { id: 'novel', label: '创建作品', status: 'pending' },
   { id: 'chapter', label: '创建首章', status: 'pending' },
-  ...(createStoryBible ? [{ id: 'story_bible', label: '生成 Story Bible', status: 'pending' as ProgressStatus }] : []),
+  ...(createStoryBible ? [{ id: 'story_bible', label: '生成动漫设定本', status: 'pending' as ProgressStatus }] : []),
   { id: 'storyboard', label: '智能生成剧本与分镜', status: 'pending' },
   { id: 'workflow', label: '创建首集工作流', status: 'pending' },
   ...(autoProducePreview
@@ -147,6 +149,7 @@ export default function QuickStartPage() {
   const [audioModelConfigId, setAudioModelConfigId] = useState('');
   const [productionStrategy, setProductionStrategy] = useState<ProductionStrategy>(DEFAULT_PRODUCTION_STRATEGY);
   const [progressSteps, setProgressSteps] = useState<QuickStartProgressStep[]>([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const checks = useMemo(() => {
     const content = form.chapterContent.trim() || form.premise.trim();
@@ -263,12 +266,12 @@ export default function QuickStartPage() {
         markStep('story_bible', 'running', '正在提取故事设定、人物和世界观');
         const storyBible = await apiClient.generateStoryBible({
           novel_id: novel.id,
-          title: `${title} Story Bible`,
+          title: `${title} 动漫设定本`,
           style: form.style,
           model_config_id: textModelConfigId || undefined,
         });
         storyBibleId = storyBible.id;
-        markStep('story_bible', 'done', 'Story Bible 已生成');
+        markStep('story_bible', 'done', '动漫设定本已生成');
       }
 
       markStep('storyboard', 'running', '正在把章节改编为剧本、分镜和镜头');
@@ -373,9 +376,9 @@ export default function QuickStartPage() {
           <div>
             <h1 className="text-3xl font-bold text-white flex items-center gap-2">
               <Wand2 className="h-7 w-7 text-violet-400" />
-              极速向导
+              连续动漫向导
             </h1>
-            <p className="mt-1 text-white/60">一次创建小说、章节、Story Bible、智能分镜和工作流</p>
+            <p className="mt-1 text-white/60">粘贴故事，AI 自动生成动漫设定本、首集剧本分镜和可预览草片</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Button onClick={() => saveDraft(true)} variant="outline" className="border-white/20 text-white">
@@ -384,13 +387,23 @@ export default function QuickStartPage() {
             </Button>
             <Button onClick={runQuickStart} disabled={isRunning} className="bg-violet-600 hover:bg-violet-700">
               {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-              生成首集工程
+              生成第一集
             </Button>
           </div>
         </div>
 
+        <NextStepGuide
+          title="这一步 AI 会帮你做什么"
+          current="你只需要提供作品名、故事梗概和首章内容"
+          next="AI 会整理统一设定，再生成第一集的剧本、分镜、配音、字幕和草片"
+          reason="先把角色、场景、道具、事件和声音锁进设定本，后续多集才不容易跑偏。"
+          href="#quick-start-form"
+          actionLabel="填写故事信息"
+          checklist={['自动抽取角色与世界观', '自动拆成镜头和对白', '高级模型配置可先不管']}
+        />
+
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <Card className="bg-white/5 border-white/10">
+          <Card id="quick-start-form" className="bg-white/5 border-white/10">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <BookOpen className="h-5 w-5 text-violet-400" />
@@ -421,6 +434,7 @@ export default function QuickStartPage() {
                   max={12}
                   value={form.shotCount}
                   onChange={(event) => setForm({ ...form, shotCount: Number(event.target.value) })}
+                  aria-label="首集镜头数"
                   className="bg-white/5 border-white/10 text-white"
                 />
               </div>
@@ -442,7 +456,7 @@ export default function QuickStartPage() {
                   checked={form.createStoryBible}
                   onChange={(event) => setForm({ ...form, createStoryBible: event.target.checked })}
                 />
-                同步生成 Story Bible 和实体上下文
+                自动生成动漫设定本，统一人物、场景、道具和风格
               </label>
               <label className="flex items-center gap-2 text-sm text-white/70">
                 <input
@@ -452,57 +466,72 @@ export default function QuickStartPage() {
                 />
                 自动生成首集可预览草片、字幕和本地渲染包
               </label>
-              <ModelCapabilitySelector
-                capability="text"
-                configs={modelConfigs}
-                value={textModelConfigId}
-                onChange={setTextModelConfigId}
-                disabled={isRunning}
-                title="首集工程文本模型"
-                description="极速向导会用该文本模型生成 Story Bible，并为智能分镜准备一致性上下文。"
-                compact
-              />
-              {form.autoProducePreview && (
-                <>
-                  <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3">
-                    <div className="mb-2 text-xs text-cyan-100/70">首集生产策略</div>
-                    <Select
-                      value={productionStrategy}
-                      onChange={(event) => setProductionStrategy(event.target.value as ProductionStrategy)}
-                      options={PRODUCTION_STRATEGY_OPTIONS}
+              <div className="rounded-lg border border-white/10 bg-white/5">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedOpen((value) => !value)}
+                  className="flex w-full items-center justify-between gap-3 p-3 text-left text-sm text-white"
+                  aria-expanded={advancedOpen}
+                >
+                  <span>
+                    高级设置
+                    <span className="ml-2 text-white/45">模型、效果模式和角色配音；默认可直接运行</span>
+                  </span>
+                  <ChevronDown className={`h-4 w-4 text-white/50 transition-transform ${advancedOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {advancedOpen && (
+                  <div className="space-y-3 border-t border-white/10 p-3">
+                    <ModelCapabilitySelector
+                      capability="text"
+                      configs={modelConfigs}
+                      value={textModelConfigId}
+                      onChange={setTextModelConfigId}
                       disabled={isRunning}
+                      title="AI编剧模型（高级）"
+                      description="用于生成动漫设定本和分镜一致性上下文；不懂模型时保持默认即可。"
+                      compact
                     />
-                    <div className="mt-2 text-sm text-cyan-50/80">
-                      <span className="font-medium text-white">{productionStrategyCopy.label}</span>
-                      <span className="ml-2">{productionStrategyCopy.description}</span>
-                    </div>
-                    <div className="mt-1 text-xs text-cyan-100/70">{productionStrategyCopy.modelHint}</div>
-                    <div className="mt-1 text-xs text-cyan-100/60">
-                      草稿默认 Seedance-2.0-fast 语义；终稿默认 Seedance-2.0 语义。没有具体配置时只展示策略建议。
-                    </div>
+                    {form.autoProducePreview && (
+                      <>
+                        <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3">
+                          <div className="mb-2 text-xs text-cyan-100/70">效果模式</div>
+                          <Select
+                            value={productionStrategy}
+                            onChange={(event) => setProductionStrategy(event.target.value as ProductionStrategy)}
+                            options={PRODUCTION_STRATEGY_OPTIONS}
+                            disabled={isRunning}
+                          />
+                          <div className="mt-2 text-sm text-cyan-50/80">
+                            <span className="font-medium text-white">{productionStrategyCopy.label}</span>
+                            <span className="ml-2">{productionStrategyCopy.description}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-cyan-100/70">{productionStrategyCopy.modelHint}</div>
+                        </div>
+                        <ModelCapabilitySelector
+                          capability="video"
+                          configs={modelConfigs}
+                          value={videoModelConfigId}
+                          onChange={setVideoModelConfigId}
+                          disabled={isRunning}
+                          title="视频质量配置（高级）"
+                          description="默认按效果模式路由；需要指定 Seedance 等视频模型时再调整。"
+                          compact
+                        />
+                        <ModelCapabilitySelector
+                          capability="audio"
+                          configs={modelConfigs}
+                          value={audioModelConfigId}
+                          onChange={setAudioModelConfigId}
+                          disabled={isRunning}
+                          title="角色配音配置（高级）"
+                          description="用于生成角色对白；后续会结合声线锁保持多集声音一致。"
+                          compact
+                        />
+                      </>
+                    )}
                   </div>
-                  <ModelCapabilitySelector
-                    capability="video"
-                    configs={modelConfigs}
-                    value={videoModelConfigId}
-                    onChange={setVideoModelConfigId}
-                    disabled={isRunning}
-                    title="可选视频配置"
-                    description="不选择具体配置时按生产策略建议路由；草稿建议 Seedance-2.0-fast，终稿建议 Seedance-2.0。"
-                    compact
-                  />
-                  <ModelCapabilitySelector
-                    capability="audio"
-                    configs={modelConfigs}
-                    value={audioModelConfigId}
-                    onChange={setAudioModelConfigId}
-                    disabled={isRunning}
-                    title="可选声音配置"
-                    description="分步策略会用该声音配置生成角色对白；未选择时保留策略建议和后端默认。"
-                    compact
-                  />
-                </>
-              )}
+                )}
+              </div>
               <div className="text-xs text-white/40">
                 草稿会自动保存在本机{draftSavedAt ? `，上次保存：${new Date(draftSavedAt).toLocaleString()}` : ''}。
               </div>
