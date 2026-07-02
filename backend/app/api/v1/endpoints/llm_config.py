@@ -227,6 +227,13 @@ def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
         or identifier_text.startswith("tts-model-")
         or "tts-api-model" in identifier_text
         or "tts api model" in identifier_text
+        or "video-api-model" in identifier_text
+        or "video api model" in identifier_text
+        or "image-api-model" in identifier_text
+        or "image api model" in identifier_text
+        or "audio-api-model" in identifier_text
+        or "audio api model" in identifier_text
+        or "api model" in display_text
         or "-test-" in identifier_text
         or identifier_text.endswith("-test")
         or " test " in f" {identifier_text} "

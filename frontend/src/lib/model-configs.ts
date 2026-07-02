@@ -71,6 +71,13 @@ export function isInternalTestModelConfig(config: Partial<SavedModelConfig> & Re
     identifiers.startsWith('tts-model-') ||
     identifiers.includes('tts-api-model') ||
     identifiers.includes('tts api model') ||
+    identifiers.includes('video-api-model') ||
+    identifiers.includes('video api model') ||
+    identifiers.includes('image-api-model') ||
+    identifiers.includes('image api model') ||
+    identifiers.includes('audio-api-model') ||
+    identifiers.includes('audio api model') ||
+    displayText.includes('api model') ||
     identifiers.includes('-test-') ||
     identifiers.endsWith('-test') ||
     ` ${identifiers} `.includes(' test ') ||

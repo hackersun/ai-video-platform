@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -52,6 +52,9 @@ type QuickStartResult = {
   ttsJobIds?: string[];
   mediaJobIds?: string[];
   subtitleTrackIds?: string[];
+  readyForConcatenate?: boolean;
+  pendingVideoJobIds?: string[];
+  pendingTtsJobIds?: string[];
   synthesisJobId?: string;
   outputUrl?: string;
   manifestUrl?: string;
@@ -62,13 +65,25 @@ type QuickStartResult = {
   autoProduced?: boolean;
 };
 
-type ProgressStatus = 'pending' | 'running' | 'done' | 'failed';
+type ProgressStatus = 'pending' | 'running' | 'done' | 'failed' | 'stopped' | 'waiting';
 
 type QuickStartProgressStep = {
   id: string;
   label: string;
   status: ProgressStatus;
   detail?: string;
+  updatedAt?: string;
+};
+
+type QuickStartIssue = {
+  stepId: string;
+  stepLabel: string;
+  summary: string;
+  rawMessage: string;
+  cause: string;
+  advice: string[];
+  canSkipAudio: boolean;
+  canRetryProduction: boolean;
 };
 
 const genreOptions = [
@@ -97,6 +112,7 @@ const sampleStory = {
 };
 
 const QUICK_START_DRAFT_KEY = 'ai-video-platform:quick-start-draft';
+const QUICK_START_RUN_KEY = 'ai-video-platform:quick-start-last-run';
 const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(/\/api\/v1\/?$/, '');
 
 const toMediaUrl = (url?: string) => {
@@ -125,6 +141,8 @@ const progressBadgeVariant = (status: ProgressStatus) => {
   if (status === 'done') return 'success';
   if (status === 'failed') return 'danger';
   if (status === 'running') return 'warning';
+  if (status === 'waiting') return 'warning';
+  if (status === 'stopped') return 'outline';
   return 'outline';
 };
 
@@ -132,7 +150,82 @@ const progressStatusText = (status: ProgressStatus) => {
   if (status === 'done') return '完成';
   if (status === 'failed') return '失败';
   if (status === 'running') return '执行中';
+  if (status === 'waiting') return '等待云端';
+  if (status === 'stopped') return '已停止';
   return '等待';
+};
+
+const stageToStep: Record<string, string> = {
+  workflow: 'workflow',
+  script: 'storyboard',
+  storyboard: 'storyboard',
+  assistant: 'contracts',
+  contracts: 'contracts',
+  media: 'media',
+  concatenate: 'concatenate',
+  preflight: 'preflight',
+  render: 'render',
+};
+
+const stringifyDetail = (detail: any): string => {
+  if (!detail) return '';
+  if (typeof detail === 'string') return detail;
+  if (typeof detail?.message === 'string') return detail.message;
+  try {
+    return JSON.stringify(detail, null, 2);
+  } catch {
+    return String(detail);
+  }
+};
+
+const buildIssue = (
+  err: any,
+  stepId: string,
+  stepLabel: string,
+  canSkipAudio: boolean,
+  canRetryProduction = canSkipAudio
+): QuickStartIssue => {
+  const detail = stringifyDetail(err?.detail);
+  const rawMessage = [err?.message, detail].filter(Boolean).join('\n\n') || '极速向导执行失败';
+  const normalized = rawMessage.toLowerCase();
+  const isVoiceMissing = normalized.includes('voice id not exist') || rawMessage.includes('[2054]');
+
+  if (isVoiceMissing) {
+    return {
+      stepId,
+      stepLabel,
+      summary: '配音音色不可用，已暂停在音视频草稿阶段',
+      rawMessage,
+      cause: '当前角色声线或默认 TTS 音色在 MiniMax 账号下不存在，可能是 voice_id 写错、音色未开通，或使用了其他服务商的音色 ID。',
+      advice: [
+        '去模型与密钥中检查当前 TTS 配置，确认 MiniMax API Key、模型和音色 ID 已开通。',
+        '去 TTS 工作台试听同一个音色；如果试听失败，先换成已验证音色。',
+        '也可以先跳过配音继续生成无声视频和字幕，后续再补角色声音。',
+      ],
+      canSkipAudio,
+      canRetryProduction,
+    };
+  }
+
+  return {
+    stepId,
+    stepLabel,
+    summary: `${stepLabel}失败，已保留已创建内容`,
+    rawMessage,
+    cause: '当前步骤调用外部模型或后端生产接口失败；作品、章节、分镜和工作流会继续保留。',
+    advice: [
+      '先进入连续动漫工作台查看已创建的镜头和生产状态。',
+      '如果是模型配置或密钥问题，去模型与密钥页面重新验证后再继续。',
+      '如果只是配音失败，可以跳过配音先生成无声视频和字幕。',
+    ],
+    canSkipAudio,
+    canRetryProduction,
+  };
+};
+
+const compactIds = (ids?: string[]) => {
+  if (!ids?.length) return '';
+  return ids.slice(0, 3).join('、') + (ids.length > 3 ? ` 等 ${ids.length} 个` : '');
 };
 
 export default function QuickStartPage() {
@@ -149,16 +242,22 @@ export default function QuickStartPage() {
   });
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [issue, setIssue] = useState<QuickStartIssue | null>(null);
   const [result, setResult] = useState<QuickStartResult | null>(null);
   const [draftReady, setDraftReady] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [restoredRunAt, setRestoredRunAt] = useState<string | null>(null);
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [videoModelConfigId, setVideoModelConfigId] = useState('');
   const [audioModelConfigId, setAudioModelConfigId] = useState('');
   const [productionStrategy, setProductionStrategy] = useState<ProductionStrategy>(DEFAULT_PRODUCTION_STRATEGY);
   const [progressSteps, setProgressSteps] = useState<QuickStartProgressStep[]>([]);
+  const [expandedStepIds, setExpandedStepIds] = useState<string[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const activeRunIdRef = useRef(0);
+  const runStateReadyRef = useRef(false);
 
   const checks = useMemo(() => {
     const content = form.chapterContent.trim() || form.premise.trim();
@@ -173,6 +272,63 @@ export default function QuickStartPage() {
   const isReady = checks.every((item) => item.ok);
   const productionStrategyCopy = useMemo(() => getProductionStrategyCopy(productionStrategy), [productionStrategy]);
 
+  const toggleStepDetails = (stepId: string) => {
+    setExpandedStepIds((current) => (
+      current.includes(stepId) ? current.filter((id) => id !== stepId) : [...current, stepId]
+    ));
+  };
+
+  const stepDetails = (step: QuickStartProgressStep) => {
+    const details = [
+      { label: '环节状态', value: progressStatusText(step.status) },
+      { label: '最近更新', value: step.updatedAt ? new Date(step.updatedAt).toLocaleString() : '尚未开始' },
+      { label: '当前说明', value: step.detail || '等待上游环节完成' },
+    ];
+    if (!result) return details;
+
+    const idMap: Record<string, Array<{ label: string; value?: string | number }>> = {
+      novel: [{ label: '作品 ID', value: result.novelId }],
+      chapter: [{ label: '章节 ID', value: result.chapterId }],
+      story_bible: [{ label: '设定本 ID', value: result.storyBibleId || '未生成或未启用' }],
+      storyboard: [
+        { label: '脚本 ID', value: result.scriptId },
+        { label: '分镜 ID', value: result.storyboardId },
+        { label: '镜头数', value: result.shotCount },
+      ],
+      workflow: [{ label: '工作流 ID', value: result.workflowId }],
+      contracts: [
+        { label: '生产策略', value: productionStrategyCopy.label },
+        { label: '策略说明', value: productionStrategyCopy.contractHint },
+      ],
+      media: [
+        { label: '视频任务', value: result.videoJobIds?.length || 0 },
+        { label: 'TTS 任务', value: result.ttsJobIds?.length || 0 },
+        { label: '直生音视频任务', value: result.mediaJobIds?.length || 0 },
+        { label: '字幕轨', value: result.subtitleTrackIds?.length || 0 },
+        { label: '视频任务 ID', value: compactIds(result.videoJobIds) || compactIds(result.mediaJobIds) || '暂无' },
+        { label: 'TTS 任务 ID', value: compactIds(result.ttsJobIds) || '暂无' },
+        { label: '待完成视频', value: result.pendingVideoJobIds?.length || 0 },
+        { label: '待完成 TTS', value: result.pendingTtsJobIds?.length || 0 },
+        { label: '待完成视频 ID', value: compactIds(result.pendingVideoJobIds) || '暂无' },
+        { label: '待完成 TTS ID', value: compactIds(result.pendingTtsJobIds) || '暂无' },
+      ],
+      concatenate: [
+        { label: '合成任务 ID', value: result.synthesisJobId || '暂无' },
+        { label: '是否可合成', value: result.readyForConcatenate === false ? '等待视频/声音任务完成' : '可继续合成' },
+      ],
+      preflight: [
+        { label: '预览包', value: result.previewUrl || '暂无' },
+        { label: '字幕文件', value: result.srtUrl || '暂无' },
+      ],
+      render: [
+        { label: '预览包', value: result.previewUrl || '暂无' },
+        { label: '时间线', value: result.timelineUrl || '暂无' },
+        { label: '渲染清单', value: result.renderManifestUrl || '暂无' },
+      ],
+    };
+    return [...details, ...(idMap[step.id] || [])].filter((item) => item.value !== undefined && item.value !== '');
+  };
+
   useEffect(() => {
     loadModelConfigs();
     try {
@@ -186,10 +342,48 @@ export default function QuickStartPage() {
       }
     } catch {
       localStorage.removeItem(QUICK_START_DRAFT_KEY);
+    }
+    try {
+      const savedRun = localStorage.getItem(QUICK_START_RUN_KEY);
+      if (savedRun) {
+        const parsed = JSON.parse(savedRun);
+        if (Array.isArray(parsed?.progressSteps)) {
+          setProgressSteps(parsed.progressSteps.map((step: QuickStartProgressStep) => (
+            step.status === 'running'
+              ? { ...step, status: 'stopped', detail: step.detail || '页面刷新后已停止等待，可从这里继续处理。' }
+              : step
+          )));
+        }
+        if (parsed?.result) setResult(parsed.result);
+        if (parsed?.issue) setIssue(parsed.issue);
+        if (parsed?.error) setError(parsed.error);
+        if (parsed?.productionStrategy) setProductionStrategy(parsed.productionStrategy);
+        if (parsed?.savedAt) setRestoredRunAt(parsed.savedAt);
+      }
+    } catch {
+      localStorage.removeItem(QUICK_START_RUN_KEY);
     } finally {
       setDraftReady(true);
+      runStateReadyRef.current = true;
     }
   }, []);
+
+  useEffect(() => {
+    if (!runStateReadyRef.current) return;
+    const hasRunState = progressSteps.length > 0 || result || issue || error;
+    if (!hasRunState) {
+      localStorage.removeItem(QUICK_START_RUN_KEY);
+      return;
+    }
+    localStorage.setItem(QUICK_START_RUN_KEY, JSON.stringify({
+      progressSteps,
+      result,
+      issue,
+      error,
+      productionStrategy,
+      savedAt: new Date().toISOString(),
+    }));
+  }, [progressSteps, result, issue, error, productionStrategy]);
 
   const loadModelConfigs = async () => {
     try {
@@ -221,6 +415,8 @@ export default function QuickStartPage() {
     setDraftSavedAt(savedAt);
     if (showMessage) {
       setError(null);
+      setSaveMessage(`草稿已保存：${new Date(savedAt).toLocaleString()}`);
+      window.setTimeout(() => setSaveMessage(null), 3000);
     }
   };
 
@@ -235,6 +431,118 @@ export default function QuickStartPage() {
       autoProducePreview: true,
     }));
     setError(null);
+    setIssue(null);
+  };
+
+  const updateProgressStep = (id: string, status: ProgressStatus, detail?: string) => {
+    setProgressSteps((current) => current.map((step) => (
+      step.id === id ? { ...step, status, detail, updatedAt: new Date().toISOString() } : step
+    )));
+  };
+
+  const applyPreviewResult = (base: QuickStartResult, preview: Awaited<ReturnType<typeof runEpisodePreviewProduction>>): QuickStartResult => ({
+    ...base,
+    scriptId: preview.scriptId || base.scriptId,
+    storyboardId: preview.storyboardId || base.storyboardId,
+    videoJobIds: preview.videoJobIds || [],
+    ttsJobIds: preview.ttsJobIds || [],
+    mediaJobIds: preview.mediaJobIds || [],
+    subtitleTrackIds: preview.subtitleTrackIds || [],
+    readyForConcatenate: preview.readyForConcatenate,
+    pendingVideoJobIds: preview.pendingVideoJobIds || [],
+    pendingTtsJobIds: preview.pendingTtsJobIds || [],
+    synthesisJobId: preview.synthesisJobId,
+    outputUrl: preview.outputUrl,
+    manifestUrl: preview.manifestUrl,
+    previewUrl: preview.previewUrl,
+    srtUrl: preview.srtUrl,
+    timelineUrl: preview.timelineUrl,
+    renderManifestUrl: preview.renderManifestUrl,
+    autoProduced: preview.readyForConcatenate !== false && Boolean(preview.previewUrl || preview.renderManifestUrl),
+  });
+
+  const runPreviewProductionFromResult = async (audioMode: 'model_audio' | 'none') => {
+    if (!result?.workflowId) return;
+    const runId = activeRunIdRef.current + 1;
+    activeRunIdRef.current = runId;
+    setIsRunning(true);
+    setError(null);
+    setIssue(null);
+    setRestoredRunAt(null);
+    updateProgressStep(
+      'media',
+      'running',
+      audioMode === 'none' ? '正在跳过配音，继续生成无声视频和字幕' : '正在重新执行首集生产阶段'
+    );
+    updateProgressStep('concatenate', 'pending');
+    updateProgressStep('preflight', 'pending');
+    updateProgressStep('render', 'pending');
+
+    try {
+      const preview = await runEpisodePreviewProduction({
+        workflowId: result.workflowId,
+        novelId: result.novelId,
+        chapterId: result.chapterId,
+        scriptId: result.scriptId,
+        storyboardId: result.storyboardId,
+        title: `${form.title.trim() || '首集'} 无配音预览`,
+        textModelConfigId: textModelConfigId || undefined,
+        videoModelConfigId: videoModelConfigId || undefined,
+        audioModelConfigId: audioMode === 'none' ? undefined : audioModelConfigId || undefined,
+        productionStrategy,
+        audioMode,
+        onStage: (stage) => {
+          if (activeRunIdRef.current !== runId) return;
+          const stepId = stageToStep[stage.key];
+          if (stepId && stage.status) {
+            updateProgressStep(stepId, stage.status, stage.message);
+          }
+        },
+      });
+      if (activeRunIdRef.current !== runId) return;
+      setResult(applyPreviewResult(result, preview));
+    } catch (err: any) {
+      if (activeRunIdRef.current !== runId) return;
+      const message = err?.message || '跳过配音继续生成失败';
+      updateProgressStep('media', 'failed', message);
+      setError(message);
+      setIssue(buildIssue(err, 'media', '批量生成音视频草稿', audioMode !== 'none'));
+    } finally {
+      if (activeRunIdRef.current === runId) {
+        setIsRunning(false);
+      }
+    }
+  };
+
+  const continueWithoutAudio = () => runPreviewProductionFromResult('none');
+
+  const retryProductionStage = () => {
+    if (result?.workflowId) {
+      runPreviewProductionFromResult('model_audio');
+      return;
+    }
+    runQuickStart();
+  };
+
+  const stopCurrentRun = () => {
+    activeRunIdRef.current += 1;
+    setIsRunning(false);
+    setRestoredRunAt(null);
+    setProgressSteps((current) => current.map((step) => (
+      step.status === 'running'
+        ? { ...step, status: 'stopped', detail: '已停止等待；已创建内容会保留，可稍后进入工作台或重试。', updatedAt: new Date().toISOString() }
+        : step
+    )));
+    setIssue((current) => current || {
+      stepId: 'workflow',
+      stepLabel: '已停止等待',
+      summary: '已停止当前等待，保留已创建内容',
+      rawMessage: '前端已停止继续等待当前向导流程。已经发出的后端或云端任务不会被强制取消，可在工作台继续查看状态。',
+      cause: '用户主动停止等待。',
+      advice: ['进入工作台查看已创建内容和任务状态。', '确认模型配置后，可重新执行生产阶段。'],
+      canSkipAudio: Boolean(result?.workflowId),
+      canRetryProduction: Boolean(result?.workflowId),
+    });
   };
 
   const runQuickStart = async () => {
@@ -245,18 +553,32 @@ export default function QuickStartPage() {
     }
 
     setIsRunning(true);
+    const runId = activeRunIdRef.current + 1;
+    activeRunIdRef.current = runId;
     setError(null);
+    setIssue(null);
     setResult(null);
+    setRestoredRunAt(null);
+    setExpandedStepIds([]);
     const initialSteps = buildProgressSteps(form.createStoryBible, form.autoProducePreview);
     setProgressSteps(initialSteps);
     let activeStepId = '';
+    let partialResult: QuickStartResult | null = null;
 
     const markStep = (id: string, status: ProgressStatus, detail?: string) => {
+      if (activeRunIdRef.current !== runId) return;
       activeStepId = status === 'running' ? id : activeStepId;
       setProgressSteps((current) => {
         const source = current.length > 0 ? current : initialSteps;
-        return source.map((step) => (step.id === id ? { ...step, status, detail } : step));
+        return source.map((step) => (
+          step.id === id ? { ...step, status, detail, updatedAt: new Date().toISOString() } : step
+        ));
       });
+    };
+    const ensureActive = () => {
+      if (activeRunIdRef.current !== runId) {
+        throw new Error('当前向导已停止等待');
+      }
     };
 
     try {
@@ -272,6 +594,7 @@ export default function QuickStartPage() {
         style: form.style,
         status: 'writing',
       });
+      ensureActive();
       markStep('novel', 'done', '作品已保存');
 
       markStep('chapter', 'running', '正在保存首章正文');
@@ -281,6 +604,7 @@ export default function QuickStartPage() {
         chapter_number: 1,
         content: chapterContent,
       });
+      ensureActive();
       markStep('chapter', 'done', '首章已保存');
 
       let storyBibleId: string | undefined;
@@ -292,6 +616,7 @@ export default function QuickStartPage() {
           style: form.style,
           model_config_id: textModelConfigId || undefined,
         });
+        ensureActive();
         storyBibleId = storyBible.id;
         markStep('story_bible', 'done', '动漫设定本已生成');
       }
@@ -307,6 +632,7 @@ export default function QuickStartPage() {
         use_ai_refine: false,
         model_config_id: textModelConfigId || undefined,
       });
+      ensureActive();
       const shotCount = storyboard.shot_count || storyboard.shots?.length || form.shotCount;
       markStep('storyboard', 'done', `已生成 ${shotCount} 个镜头`);
 
@@ -318,6 +644,7 @@ export default function QuickStartPage() {
         script_id: storyboard.script_id,
         storyboard_id: storyboard.id,
       });
+      ensureActive();
       markStep('workflow', 'done', '工作流已创建');
 
       let nextResult: QuickStartResult = {
@@ -329,20 +656,12 @@ export default function QuickStartPage() {
         workflowId: workflow.workflow_id,
         shotCount,
       };
-      setResult(nextResult);
+      partialResult = nextResult;
+      if (activeRunIdRef.current === runId) {
+        setResult(nextResult);
+      }
 
       if (form.autoProducePreview) {
-        const stageToStep: Record<string, string> = {
-          workflow: 'workflow',
-          script: 'storyboard',
-          storyboard: 'storyboard',
-          assistant: 'contracts',
-          contracts: 'contracts',
-          media: 'media',
-          concatenate: 'concatenate',
-          preflight: 'preflight',
-          render: 'render',
-        };
         const preview = await runEpisodePreviewProduction({
           workflowId: workflow.workflow_id,
           novelId: novel.id,
@@ -355,39 +674,39 @@ export default function QuickStartPage() {
           audioModelConfigId: audioModelConfigId || undefined,
           productionStrategy,
           onStage: (stage) => {
+            if (activeRunIdRef.current !== runId) return;
             const stepId = stageToStep[stage.key];
             if (stepId && stage.status) {
               markStep(stepId, stage.status, stage.message);
             }
           },
         });
-        nextResult = {
-          ...nextResult,
-          scriptId: preview.scriptId || nextResult.scriptId,
-          storyboardId: preview.storyboardId || nextResult.storyboardId,
-          videoJobIds: preview.videoJobIds || [],
-          ttsJobIds: preview.ttsJobIds || [],
-          mediaJobIds: preview.mediaJobIds || [],
-          subtitleTrackIds: preview.subtitleTrackIds || [],
-          synthesisJobId: preview.synthesisJobId,
-          outputUrl: preview.outputUrl,
-          manifestUrl: preview.manifestUrl,
-          previewUrl: preview.previewUrl,
-          srtUrl: preview.srtUrl,
-          timelineUrl: preview.timelineUrl,
-          renderManifestUrl: preview.renderManifestUrl,
-          autoProduced: preview.readyForConcatenate !== false && Boolean(preview.previewUrl || preview.renderManifestUrl),
-        };
+        ensureActive();
+        nextResult = applyPreviewResult(nextResult, preview);
+        partialResult = nextResult;
         setResult(nextResult);
       }
     } catch (err: any) {
+      if (activeRunIdRef.current !== runId) return;
       const message = err?.message || '极速向导执行失败';
       if (activeStepId) {
         markStep(activeStepId, 'failed', message);
       }
       setError(message);
+      const failedStep = initialSteps.find((step) => step.id === activeStepId);
+      const canRecoverFromWorkflow = Boolean(partialResult?.workflowId || result?.workflowId);
+      const canSkipAudio = canRecoverFromWorkflow && (activeStepId === 'media' || activeStepId === 'concatenate');
+      setIssue(buildIssue(
+        err,
+        activeStepId || 'media',
+        failedStep?.label || '当前步骤',
+        canSkipAudio,
+        canRecoverFromWorkflow
+      ));
     } finally {
-      setIsRunning(false);
+      if (activeRunIdRef.current === runId) {
+        setIsRunning(false);
+      }
     }
   };
 
@@ -411,6 +730,11 @@ export default function QuickStartPage() {
               {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
               生成第一集
             </Button>
+            {isRunning && (
+              <Button type="button" onClick={stopCurrentRun} variant="outline" className="border-yellow-400/30 text-yellow-100">
+                停止等待
+              </Button>
+            )}
           </div>
         </div>
 
@@ -587,7 +911,83 @@ export default function QuickStartPage() {
               <div className="text-xs text-white/40">
                 草稿会自动保存在本机{draftSavedAt ? `，上次保存：${new Date(draftSavedAt).toLocaleString()}` : ''}。
               </div>
-              {error && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+              {saveMessage && (
+                <div className="rounded border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+                  {saveMessage}
+                </div>
+              )}
+              {restoredRunAt && (
+                <div className="rounded border border-cyan-400/30 bg-cyan-500/10 p-3 text-sm text-cyan-100">
+                  已恢复上次执行记录：{new Date(restoredRunAt).toLocaleString()}。你可以查看进度明细、进入工作台，或从失败环节继续处理。
+                </div>
+              )}
+              {error && !issue && <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-200">{error}</div>}
+              {issue && (
+                <div className="space-y-3 rounded-xl border border-red-400/30 bg-red-500/10 p-4">
+                  <div>
+                    <div className="text-sm font-semibold text-red-100">{issue.summary}</div>
+                    <div className="mt-1 text-xs text-red-100/70">
+                      已完成的作品、章节、设定本、分镜和工作流不会丢失；你可以修复配置后继续，也可以先跳过配音生成无声草片。
+                    </div>
+                    <div className="mt-2 rounded border border-red-300/20 bg-black/20 px-2 py-1 text-xs text-red-100/80">
+                      错误摘要：{issue.rawMessage.split('\n')[0]}
+                    </div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs font-medium text-white/70">可能原因</div>
+                    <div className="mt-1 text-sm text-white/80">{issue.cause}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs font-medium text-white/70">处理办法</div>
+                    <ul className="mt-2 space-y-1 text-sm text-white/75">
+                      {issue.advice.map((item) => (
+                        <li key={item}>- {item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                  <details className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <summary className="cursor-pointer text-xs font-medium text-white/70">查看完整错误信息</summary>
+                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-red-100/80">{issue.rawMessage}</pre>
+                  </details>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {issue.canRetryProduction && (
+                      <Button type="button" onClick={retryProductionStage} disabled={isRunning} className="justify-start bg-emerald-600 hover:bg-emerald-700">
+                        {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                        重试生产阶段
+                      </Button>
+                    )}
+                    {issue.canSkipAudio && result?.workflowId && (
+                      <Button type="button" onClick={continueWithoutAudio} disabled={isRunning} className="justify-start bg-cyan-600 hover:bg-cyan-700">
+                        {isRunning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Film className="mr-2 h-4 w-4" />}
+                        跳过配音继续生成
+                      </Button>
+                    )}
+                    <Button type="button" onClick={stopCurrentRun} variant="outline" className="justify-start border-yellow-400/30 text-yellow-100">
+                      停止处理并保留成果
+                    </Button>
+                    <Button asChild variant="outline" className="justify-start border-white/20 text-white">
+                      <Link href="/llm-config">
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        去模型与密钥检查
+                      </Link>
+                    </Button>
+                    <Button asChild variant="outline" className="justify-start border-white/20 text-white">
+                      <Link href="/tts">
+                        <PlayCircle className="mr-2 h-4 w-4" />
+                        去 TTS 试听音色
+                      </Link>
+                    </Button>
+                    {result?.workflowId && (
+                      <Button asChild variant="outline" className="justify-start border-white/20 text-white">
+                        <Link href={`/studio?workflow_id=${result.workflowId}`}>
+                          <Route className="mr-2 h-4 w-4" />
+                          进入工作台处理
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -623,18 +1023,47 @@ export default function QuickStartPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {progressSteps.map((step) => (
-                    <div key={step.id} className="rounded border border-white/10 bg-white/5 p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-sm text-white">{step.label}</span>
-                        <Badge variant={progressBadgeVariant(step.status)}>
-                          {step.status === 'running' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                          {progressStatusText(step.status)}
-                        </Badge>
+                  {progressSteps.map((step) => {
+                    const expanded = expandedStepIds.includes(step.id);
+                    const details = stepDetails(step);
+                    return (
+                      <div key={step.id} className="rounded border border-white/10 bg-white/5 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <span className="text-sm text-white">{step.label}</span>
+                            {step.detail && <div className="mt-1 text-xs text-white/50">{step.detail}</div>}
+                          </div>
+                          <Badge variant={progressBadgeVariant(step.status)}>
+                            {step.status === 'running' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                            {progressStatusText(step.status)}
+                          </Badge>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleStepDetails(step.id)}
+                          className="mt-2 text-xs text-cyan-200 hover:text-cyan-100"
+                          aria-expanded={expanded}
+                        >
+                          {expanded ? '隐藏任务明细' : '查看任务明细'}
+                        </button>
+                        {expanded && (
+                          <div className="mt-3 space-y-2 rounded-lg border border-white/10 bg-black/20 p-3">
+                            {details.map((item) => (
+                              <div key={`${step.id}-${item.label}`} className="grid grid-cols-[80px_minmax(0,1fr)] gap-3 text-xs">
+                                <div className="text-white/45">{item.label}</div>
+                                <div className="break-all text-white/75">{String(item.value)}</div>
+                              </div>
+                            ))}
+                            {step.status === 'failed' && issue?.rawMessage && (
+                              <div className="border-t border-white/10 pt-2 text-xs text-red-100/80">
+                                错误：{issue.rawMessage.split('\n')[0]}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {step.detail && <div className="mt-1 text-xs text-white/50">{step.detail}</div>}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </CardContent>
               </Card>
             )}

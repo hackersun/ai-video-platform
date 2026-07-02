@@ -7,7 +7,7 @@ import {
   ProductionStrategy,
 } from '@/lib/production-strategy';
 
-export type EpisodePreviewStageStatus = 'pending' | 'running' | 'done' | 'failed';
+export type EpisodePreviewStageStatus = 'pending' | 'running' | 'done' | 'failed' | 'waiting';
 
 export type EpisodePreviewStageKey =
   | 'workflow'
@@ -59,6 +59,8 @@ export type EpisodePreviewProductionResult = {
   preflight?: any;
   render?: any;
 };
+
+export type EpisodePreviewAudioMode = 'model_audio' | 'none';
 
 export const EPISODE_PREVIEW_STAGE_DEFS: EpisodePreviewStage[] = [
   { key: 'workflow', label: '工程链路', status: 'pending', message: '确认小说、章节和工作流' },
@@ -126,6 +128,7 @@ export async function runEpisodePreviewProduction(params: {
   textModelConfigId?: string;
   videoModelConfigId?: string;
   audioModelConfigId?: string;
+  audioMode?: EpisodePreviewAudioMode;
   productionStrategy?: ProductionStrategy;
   generationStrategy?: GenerationStrategy;
   onStage?: (stage: EpisodePreviewStageUpdate) => void;
@@ -213,6 +216,7 @@ export async function runEpisodePreviewProduction(params: {
 
   const productionStrategy = params.productionStrategy || DEFAULT_PRODUCTION_STRATEGY;
   const strategy = params.generationStrategy || getGenerationStrategyForProduction(productionStrategy);
+  const audioMode = params.audioMode || 'model_audio';
   const strategyCopy = getProductionStrategyCopy(productionStrategy);
   const strategyContract = getStrategyContractFlags(productionStrategy);
 
@@ -238,7 +242,9 @@ export async function runEpisodePreviewProduction(params: {
     onStage,
     'media',
     'running',
-    strategy === 'separate_video_tts'
+    audioMode === 'none'
+      ? `正在按「${strategyCopy.label}」生成无配音视频和字幕；可稍后补配音`
+      : strategy === 'separate_video_tts'
       ? `正在按「${strategyCopy.label}」分别调用视频模型和声音模型；${strategyCopy.contractHint}`
       : `正在按「${strategyCopy.label}」调用直生音视频模型；${strategyCopy.contractHint}`
   );
@@ -247,9 +253,9 @@ export async function runEpisodePreviewProduction(params: {
     strategy,
     resolution: '720p',
     subtitle_mode: 'shot_dialogue',
-    audio_mode: 'model_audio',
+    audio_mode: audioMode,
     model_config_id: params.videoModelConfigId || undefined,
-    audio_model_config_id: params.audioModelConfigId || undefined,
+    audio_model_config_id: audioMode === 'none' ? undefined : params.audioModelConfigId || undefined,
   });
   const videoJobIds = mediaBatch.video_job_ids || [];
   const ttsJobIds = mediaBatch.tts_job_ids || [];
@@ -260,7 +266,7 @@ export async function runEpisodePreviewProduction(params: {
   if (mediaBatch.ready_for_concatenate === false) {
     const message = `已提交 ${videoJobIds.length} 个视频任务、${ttsJobIds.length} 个声音任务；等待云端生成完成后再合成`;
     await mark(onStage, 'media', 'done', message);
-    await mark(onStage, 'concatenate', 'failed', '等待视频/声音任务完成后再继续合成');
+    await mark(onStage, 'concatenate', 'waiting', '视频/声音仍在云端生成中；完成后可回到工作台继续合成');
     return {
       workflowId,
       novelId,
@@ -284,7 +290,9 @@ export async function runEpisodePreviewProduction(params: {
     onStage,
     'media',
     'done',
-    strategy === 'separate_video_tts'
+    audioMode === 'none'
+      ? `已创建 ${videoJobIds.length || mediaJobIds.length} 个无配音视频任务和 ${subtitleTrackIds.length} 条字幕轨`
+      : strategy === 'separate_video_tts'
       ? `已创建 ${videoJobIds.length} 个视频任务、${ttsJobIds.length} 个声音任务和 ${subtitleTrackIds.length} 条字幕轨`
       : `已创建 ${mediaJobIds.length} 个直生音视频任务和 ${subtitleTrackIds.length} 条字幕轨`
   );

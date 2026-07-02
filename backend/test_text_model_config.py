@@ -249,6 +249,73 @@ async def test_llm_catalog_hides_placeholder_tts_models_and_providers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_catalog_hides_placeholder_video_api_models() -> None:
+    user_id = f"llm-catalog-video-placeholder-user-{uuid4()}"
+    model_id = f"video-api-model-{uuid4()}"
+    config_id = f"video-api-config-{uuid4()}"
+
+    async with AsyncSessionLocal() as db:
+        provider = await db.get(LLMProvider, "volcano")
+        if provider is None:
+            db.add(
+                LLMProvider(
+                    id="volcano",
+                    name="volcano",
+                    name_cn="火山引擎",
+                    base_url="https://ark.cn-beijing.volces.com/api/v3",
+                    is_active=True,
+                )
+            )
+        db.add(
+            LLMModel(
+                id=model_id,
+                provider_id="volcano",
+                model_id="video-api-model",
+                model_name="video API Model",
+                model_type="video",
+                capabilities=["text-to-video"],
+                is_active=True,
+            )
+        )
+        config = LLMConfig(
+            id=config_id,
+            user_id=user_id,
+            model_id=model_id,
+            name="video API Model",
+            is_active=True,
+            is_default=True,
+            test_status="success",
+        )
+        config.set_api_key_encrypted("sk-video-api-model")
+        db.add(config)
+        await db.commit()
+
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    try:
+        models_response = client.get("/api/v1/llm/models?provider=volcano", headers=headers)
+        assert models_response.status_code == 200
+        model_ids = {model["id"] for model in models_response.json()}
+        model_names = {model["model_name"] for model in models_response.json()}
+        assert model_id not in model_ids
+        assert "video API Model" not in model_names
+
+        configs_response = client.get("/api/v1/llm/configs", headers=headers)
+        assert configs_response.status_code == 200
+        assert all(config["id"] != config_id for config in configs_response.json())
+    finally:
+        async with AsyncSessionLocal() as db:
+            config = await db.get(LLMConfig, config_id)
+            if config is not None:
+                await db.delete(config)
+            model = await db.get(LLMModel, model_id)
+            if model is not None:
+                await db.delete(model)
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_default_minimax_chat_model_is_resolved_as_text_config() -> None:
     user_id = "text-default-minimax-user"
 
