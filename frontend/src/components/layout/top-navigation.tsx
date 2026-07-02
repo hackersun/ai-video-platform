@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
 import { 
   BookOpen, 
   FileText, 
@@ -101,15 +102,35 @@ const mobileMoreMenuItems = [
   teamMenuItem,
 ];
 
+const EXPERT_NAV_KEY = 'ai-video-platform:expert-nav';
+
 export function TopNavigation() {
   const pathname = usePathname();
   const router = useRouter();
+  const [expertMode, setExpertMode] = useState(false);
 
   const isActive = (path: string) => {
     return pathname === path || pathname.startsWith(path + '/');
   };
 
   const isGroupActive = (group: NavigationGroup) => group.items.some((item) => isActive(item.path));
+  const isExpertRoute = useMemo(
+    () => groupedMenuItems.some((group) => isGroupActive(group)) || isActive(teamMenuItem.path),
+    [pathname]
+  );
+  const showExpertNav = expertMode || isExpertRoute;
+
+  useEffect(() => {
+    setExpertMode(localStorage.getItem(EXPERT_NAV_KEY) === '1');
+  }, []);
+
+  const toggleExpertMode = () => {
+    setExpertMode((current) => {
+      const next = !current;
+      localStorage.setItem(EXPERT_NAV_KEY, next ? '1' : '0');
+      return next;
+    });
+  };
 
   const renderDropdownItems = (items: NavigationItem[]) =>
     items.map((item) => {
@@ -163,7 +184,7 @@ export function TopNavigation() {
             );
           })}
 
-          {groupedMenuItems.map((group) => {
+          {showExpertNav && groupedMenuItems.map((group) => {
             const Icon = group.icon;
             return (
               <DropdownMenu key={group.label} modal={false}>
@@ -194,18 +215,34 @@ export function TopNavigation() {
             );
           })}
 
-          <Link
-            href={teamMenuItem.path}
-            aria-label={teamMenuItem.label}
+          {showExpertNav && (
+            <Link
+              href={teamMenuItem.path}
+              aria-label={teamMenuItem.label}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
+                ${isActive(teamMenuItem.path)
+                  ? 'text-white bg-white/10'
+                  : 'text-white/60 hover:text-white hover:bg-white/5'
+                }`}
+            >
+              <Users className="w-4 h-4" />
+              <span className="hidden md:inline">{teamMenuItem.label}</span>
+            </Link>
+          )}
+
+          <button
+            type="button"
+            onClick={toggleExpertMode}
+            aria-pressed={expertMode}
             className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
-              ${isActive(teamMenuItem.path)
-                ? 'text-white bg-white/10'
+              ${showExpertNav
+                ? 'text-cyan-100 bg-cyan-500/10'
                 : 'text-white/60 hover:text-white hover:bg-white/5'
               }`}
           >
-            <Users className="w-4 h-4" />
-            <span className="hidden md:inline">{teamMenuItem.label}</span>
-          </Link>
+            <Settings className="w-4 h-4" />
+            <span className="hidden lg:inline">{showExpertNav ? '收起专家工具' : '专家工具'}</span>
+          </button>
         </nav>
 
         <nav className="flex min-w-0 flex-1 items-center justify-end gap-1 md:hidden">
@@ -228,32 +265,35 @@ export function TopNavigation() {
             );
           })}
 
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label="流程菜单"
-                title="流程菜单"
-                className={`flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
-                  ${groupedMenuItems.some((group) => isGroupActive(group))
-                    ? 'bg-white/10 text-white'
-                    : 'text-white/60 hover:bg-white/5 hover:text-white'
-                  }`}
+          {showExpertNav && (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="流程菜单"
+                  title="流程菜单"
+                  className={`flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
+                    ${groupedMenuItems.some((group) => isGroupActive(group))
+                      ? 'bg-white/10 text-white'
+                      : 'text-white/60 hover:bg-white/5 hover:text-white'
+                    }`}
+                >
+                  <Workflow className="h-4 w-4" />
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                sideOffset={8}
+                className="z-[60] w-52 max-w-[calc(100vw-1rem)] border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
               >
-                <Workflow className="h-4 w-4" />
-                <ChevronDown className="h-3 w-3" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              sideOffset={8}
-              className="z-[60] w-52 max-w-[calc(100vw-1rem)] border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
-            >
-              {groupedMenuItems.flatMap((group) => renderDropdownItems(group.items))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                {groupedMenuItems.flatMap((group) => renderDropdownItems(group.items))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
-          <DropdownMenu modal={false}>
+          {showExpertNav ? (
+            <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
@@ -293,6 +333,17 @@ export function TopNavigation() {
               })}
             </DropdownMenuContent>
           </DropdownMenu>
+          ) : (
+            <button
+              type="button"
+              onClick={toggleExpertMode}
+              aria-label="显示专家工具"
+              title="显示专家工具"
+              className="flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-sm font-medium text-white/60 transition-colors hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+          )}
         </nav>
       </div>
     </header>

@@ -115,3 +115,28 @@ test('model config keeps test and noisy TTS models hidden until advanced mode is
   await expect(page.getByText('测试视频模型').first()).toBeVisible();
   await expect(page.getByText('普通 TTS 声音模型').first()).toBeVisible();
 });
+
+test('top navigation defaults to beginner mode and can reveal expert tools', async ({ page }) => {
+  await page.route('**/api/v1/novels**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.route('**/api/v1/video/jobs**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.route('**/api/v1/tts/jobs**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.route('**/api/v1/scripts**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+
+  await page.addInitScript(() => localStorage.removeItem('ai-video-platform:expert-nav'));
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto('/dashboard');
+
+  await expect(page.getByRole('link', { name: '连续动漫向导' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '打开故事创作菜单' })).toHaveCount(0);
+  await page.getByRole('button', { name: '专家工具' }).click();
+  await expect(page.getByRole('button', { name: '打开故事创作菜单' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '收起专家工具' })).toBeVisible();
+});
