@@ -262,13 +262,15 @@ test('producer preview production uses audio model, contract refresh, render pre
   });
 
   await page.goto('/producer?workflow_id=wf-preview');
-  await expect(page.getByText('本集草片声音模型')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('生产策略', { exact: true })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('可选声音配置')).toBeVisible();
   await page.getByRole('button', { name: '一键生成本集草片' }).click();
 
   await expect(page.getByRole('link', { name: /打开草片预览/ })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('link', { name: '查看字幕' })).toBeVisible();
   await expect.poll(() => mediaRequests.length).toBe(1);
   expect(mediaRequests[0]).toMatchObject({
+    production_strategy: 'draft_fast',
     strategy: 'separate_video_tts',
     model_config_id: 'video-model-preview',
     audio_model_config_id: 'audio-model-preview',

@@ -17,6 +17,12 @@ import {
   SavedModelConfig,
 } from '@/lib/model-configs';
 import {
+  DEFAULT_PRODUCTION_STRATEGY,
+  getProductionStrategyCopy,
+  ProductionStrategy,
+  PRODUCTION_STRATEGY_OPTIONS,
+} from '@/lib/production-strategy';
+import {
   BookOpen,
   Captions,
   CheckCircle,
@@ -139,6 +145,7 @@ export default function QuickStartPage() {
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [videoModelConfigId, setVideoModelConfigId] = useState('');
   const [audioModelConfigId, setAudioModelConfigId] = useState('');
+  const [productionStrategy, setProductionStrategy] = useState<ProductionStrategy>(DEFAULT_PRODUCTION_STRATEGY);
   const [progressSteps, setProgressSteps] = useState<QuickStartProgressStep[]>([]);
 
   const checks = useMemo(() => {
@@ -152,6 +159,7 @@ export default function QuickStartPage() {
   }, [form]);
 
   const isReady = checks.every((item) => item.ok);
+  const productionStrategyCopy = useMemo(() => getProductionStrategyCopy(productionStrategy), [productionStrategy]);
 
   useEffect(() => {
     loadModelConfigs();
@@ -320,7 +328,7 @@ export default function QuickStartPage() {
           textModelConfigId: textModelConfigId || undefined,
           videoModelConfigId: videoModelConfigId || undefined,
           audioModelConfigId: audioModelConfigId || undefined,
-          generationStrategy: 'separate_video_tts',
+          productionStrategy,
           onStage: (stage) => {
             const stepId = stageToStep[stage.key];
             if (stepId && stage.status) {
@@ -456,14 +464,31 @@ export default function QuickStartPage() {
               />
               {form.autoProducePreview && (
                 <>
+                  <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3">
+                    <div className="mb-2 text-xs text-cyan-100/70">首集生产策略</div>
+                    <Select
+                      value={productionStrategy}
+                      onChange={(event) => setProductionStrategy(event.target.value as ProductionStrategy)}
+                      options={PRODUCTION_STRATEGY_OPTIONS}
+                      disabled={isRunning}
+                    />
+                    <div className="mt-2 text-sm text-cyan-50/80">
+                      <span className="font-medium text-white">{productionStrategyCopy.label}</span>
+                      <span className="ml-2">{productionStrategyCopy.description}</span>
+                    </div>
+                    <div className="mt-1 text-xs text-cyan-100/70">{productionStrategyCopy.modelHint}</div>
+                    <div className="mt-1 text-xs text-cyan-100/60">
+                      草稿默认 Seedance-2.0-fast 语义；终稿默认 Seedance-2.0 语义。没有具体配置时只展示策略建议。
+                    </div>
+                  </div>
                   <ModelCapabilitySelector
                     capability="video"
                     configs={modelConfigs}
                     value={videoModelConfigId}
                     onChange={setVideoModelConfigId}
                     disabled={isRunning}
-                    title="首集草片视频模型"
-                    description="自动出片会优先使用该视频能力配置；未配置时 DEV_MODE 会生成本地可播放草片。"
+                    title="可选视频配置"
+                    description="不选择具体配置时按生产策略建议路由；草稿建议 Seedance-2.0-fast，终稿建议 Seedance-2.0。"
                     compact
                   />
                   <ModelCapabilitySelector
@@ -472,8 +497,8 @@ export default function QuickStartPage() {
                     value={audioModelConfigId}
                     onChange={setAudioModelConfigId}
                     disabled={isRunning}
-                    title="首集草片声音模型"
-                    description="自动出片会用该声音模型生成角色对白，并在合成前执行字幕与时间线预检。"
+                    title="可选声音配置"
+                    description="分步策略会用该声音配置生成角色对白；未选择时保留策略建议和后端默认。"
                     compact
                   />
                 </>

@@ -27,6 +27,7 @@ from app.services.entity_extraction_service import (
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_blocks, apply_active_prompt_skill_template
+from app.services.production_bible import build_production_bible_summary
 from app.services.story_state_machine import (
     build_story_state_machine,
     check_story_state_machine,
@@ -366,6 +367,10 @@ class StoryStateMachineCheckResponse(BaseModel):
     generated_transient: bool
     issue_count: int
     issues: List[Dict[str, Any]]
+    summary: Dict[str, Any]
+
+
+class ProductionBibleSummaryResponse(BaseModel):
     summary: Dict[str, Any]
 
 
@@ -1313,6 +1318,22 @@ async def get_story_production_pack(
         scene_tags=[_scene_tag_item(entity) for entity in scenes],
         asset_requirements=asset_requirements,
     )
+
+
+@router.get("/production-bible/{novel_id}/summary", response_model=ProductionBibleSummaryResponse)
+async def get_production_bible_summary(
+    novel_id: str,
+    story_bible_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    summary = await build_production_bible_summary(
+        db,
+        user_id,
+        novel_id,
+        story_bible_id=story_bible_id,
+    )
+    return ProductionBibleSummaryResponse(summary=summary)
 
 
 @router.post("/entities/check-consistency", response_model=EntityConsistencyCheckResponse)

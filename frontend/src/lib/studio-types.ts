@@ -72,6 +72,24 @@ export type StudioSnapshot = {
     prop_rule_count?: number;
     event_count?: number;
   };
+  production_bible_summary?: {
+    version?: string;
+    novel_id?: string;
+    story_bible_id?: string | null;
+    style?: Record<string, any>;
+    characters?: Array<Record<string, any>>;
+    scenes?: Array<Record<string, any>>;
+    props?: Array<Record<string, any>>;
+    events?: Array<Record<string, any>>;
+    voices?: Array<Record<string, any>>;
+    asset_readiness?: {
+      asset_count?: number;
+      missing_asset_count?: number;
+      ready?: boolean;
+    };
+    missing_requirements?: Array<Record<string, any>>;
+    counts?: Record<string, number>;
+  };
   state_machine?: Record<string, any>;
   production?: {
     shot_count?: number;

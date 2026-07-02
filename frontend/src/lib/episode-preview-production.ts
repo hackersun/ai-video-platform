@@ -1,4 +1,11 @@
 import { apiClient } from '@/lib/api-client';
+import {
+  DEFAULT_PRODUCTION_STRATEGY,
+  getGenerationStrategyForProduction,
+  getProductionStrategyCopy,
+  GenerationStrategy,
+  ProductionStrategy,
+} from '@/lib/production-strategy';
 
 export type EpisodePreviewStageStatus = 'pending' | 'running' | 'done' | 'failed';
 
@@ -107,7 +114,8 @@ export async function runEpisodePreviewProduction(params: {
   textModelConfigId?: string;
   videoModelConfigId?: string;
   audioModelConfigId?: string;
-  generationStrategy?: 'separate_video_tts' | 'direct_av_first';
+  productionStrategy?: ProductionStrategy;
+  generationStrategy?: GenerationStrategy;
   onStage?: (stage: EpisodePreviewStageUpdate) => void;
 }): Promise<EpisodePreviewProductionResult> {
   const { workflowId, onStage } = params;
@@ -196,16 +204,19 @@ export async function runEpisodePreviewProduction(params: {
   await apiClient.refreshWorkflowShortVideoContracts(workflowId);
   await mark(onStage, 'contracts', 'done', '人物、场景、道具、字幕和模型路线已锁定');
 
-  const strategy = params.generationStrategy || 'separate_video_tts';
+  const productionStrategy = params.productionStrategy || DEFAULT_PRODUCTION_STRATEGY;
+  const strategy = params.generationStrategy || getGenerationStrategyForProduction(productionStrategy);
+  const strategyCopy = getProductionStrategyCopy(productionStrategy);
   await mark(
     onStage,
     'media',
     'running',
     strategy === 'separate_video_tts'
-      ? '正在分别调用视频模型和声音模型生成镜头草稿'
-      : '正在调用直生音视频模型生成镜头草稿'
+      ? `正在按「${strategyCopy.label}」分别调用视频模型和声音模型生成镜头草稿`
+      : `正在按「${strategyCopy.label}」调用直生音视频模型生成镜头草稿`
   );
   const mediaBatch = await apiClient.generateWorkflowMediaBatch(workflowId, {
+    production_strategy: productionStrategy,
     strategy,
     resolution: '720p',
     subtitle_mode: 'shot_dialogue',

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { AlertCircle, Loader2, PlayCircle } from 'lucide-react';
+import { AlertCircle, BookOpen, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
@@ -13,6 +13,7 @@ import { StudioAgentPanel } from './studio-agent-panel';
 import { StudioContextPanel } from './studio-context-panel';
 import { StudioModeBanner } from './studio-mode-banner';
 import { StudioProductionBoard } from './studio-production-board';
+import { StudioSeriesBoard } from './studio-series-board';
 import { PromptSkillPanel } from './prompt-skill-panel';
 
 function workflowIdOf(item: StudioWorkflowOption) {
@@ -131,12 +132,12 @@ export function StudioShell() {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm text-cyan-200">
-            <PlayCircle className="h-4 w-4" />
-            统一创作工作台
+            <BookOpen className="h-4 w-4" />
+            统一创作工作台 · Series Studio
           </div>
-          <h1 className="mt-2 text-2xl font-semibold text-white">从上下文到出片检查，一屏推进</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-white">系列动漫工作室：从小说章节到本集草片</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-            选择本集工程后，工作台会聚合 Story Bible、镜头、资产锁、任务和时间线，并给出明确修复路径。
+            选择小说/章节生成本集工程后，这里会聚合 Production Bible、剧本分镜、资产/声音锁、草片任务和质量门禁，继续兼容已有 workflow。
           </p>
         </div>
         <div className="w-full lg:w-80">
@@ -162,16 +163,16 @@ export function StudioShell() {
       {!workflowId && !loading ? (
         <Card className="border-white/10 bg-white/5">
           <CardContent className="p-8 text-center">
-            <div className="text-lg font-medium text-white">先创建首集工程</div>
+            <div className="text-lg font-medium text-white">先从小说创建本集工程</div>
             <div className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/55">
-              还没有可继续制作的本集工程。先用极速向导生成首集工程，完成后会带着工作流回到这里继续检查和修复。
+              还没有可继续制作的本集工程。先导入或选择小说章节，生成 Production Bible 和首集工程；完成后会带着 workflow 回到这里继续一键草片、资产锁和质量门禁。
             </div>
             <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
               <Button className="bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/quick-start')}>
-                极速创建首集工程
+                极速向导：小说到首集
               </Button>
-              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/workflow')}>
-                手动创建工作流
+              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/producer')}>
+                AI 制片：创建本集工程
               </Button>
             </div>
           </CardContent>
@@ -185,18 +186,21 @@ export function StudioShell() {
             </div>
           ) : null}
           <PromptSkillPanel />
+          <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContextPanel snapshot={snapshot} />
           <StudioProductionBoard snapshot={snapshot} />
-          <StudioAgentPanel
-            snapshot={snapshot}
-            mode={mode}
-            loading={loading}
-            bypassReason={bypassReason}
-            lastAction={lastAction}
-            onBypassReasonChange={setBypassReason}
-            onRefresh={() => loadSnapshot(workflowId, mode)}
-            onAction={handleAction}
-          />
+          <div id="studio-agent-panel">
+            <StudioAgentPanel
+              snapshot={snapshot}
+              mode={mode}
+              loading={loading}
+              bypassReason={bypassReason}
+              lastAction={lastAction}
+              onBypassReasonChange={setBypassReason}
+              onRefresh={() => loadSnapshot(workflowId, mode)}
+              onAction={handleAction}
+            />
+          </div>
         </>
       )}
     </div>

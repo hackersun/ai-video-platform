@@ -22,6 +22,12 @@ import {
   runEpisodePreviewProduction,
 } from '@/lib/episode-preview-production';
 import {
+  DEFAULT_PRODUCTION_STRATEGY,
+  getProductionStrategyCopy,
+  ProductionStrategy,
+  PRODUCTION_STRATEGY_OPTIONS,
+} from '@/lib/production-strategy';
+import {
   ArrowRight,
   AlertCircle,
   Bot,
@@ -229,6 +235,7 @@ function ProducerCenterContent() {
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [videoModelConfigId, setVideoModelConfigId] = useState('');
   const [audioModelConfigId, setAudioModelConfigId] = useState('');
+  const [productionStrategy, setProductionStrategy] = useState<ProductionStrategy>(DEFAULT_PRODUCTION_STRATEGY);
   const [previewStages, setPreviewStages] = useState<EpisodePreviewStage[]>(() => createInitialEpisodePreviewStages());
   const [previewResult, setPreviewResult] = useState<EpisodePreviewProductionResult | null>(null);
   const [shortVideoReadiness, setShortVideoReadiness] = useState<any>(null);
@@ -259,6 +266,7 @@ function ProducerCenterContent() {
     () => workflows.find((item) => item.workflow_id === workflowId) || null,
     [workflows, workflowId]
   );
+  const productionStrategyCopy = useMemo(() => getProductionStrategyCopy(productionStrategy), [productionStrategy]);
   const selectedStoryBible = useMemo(
     () => storyBibles.find((item) => item.id === selectedStoryBibleId) || null,
     [storyBibles, selectedStoryBibleId]
@@ -726,7 +734,7 @@ function ProducerCenterContent() {
         textModelConfigId: textModelConfigId || undefined,
         videoModelConfigId: videoModelConfigId || undefined,
         audioModelConfigId: audioModelConfigId || undefined,
-        generationStrategy: 'separate_video_tts',
+        productionStrategy,
         onStage: updatePreviewStage,
       });
       setPreviewResult(result);
@@ -1258,6 +1266,28 @@ function ProducerCenterContent() {
                 </div>
               </div>
 
+              <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-4">
+                <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+                  <div>
+                    <div className="mb-2 text-xs text-cyan-100/70">生产策略</div>
+                    <Select
+                      value={productionStrategy}
+                      onChange={(event) => setProductionStrategy(event.target.value as ProductionStrategy)}
+                      options={PRODUCTION_STRATEGY_OPTIONS}
+                      disabled={Boolean(loadingAction)}
+                    />
+                  </div>
+                  <div className="text-sm text-cyan-50/80">
+                    <div className="font-medium text-white">{productionStrategyCopy.label}</div>
+                    <div className="mt-1">{productionStrategyCopy.description}</div>
+                    <div className="mt-2 text-xs text-cyan-100/70">{productionStrategyCopy.modelHint}</div>
+                    <div className="mt-2 text-xs text-cyan-100/60">
+                      草稿默认 Seedance-2.0-fast 语义；终稿默认 Seedance-2.0 语义。这里保存策略建议，不硬编码真实配置 ID。
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid gap-3 md:grid-cols-3">
                 <ModelCapabilitySelector
                   capability="text"
@@ -1275,8 +1305,8 @@ function ProducerCenterContent() {
                   value={videoModelConfigId}
                   onChange={setVideoModelConfigId}
                   disabled={Boolean(loadingAction)}
-                  title="本集草片视频模型"
-                  description="分步生成会用该模型创建视频任务，声音不会再混用视频模型。"
+                  title="可选视频配置"
+                  description="不选择具体配置时按生产策略建议路由；草稿建议 Seedance-2.0-fast，终稿建议 Seedance-2.0。"
                   compact
                 />
                 <ModelCapabilitySelector
@@ -1285,8 +1315,8 @@ function ProducerCenterContent() {
                   value={audioModelConfigId}
                   onChange={setAudioModelConfigId}
                   disabled={Boolean(loadingAction)}
-                  title="本集草片声音模型"
-                  description="分步生成会用该声音模型创建每个镜头的配音任务，并用于后续合成。"
+                  title="可选声音配置"
+                  description="分步策略会用该声音配置创建每个镜头配音；不选择时保留策略建议。"
                   compact
                 />
               </div>

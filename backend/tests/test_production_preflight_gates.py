@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
-from app.models import Chapter, LLMConfig, LLMModel, LLMProvider, Novel, Script, Shot, Storyboard, TTSJob
+from app.models import Asset, Chapter, LLMConfig, LLMModel, LLMProvider, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard, TTSJob
 from app.models.video_job import VideoJob
 from app.models.workflow import Workflow
 from init_db import init_db
@@ -82,8 +82,10 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
     storyboard_id = f"storyboard-{uuid4()}"
     workflow_id = f"workflow-{uuid4()}"
     shot_id = f"shot-{uuid4()}"
+    character_entity_id = f"char-{uuid4()}"
+    character_asset_id = f"asset-char-{uuid4()}"
     entity_refs = {
-        "characters": [{"entity_id": "char-1", "name": "沈砚"}],
+        "characters": [{"entity_id": character_entity_id, "name": "沈砚"}],
         "scenes": [],
         "props": [],
         "events": [],
@@ -91,6 +93,103 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
 
     async with AsyncSessionLocal() as db:
         db.add(Novel(id=novel_id, user_id=user_id, title="生产门禁小说", description="生产门禁"))
+        db.add(
+            StoryBible(
+                id=f"story-bible-{uuid4()}",
+                user_id=user_id,
+                novel_id=novel_id,
+                title="生产门禁 Story Bible",
+                style="冷色悬疑动漫风格",
+                worldview="近未来港口城市",
+                character_rules=[{"name": "沈砚", "rule": "黑发灰蓝长衫"}],
+                scene_rules=[{"name": "旧码头", "rule": "冷雾与潮湿木栈道"}],
+                prop_rules=[{"name": "铜铃", "rule": "斑驳旧铜材质"}],
+                event_timeline=[{"name": "追查铜铃", "sequence": 1}],
+                extra_data={
+                    "voices": [{"character_name": "沈砚", "voice": "calm_male"}],
+                    "state_machine": {
+                        "generated_at": "2026-01-01T00:00:00+00:00",
+                        "summary": {"characters": 1, "scenes": 1, "props": 1, "events": 1},
+                        "current_state": {
+                            "characters": {"沈砚": {"state": "追查中"}},
+                            "scenes": {"旧码头": {"weather": "冷雾"}},
+                            "props": {"铜铃": {"state": "线索"}},
+                            "events": [{"name": "追查铜铃", "sequence": 1}],
+                        },
+                        "issues": [],
+                    },
+                },
+            )
+        )
+        db.add(
+            StoryEntity(
+                id=character_entity_id,
+                user_id=user_id,
+                novel_id=novel_id,
+                entity_type="character",
+                name="沈砚",
+                description="黑发青年，灰蓝长衫",
+                attributes={"visual_dna": {"hair": "black", "costume": "灰蓝长衫"}, "voice": "calm_male"},
+                confidence=95,
+                is_approved=True,
+            )
+        )
+        db.add(
+            StoryEntity(
+                id=f"scene-{uuid4()}",
+                user_id=user_id,
+                novel_id=novel_id,
+                entity_type="scene",
+                name="旧码头",
+                description="冷雾弥漫的木质码头",
+                attributes={"scene_dna": {"weather": "冷雾", "lighting": "低饱和蓝灰"}},
+                confidence=90,
+                is_approved=True,
+            )
+        )
+        db.add(
+            StoryEntity(
+                id=f"prop-{uuid4()}",
+                user_id=user_id,
+                novel_id=novel_id,
+                entity_type="prop",
+                name="铜铃",
+                description="关键线索道具",
+                attributes={"prop_dna": {"material": "旧铜", "state": "斑驳"}},
+                confidence=90,
+                is_approved=True,
+            )
+        )
+        db.add(
+            StoryEntity(
+                id=f"event-{uuid4()}",
+                user_id=user_id,
+                novel_id=novel_id,
+                entity_type="event",
+                name="追查铜铃",
+                description="沈砚在旧码头发现铜铃线索",
+                attributes={"sequence": 1, "participants": ["沈砚"], "location": "旧码头"},
+                confidence=90,
+                is_approved=True,
+            )
+        )
+        db.add(
+            Asset(
+                id=character_asset_id,
+                user_id=user_id,
+                category="character",
+                entity_id=character_entity_id,
+                entity_type="character",
+                name="沈砚角色定稿",
+                description="黑发灰蓝长衫角色定稿",
+                asset_type="image",
+                url="https://cdn.example.com/shenyan.png",
+                novel_id=novel_id,
+                is_active=True,
+                is_final=True,
+                is_locked=True,
+            )
+        )
         db.add(
             Chapter(
                 id=chapter_id,
@@ -155,10 +254,10 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                     "entity_refs": entity_refs,
                     "subtitle_text": "沈砚: 我会查清铜铃的来历。",
                     "locked_assets": {
-                        "character_char-1": {
-                            "asset_id": "asset-char-1",
+                        f"character_{character_entity_id}": {
+                            "asset_id": character_asset_id,
                             "entity_type": "character",
-                            "entity_id": "char-1",
+                            "entity_id": character_entity_id,
                             "asset_name": "沈砚角色定稿",
                             "asset_url": "https://cdn.example.com/shenyan.png",
                         }
@@ -176,6 +275,66 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
         "workflow_id": workflow_id,
         "shot_id": shot_id,
     }
+
+
+def test_production_bible_summary_endpoint_exposes_core_sections(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEV_MODE", "true")
+    user_id = str(uuid4())
+    seeded = asyncio.run(_seed_workflow_with_shot(user_id=user_id, image_url="https://cdn.example.com/shot.png"))
+
+    with TestClient(app) as test_client:
+        response = test_client.get(
+            f"/api/v1/story-bibles/production-bible/{seeded['novel_id']}/summary",
+            headers=_signed_auth_headers(user_id),
+        )
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["style"]["style"] == "冷色悬疑动漫风格"
+    assert summary["characters"][0]["name"] == "沈砚"
+    assert summary["scenes"][0]["name"] == "旧码头"
+    assert summary["props"][0]["name"] == "铜铃"
+    assert summary["events"][0]["name"] == "追查铜铃"
+    assert summary["voices"][0]["character_name"] == "沈砚"
+    assert summary["asset_readiness"]["missing_asset_count"] >= 0
+    assert summary["state_machine"]["available"] is True
+
+
+def test_workflow_asset_locks_persist_production_bible_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEV_MODE", "true")
+    user_id = str(uuid4())
+    seeded = asyncio.run(_seed_workflow_with_shot(user_id=user_id, image_url="https://cdn.example.com/shot.png"))
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            f"/api/v1/production-control/workflow/{seeded['workflow_id']}/asset-locks",
+            headers=_signed_auth_headers(user_id),
+            json={"create_missing_assets": False, "persist": True},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["production_bible_summary"]["novel_id"] == seeded["novel_id"]
+    assert payload["production_snapshot"]["reason"] == "asset_locks_applied"
+
+    with TestClient(app) as test_client:
+        status_response = test_client.get(
+            f"/api/v1/workflow/status/{seeded['workflow_id']}",
+            headers=_signed_auth_headers(user_id),
+        )
+
+    assert status_response.status_code == 200
+    assert status_response.json()["production_bible_summary"]["novel_id"] == seeded["novel_id"]
+
+    async def _load_snapshot() -> dict:
+        async with AsyncSessionLocal() as db:
+            workflow = await db.get(Workflow, seeded["workflow_id"])
+            assert workflow is not None
+            return workflow.metadata_["production_snapshot"]
+
+    snapshot = asyncio.run(_load_snapshot())
+    assert snapshot["summary"]["characters"][0]["name"] == "沈砚"
+    assert snapshot["summary"]["asset_readiness"]["asset_count"] >= 1
 
 
 @pytest.mark.parametrize(

@@ -258,12 +258,14 @@ test('quick start auto preview uses canonical episode production pipeline with a
 
   await page.goto('/quick-start');
   await expect(page.getByPlaceholder('作品名')).toHaveValue('自动草片统一管线', { timeout: 10_000 });
-  await expect(page.getByText('首集草片声音模型')).toBeVisible();
+  await expect(page.getByText('首集生产策略')).toBeVisible();
+  await expect(page.getByText('可选声音配置')).toBeVisible();
   await page.getByRole('button', { name: '生成首集工程' }).click();
 
   await expect(page.getByText('首集预览草片、字幕和渲染包已生成')).toBeVisible({ timeout: 10_000 });
   expect(mediaRequests).toHaveLength(1);
   expect(mediaRequests[0]).toMatchObject({
+    production_strategy: 'draft_fast',
     strategy: 'separate_video_tts',
     model_config_id: 'video-model-e2e',
     audio_model_config_id: 'audio-model-e2e',

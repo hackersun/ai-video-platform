@@ -1316,3 +1316,17 @@
 - [x] 现状问题与目标流程设计
 - [x] 写入完整优化方案文档：docs/continuous-anime-production-optimization.md
 - [x] 验证与总结
+
+## 2026-07-02 P0 连续动漫制作优化并行执行
+
+### 假设
+- 不做数据库迁移，优先复用 `StoryBible.extra_data`、`StoryEntity.attributes`、`Workflow.metadata_` / extra_data、`Novel.extra_data`。
+- 第一阶段只交付可验证的 P0：Series Studio 入口收束、Production Bible 摘要/快照、生产策略文案/元数据。
+- 不清理既有未跟踪媒体和缓存文件，不回滚用户或其他代理改动。
+
+### 并行任务
+- [x] 前端 Series Studio：改造 `/studio` 为小说/本集生产入口，展示 P0 看板和无 workflow 引导。
+- [x] 后端 Production Bible：新增摘要构建与 workflow 开拍快照，补最小测试。
+- [x] 模型/生产策略：新增 draft/final 等生产策略文案与一键草片默认策略，保持现有接口兼容。
+- [x] 主线集成：审查代理补丁、解决冲突、运行针对性验证。
+- [x] 阶段提交：每个稳定切片独立提交，记录验证结果。

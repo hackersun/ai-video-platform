@@ -27,6 +27,7 @@ from app.models import (
 from app.services.shot_quality_service import build_shot_quality_report
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.story_state_machine import get_story_state_machine
+from app.services.production_bible import build_production_bible_summary
 
 
 SHOT_LIMIT = 80
@@ -405,6 +406,15 @@ async def build_studio_snapshot(
     assets = await _load_assets(db, user_id, project_id=workflow.project_id, novel_id=workflow.novel_id)
     jobs = await _load_jobs(db, user_id, workflow)
     timeline = await _load_timeline(db, user_id, workflow.project_id)
+    metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+    production_snapshot = metadata.get("production_snapshot") if isinstance(metadata.get("production_snapshot"), dict) else {}
+    production_bible_summary = (
+        production_snapshot.get("summary")
+        if isinstance(production_snapshot.get("summary"), dict)
+        else None
+    )
+    if production_bible_summary is None and workflow.novel_id:
+        production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
     raw_issues = _build_issues(workflow=workflow, story_bible=story_bible, shots=shots, jobs=jobs)
     policy_result = apply_mode_policy(raw_issues, mode_policy or StudioModePolicy())
     actions = _unique_actions(policy_result["issues"])
@@ -421,7 +431,7 @@ async def build_studio_snapshot(
             "chapter_id": workflow.chapter_id,
             "script_id": workflow.script_id,
             "storyboard_id": workflow.storyboard_id,
-            "metadata": workflow.metadata_ or {},
+            "metadata": metadata,
             "updated_at": _dt(workflow.updated_at),
         },
         "story_context": {
@@ -431,6 +441,7 @@ async def build_studio_snapshot(
             "storyboard": {"id": storyboard.id, "title": storyboard.title, "shot_count": storyboard.shot_count} if storyboard else None,
         },
         "story_bible": _story_bible_payload(story_bible),
+        "production_bible_summary": production_bible_summary,
         "state_machine": state_machine,
         "production": {
             "shot_count": len(shots),

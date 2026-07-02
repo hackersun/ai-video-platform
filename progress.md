@@ -1062,3 +1062,17 @@
 - 已完成现有架构与业务流程复核，重点确认 `episode-preview-production.ts`、`workflow.py`、`production_control.py`、`consistency_preflight.py`、`prompt_composer.py`、`default_anime_library.py`、`volcano_config.py` 等能力边界。
 - 已结合火山 Seedance 2.0/fast、Runway、Kling、Luma、OpenAI Sora、Google 视频生成文档形成模型路由与平台对标结论。
 - 新增方案文档：`docs/continuous-anime-production-optimization.md`，给出 Series Studio、Production Bible、多集计划、资产/声音锁、模型策略、质量门禁、P0-P5 落地路线和验收标准。
+
+## 2026-07-02 P0 并行优化启动
+
+- 已先提交方案稳定点：`484f30e docs: add continuous anime production optimization plan`。
+- 已启动 3 个并行 worker：前端 Series Studio、后端 Production Bible、模型/生产策略。
+- 主线将只集成稳定小切片，避免把无关生成媒体、缓存或测试产物纳入提交。
+
+## 2026-07-02 P0 并行优化集成
+
+- 前端 Series Studio：`/studio` 已改成“系列动漫工作室”入口，新增本集生产 P0 看板，覆盖 Production Bible、一键本集草片、资产/声音锁、质量门禁。
+- 后端 Production Bible：新增 `production_bible.py`，支持小说级摘要；应用资产锁/刷新合约时写入 `Workflow.metadata_.production_snapshot`；workflow 状态/详情和 Story Bible summary API 暴露摘要。
+- 生产策略：新增 `draft_fast/final_quality/low_cost/separate_video_tts/direct_av_first` 文案与透传；一键草片默认 `draft_fast`，仍兼容旧 `strategy` 字段。
+- 集成修正：Studio snapshot 返回 `production_bible_summary`；Producer/Quick Start 不再硬编码覆盖生成策略，由 production strategy 映射生成策略。
+- 验证通过：`cd backend && python3 -m pytest tests/test_production_preflight_gates.py test_studio_snapshot.py test_studio_actions.py test_workflow_routes.py -q`，64 passed；`cd frontend && npm run typecheck` 通过；`cd frontend && npx playwright test e2e/producer-preview-production.spec.ts --project=chromium --workers=1 --timeout=90000`，1 passed；前一次组合 E2E 中 `quick-start-series-plan` 与 3 个 Studio 用例 7 passed，唯一失败为 Producer 测试选择器歧义，已修复并单独通过。

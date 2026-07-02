@@ -36,6 +36,7 @@ from app.models import (
     Workflow,
 )
 from app.services.media_persistence import audit_media_url, persist_remote_media_url
+from app.services.production_bible import build_production_bible_summary, build_production_snapshot
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
 from app.services.short_video_production import build_shot_production_contract, persist_contract_to_shot
 
@@ -357,14 +358,22 @@ async def apply_asset_locks_to_workflow(
         "lock_count": pack["summary"]["lock_count"],
         "applied_shot_count": len(updated),
     }
+    production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
+    metadata["production_snapshot"] = build_production_snapshot(
+        production_bible_summary,
+        reason="asset_locks_applied",
+    )
     workflow.metadata_ = metadata
     workflow.updated_at = utc_now()
+    flag_modified(workflow, "metadata_")
     if persist:
         await db.commit()
     return {
         "workflow_id": workflow.id,
         "novel_id": workflow.novel_id,
         "production_pack": pack,
+        "production_bible_summary": production_bible_summary,
+        "production_snapshot": metadata["production_snapshot"],
         "applied_shots": updated,
     }
 
@@ -586,16 +595,25 @@ async def refresh_workflow_production_contracts(
 
     if persist:
         metadata = dict(_json_dict(workflow.metadata_))
+        production_bible_summary = None
+        if workflow.novel_id:
+            production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
         metadata["production_contracts"] = {
             "refreshed_at": utc_now().isoformat(),
             "refreshed_count": len(refreshed),
             "skipped_count": len(skipped),
         }
+        if production_bible_summary:
+            metadata["production_snapshot"] = build_production_snapshot(
+                production_bible_summary,
+                reason="production_contracts_refreshed",
+            )
         workflow.metadata_ = metadata
         workflow.updated_at = utc_now()
+        flag_modified(workflow, "metadata_")
         await db.commit()
 
-    return {
+    response = {
         "workflow_id": workflow.id,
         "storyboard_id": workflow.storyboard_id,
         "refreshed_count": len(refreshed),
@@ -603,6 +621,11 @@ async def refresh_workflow_production_contracts(
         "refreshed_shots": refreshed,
         "skipped_shots": skipped,
     }
+    snapshot = _json_dict(_json_dict(workflow.metadata_).get("production_snapshot"))
+    if snapshot:
+        response["production_snapshot"] = snapshot
+        response["production_bible_summary"] = _json_dict(snapshot.get("summary"))
+    return response
 
 
 def _quality_recommendations(summary: Dict[str, Any]) -> List[str]:

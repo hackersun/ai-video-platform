@@ -26,6 +26,7 @@ from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
+from app.services.production_bible import build_production_bible_summary
 from app.services.publication_readiness import evaluate_publication_readiness
 
 router = APIRouter(tags=["工作流"])
@@ -1324,6 +1325,7 @@ class WorkflowStatusResponse(BaseModel):
     subtitle_tracks: List[dict] = Field(default_factory=list)
     synthesis_jobs: List[dict]
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    production_bible_summary: Optional[Dict[str, Any]] = None
 
 
 class WorkflowUpdateStepRequest(BaseModel):
@@ -1353,6 +1355,7 @@ class WorkflowDetailResponse(BaseModel):
     tts_job_ids: List[str]
     synthesis_job_ids: List[str]
     metadata: dict
+    production_bible_summary: Optional[Dict[str, Any]] = None
     error_message: Optional[str]
     created_at: str
     updated_at: str
@@ -1453,6 +1456,7 @@ class WorkflowTimelineSyncResponse(BaseModel):
 
 
 class WorkflowMediaBatchRequest(BaseModel):
+    production_strategy: Optional[str] = Field(None, description="业务生产策略：draft_fast/final_quality/low_cost/separate_video_tts/direct_av_first")
     strategy: str = Field("direct_av_first", description="direct_av_first/separate_video_tts")
     shot_ids: Optional[List[str]] = Field(None, description="指定镜头ID，不传则使用工作流分镜下全部镜头")
     duration_seconds: Optional[int] = Field(None, ge=1, le=60)
@@ -1470,6 +1474,7 @@ class WorkflowMediaBatchRequest(BaseModel):
 class WorkflowMediaBatchResponse(BaseModel):
     workflow_id: str
     strategy: str
+    production_strategy: Optional[str] = None
     created_count: int
     video_job_ids: List[str] = Field(default_factory=list)
     tts_job_ids: List[str] = Field(default_factory=list)
@@ -1554,6 +1559,8 @@ async def generate_workflow_media_batch(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工作流不存在")
     if request.strategy not in {"direct_av_first", "separate_video_tts"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="当前仅支持 direct_av_first 或 separate_video_tts 策略")
+    if request.production_strategy and request.production_strategy not in {"draft_fast", "final_quality", "low_cost", "separate_video_tts", "direct_av_first"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="未知生产策略")
 
     shot_query = select(Shot).where(Shot.user_id == user_id)
     if request.shot_ids:
@@ -1725,6 +1732,7 @@ async def generate_workflow_media_batch(
             prompt_parameters["reference_image_source"] = package.get("reference_image_source")
             extra_data["prompt_parameters"] = prompt_parameters
             extra_data["source_prompt"] = video_request.prompt
+            extra_data["production_strategy"] = request.production_strategy
             extra_data["generation_strategy"] = request.strategy
             extra_data["audio_model_config_id"] = request.audio_model_config_id
             if prepared.get("video_preflight_package") is not None:
@@ -1883,6 +1891,7 @@ async def generate_workflow_media_batch(
                         "api_model_id": selected_audio_model.get("model_id") if selected_audio_model else None,
                         "provider_id": selected_audio_model.get("provider_id") if selected_audio_model else None,
                         "model_test_status": selected_audio_model.get("test_status") if selected_audio_model else None,
+                        "production_strategy": request.production_strategy,
                         "generation_strategy": request.strategy,
                         "generation_preflight": {
                             "ready": prepared["tts_preflight_package"].get("ready"),
@@ -1934,6 +1943,7 @@ async def generate_workflow_media_batch(
         workflow.metadata_ = {
             **metadata,
             "subtitle_track_ids": list(dict.fromkeys((metadata.get("subtitle_track_ids") or []) + subtitle_track_ids)),
+            "latest_production_strategy": request.production_strategy,
             "latest_media_batch_strategy": request.strategy,
             "latest_media_batch_count": len(video_job_ids),
             "latest_media_batch_model_config_id": request.model_config_id,
@@ -1949,6 +1959,7 @@ async def generate_workflow_media_batch(
         return WorkflowMediaBatchResponse(
             workflow_id=workflow.id,
             strategy=request.strategy,
+            production_strategy=request.production_strategy,
             created_count=len(video_job_ids),
             video_job_ids=video_job_ids,
             tts_job_ids=tts_job_ids,
@@ -2022,6 +2033,7 @@ async def generate_workflow_media_batch(
                 "subtitle_text": subtitle_text,
                 "subtitle_mode": request.subtitle_mode,
                 "audio_mode": request.audio_mode,
+                "production_strategy": request.production_strategy,
                 "model_config_id": request.model_config_id,
                 "model_test_status": runtime_model.get("test_status"),
                 "asset_version_locks": asset_version_locks,
@@ -2096,6 +2108,7 @@ async def generate_workflow_media_batch(
         **metadata,
         "media_job_ids": list(dict.fromkeys((metadata.get("media_job_ids") or []) + media_job_ids)),
         "subtitle_track_ids": list(dict.fromkeys((metadata.get("subtitle_track_ids") or []) + subtitle_track_ids)),
+        "latest_production_strategy": request.production_strategy,
         "latest_media_batch_strategy": request.strategy,
         "latest_media_batch_count": len(media_job_ids),
         "latest_media_batch_model_config_id": request.model_config_id,
@@ -2107,6 +2120,7 @@ async def generate_workflow_media_batch(
     return WorkflowMediaBatchResponse(
         workflow_id=workflow.id,
         strategy=request.strategy,
+        production_strategy=request.production_strategy,
         created_count=len(media_job_ids),
         video_job_ids=[],
         tts_job_ids=[],
@@ -2322,6 +2336,13 @@ async def get_workflow_status(
             "extra_data": extra,
         })
 
+    production_bible_summary = None
+    snapshot = metadata.get("production_snapshot") if isinstance(metadata.get("production_snapshot"), dict) else {}
+    if snapshot:
+        production_bible_summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else None
+    elif workflow.novel_id:
+        production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
+
     return WorkflowStatusResponse(
         workflow_id=workflow.id,
         title=workflow.title,
@@ -2338,6 +2359,7 @@ async def get_workflow_status(
         subtitle_tracks=subtitle_tracks,
         synthesis_jobs=synthesis_jobs,
         metadata=metadata,
+        production_bible_summary=production_bible_summary,
     )
 
 
@@ -2394,6 +2416,9 @@ async def update_workflow_step(
         tts_job_ids=workflow.tts_job_ids or [],
         synthesis_job_ids=workflow.synthesis_job_ids or [],
         metadata=workflow.metadata_ or {},
+        production_bible_summary=(workflow.metadata_ or {}).get("production_snapshot", {}).get("summary")
+        if isinstance((workflow.metadata_ or {}).get("production_snapshot"), dict)
+        else None,
         error_message=workflow.error_message,
         created_at=str(workflow.created_at),
         updated_at=str(workflow.updated_at),
@@ -2428,6 +2453,9 @@ async def get_workflow_detail(
         tts_job_ids=workflow.tts_job_ids or [],
         synthesis_job_ids=workflow.synthesis_job_ids or [],
         metadata=workflow.metadata_ or {},
+        production_bible_summary=(workflow.metadata_ or {}).get("production_snapshot", {}).get("summary")
+        if isinstance((workflow.metadata_ or {}).get("production_snapshot"), dict)
+        else None,
         error_message=workflow.error_message,
         created_at=str(workflow.created_at),
         updated_at=str(workflow.updated_at),

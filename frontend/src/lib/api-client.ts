@@ -1194,6 +1194,7 @@ class ApiClient {
   }
 
   async generateWorkflowMediaBatch(workflowId: string, params: {
+    production_strategy?: string;
     strategy?: string;
     shot_ids?: string[];
     duration_seconds?: number;
