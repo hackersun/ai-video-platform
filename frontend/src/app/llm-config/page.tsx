@@ -40,6 +40,7 @@ import {
   getDefaultConfigForCapability,
   getModelCapabilities,
   getModelCapability,
+  isInternalTestModelConfig,
   modelStatusClass,
   modelStatusLabel,
   type ModelCapability,
@@ -177,18 +178,35 @@ export default function LLMConfigPage() {
   const [maxTokens, setMaxTokens] = useState(2048);
   const [isDefault, setIsDefault] = useState(false);
   const [selectedCapabilityFilter, setSelectedCapabilityFilter] = useState<ModelCapability | 'all'>('all');
+  const [showAdvancedModels, setShowAdvancedModels] = useState(false);
 
   const currentProvider = providers.find(p => p.id === selectedProvider);
   const providerTabs = providers.filter((provider) => provider.id !== 'external');
   const activeProvider = providers.find((provider) => provider.id === activeTab);
   const providerModels = models.filter(m => m.provider_id === selectedProvider);
-  const filteredModels = providerModels.filter((model) => (
+  const isAdvancedModel = (model: Model) => {
+    const capabilities = getModelCapabilities(model);
+    return (
+      isInternalTestModelConfig(model)
+      || (
+        selectedCapabilityFilter === 'all'
+        && capabilities.includes('audio')
+        && !model.user_configured
+        && !model.is_recommended
+      )
+    );
+  };
+  const visibleProviderModels = providerModels.filter((model) => showAdvancedModels || !isAdvancedModel(model));
+  const hiddenModelCount = providerModels.length - visibleProviderModels.length;
+  const filteredModels = visibleProviderModels.filter((model) => (
     selectedCapabilityFilter === 'all' || getModelCapabilities(model).includes(selectedCapabilityFilter)
   ));
   const selectedModelInfo = models.find(m => m.id === selectedModel);
   const selectedModelExistingConfig = selectedModelInfo?.user_config_id
     ? savedConfigs.find(config => config.id === selectedModelInfo.user_config_id)
     : undefined;
+  const productionSavedConfigs = savedConfigs.filter((config) => !isInternalTestModelConfig(config));
+  const visibleSavedConfigs = showAdvancedModels ? savedConfigs : productionSavedConfigs;
   const targetConfig = editingConfig || selectedModelExistingConfig;
   const targetConfigModelId = targetConfig?.config_model_id || targetConfig?.model_id;
   const hasSavedUsableKey = Boolean(targetConfig?.key_available && targetConfigModelId === selectedModel);
@@ -206,23 +224,23 @@ export default function LLMConfigPage() {
   const agentPlanSelected = selectedProvider === 'volcano_agent_plan';
   const capabilityOrder: ModelCapability[] = ['text', 'image', 'vision', 'audio', 'video', 'embedding'];
   const capabilityFilterOptions: Array<{ value: ModelCapability | 'all'; label: string; count: number }> = [
-    { value: 'all', label: '全部', count: providerModels.length },
+    { value: 'all', label: '全部', count: visibleProviderModels.length },
     ...capabilityOrder.map((capability) => ({
       value: capability,
       label: MODEL_CAPABILITY_LABELS[capability],
-      count: providerModels.filter((model) => getModelCapabilities(model).includes(capability)).length,
+      count: visibleProviderModels.filter((model) => getModelCapabilities(model).includes(capability)).length,
     })),
   ];
   const selectedCapability = selectedModelInfo ? getModelCapability(selectedModelInfo) : null;
   const selectedCapabilities = selectedModelInfo ? getModelCapabilities(selectedModelInfo) : [];
   const selectedModelIsVisionOnly = selectedCapabilities.includes('vision') && !selectedCapabilities.includes('image');
   const activeDefaultConfigs = capabilityOrder
-    .map((capability) => ({ capability, config: getDefaultConfigForCapability(savedConfigs, capability) }))
+    .map((capability) => ({ capability, config: getDefaultConfigForCapability(productionSavedConfigs, capability) }))
     .filter((item): item is { capability: ModelCapability; config: SavedConfig } => Boolean(item.config));
-  const missingDefaultCapabilities = capabilityOrder.filter((capability) => !getDefaultConfigForCapability(savedConfigs, capability));
+  const missingDefaultCapabilities = capabilityOrder.filter((capability) => !getDefaultConfigForCapability(productionSavedConfigs, capability));
   const unverifiedDefaultConfigs = activeDefaultConfigs.filter((item) => item.config.test_status !== 'success');
-  const failedConfigs = savedConfigs.filter((config) => config.test_status === 'failed');
-  const duplicateConfigGroups = savedConfigs.reduce<Record<string, SavedConfig[]>>((groups, config) => {
+  const failedConfigs = productionSavedConfigs.filter((config) => config.test_status === 'failed');
+  const duplicateConfigGroups = productionSavedConfigs.reduce<Record<string, SavedConfig[]>>((groups, config) => {
     const key = config.config_model_id || config.model_id || config.api_model_id || config.model_name;
     if (!key) return groups;
     groups[key] = [...(groups[key] || []), config];
@@ -1012,7 +1030,7 @@ export default function LLMConfigPage() {
               <CardContent>
                 <div className="grid gap-3 md:grid-cols-2">
                   {PRODUCTION_TASK_REQUIREMENTS.map((task) => {
-                    const ready = task.capabilities.every((capability) => getDefaultConfigForCapability(savedConfigs, capability)?.test_status === 'success');
+                    const ready = task.capabilities.every((capability) => getDefaultConfigForCapability(productionSavedConfigs, capability)?.test_status === 'success');
                     return (
                       <div key={task.name} className="rounded-lg border border-white/10 bg-black/20 p-3">
                         <div className="flex items-start justify-between gap-3">
@@ -1030,7 +1048,7 @@ export default function LLMConfigPage() {
                         </div>
                         <div className="mt-3 flex flex-wrap gap-1.5">
                           {task.capabilities.map((capability) => {
-                            const config = getDefaultConfigForCapability(savedConfigs, capability);
+                            const config = getDefaultConfigForCapability(productionSavedConfigs, capability);
                             const verified = config?.test_status === 'success';
                             return (
                               <button
@@ -1102,6 +1120,27 @@ export default function LLMConfigPage() {
                 {/* 服务商模型 */}
                 {activeTab !== 'external' && (
                   <div className="space-y-3">
+                    <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="text-sm font-medium text-cyan-50">新手模式：只显示推荐和常用模型</div>
+                          <p className="mt-1 text-xs leading-5 text-cyan-100/70">
+                            内部测试模型会默认隐藏；未配置的 TTS/声音模型默认收起，切到“语音/声音”或打开高级模型后再选择。
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowAdvancedModels((value) => !value)}
+                          className={`shrink-0 rounded-md border px-3 py-2 text-xs transition-colors ${
+                            showAdvancedModels
+                              ? 'border-cyan-300/50 bg-cyan-500/20 text-cyan-50'
+                              : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10 hover:text-white'
+                          }`}
+                        >
+                          {showAdvancedModels ? '隐藏测试/高级模型' : `显示测试/高级模型${hiddenModelCount > 0 ? `（${hiddenModelCount}）` : ''}`}
+                        </button>
+                      </div>
+                    </div>
                     <div className="flex flex-wrap gap-2 rounded-lg border border-white/10 bg-black/20 p-2">
                       {capabilityFilterOptions
                         .filter((option) => option.value === 'all' || option.count > 0 || selectedCapabilityFilter === option.value)
@@ -1222,7 +1261,7 @@ export default function LLMConfigPage() {
                     }) : (
                       <div className="text-center py-8 text-white/40">
                         <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                        <p>暂无可用模型，请检查网络连接</p>
+                        <p>{hiddenModelCount > 0 ? '当前筛选下常用模型为空，可显示测试/高级模型查看更多。' : '暂无可用模型，请检查网络连接'}</p>
                       </div>
                     )}
                   </div>
@@ -1263,8 +1302,8 @@ export default function LLMConfigPage() {
               </CardHeader>
               <CardContent className="space-y-3">
                 {capabilityOrder.map((capability) => {
-                  const configs = getConfigsByCapability(savedConfigs, capability);
-                  const defaultConfig = getDefaultConfigForCapability(savedConfigs, capability);
+                  const configs = getConfigsByCapability(productionSavedConfigs, capability);
+                  const defaultConfig = getDefaultConfigForCapability(productionSavedConfigs, capability);
                   return (
                     <div key={capability} className="rounded-lg border border-white/10 bg-black/20 p-3">
                       <div className="flex items-center justify-between gap-2">
@@ -1634,13 +1673,15 @@ export default function LLMConfigPage() {
                 <CardTitle className="text-white flex items-center gap-2">
                   <Settings className="w-5 h-5" />
                   已保存配置
-                  <span className="text-xs text-white/40 ml-auto">{savedConfigs.length}个</span>
+                  <span className="text-xs text-white/40 ml-auto">
+                    {visibleSavedConfigs.length}个{!showAdvancedModels && savedConfigs.length > visibleSavedConfigs.length ? `，已隐藏 ${savedConfigs.length - visibleSavedConfigs.length} 个测试/高级配置` : ''}
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {savedConfigs.length > 0 ? (
+                {visibleSavedConfigs.length > 0 ? (
                   <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {savedConfigs.map((config) => (
+                    {visibleSavedConfigs.map((config) => (
                       <div
                         key={config.id}
                         className="p-3 rounded-lg bg-white/5 border border-white/10"
