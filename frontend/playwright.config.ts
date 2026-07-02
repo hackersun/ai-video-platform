@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const e2ePort = process.env.PLAYWRIGHT_PORT || '3100';
 const baseURL = `http://localhost:${e2ePort}`;
+const chromeExecutablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE_PATH;
 
 export default defineConfig({
   testDir: './e2e',
@@ -14,9 +15,7 @@ export default defineConfig({
     baseURL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
-    launchOptions: {
-      executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    },
+    ...(chromeExecutablePath ? { launchOptions: { executablePath: chromeExecutablePath } } : {}),
   },
   projects: [
     {

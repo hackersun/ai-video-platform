@@ -297,7 +297,7 @@ function ProducerCenterContent() {
     }
     setLoadingReadiness(true);
     try {
-      const data = await apiClient.getWorkflowShortVideoReadiness(id, {
+      const data = await apiClient.getWorkflowProductionStatus(id, {
         target_duration_seconds: 60,
         aspect_ratio: '9:16',
       });

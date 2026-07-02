@@ -3,6 +3,8 @@
 from unittest.mock import MagicMock, AsyncMock
 from datetime import datetime, timezone
 
+import pytest
+
 from app.services.asset_lock_service import AssetLockService
 
 
@@ -13,8 +15,11 @@ class MockAsset:
         self.name = kwargs.get("name", "Test Asset")
         self.description = kwargs.get("description", "Test description")
         self.url = kwargs.get("url", "https://example.com/asset.jpg")
+        self.thumbnail_url = kwargs.get("thumbnail_url", "https://example.com/asset-thumb.jpg")
         self.entity_id = kwargs.get("entity_id", "entity-001")
         self.entity_type = kwargs.get("entity_type", "character")
+        self.category = kwargs.get("category", self.entity_type)
+        self.version = kwargs.get("version", 1)
         self.is_locked = kwargs.get("is_locked", True)
         self.is_final = kwargs.get("is_final", True)
         self.locked_at = kwargs.get("locked_at", datetime.now(timezone.utc))
@@ -25,7 +30,35 @@ class MockShot:
     """模拟镜头对象"""
     def __init__(self, **kwargs):
         self.id = kwargs.get("id", "shot-001")
+        self.user_id = kwargs.get("user_id", "user-001")
         self.extra_data = kwargs.get("extra_data", {})
+
+
+class FakeScalarResult:
+    """模拟 SQLAlchemy execute 结果"""
+    def __init__(self, asset=None):
+        self.asset = asset
+
+    def scalar_one_or_none(self):
+        return self.asset
+
+
+class FakeAsyncDb:
+    """模拟异步数据库会话"""
+    def __init__(self, asset=None):
+        self.asset = asset
+        self.execute_count = 0
+
+    async def execute(self, statement):
+        self.execute_count += 1
+        self.statement = statement
+        return FakeScalarResult(self.asset)
+
+
+class NoMutationDb:
+    """解锁不应触碰共享 Asset 表"""
+    async def execute(self, statement):
+        raise AssertionError("unlock_shot_assets should not mutate shared Asset records")
 
 
 def test_service_initialization():
@@ -129,6 +162,62 @@ def test_key_generation():
 
     assert key == "character_char-001"
     print(f"[PASS] Key生成测试: {key}")
+
+
+@pytest.mark.asyncio
+async def test_lock_shot_assets_awaits_execute_before_scalar_lookup():
+    """测试 lock_shot_assets 正确 await execute 后再读取标量结果"""
+    service = AssetLockService()
+    asset = MockAsset(
+        id="asset-char-001",
+        entity_id="char-001",
+        entity_type="character",
+        category="character",
+        name="主角定稿",
+        description="黑发蓝衣",
+        version=3,
+    )
+    db = FakeAsyncDb(asset)
+    shot = MockShot(extra_data={
+        "entity_refs": {
+            "characters": [{"entity_id": "char-001", "name": "主角"}],
+            "scenes": [],
+            "props": [],
+        },
+        "novel_id": "novel-001",
+    })
+
+    result = await service.lock_shot_assets(db, shot)
+
+    assert db.execute_count == 1
+    assert result["count"] == 1
+    locked = shot.extra_data["locked_assets"]["character_char-001"]
+    assert locked["asset_id"] == "asset-char-001"
+    assert locked["version"] == 3
+    print("[PASS] async execute await顺序测试")
+
+
+@pytest.mark.asyncio
+async def test_unlock_shot_assets_only_clears_shot_binding():
+    """测试解锁只移除镜头绑定，不修改共享资产状态"""
+    service = AssetLockService()
+    asset = MockAsset(is_locked=True, is_final=True, locked_by="reviewer-001")
+    shot = MockShot(extra_data={
+        "locked_assets": {
+            "character_char-001": {"asset_id": asset.id}
+        },
+        "other_data": "should be preserved",
+    })
+
+    result = await service.unlock_shot_assets(NoMutationDb(), shot)
+
+    assert result["unlocked_count"] == 1
+    assert "locked_assets" not in shot.extra_data
+    assert shot.extra_data["other_data"] == "should be preserved"
+    assert asset.is_locked is True
+    assert asset.is_final is True
+    assert asset.locked_by == "reviewer-001"
+    print("[PASS] 解锁不修改共享Asset测试")
 
 
 def test_extra_data_structure():

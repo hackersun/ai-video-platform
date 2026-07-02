@@ -4,6 +4,8 @@ Account/authentication flow tests.
 
 from __future__ import annotations
 
+import base64
+import json
 from uuid import uuid4
 
 import pytest
@@ -37,6 +39,13 @@ def _register(client: TestClient, suffix: str, password: str = "oldPass123") -> 
     payload = response.json()
     assert payload["success"] is True
     return payload
+
+
+def _dev_style_token(user_id: str) -> str:
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"sub": user_id, "exp": 4_102_444_800}).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    return f"dev.{payload}.sig"
 
 
 def test_profile_update_and_change_password_persist(client: TestClient) -> None:
@@ -111,5 +120,27 @@ def test_non_dev_mode_rejects_unsigned_tokens(monkeypatch: pytest.MonkeyPatch) -
         response = test_client.get(
             "/api/v1/auth/me",
             headers={"Authorization": "Bearer unsigned-user-id"},
+        )
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/auth/me",
+        "/api/v1/novels",
+        "/api/v1/llm/configs",
+        "/api/v1/video/jobs",
+    ],
+)
+def test_non_dev_mode_rejects_dev_payload_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+) -> None:
+    monkeypatch.setenv("DEV_MODE", "false")
+    with TestClient(app) as test_client:
+        response = test_client.get(
+            path,
+            headers={"Authorization": f"Bearer {_dev_style_token('frontend-dev-user')}"},
         )
     assert response.status_code == 401

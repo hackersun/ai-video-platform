@@ -99,7 +99,10 @@ class AssetLockService:
             Asset.is_locked == True,
             Asset.is_final == True,
             Asset.is_active == True,
-            or_(Asset.entity_type == entity_type, Asset.category == entity_type),
+            or_(
+                Asset.entity_type == entity_type,
+                and_(Asset.entity_type.is_(None), Asset.category == entity_type),
+            ),
         ]
         if user_id:
             filters.append(or_(Asset.user_id == user_id, Asset.is_public == True))
@@ -163,14 +166,13 @@ class AssetLockService:
         Returns:
             操作结果
         """
-        extra_data = shot.extra_data or {}
+        extra_data = dict(shot.extra_data or {})
         locked_assets = extra_data.get("locked_assets", {})
 
         unlocked_count = len(locked_assets) if isinstance(locked_assets, dict) else 0
 
         # 清除shot中的锁定资产记录
-        if "locked_assets" in extra_data:
-            del extra_data["locked_assets"]
+        extra_data.pop("locked_assets", None)
         shot.extra_data = extra_data
 
         return {"unlocked_count": unlocked_count}

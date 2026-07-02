@@ -11,6 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import apiClient from '@/lib/api-client';
+import { runEpisodePreviewProduction } from '@/lib/episode-preview-production';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
@@ -39,6 +40,8 @@ type QuickStartResult = {
   storyboardId: string;
   workflowId: string;
   shotCount: number;
+  videoJobIds?: string[];
+  ttsJobIds?: string[];
   mediaJobIds?: string[];
   subtitleTrackIds?: string[];
   synthesisJobId?: string;
@@ -95,6 +98,7 @@ const buildProgressSteps = (createStoryBible: boolean, autoProducePreview: boole
         { id: 'contracts', label: '刷新镜头生产合约', status: 'pending' as ProgressStatus },
         { id: 'media', label: '批量生成音视频草稿', status: 'pending' as ProgressStatus },
         { id: 'concatenate', label: '编排连续成片', status: 'pending' as ProgressStatus },
+        { id: 'preflight', label: '渲染预检', status: 'pending' as ProgressStatus },
         { id: 'render', label: '生成本地预览包与字幕', status: 'pending' as ProgressStatus },
       ]
     : []),
@@ -134,6 +138,7 @@ export default function QuickStartPage() {
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [videoModelConfigId, setVideoModelConfigId] = useState('');
+  const [audioModelConfigId, setAudioModelConfigId] = useState('');
   const [progressSteps, setProgressSteps] = useState<QuickStartProgressStep[]>([]);
 
   const checks = useMemo(() => {
@@ -173,8 +178,10 @@ export default function QuickStartPage() {
       setModelConfigs(list);
       const textDefault = getDefaultConfigForCapability(list, 'text');
       const videoDefault = getDefaultConfigForCapability(list, 'video');
+      const audioDefault = getDefaultConfigForCapability(list, 'audio');
       if (textDefault) setTextModelConfigId(textDefault.id);
       if (videoDefault) setVideoModelConfigId(videoDefault.id);
+      if (audioDefault) setAudioModelConfigId(audioDefault.id);
     } catch {
       setModelConfigs([]);
     }
@@ -292,65 +299,53 @@ export default function QuickStartPage() {
       setResult(nextResult);
 
       if (form.autoProducePreview) {
-        markStep('contracts', 'running', '正在锁定人物、场景、道具、字幕和模型路线');
-        await apiClient.refreshWorkflowShortVideoContracts(workflow.workflow_id);
-        markStep('contracts', 'done', '镜头生产合约已刷新');
-
-        markStep('media', 'running', '正在生成带音频和字幕的镜头草稿');
-        const mediaBatch = await apiClient.generateWorkflowMediaBatch(workflow.workflow_id, {
-          strategy: 'direct_av_first',
-          resolution: '720p',
-          subtitle_mode: 'shot_dialogue',
-          audio_mode: 'model_audio',
-          model_config_id: videoModelConfigId || undefined,
-        });
-        nextResult = {
-          ...nextResult,
-          mediaJobIds: mediaBatch.media_job_ids || [],
-          subtitleTrackIds: mediaBatch.subtitle_track_ids || [],
+        const stageToStep: Record<string, string> = {
+          workflow: 'workflow',
+          script: 'storyboard',
+          storyboard: 'storyboard',
+          assistant: 'contracts',
+          contracts: 'contracts',
+          media: 'media',
+          concatenate: 'concatenate',
+          preflight: 'preflight',
+          render: 'render',
         };
-        setResult(nextResult);
-        markStep('media', 'done', `已生成 ${mediaBatch.created_count || 0} 个音视频草稿`);
-
-        markStep('concatenate', 'running', '正在按镜头顺序编排连续成片清单');
-        const sequence = await apiClient.concatenateVideos(workflow.workflow_id, {
-          video_job_ids: [],
-          media_job_ids: mediaBatch.media_job_ids || [],
+        const preview = await runEpisodePreviewProduction({
+          workflowId: workflow.workflow_id,
+          novelId: novel.id,
+          chapterId: chapter.id,
+          scriptId: storyboard.script_id,
+          storyboardId: storyboard.id,
           title: `${title} 首集预览`,
-          transition_style: 'cut',
-          include_subtitles: true,
-          subtitle_mode: 'dialogue',
-          audio_mix_strategy: 'match_by_shot',
-          quality_profile: 'review',
+          textModelConfigId: textModelConfigId || undefined,
+          videoModelConfigId: videoModelConfigId || undefined,
+          audioModelConfigId: audioModelConfigId || undefined,
+          generationStrategy: 'separate_video_tts',
+          onStage: (stage) => {
+            const stepId = stageToStep[stage.key];
+            if (stepId && stage.status) {
+              markStep(stepId, stage.status, stage.message);
+            }
+          },
         });
         nextResult = {
           ...nextResult,
-          synthesisJobId: sequence.job_id,
-          outputUrl: sequence.output_url,
-          manifestUrl: sequence.manifest_url,
+          scriptId: preview.scriptId || nextResult.scriptId,
+          storyboardId: preview.storyboardId || nextResult.storyboardId,
+          videoJobIds: preview.videoJobIds || [],
+          ttsJobIds: preview.ttsJobIds || [],
+          mediaJobIds: preview.mediaJobIds || [],
+          subtitleTrackIds: preview.subtitleTrackIds || [],
+          synthesisJobId: preview.synthesisJobId,
+          outputUrl: preview.outputUrl,
+          manifestUrl: preview.manifestUrl,
+          previewUrl: preview.previewUrl,
+          srtUrl: preview.srtUrl,
+          timelineUrl: preview.timelineUrl,
+          renderManifestUrl: preview.renderManifestUrl,
+          autoProduced: preview.readyForConcatenate !== false && Boolean(preview.previewUrl || preview.renderManifestUrl),
         };
         setResult(nextResult);
-        markStep('concatenate', 'done', `已编排 ${sequence.segment_count || 0} 个段落`);
-
-        markStep('render', 'running', '正在输出 HTML 预览、SRT 字幕和时间线');
-        const render = await apiClient.renderWorkflowPackage(workflow.workflow_id, {
-          synthesis_job_id: sequence.job_id,
-          force: true,
-          quality_profile: 'review',
-          render_backend: 'local_artifact_package',
-          burn_subtitles: false,
-          use_editable_timeline: true,
-        });
-        nextResult = {
-          ...nextResult,
-          previewUrl: render.preview_url,
-          srtUrl: render.srt_url,
-          timelineUrl: render.timeline_url,
-          renderManifestUrl: render.render_manifest_url,
-          autoProduced: render.status !== 'preflight_failed',
-        };
-        setResult(nextResult);
-        markStep('render', render.status === 'preflight_failed' ? 'failed' : 'done', render.message || '预览包已生成');
       }
     } catch (err: any) {
       const message = err?.message || '极速向导执行失败';
@@ -460,16 +455,28 @@ export default function QuickStartPage() {
                 compact
               />
               {form.autoProducePreview && (
-                <ModelCapabilitySelector
-                  capability="video"
-                  configs={modelConfigs}
-                  value={videoModelConfigId}
-                  onChange={setVideoModelConfigId}
-                  disabled={isRunning}
-                  title="首集草片视频模型"
-                  description="自动出片会优先使用该视频能力配置；未配置时 DEV_MODE 会生成本地可播放草片。"
-                  compact
-                />
+                <>
+                  <ModelCapabilitySelector
+                    capability="video"
+                    configs={modelConfigs}
+                    value={videoModelConfigId}
+                    onChange={setVideoModelConfigId}
+                    disabled={isRunning}
+                    title="首集草片视频模型"
+                    description="自动出片会优先使用该视频能力配置；未配置时 DEV_MODE 会生成本地可播放草片。"
+                    compact
+                  />
+                  <ModelCapabilitySelector
+                    capability="audio"
+                    configs={modelConfigs}
+                    value={audioModelConfigId}
+                    onChange={setAudioModelConfigId}
+                    disabled={isRunning}
+                    title="首集草片声音模型"
+                    description="自动出片会用该声音模型生成角色对白，并在合成前执行字幕与时间线预检。"
+                    compact
+                  />
+                </>
               )}
               <div className="text-xs text-white/40">
                 草稿会自动保存在本机{draftSavedAt ? `，上次保存：${new Date(draftSavedAt).toLocaleString()}` : ''}。
@@ -546,7 +553,9 @@ export default function QuickStartPage() {
                     </div>
                     <div className="rounded border border-white/10 bg-white/5 p-3">
                       <div className="text-white/50">音视频草稿</div>
-                      <div className="text-lg font-semibold text-white">{result.mediaJobIds?.length || 0}</div>
+                      <div className="text-lg font-semibold text-white">
+                        {(result.mediaJobIds?.length || 0) + (result.videoJobIds?.length || 0) + (result.ttsJobIds?.length || 0)}
+                      </div>
                     </div>
                     <div className="rounded border border-white/10 bg-white/5 p-3">
                       <div className="text-white/50">字幕轨</div>
@@ -595,6 +604,12 @@ export default function QuickStartPage() {
                     </div>
                   )}
                   <div className="grid grid-cols-1 gap-2">
+                    <Button asChild className="justify-start bg-cyan-600 hover:bg-cyan-700">
+                      <Link href={`/studio?workflow_id=${result.workflowId}`}>
+                        <Route className="mr-2 h-4 w-4" />
+                        进入创作工作台
+                      </Link>
+                    </Button>
                     <Button asChild variant="outline" className="justify-start border-white/20 text-white">
                       <Link href={`/novels/${result.novelId}`}>
                         <BookOpen className="mr-2 h-4 w-4" />
@@ -602,15 +617,15 @@ export default function QuickStartPage() {
                       </Link>
                     </Button>
                     <Button asChild variant="outline" className="justify-start border-white/20 text-white">
-                      <Link href={`/storyboards?storyboard_id=${result.storyboardId}`}>
-                        <Clapperboard className="mr-2 h-4 w-4" />
-                        审核分镜
+                      <Link href={`/novels/${result.novelId}?tab=series-plan`}>
+                        <BookOpen className="mr-2 h-4 w-4" />
+                        进入整书计划
                       </Link>
                     </Button>
                     <Button asChild variant="outline" className="justify-start border-white/20 text-white">
-                      <Link href={`/workflow?workflow_id=${result.workflowId}`}>
-                        <Route className="mr-2 h-4 w-4" />
-                        进入工作流
+                      <Link href={`/storyboards?storyboard_id=${result.storyboardId}`}>
+                        <Clapperboard className="mr-2 h-4 w-4" />
+                        审核分镜
                       </Link>
                     </Button>
                     <Button asChild variant="outline" className="justify-start border-white/20 text-white">

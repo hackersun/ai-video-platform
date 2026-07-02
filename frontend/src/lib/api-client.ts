@@ -87,6 +87,9 @@ type SynthesisJob = {
   render_manifest_url?: string;
   render_status?: string;
   render_backend?: string;
+  is_publishable?: boolean;
+  output_kind?: string;
+  publication_blockers?: Array<{ code?: string; message?: string }>;
   segment_count?: number;
   error_message?: string;
   extra_data?: any;
@@ -157,6 +160,27 @@ type StoryboardMergeVideosResponse = {
   render_backend: string;
   is_real_merged: boolean;
   render_message?: string;
+};
+
+type WorkflowRenderResponse = {
+  status: string;
+  render_status?: string;
+  render_backend?: string;
+  output_url?: string;
+  manifest_url?: string;
+  preview_url?: string;
+  srt_url?: string;
+  timeline_url?: string;
+  render_manifest_url?: string;
+  segment_count?: number;
+  duration_seconds?: number;
+  render_source?: string;
+  timeline_id?: string;
+  is_publishable?: boolean;
+  output_kind?: string;
+  publication_blockers?: Array<{ code?: string; message?: string }>;
+  publish_block_reason?: string;
+  [key: string]: any;
 };
 
 type NovelImportChapter = {
@@ -840,13 +864,13 @@ class ApiClient {
     });
   }
 
-  async publishSynthesis(jobId: string, data: { title?: string; visibility?: string } = {}) {
+  async publishSynthesis(jobId: string, data: { title?: string; visibility?: string; metadata?: Record<string, any> } = {}) {
     return this.request<any>('/synthesis/publish', {
       method: 'POST',
       body: JSON.stringify({
         synthesis_job_id: jobId,
         title: data.title,
-        metadata: { visibility: data.visibility || 'private' },
+        metadata: { ...(data.metadata || {}), visibility: data.visibility || 'private' },
       }),
     });
   }
@@ -1078,7 +1102,7 @@ class ApiClient {
     use_editable_timeline?: boolean;
     timeline_id?: string;
   } = {}) {
-    return this.request<any>(`/workflow/${workflowId}/render`, {
+    return this.request<WorkflowRenderResponse>(`/workflow/${workflowId}/render`, {
       method: 'POST',
       body: JSON.stringify(params),
     });
@@ -1223,6 +1247,14 @@ class ApiClient {
     if (params.style_asset_id) searchParams.set('style_asset_id', params.style_asset_id);
     const qs = searchParams.toString();
     return this.request<any>(`/short-video/workflow/${workflowId}/readiness${qs ? `?${qs}` : ''}`);
+  }
+
+  async getWorkflowProductionStatus(workflowId: string, params: {
+    target_duration_seconds?: number;
+    aspect_ratio?: string;
+    style_asset_id?: string;
+  } = {}) {
+    return this.getWorkflowShortVideoReadiness(workflowId, params);
   }
 
   async refreshWorkflowShortVideoContracts(workflowId: string, params: {

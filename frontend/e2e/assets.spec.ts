@@ -208,7 +208,7 @@ test('资产库提供小说实体多视图 AI 制片向导', async ({ page }) =>
   await expect(page.getByTestId('asset-wizard-view-front').getByText('正面', { exact: true })).toBeVisible();
   await expect(page.getByTestId('asset-wizard-view-side').getByText('侧面', { exact: true })).toBeVisible();
   await expect(page.getByTestId('asset-wizard-view-back').getByText('背面', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: '生成缺失视图' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /生成.*缺失视图/ })).toBeVisible();
 });
 
 test('资产向导多视图卡片使用紧凑图标操作栏', async ({ page }) => {
@@ -342,7 +342,7 @@ test('资产制片向导阻止复合角色生成单角色三视图并精确过�
   await expect(page.getByText('角色三视图只能用于单一角色')).toBeVisible();
 
   await entitySelect.selectOption(single.id);
-  await expect(page.getByRole('button', { name: '生成缺失视图' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: /生成.*缺失视图/ })).toBeEnabled();
   await expect(page.getByText(`孙剑正面参考-${stamp}`)).toBeVisible();
   await expect(page.getByText(`全局角色参考-${stamp}`)).toHaveCount(0);
 

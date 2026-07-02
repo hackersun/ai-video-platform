@@ -1034,3 +1034,20 @@
 - 后端组合回归通过：`python3 -m compileall backend/app`；`python3 -m pytest backend/tests/test_entity_extraction_classification.py backend/test_prompt_skills.py backend/test_prompt_skill_ai_entrypoints.py backend/test_prompt_skill_prompt_composer.py backend/test_studio_mode.py backend/test_studio_snapshot.py backend/test_studio_actions.py backend/test_workflow_routes.py -q`，80 passed。
 - 前端组合回归通过：`PATH=/Users/sunqinyue/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH npm run build`；`PLAYWRIGHT_PORT=3100 npx playwright test e2e/prompt-skills.spec.ts e2e/studio-workspace.spec.ts e2e/studio-mode-gates.spec.ts e2e/studio-full-flow.spec.ts --project=chromium`，5 passed。
 - `git diff --check` 已通过；本轮准备精确暂存并提交候选稳定点，便于后续回退。
+
+## 2026-06-12 Phase 274 生产门禁与章节上下文收口
+
+- 并行审计结论：`/workflow` 无 `workflow_id` 自动创建问题已不存在；TTS 和自定义剧本主链路已按章节传参；资产锁 P0 已修复，剩余 JSON 持久化和跨类型 fallback 是 P1。
+- 新增红灯回归并修复 `/api/v1/video/generate` 生产硬预检绕过：`unsafe_skip_consistency_preflight=true` 不能跳过硬预检；省略 `model_config_id` 时改用最终解析到的模型配置 ID 做预检；关闭一致性上下文时仍用请求参考图或 `Shot.image_url` 做公网参考图检查。
+- 修复章节列表进入剧本页丢失小说上下文：章节“剧本”入口从 `/scripts?chapter_id=...` 改为 `/scripts?novel_id=...&chapter_id=...`，新增 E2E 验证只展示目标章节剧本。
+- 补齐 `/scripts?novel_id=&chapter_id=` 后端回归，覆盖正式 `Script.chapter_id` 和旧数据 `extra_data.chapter_id` 兼容。
+- 修复资产锁 P1：`unlock_shot_assets` 复制 `Shot.extra_data` 后删除 `locked_assets`，确保 JSON 变更持久化；资产查询只在 `entity_type IS NULL` 的旧数据上按 `category` fallback，避免显式 `entity_type` 冲突时误锁错资产。
+- 验证通过：生产预检补充红灯先失败后转绿；`DEV_MODE=true PYTHONPATH=. pytest -q tests/test_production_preflight_gates.py test_parent_ownership_routes.py test_asset_lock_service.py tests/test_p0_consistency_pipeline.py` 66 passed；`npx playwright test e2e/chapter-script-link.spec.ts e2e/tts-script-filter.spec.ts e2e/scripts-ai-generation.spec.ts --project=chromium --workers=1 --timeout=90000` 3 passed；`npm run typecheck` 通过；`npm run build` 通过；`python3 -m compileall app` 通过；相关文件 `git diff --check` 通过。
+
+## 2026-06-12 Phase 275 最终渲染与发布完整性收口
+
+- 新增 `publication_readiness` 发布门禁：只有 `render_status=rendered` 且 `output_url` 是 `.mp4/.mov/.webm` 最终视频时可发布；`local_artifact_package/preview_package`、`adapter_ready/cloud_pending/preflight_failed`、旧 DEV `/synthesis/create` 占位 mp4 和 metadata-only 预览包都会返回结构化 `publication_not_ready`。
+- `/workflow` 本地渲染包明确标记为审阅包：保留 preview/SRT/timeline/render manifest，但写入 `is_publishable=false`、`output_kind=preview_package`、`publication_blockers`，不再把 HTML 预览包当成最终成片。
+- `/synthesis` 历史与发布入口透出 `is_publishable/output_kind/publication_blockers`，前端仅对可发布最终视频显示发布动作；失败时展示后端结构化原因。
+- 并行只读审查发现 metadata-only 发布绕过和 RenderResponse 字段契约缺口，已补红灯回归并修复；未清理或暂存大量无关脏文件。
+- 验证通过：`DEV_MODE=true PYTHONPATH=. pytest -q test_project_permissions_publication.py test_workflow_routes.py` 55 passed；`python3 -m compileall app` 通过；`npm run typecheck` 通过；`npm run build` 通过；`npx playwright test e2e/synthesis-history.spec.ts e2e/workflow-production-guidance.spec.ts --project=chromium --workers=1 --timeout=90000` 6 passed；`npx playwright test e2e/workflow-step-generation-evidence.spec.ts --project=chromium --workers=1 --timeout=90000` 4 passed；相关文件 `git diff --check` 通过。

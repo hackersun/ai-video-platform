@@ -10,7 +10,12 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import StudioRepairAction, StudioReviewRun, Workflow
-from app.services.production_control import apply_asset_locks_to_workflow
+from app.services.production_control import (
+    apply_asset_locks_to_workflow,
+    audit_and_persist_workflow_media,
+    build_workflow_quality_report,
+    refresh_workflow_production_contracts,
+)
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.studio_snapshot import build_studio_snapshot
 
@@ -227,19 +232,84 @@ async def run_studio_action(
         )
         return _action_payload(audit)
 
-    if code in {"refresh_contracts", "quality_check", "media_audit"}:
-        messages = {
-            "refresh_contracts": "已记录生产合约刷新请求，请根据最新工作台快照继续处理。",
-            "quality_check": "已记录质量检查请求，请根据工作台问题列表继续处理。",
-            "media_audit": "已记录媒体文件审计请求，请根据缺失媒体提示继续处理。",
-        }
+    if code == "quality_check":
+        action_params = params or {}
+        result = await build_workflow_quality_report(
+            db,
+            user_id,
+            workflow_id,
+            persist=bool(action_params.get("persist", True)),
+        )
         audit = await _record_action(
             db,
             user_id=user_id,
             workflow_id=workflow_id,
             code=code,
             status_value="succeeded",
-            result={"message": messages[code]},
+            result={
+                "summary": result.get("summary") or {},
+                "item_count": len(result.get("items") or []),
+                "blocking_issue_count": len(result.get("blocking_issues") or []),
+                "warning_count": len(result.get("warnings") or []),
+                "recommendations": result.get("recommendations") or [],
+            },
+            mode=normalized_mode,
+            params=params,
+        )
+        return _action_payload(audit)
+
+    if code == "media_audit":
+        action_params = params or {}
+        result = await audit_and_persist_workflow_media(
+            db,
+            user_id,
+            workflow_id,
+            persist_remote=bool(action_params.get("persist_remote", True)),
+            dry_run=bool(action_params.get("dry_run", False)),
+        )
+        audit = await _record_action(
+            db,
+            user_id=user_id,
+            workflow_id=workflow_id,
+            code=code,
+            status_value="succeeded" if not result.get("blocking_issues") else "failed",
+            result={
+                "summary": result.get("summary") or {},
+                "item_count": len(result.get("items") or []),
+                "blocking_issues": result.get("blocking_issues") or [],
+                "recommendations": result.get("recommendations") or [],
+            },
+            mode=normalized_mode,
+            params=params,
+            error_message="媒体巡检发现缺失文件" if result.get("blocking_issues") else None,
+        )
+        return _action_payload(audit)
+
+    if code == "refresh_contracts":
+        action_params = params or {}
+        result = await refresh_workflow_production_contracts(
+            db,
+            user_id,
+            workflow_id,
+            shot_ids=action_params.get("shot_ids"),
+            force=bool(action_params.get("force", False)),
+            persist=bool(action_params.get("persist", True)),
+        )
+        audit = await _record_action(
+            db,
+            user_id=user_id,
+            workflow_id=workflow_id,
+            code=code,
+            status_value="succeeded",
+            result={
+                "refreshed_count": result.get("refreshed_count") or 0,
+                "skipped_count": result.get("skipped_count") or 0,
+                "refreshed_shot_ids": [
+                    item.get("shot_id")
+                    for item in (result.get("refreshed_shots") or [])
+                    if item.get("shot_id")
+                ],
+            },
             mode=normalized_mode,
             params=params,
         )

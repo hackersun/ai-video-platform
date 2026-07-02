@@ -1,8 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { useAuth } from "@/contexts/AuthContext";
 import { 
   Film, 
   Sparkles, 
@@ -43,7 +44,8 @@ const highlights = [
 ];
 
 export default function HomePage() {
-  const router = useRouter();
+  const { isAuthenticated } = useAuth();
+  const startHref = isAuthenticated ? "/quick-start" : "/login";
 
   return (
     <div className="min-h-screen">
@@ -75,12 +77,16 @@ export default function HomePage() {
           </p>
 
           <div className="flex items-center justify-center gap-4">
-            <Button size="lg" onClick={() => router.push("/login")}>
-              开始创作
-              <ArrowRight className="w-4 h-4 ml-2" />
+            <Button asChild size="lg">
+              <Link href={startHref}>
+                开始创作
+                <ArrowRight className="w-4 h-4 ml-2" />
+              </Link>
             </Button>
-            <Button variant="outline" size="lg">
-              了解更多
+            <Button asChild variant="outline" size="lg">
+              <a href="#features">
+                了解更多
+              </a>
             </Button>
           </div>
 
@@ -97,7 +103,7 @@ export default function HomePage() {
       </section>
 
       {/* Features Section */}
-      <section className="py-20 px-4">
+      <section id="features" className="py-20 px-4">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
             <h2 className="text-3xl font-bold mb-4">强大功能</h2>
@@ -132,9 +138,11 @@ export default function HomePage() {
                 立即加入，开启您的AI视频创作之旅。
                 无需信用卡，免费开始使用。
               </p>
-              <Button size="lg" onClick={() => router.push("/login")}>
-                免费开始
-                <ArrowRight className="w-4 h-4 ml-2" />
+              <Button asChild size="lg">
+                <Link href={startHref}>
+                  免费开始
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Link>
               </Button>
             </div>
           </Card>

@@ -102,8 +102,9 @@ export async function fetchWithAuth(
     return new Response(JSON.stringify({ detail: 'Token expired, redirecting...' }), { status: 401 });
   }
 
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(options.headers as Record<string, string> || {}),
   };
   headers['Authorization'] = `Bearer ${token}`;
@@ -137,15 +138,16 @@ export async function fetchJsonWithAuth<T = any>(
   const response = await fetchWithAuth(url, options);
 
   if (!response.ok) {
+    let message = `HTTP ${response.status}`;
     try {
       const error = await response.json();
-      throw new Error(error.detail || error.message || `HTTP ${response.status}`);
+      message = error.detail || error.message || message;
     } catch (e) {
       if (e instanceof Error && (e.message.includes('expired') || e.message.includes('redirecting'))) {
         throw e; // token 过期，等跳转
       }
-      throw new Error(`HTTP ${response.status}`);
     }
+    throw new Error(message);
   }
   return response.json();
 }

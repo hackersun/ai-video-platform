@@ -148,7 +148,57 @@ def test_studio_action_execute_compat_route_and_safe_audit_action(client: TestCl
     payload = quality_response.json()
     assert payload["code"] == "quality_check"
     assert payload["status"] == "succeeded"
-    assert payload["result"]["message"] == "已记录质量检查请求，请根据工作台问题列表继续处理。"
+    assert payload["result"]["summary"]["shot_count"] == 3
+    assert payload["result"]["summary"]["average_score"] > 0
+    assert payload["result"]["item_count"] == 3
+
+    media_resp = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first", "subtitle_mode": "shot_dialogue", "audio_mode": "model_audio"},
+        headers=_auth_headers(user_id),
+    )
+    assert media_resp.status_code == 200
+
+    audit_response = client.post(
+        f"/api/v1/studio/workflows/{workflow_id}/actions/media_audit/execute",
+        json={"mode": "production", "params": {"persist_remote": True, "dry_run": False}},
+        headers=_auth_headers(user_id),
+    )
+    assert audit_response.status_code == 200
+    audit_payload = audit_response.json()
+    assert audit_payload["code"] == "media_audit"
+    assert audit_payload["status"] == "succeeded"
+    assert audit_payload["result"]["summary"]["item_count"] >= 1
+    assert audit_payload["result"]["summary"]["missing_count"] == 0
+
+
+def test_studio_action_refresh_contracts_persists_real_contracts(client: TestClient) -> None:
+    user_id = f"studio-refresh-contracts-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+    workflow_id = fixture["workflow_id"]
+
+    before = client.get(f"/api/v1/shots/{fixture['shot_ids'][0]}", headers=_auth_headers(user_id))
+    assert before.status_code == 200
+    assert "production_contract" not in before.json().get("extra_data", {}).get("production_context", {})
+
+    response = client.post(
+        f"/api/v1/studio/workflows/{workflow_id}/actions/refresh_contracts/execute",
+        json={"mode": "production"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["code"] == "refresh_contracts"
+    assert payload["status"] == "succeeded"
+    assert payload["result"]["refreshed_count"] == 3
+    assert payload["result"]["skipped_count"] == 0
+
+    after = client.get(f"/api/v1/shots/{fixture['shot_ids'][0]}", headers=_auth_headers(user_id))
+    assert after.status_code == 200
+    production_context = after.json()["extra_data"]["production_context"]
+    assert production_context["production_contract"]["contract_version"] == "short-video-v1"
+    assert production_context["production_contract"]["lineage"]["workflow_id"] == workflow_id
 
 
 def test_studio_test_mode_skip_persists_bypass_audit(client: TestClient) -> None:

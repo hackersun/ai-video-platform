@@ -199,8 +199,8 @@ export default function ChapterEditPage() {
       toast({ title: '请先加载章节信息', type: 'info' });
       return;
     }
-    if (mode !== 'rewrite' && !formData.content.trim()) {
-      toast({ title: '请先编写一些内容', description: '续写或润色需要已有正文。', type: 'info' });
+    if (mode === 'polish' && !formData.content.trim()) {
+      toast({ title: '请先编写一些内容', description: '润色需要已有正文；空章节可以直接点击生成本章内容。', type: 'info' });
       return;
     }
 
@@ -271,25 +271,26 @@ export default function ChapterEditPage() {
   }
 
   const wordCount = formData.content.replace(/\s/g, '').length;
+  const canContinueFromContext = wordCount === 0;
 
   return (
     <MainLayout>
       <div className="space-y-6">
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
             <Button asChild variant="ghost" className="text-white/60 hover:text-white">
               <Link href={`/novels/${novelId}/chapters/${chapterId}`}>
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 返回
               </Link>
             </Button>
-            <div>
+            <div className="min-w-0">
               <p className="text-white/40 text-sm">{novel.title}</p>
-              <h1 className="text-xl font-bold text-white">编辑章节</h1>
+              <h1 className="break-words text-xl font-bold text-white">编辑章节</h1>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <span className={`text-xs ${
               saveState === 'error' ? 'text-red-400' :
               saveState === 'saving' ? 'text-yellow-400' :
@@ -315,132 +316,139 @@ export default function ChapterEditPage() {
           </div>
         </div>
 
-        {/* AI辅助 */}
-        <Card className="bg-violet-500/5 border-violet-500/20">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-violet-400 text-base flex items-center gap-2">
-              <Sparkles className="w-4 h-4" />
-              AI辅助写作
-              {isGenerating && <Loader2 className="w-4 h-4 animate-spin ml-2" />}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-3">
-              <Input
-                value={aiInstruction}
-                onChange={(e) => setAiInstruction(e.target.value)}
-                placeholder="补充要求，例如：强化女主视角、保留雨夜场景、结尾接下一章追击"
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-              />
-              <Input
-                type="number"
-                min={300}
-                max={8000}
-                value={targetWordCount}
-                onChange={(e) => setTargetWordCount(Math.max(300, Math.min(8000, parseInt(e.target.value) || 1800)))}
-                className="bg-white/5 border-white/10 text-white"
-                title="目标字数"
-              />
-            </div>
-            <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-violet-500/50 text-violet-400 hover:bg-violet-500/10"
-              onClick={handleAIGenerate}
-              disabled={isGenerating}
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4 mr-1" />
-              )}
-              重新生成
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
-              onClick={handleAIExtend}
-              disabled={isGenerating}
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4 mr-1" />
-              )}
-              续写内容
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-green-500/50 text-green-400 hover:bg-green-500/10"
-              onClick={handleAIPolish}
-              disabled={isGenerating}
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-              ) : (
-                <Sparkles className="w-4 h-4 mr-1" />
-              )}
-              润色内容
-            </Button>
-            </div>
-            <p className="text-xs text-white/40">
-              AI 会读取小说简介、前后章节、Story Bible 及已抽取的人物/场景/道具/事件，生成后立即保存并同步一致性上下文。
-            </p>
-          </CardContent>
-        </Card>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+          <div className="space-y-4">
+            {/* 章节标题 */}
+            <Card className="bg-white/5 border-white/10">
+              <CardContent className="p-4">
+                <label className="text-white/60 text-sm mb-2 block">章节标题</label>
+                <Input
+                  value={formData.title}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                  className="bg-white/5 border-white/10 text-white text-lg"
+                  placeholder="输入章节标题"
+                />
+              </CardContent>
+            </Card>
 
-        {/* 章节标题 */}
-        <Card className="bg-white/5 border-white/10">
-          <CardContent className="p-4">
-            <label className="text-white/60 text-sm mb-2 block">章节标题</label>
-            <Input
-              value={formData.title}
-              onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-              className="bg-white/5 border-white/10 text-white text-lg"
-              placeholder="输入章节标题"
-            />
-          </CardContent>
-        </Card>
+            {/* 章节内容 */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="text-white">章节正文</CardTitle>
+                <div className="flex items-center gap-4 text-sm text-white/40">
+                  <span className="flex items-center gap-1">
+                    <FileText className="w-4 h-4" />
+                    {wordCount} 字
+                  </span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <Textarea
+                  value={formData.content}
+                  onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                  className="min-h-[clamp(460px,62vh,820px)] resize-y bg-white/5 border-white/10 text-base leading-7 text-white"
+                  placeholder="开始编写章节内容…"
+                />
+                <p className="mt-2 text-xs text-white/40">
+                  长章节可直接滚动页面编辑，也可以拖动正文框右下角调整写作区高度。
+                </p>
+              </CardContent>
+            </Card>
 
-        {/* 章节内容 */}
-        <Card className="bg-white/5 border-white/10">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-white">章节正文</CardTitle>
-            <div className="flex items-center gap-4 text-sm text-white/40">
-              <span className="flex items-center gap-1">
-                <FileText className="w-4 h-4" />
-                {wordCount} 字
-              </span>
+            {/* 保存按钮 */}
+            <div className="flex justify-center">
+              <Button
+                onClick={handleSave}
+                disabled={saving}
+                size="lg"
+                className="bg-violet-600 hover:bg-violet-700 px-8"
+              >
+                {saving ? (
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-5 h-5 mr-2" />
+                )}
+                保存章节
+              </Button>
             </div>
-          </CardHeader>
-          <CardContent>
-            <Textarea
-              value={formData.content}
-              onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-              className="bg-white/5 border-white/10 text-white min-h-[500px]"
-              placeholder="开始编写章节内容…"
-            />
-          </CardContent>
-        </Card>
+          </div>
 
-        {/* 保存按钮 */}
-        <div className="flex justify-center">
-          <Button
-            onClick={handleSave}
-            disabled={saving}
-            size="lg"
-            className="bg-violet-600 hover:bg-violet-700 px-8"
-          >
-            {saving ? (
-              <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-            ) : (
-              <Save className="w-5 h-5 mr-2" />
-            )}
-            保存章节
-          </Button>
+          {/* AI辅助 */}
+          <Card className="bg-violet-500/5 border-violet-500/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-violet-400 text-base flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                AI辅助写作
+                {isGenerating && <Loader2 className="w-4 h-4 animate-spin ml-2" />}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-1 gap-3">
+                <Input
+                  value={aiInstruction}
+                  onChange={(e) => setAiInstruction(e.target.value)}
+                  placeholder="补充要求，例如：强化女主视角、保留雨夜场景、结尾接下一章追击"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
+                />
+                <Input
+                  type="number"
+                  min={300}
+                  max={8000}
+                  value={targetWordCount}
+                  onChange={(e) => setTargetWordCount(Math.max(300, Math.min(8000, parseInt(e.target.value) || 1800)))}
+                  className="bg-white/5 border-white/10 text-white"
+                  title="目标字数"
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-violet-500/50 text-violet-400 hover:bg-violet-500/10"
+                  onClick={handleAIGenerate}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-1" />
+                  )}
+                  重新生成
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
+                  onClick={handleAIExtend}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4 mr-1" />
+                  )}
+                  {canContinueFromContext ? '生成本章内容' : '续写内容'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-green-500/50 text-green-400 hover:bg-green-500/10"
+                  onClick={handleAIPolish}
+                  disabled={isGenerating}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 mr-1" />
+                  )}
+                  润色内容
+                </Button>
+              </div>
+              <p className="text-xs leading-5 text-white/40">
+                AI 会读取小说简介、前后章节、Story Bible 及已抽取的人物/场景/道具/事件，生成后立即保存并同步一致性上下文。
+              </p>
+            </CardContent>
+          </Card>
         </div>
       </div>
       <ConfirmDialog

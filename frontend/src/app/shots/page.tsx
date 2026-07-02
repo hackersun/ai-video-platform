@@ -10,6 +10,13 @@ import { MainLayout } from '@/components/layout/main-layout';
 import { useToast } from '@/components/ui/toast';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import apiClient from '@/lib/api-client';
+import { formatChapterLabel } from '@/lib/chapter-label';
+import {
+  DEFAULT_IMAGE_STYLE_TEMPLATES,
+  ImageStyleTemplatePicker,
+  type ImageStyleTemplate,
+} from '@/components/media/image-style-template-picker';
+import { ReferenceImagePreview } from '@/components/media/reference-image-preview';
 import {
   CAMERA_ANGLE_LABELS,
   CAMERA_ANGLE_OPTIONS,
@@ -80,6 +87,7 @@ interface Shot {
   lighting?: string;
   color_grading?: string;
   image_url?: string;
+  image_asset_id?: string;
   image_status?: string;
   keyframes?: any[];
   character_refs?: any[];
@@ -103,6 +111,7 @@ interface Storyboard {
 interface Script {
   id: string;
   title: string;
+  content?: string;
   novel_id?: string;
   chapter_id?: string;
   novel_title?: string;
@@ -117,7 +126,42 @@ interface Chapter {
   id: string;
   novel_id?: string;
   title: string;
+  content?: string;
   chapter_number?: number;
+}
+
+interface Asset {
+  id: string;
+  name: string;
+  category?: string;
+  asset_type?: string;
+  url?: string;
+  thumbnail_url?: string;
+  entity_id?: string;
+  entity_type?: string;
+  generation_params?: any;
+  is_locked?: boolean;
+}
+
+interface EntityAssetsResponse {
+  assets: Asset[];
+  locked_assets: Asset[];
+  total: number;
+}
+
+interface AssetViewPreset {
+  entity_type: string;
+  title: string;
+  views: {
+    key: string;
+    label: string;
+  }[];
+}
+
+interface ShotReferencedEntity {
+  id: string;
+  name: string;
+  entity_type: 'character' | 'scene' | 'prop';
 }
 
 const VIDEO_STATUS_LABELS: Record<string, string> = {
@@ -126,6 +170,38 @@ const VIDEO_STATUS_LABELS: Record<string, string> = {
   succeeded: '已完成',
   failed: '失败'
 };
+
+const FALLBACK_VIEW_PRESETS: AssetViewPreset[] = [
+  {
+    entity_type: 'character',
+    title: '角色三视图',
+    views: [
+      { key: 'front', label: '正面' },
+      { key: 'side', label: '侧面' },
+      { key: 'back', label: '背面' },
+    ],
+  },
+  {
+    entity_type: 'scene',
+    title: '场景四视图',
+    views: [
+      { key: 'establishing', label: '全景定场' },
+      { key: 'layout', label: '空间布局' },
+      { key: 'detail', label: '关键细节' },
+      { key: 'lighting', label: '光影氛围' },
+    ],
+  },
+  {
+    entity_type: 'prop',
+    title: '道具多视图',
+    views: [
+      { key: 'main', label: '主视图' },
+      { key: 'detail', label: '细节纹理' },
+      { key: 'scale', label: '比例参考' },
+      { key: 'in_use', label: '使用状态' },
+    ],
+  },
+];
 
 const QUALITY_STATUS_LABELS: Record<string, string> = {
   ready: '可生成',
@@ -152,6 +228,7 @@ const getShotQualityStatus = (shot: Shot) => shot.extra_data?.quality_report?.st
 const getShotQualityScore = (shot: Shot) => shot.extra_data?.quality_report?.score;
 const getShotReviewState = (shot: Shot) =>
   shot.extra_data?.production_context?.review_state || shot.extra_data?.review_state || 'pending_review';
+type BatchImageProgress = { status: string; message?: string };
 
 export default function ShotsPage() {
   const { toast } = useToast();
@@ -180,14 +257,21 @@ export default function ShotsPage() {
   const [selectedShots, setSelectedShots] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const [batchGenerating, setBatchGenerating] = useState(false);
-  const [batchProgress, setBatchProgress] = useState<Record<string, string>>({});
+  const [batchProgress, setBatchProgress] = useState<Record<string, BatchImageProgress>>({});
   const [productionContext, setProductionContext] = useState<any>({});
   const [qualityReport, setQualityReport] = useState<any>({});
   const [budgetEstimate, setBudgetEstimate] = useState<any>({});
   const [qualityLoading, setQualityLoading] = useState(false);
   const [qualityBatchLoading, setQualityBatchLoading] = useState(false);
   const [reviewBatchLoading, setReviewBatchLoading] = useState(false);
+  const [dialogueGenerating, setDialogueGenerating] = useState<'extract' | 'polish' | 'rewrite' | null>(null);
+  const [dialogueAiWarnings, setDialogueAiWarnings] = useState<string[]>([]);
   const [productionSaving, setProductionSaving] = useState(false);
+  const [productionEditMode, setProductionEditMode] = useState<'simple' | 'advanced'>('simple');
+  const [viewPresets, setViewPresets] = useState<AssetViewPreset[]>(FALLBACK_VIEW_PRESETS);
+  const [shotEntityAssetPacks, setShotEntityAssetPacks] = useState<Record<string, EntityAssetsResponse>>({});
+  const [imageStyleTemplates, setImageStyleTemplates] = useState<ImageStyleTemplate[]>(DEFAULT_IMAGE_STYLE_TEMPLATES);
+  const [shotImageStyle, setShotImageStyle] = useState('anime');
   const [productionForm, setProductionForm] = useState({
     assetLocksJson: '[]',
     keyframesJson: '[]',
@@ -204,7 +288,7 @@ export default function ShotsPage() {
   const getChapterLabel = (chapterId?: string) => {
     const chapter = chapters.find((item) => item.id === chapterId);
     if (!chapter) return chapterId ? `章节 ${chapterId.slice(0, 8)}...` : '未绑定章节';
-    return chapter.chapter_number ? `第${chapter.chapter_number}章 ${chapter.title}` : chapter.title;
+    return formatChapterLabel(chapter);
   };
 
   const loadChaptersForNovel = async (novelId: string) => {
@@ -322,6 +406,158 @@ export default function ShotsPage() {
     }
   }, [selectedNovel]);
 
+  useEffect(() => {
+    const loadViewPresets = async () => {
+      try {
+        const data = await apiClient.getAssetViewPresets();
+        const presets = Array.isArray(data?.presets) ? data.presets : FALLBACK_VIEW_PRESETS;
+        setViewPresets(presets.length ? presets : FALLBACK_VIEW_PRESETS);
+      } catch (err) {
+        console.error('加载多视图预设失败:', err);
+        setViewPresets(FALLBACK_VIEW_PRESETS);
+      }
+    };
+    loadViewPresets();
+  }, []);
+
+  useEffect(() => {
+    const loadImageStyleTemplates = async () => {
+      try {
+        const data = await apiClient.getAssetStyleTemplates();
+        const templates = Array.isArray(data?.templates) ? data.templates : DEFAULT_IMAGE_STYLE_TEMPLATES;
+        setImageStyleTemplates(templates.length ? templates : DEFAULT_IMAGE_STYLE_TEMPLATES);
+      } catch (err) {
+        console.error('加载画面风格模板失败:', err);
+        setImageStyleTemplates(DEFAULT_IMAGE_STYLE_TEMPLATES);
+      }
+    };
+    loadImageStyleTemplates();
+  }, []);
+
+  const refNames = (refs?: any[]) =>
+    (refs || [])
+      .map((ref) => ref?.name || ref?.entity_name || ref?.character_name || ref?.title)
+      .filter(Boolean)
+      .join('、');
+
+  const getShotEntityRefs = (shot?: Shot | null) => {
+    const extra = shot?.extra_data || {};
+    const entityRefs = extra.entity_refs || {};
+    return {
+      characters: shot?.character_refs?.length ? shot.character_refs : (extra.character_refs || entityRefs.characters || []),
+      scenes: extra.scene_refs || entityRefs.scenes || [],
+      props: extra.prop_refs || entityRefs.props || [],
+      events: extra.event_refs || entityRefs.events || [],
+      subtitle: extra.subtitle_text || shot?.dialogue,
+    };
+  };
+
+  const getRefId = (ref: any) => ref?.entity_id || ref?.story_entity_id || (ref?.entity_type ? ref?.id : '');
+  const getRefName = (ref: any) => ref?.name || ref?.entity_name || ref?.character_name || ref?.title || '';
+
+  const getShotReferencedEntities = (shot?: Shot | null): ShotReferencedEntity[] => {
+    const refs = getShotEntityRefs(shot);
+    const seen = new Set<string>();
+    const result: ShotReferencedEntity[] = [];
+    const append = (items: any[], entityType: ShotReferencedEntity['entity_type']) => {
+      for (const item of items || []) {
+        const id = getRefId(item);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        result.push({
+          id,
+          name: getRefName(item) || `${entityType} ${id.slice(0, 8)}`,
+          entity_type: entityType,
+        });
+      }
+    };
+    append(refs.characters || [], 'character');
+    append(refs.scenes || [], 'scene');
+    append(refs.props || [], 'prop');
+    return result;
+  };
+
+  useEffect(() => {
+    const loadShotEntityAssets = async () => {
+      const entities = getShotReferencedEntities(selectedShot);
+      if (!entities.length) {
+        setShotEntityAssetPacks({});
+        return;
+      }
+      const entries = await Promise.all(
+        entities.map(async (entity) => {
+          try {
+            const data = await apiClient.getEntityAssets(entity.id, { entity_type: entity.entity_type });
+            return [entity.id, data as EntityAssetsResponse] as const;
+          } catch (err) {
+            console.error(`加载镜头实体资产失败: ${entity.name}`, err);
+            return [entity.id, { assets: [], locked_assets: [], total: 0 }] as const;
+          }
+        })
+      );
+      setShotEntityAssetPacks(Object.fromEntries(entries));
+    };
+    loadShotEntityAssets();
+  }, [selectedShot?.id]);
+
+  const assetViewKey = (asset?: Asset) => (
+    asset?.generation_params?.view_key || asset?.generation_params?.asset_subtype || ''
+  );
+
+  const assetWizardHref = (entity: ShotReferencedEntity) => {
+    const params = new URLSearchParams();
+    if (selectedShot?.novel_id) params.set('novel_id', selectedShot.novel_id);
+    if (selectedShot?.chapter_id) params.set('chapter_id', selectedShot.chapter_id);
+    params.set('entity_type', entity.entity_type);
+    params.set('entity_id', entity.id);
+    return `/assets?${params.toString()}`;
+  };
+
+  const renderShotMultiviewStatus = (shot?: Shot | null) => {
+    const entities = getShotReferencedEntities(shot);
+    if (!entities.length) return null;
+
+    return (
+      <div data-testid="shot-edit-multiview-status" className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3">
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-white">
+          <ImageIcon className="h-4 w-4 text-cyan-100" />
+          参考资产完整度
+        </div>
+        <div className="space-y-2">
+          {entities.map((entity) => {
+            const preset = viewPresets.find((item) => item.entity_type === entity.entity_type)
+              || FALLBACK_VIEW_PRESETS.find((item) => item.entity_type === entity.entity_type);
+            if (!preset) return null;
+            const pack = shotEntityAssetPacks[entity.id] || { assets: [], locked_assets: [], total: 0 };
+            const lockedKeys = new Set((pack.locked_assets || []).map(assetViewKey).filter(Boolean));
+            const generatedKeys = new Set((pack.assets || []).map(assetViewKey).filter(Boolean));
+            const lockedCount = preset.views.filter((view) => lockedKeys.has(view.key)).length;
+            const missingLabels = preset.views
+              .filter((view) => !lockedKeys.has(view.key) && !generatedKeys.has(view.key))
+              .map((view) => view.label);
+            return (
+              <div key={entity.id} className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-white/80">
+                    {entity.name} · {preset.title} · {lockedCount}/{preset.views.length} 已定稿
+                  </div>
+                  <Link className="text-cyan-100 hover:text-white" href={assetWizardHref(entity)}>
+                    补齐参考图
+                  </Link>
+                </div>
+                {missingLabels.length > 0 ? (
+                  <div className="mt-1 text-amber-100">待补齐：{missingLabels.join('、')}</div>
+                ) : (
+                  <div className="mt-1 text-emerald-200">必备视图已补齐，可用于后续视频一致性生成。</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   // 筛选镜头
   const filteredShots = shots.filter(shot => {
     const matchesSearch = !searchQuery ||
@@ -431,8 +667,8 @@ export default function ShotsPage() {
     if (storyboardIds.length === 0) return;
 
     setBatchGenerating(true);
-    const progress: Record<string, string> = {};
-    shotArray.forEach(shot => { progress[shot.id] = "pending"; });
+    const progress: Record<string, BatchImageProgress> = {};
+    shotArray.forEach(shot => { progress[shot.id] = { status: "pending" }; });
     setBatchProgress(progress);
 
     try {
@@ -443,15 +679,22 @@ export default function ShotsPage() {
           const results = await fetchWithAuth(`${API_BASE}/storyboards/${sbId}/shots/generate-images`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(sbShotIds)
+            body: JSON.stringify({ shot_ids: sbShotIds, style: shotImageStyle })
           });
           const data = await results.json();
           for (const r of data.results || []) {
             if (r.status === "generating") {
-              setBatchProgress(prev => ({ ...prev, [r.shot_id]: "generating" }));
+              setBatchProgress(prev => ({ ...prev, [r.shot_id]: { status: "generating", message: r.message } }));
               pollBatchShotImage(r.shot_id, sbId);
+            } else if (r.status === "succeeded") {
+              setBatchProgress(prev => ({ ...prev, [r.shot_id]: { status: "succeeded", message: r.message || "图片已生成" } }));
+              setShots(prev => prev.map(shot => (
+                shot.id === r.shot_id
+                  ? { ...shot, image_status: "succeeded", image_url: r.image_url || shot.image_url, image_asset_id: r.image_asset_id || shot.image_asset_id }
+                  : shot
+              )));
             } else if (r.status === "skipped" || r.status === "error") {
-              setBatchProgress(prev => ({ ...prev, [r.shot_id]: r.status }));
+              setBatchProgress(prev => ({ ...prev, [r.shot_id]: { status: r.status === "error" ? "failed" : r.status, message: r.reason || r.message } }));
             }
           }
         } catch (err) {
@@ -473,7 +716,7 @@ export default function ShotsPage() {
         if (!response.ok) continue;
         const shot: Shot = await response.json();
         if (shot.image_status === "succeeded") {
-          setBatchProgress(prev => ({ ...prev, [shotId]: "succeeded" }));
+          setBatchProgress(prev => ({ ...prev, [shotId]: { status: "succeeded", message: "图片已生成" } }));
           // Refresh shots list for this storyboard
           const updated = await fetchWithAuth(`${API_BASE}/shots/storyboard/${storyboardId}`);
           if (updated.ok) {
@@ -484,8 +727,8 @@ export default function ShotsPage() {
             }));
           }
           setBatchProgress(prev => {
-            const nextProgress = { ...prev, [shotId]: "succeeded" };
-            const vals = Object.values(nextProgress);
+            const nextProgress = { ...prev, [shotId]: { status: "succeeded", message: "图片已生成" } };
+            const vals = Object.values(nextProgress).map(item => item.status);
             if (!vals.includes("generating") && !vals.includes("pending")) {
               setBatchGenerating(false);
             }
@@ -494,7 +737,10 @@ export default function ShotsPage() {
           return;
         }
         if (shot.image_status === "failed") {
-          setBatchProgress(prev => ({ ...prev, [shotId]: "failed" }));
+          setBatchProgress(prev => ({
+            ...prev,
+            [shotId]: { status: "failed", message: shot.extra_data?.image_generation_error || "图像模型任务失败" },
+          }));
           setBatchGenerating(false);
           return;
         }
@@ -502,7 +748,7 @@ export default function ShotsPage() {
         console.error(`Poll failed for shot ${shotId}:`, err);
       }
     }
-    setBatchProgress(prev => ({ ...prev, [shotId]: "timeout" }));
+    setBatchProgress(prev => ({ ...prev, [shotId]: { status: "timeout", message: "暂未拿到图片结果，请稍后刷新或重试" } }));
     setBatchGenerating(false);
   };
 
@@ -510,6 +756,8 @@ export default function ShotsPage() {
   const handleEdit = (shot: Shot) => {
     setSelectedShot(shot);
     setEditData({ ...shot });
+    setDialogueAiWarnings([]);
+    setProductionEditMode('simple');
     setIsEditing(true);
     loadProductionContext(shot);
     loadShotQuality(shot);
@@ -645,6 +893,281 @@ export default function ShotsPage() {
     return JSON.parse(trimmed);
   };
 
+  const parseJsonDraft = <T,>(value: string, fallback: T): T => {
+    try {
+      return parseJsonField(value, fallback) as T;
+    } catch {
+      return fallback;
+    }
+  };
+
+  const isInvalidJson = (value: string) => {
+    if (!value.trim()) return false;
+    try {
+      JSON.parse(value);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+
+  const toPrettyJson = (value: any) => JSON.stringify(value, null, 2);
+
+  const mergeByKey = (items: any[], nextItems: any[], getKey: (item: any) => string) => {
+    const merged = new Map<string, any>();
+    for (const item of items) {
+      if (!item) continue;
+      merged.set(getKey(item), item);
+    }
+    for (const item of nextItems) {
+      if (!item) continue;
+      merged.set(getKey(item), item);
+    }
+    return Array.from(merged.values());
+  };
+
+  const getShotDuration = () => {
+    const duration = Number(editData.duration ?? selectedShot?.duration ?? 4);
+    return Number.isFinite(duration) && duration > 0 ? duration : 4;
+  };
+
+  const getShotPromptText = () =>
+    String(editData.visual_description || editData.prompt || selectedShot?.visual_description || selectedShot?.prompt || '').trim();
+
+  const getDialogueSpeaker = () =>
+    String(
+      editData.extra_data?.dialogue_speaker ||
+      selectedShot?.extra_data?.dialogue_speaker ||
+      ''
+    ).trim();
+
+  const getShotCharactersForDialogue = (shot: Shot | null) => {
+    if (!shot) return [];
+    const sources = [
+      shot.character_refs,
+      shot.extra_data?.character_refs,
+      shot.extra_data?.entity_refs?.characters,
+      shot.extra_data?.production_context?.character_refs,
+    ].filter(Array.isArray) as any[][];
+    const map = new Map<string, any>();
+    for (const source of sources) {
+      for (const item of source) {
+        if (!item || typeof item !== 'object') continue;
+        const name = String(item.name || item.character_name || item.entity_name || item.alias || '').trim();
+        const key = String(item.character_id || item.entity_id || item.id || name || JSON.stringify(item)).trim();
+        if (!key) continue;
+        map.set(key, {
+          name: name || item.character_name || item.entity_name || '未命名角色',
+          description: item.description || item.appearance || item.role || item.notes || '',
+          aliases: item.aliases || [],
+          character_id: item.character_id,
+          entity_id: item.entity_id,
+          voice: item.voice,
+        });
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const loadDialogueAssistContext = async (shot: Shot) => {
+    let scriptContent = scripts.find(item => item.id === shot.script_id)?.content || '';
+    let chapterContent = chapters.find(item => item.id === shot.chapter_id)?.content || '';
+
+    if (shot.script_id && !scriptContent) {
+      try {
+        const script = await apiClient.getScript(shot.script_id);
+        scriptContent = script?.content || '';
+      } catch {
+        scriptContent = '';
+      }
+    }
+
+    if (shot.chapter_id && !chapterContent) {
+      try {
+        const chapter = await apiClient.getChapter(shot.chapter_id);
+        chapterContent = chapter?.content || '';
+      } catch {
+        chapterContent = '';
+      }
+    }
+
+    return { scriptContent, chapterContent };
+  };
+
+  const handleAssistDialogue = async (mode: 'extract' | 'polish' | 'rewrite') => {
+    if (!selectedShot) return;
+    const sceneDescription = getShotPromptText();
+    if (!sceneDescription) {
+      toast({ title: '缺少镜头描述', description: '先补充视频描述或视觉描述，再让 AI 处理台词。', type: 'error' });
+      return;
+    }
+
+    setDialogueGenerating(mode);
+    setDialogueAiWarnings([]);
+    try {
+      const { scriptContent, chapterContent } = await loadDialogueAssistContext(selectedShot);
+      const result = await apiClient.generateDialogue({
+        scene_description: sceneDescription,
+        script_content: scriptContent || undefined,
+        chapter_content: chapterContent || undefined,
+        current_dialogue: String(editData.dialogue || selectedShot.dialogue || '').trim() || undefined,
+        speaker_name: getDialogueSpeaker() || undefined,
+        dialogue_mode: mode,
+        characters: getShotCharactersForDialogue(selectedShot),
+        style: 'anime',
+        novel_id: selectedShot.novel_id,
+        chapter_id: selectedShot.chapter_id,
+        script_id: selectedShot.script_id,
+        storyboard_id: selectedShot.storyboard_id,
+        shot_id: selectedShot.id,
+      });
+
+      const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+      setDialogueAiWarnings(warnings);
+      setEditData(prev => {
+        const extraData = {
+          ...(selectedShot.extra_data || {}),
+          ...(prev.extra_data || {}),
+          dialogue_speaker: result.speaker_name || prev.extra_data?.dialogue_speaker || selectedShot.extra_data?.dialogue_speaker,
+          dialogue_spoken_text: result.spoken_text || prev.extra_data?.dialogue_spoken_text || selectedShot.extra_data?.dialogue_spoken_text,
+          dialogue_source: result.dialogue_source || prev.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source,
+          dialogue_ai_warnings: warnings,
+        };
+        return {
+          ...prev,
+          dialogue: result.dialogue || prev.dialogue,
+          visual_description: prev.visual_description || result.visual_description || selectedShot.visual_description,
+          camera_angle: prev.camera_angle || result.camera_suggestion || selectedShot.camera_angle,
+          extra_data: extraData,
+        };
+      });
+
+      const title = mode === 'extract' ? '已从原文提炼台词' : mode === 'polish' ? '台词已润色' : '台词已补齐';
+      toast({
+        title,
+        description: warnings.length ? warnings[0] : '保存镜头后会同步用于字幕、配音和视频生成。',
+        type: warnings.length ? 'info' : 'success',
+      });
+    } catch (err: any) {
+      toast({ title: 'AI 台词处理失败', description: err.message || '请检查模型配置后重试。', type: 'error' });
+    } finally {
+      setDialogueGenerating(null);
+    }
+  };
+
+  const handleFillKeyframes = () => {
+    const promptText = getShotPromptText();
+    if (!promptText) {
+      toast({ title: '缺少镜头描述', description: '先补充视频描述或视觉描述，再生成关键画面。', type: 'error' });
+      return;
+    }
+    const duration = getShotDuration();
+    const keyframes = [
+      {
+        time: 0,
+        role: 'start',
+        label: '开头画面',
+        prompt: promptText,
+      },
+      {
+        time: duration,
+        role: 'end',
+        label: '结尾画面',
+        prompt: `${promptText}，动作和情绪自然延续，人物、场景、服装和道具保持一致`,
+      },
+    ];
+    setProductionForm(prev => ({ ...prev, keyframesJson: toPrettyJson(keyframes) }));
+    toast({ title: '关键画面已补齐', description: '已根据当前镜头描述生成开头和结尾画面约束。', type: 'success' });
+  };
+
+  const handleEnableLipSync = () => {
+    const dialogue = String(editData.dialogue || selectedShot?.dialogue || '').trim();
+    if (!dialogue) {
+      toast({ title: '缺少台词', description: '有对白的镜头才需要开启口型同步。', type: 'error' });
+      return;
+    }
+    setProductionForm(prev => ({
+      ...prev,
+      lipSyncJson: toPrettyJson({
+        mode: 'provider',
+        language: 'zh-CN',
+        source: 'dialogue',
+        text: dialogue,
+      }),
+    }));
+    toast({ title: '口型同步已开启', description: '生成视频时会把当前台词作为口型对齐依据。', type: 'success' });
+  };
+
+  const handleLockCurrentReferenceImage = () => {
+    if (!selectedShot) return;
+    const imageAssetId =
+      selectedShot.image_asset_id ||
+      selectedShot.extra_data?.image_asset_id ||
+      selectedShot.extra_data?.reference_image_asset_id;
+    const imageUrl = selectedShot.image_url || selectedShot.extra_data?.image_url;
+    if (!imageAssetId) {
+      toast({
+        title: '没有可固定的参考图资产',
+        description: '请先为镜头生成参考图，生成成功后再固定为一致性素材。',
+        type: 'error',
+      });
+      return;
+    }
+    const current = parseJsonDraft<any[]>(productionForm.assetLocksJson, []);
+    const nextLock = {
+      asset_id: String(imageAssetId),
+      role: 'shot_reference',
+      name: `镜头 ${selectedShot.shot_number} 参考图`,
+      url: imageUrl,
+      thumbnail_url: imageUrl,
+      notes: '从当前镜头参考图固定，用于保持同一镜头重生成时画面一致',
+    };
+    const merged = mergeByKey(current, [nextLock], item => `${item.asset_id}:${item.role || 'reference'}`);
+    setProductionForm(prev => ({ ...prev, assetLocksJson: toPrettyJson(merged) }));
+    toast({ title: '参考图已加入一致性素材', description: '保存后该镜头会固定使用这张参考图。', type: 'success' });
+  };
+
+  const normalizeEntityBinding = (item: any, role: string, usage: string) => {
+    if (!item || typeof item !== 'object') return null;
+    const entityId = item.entity_id || item.id || item.story_entity_id;
+    if (!entityId) return null;
+    return {
+      entity_id: String(entityId),
+      role,
+      usage,
+      name: item.name || item.entity_name || item.title,
+    };
+  };
+
+  const handleFillEntityBindings = () => {
+    if (!selectedShot) return;
+    const extra = selectedShot.extra_data || {};
+    const groups = [
+      { items: extra.character_refs || selectedShot.character_refs || [], role: 'character', usage: 'character_reference' },
+      { items: extra.entity_refs || [], role: 'entity', usage: 'story_entity_reference' },
+      { items: extra.scene_refs || [], role: 'scene', usage: 'scene_reference' },
+      { items: extra.prop_refs || [], role: 'prop', usage: 'prop_reference' },
+      { items: extra.event_refs || [], role: 'event', usage: 'event_reference' },
+    ];
+    const extracted = groups.flatMap(group =>
+      (Array.isArray(group.items) ? group.items : [])
+        .map((item: any) => normalizeEntityBinding(item, group.role, group.usage))
+        .filter(Boolean)
+    ) as any[];
+    if (extracted.length === 0) {
+      toast({
+        title: '没有可绑定的出镜对象',
+        description: '请先在小说或剧本中完成角色、场景、道具、事件提取。',
+        type: 'error',
+      });
+      return;
+    }
+    const current = parseJsonDraft<any[]>(productionForm.entityBindingsJson, []);
+    const merged = mergeByKey(current, extracted, item => `${item.entity_id}:${item.role || 'entity'}`);
+    setProductionForm(prev => ({ ...prev, entityBindingsJson: toPrettyJson(merged) }));
+    toast({ title: '出镜对象已整理', description: `已绑定 ${extracted.length} 个角色、场景、道具或事件。`, type: 'success' });
+  };
+
   const handleSaveProductionContext = async () => {
     if (!selectedShot) return;
     setProductionSaving(true);
@@ -673,9 +1196,9 @@ export default function ShotsPage() {
         },
       } : s));
       await refreshShotQuality();
-      toast({ title: '生产上下文已保存', type: 'success' });
+      toast({ title: '一致性设置已保存', type: 'success' });
     } catch (err: any) {
-      toast({ title: '生产上下文保存失败', description: err.message || '请检查 JSON 格式。', type: 'error' });
+      toast({ title: '一致性设置保存失败', description: err.message || '请切到高级设置检查格式。', type: 'error' });
     } finally {
       setProductionSaving(false);
     }
@@ -741,6 +1264,51 @@ export default function ShotsPage() {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const assetLocks = parseJsonDraft<any[]>(productionForm.assetLocksJson, []);
+  const keyframeItems = parseJsonDraft<any[]>(productionForm.keyframesJson, []);
+  const multiviewRefs = parseJsonDraft<any[]>(productionForm.multiviewJson, []);
+  const entityBindings = parseJsonDraft<any[]>(productionForm.entityBindingsJson, []);
+  const lipSyncConfig = parseJsonDraft<Record<string, any>>(productionForm.lipSyncJson, {});
+  const productionJsonHasError = [
+    productionForm.assetLocksJson,
+    productionForm.keyframesJson,
+    productionForm.multiviewJson,
+    productionForm.entityBindingsJson,
+    productionForm.lipSyncJson,
+  ].some(isInvalidJson);
+  const lipSyncLabel =
+    lipSyncConfig.mode === 'provider' ? '已按台词开启' :
+    lipSyncConfig.mode === 'model_audio' ? '使用模型音频' :
+    lipSyncConfig.mode ? `模式：${lipSyncConfig.mode}` :
+    '未开启';
+  const productionSummaryItems = [
+    {
+      title: '一致性素材',
+      value: `${assetLocks.length} 个`,
+      description: assetLocks.length > 0 ? '已固定角色、场景或参考图' : '用于固定角色、场景、道具参考，减少重生成跑偏',
+    },
+    {
+      title: '关键画面',
+      value: `${keyframeItems.length} 个`,
+      description: keyframeItems.length > 0 ? '已设置画面起止或过程约束' : '建议至少设置开头和结尾画面',
+    },
+    {
+      title: '角色多角度',
+      value: `${multiviewRefs.length} 组`,
+      description: multiviewRefs.length > 0 ? '已配置正侧背或表情参考' : '用于保持人物脸型、发型、服装一致',
+    },
+    {
+      title: '出镜对象',
+      value: `${entityBindings.length} 个`,
+      description: entityBindings.length > 0 ? '已绑定本镜头角色、场景、道具或事件' : '从小说实体中承接角色、场景、道具和事件',
+    },
+    {
+      title: '口型同步',
+      value: lipSyncLabel,
+      description: lipSyncConfig.text ? `台词：${String(lipSyncConfig.text).slice(0, 24)}${String(lipSyncConfig.text).length > 24 ? '...' : ''}` : '有对白时开启，嘴型会跟配音对齐',
+    },
+  ];
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -751,7 +1319,7 @@ export default function ShotsPage() {
               <Film className="w-7 h-7" />
               镜头管理
             </h1>
-            <p className="text-white/60 mt-1">管理镜头、资产版本锁、关键帧、多视图参考、口型和审核状态</p>
+            <p className="text-white/60 mt-1">管理镜头画面、台词、参考素材、关键画面和审核状态</p>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             {selectedShots.size > 0 && (
@@ -815,6 +1383,19 @@ export default function ShotsPage() {
           </div>
         </div>
 
+        {selectedShots.size > 0 && (
+          <ImageStyleTemplatePicker
+            templates={imageStyleTemplates}
+            value={shotImageStyle}
+            onChange={setShotImageStyle}
+            toMediaUrl={toMediaUrl}
+            recommendedFor="shot"
+            title={`批量参考图风格（已选 ${selectedShots.size} 个镜头）`}
+            compact
+            layout="inline"
+          />
+        )}
+
         <Card className="bg-cyan-500/10 border-cyan-500/20">
           <CardContent className="p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
@@ -823,7 +1404,7 @@ export default function ShotsPage() {
                 镜头生产上下文已接入
               </div>
               <div className="text-white/55 text-sm mt-1">
-                打开任意镜头的编辑面板，可维护资产锁、关键帧、多视图角色参考、口型配置和多人审核状态。
+                打开任意镜头的编辑面板，可用简易方式维护一致性素材、关键画面、出镜对象、口型同步和审核状态。
               </div>
             </div>
             <Button asChild variant="outline" className="border-cyan-500/40 text-cyan-100 hover:bg-cyan-500/10">
@@ -916,7 +1497,7 @@ export default function ShotsPage() {
                     <option value="all">全部章节</option>
                     {chapters.map(chapter => (
                       <option key={chapter.id} value={chapter.id}>
-                        {chapter.chapter_number ? `第${chapter.chapter_number}章 ` : ''}{chapter.title}
+                        {formatChapterLabel(chapter)}
                       </option>
                     ))}
                   </select>
@@ -1092,31 +1673,40 @@ export default function ShotsPage() {
                         );
                       })()}
                       {/* Image status overlay */}
-                      {batchProgress[shot.id] === "generating" && (
+                      {batchProgress[shot.id]?.status === "generating" && (
                         <span className="absolute top-2 left-2 z-20 px-2 py-1 bg-yellow-500 text-white text-xs rounded flex items-center gap-1">
                           <Loader2 className="w-3 h-3 animate-spin" />
                           生成中…
                         </span>
                       )}
-                      {batchProgress[shot.id] === "succeeded" && (
+                      {batchProgress[shot.id]?.status === "succeeded" && (
                         <span className="absolute top-2 left-2 z-20 px-2 py-1 bg-green-500 text-white text-xs rounded">
                           图片已生成
                         </span>
                       )}
-                      {batchProgress[shot.id] === "failed" && (
-                        <span className="absolute top-2 left-2 z-20 px-2 py-1 bg-red-500 text-white text-xs rounded">
+                      {batchProgress[shot.id]?.status === "failed" && (
+                        <span
+                          className="absolute top-2 left-2 z-20 max-w-[70%] truncate px-2 py-1 bg-red-500 text-white text-xs rounded"
+                          title={batchProgress[shot.id]?.message || '生成失败'}
+                        >
                           生成失败
                         </span>
                       )}
-                      {shot.image_status === "succeeded" && shot.image_url && (
-                        <img
-                          src={toMediaUrl(shot.image_url)}
-                          className="absolute inset-0 w-full h-full object-cover opacity-20 rounded-lg"
-                          alt=""
-                          width={480}
-                          height={270}
-                          loading="lazy"
-                        />
+                      {batchProgress[shot.id]?.status === "skipped" && (
+                        <span
+                          className="absolute top-2 left-2 z-20 max-w-[70%] truncate px-2 py-1 bg-slate-600 text-white text-xs rounded"
+                          title={batchProgress[shot.id]?.message || '已跳过'}
+                        >
+                          已跳过
+                        </span>
+                      )}
+                      {batchProgress[shot.id]?.status === "timeout" && (
+                        <span
+                          className="absolute top-2 left-2 z-20 max-w-[70%] truncate px-2 py-1 bg-orange-500 text-white text-xs rounded"
+                          title={batchProgress[shot.id]?.message || '生成超时'}
+                        >
+                          生成超时
+                        </span>
                       )}
                       <div className="flex items-start justify-between mb-3 pr-24">
                         <div className="flex items-center gap-2">
@@ -1148,7 +1738,7 @@ export default function ShotsPage() {
                               aria-label={`播放镜头 ${shot.shot_number} 视频`}
                               title="播放视频"
                               className="w-6 h-6 text-green-400"
-                              onClick={(e) => { e.stopPropagation(); window.open(shot.video_url, '_blank'); }}
+                              onClick={(e) => { e.stopPropagation(); window.open(toMediaUrl(shot.video_url), '_blank'); }}
                             >
                               <Play className="w-3 h-3" />
                             </Button>
@@ -1184,6 +1774,21 @@ export default function ShotsPage() {
                         )}
                         {shot.visual_description && (
                           <p className="text-white/60 text-xs line-clamp-2">{shot.visual_description}</p>
+                        )}
+
+                        {shot.image_status === "succeeded" && shot.image_url ? (
+                          <ReferenceImagePreview
+                            src={toMediaUrl(shot.image_url)}
+                            title={`镜头 ${shot.shot_number} 参考图`}
+                            alt={`镜头 ${shot.shot_number} 参考图`}
+                            caption={shot.visual_description || shot.prompt}
+                            className="h-28 w-full"
+                            thumbnailClassName="p-1"
+                          />
+                        ) : (
+                          <div className="flex h-20 items-center justify-center rounded-lg border border-dashed border-white/10 bg-black/20 text-xs text-white/35">
+                            {shot.image_status === "generating" ? "参考图生成中…" : "暂无参考图"}
+                          </div>
                         )}
 
                         {(shot.novel_title || shot.chapter_title || shot.script_title) && (
@@ -1241,9 +1846,17 @@ export default function ShotsPage() {
 
                         {/* 台词 */}
                         {shot.dialogue && (
-                          <div className="flex items-start gap-1 mt-1">
-                            <Mic className="w-3 h-3 text-blue-400 mt-0.5 flex-shrink-0" />
-                            <p className="text-blue-300/80 text-xs italic line-clamp-2">"{shot.dialogue}"</p>
+                          <div className="mt-1 space-y-1">
+                            <div className="flex items-start gap-1">
+                              <Mic className="w-3 h-3 text-blue-400 mt-0.5 flex-shrink-0" />
+                              <p className="text-blue-300/80 text-xs italic line-clamp-2">"{shot.dialogue}"</p>
+                            </div>
+                            {shot.extra_data?.dialogue_speaker && (
+                              <div className="text-[11px] text-white/40">
+                                说话人：{shot.extra_data.dialogue_speaker}
+                                {shot.extra_data.dialogue_source ? ` · 来源：${shot.extra_data.dialogue_source}` : ''}
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -1350,14 +1963,29 @@ export default function ShotsPage() {
         {/* 镜头编辑弹窗 */}
         <Dialog open={isEditing && Boolean(selectedShot)} onOpenChange={(open) => setIsEditing(open)}>
           {selectedShot && (
-            <DialogContent className="max-w-2xl gap-6 bg-[#1a1a2e] p-6">
-              <DialogHeader className="pr-10">
+            <DialogContent className="max-h-[92dvh] max-w-5xl gap-0 overflow-hidden border-white/15 bg-slate-950 p-0 shadow-2xl">
+              <DialogHeader className="border-b border-white/10 bg-slate-950 px-6 py-5 pr-12">
                 <DialogTitle className="flex items-center gap-2">
                   <Edit2 className="w-5 h-5" />
-                  编辑镜头 {selectedShot.shot_number}
+                  镜头编辑工作台
                 </DialogTitle>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-white/45">
+                  <span>镜头 {selectedShot.shot_number}</span>
+                  <span>·</span>
+                  <span>{selectedShot.storyboard_title || '未命名分镜'}</span>
+                  <span>·</span>
+                  <span>{selectedShot.novel_title || '未绑定小说'} / {selectedShot.chapter_title || '未绑定章节'}</span>
+                </div>
               </DialogHeader>
-                <div className="space-y-4">
+                <div className="max-h-[calc(92dvh-166px)] space-y-5 overflow-y-auto px-6 py-5">
+                  {renderShotMultiviewStatus(selectedShot)}
+
+                  <section className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">基础镜头</h3>
+                      <p className="mt-1 text-xs text-white/45">先确认镜头顺序、时长和视频生成描述；这些字段会直接影响后续视频生成。</p>
+                    </div>
+
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-sm text-white/60 mb-1 block">镜头序号</label>
@@ -1389,9 +2017,16 @@ export default function ShotsPage() {
                       placeholder="描述镜头画面…"
                     />
                   </div>
+                  </section>
 
-                  <div>
-                    <label className="text-sm text-white/60 mb-1 block">视觉描述</label>
+                  <section className="space-y-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">画面与运镜</h3>
+                      <p className="mt-1 text-xs text-white/45">集中维护画面细节、参考图、景别、运镜、情绪、光线和调色。</p>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-white/60 mb-1 block">视觉描述</label>
                     <textarea
                       value={editData.visual_description || ''}
                       onChange={(e) => setEditData({ ...editData, visual_description: e.target.value })}
@@ -1401,17 +2036,19 @@ export default function ShotsPage() {
                     />
                   </div>
 
-                  <div>
-                    <label className="text-sm text-white/60 mb-1 block">台词/配音</label>
-                    <Input
-                      value={editData.dialogue || ''}
-                      onChange={(e) => setEditData({ ...editData, dialogue: e.target.value })}
-                      placeholder="输入台词…"
-                      className="bg-white/5 border-white/10 text-white"
-                    />
-                  </div>
+                    <div>
+                      <label className="text-sm text-white/60 mb-1 block">参考图缩略图</label>
+                      <ReferenceImagePreview
+                        src={toMediaUrl(editData.image_url || selectedShot.image_url || selectedShot.extra_data?.image_url)}
+                        title={`镜头 ${selectedShot.shot_number} 参考图`}
+                        alt={`镜头 ${selectedShot.shot_number} 参考图`}
+                        caption={String(editData.visual_description || selectedShot.visual_description || editData.prompt || selectedShot.prompt || '')}
+                        className="h-44 w-full"
+                        thumbnailClassName="p-1"
+                      />
+                    </div>
 
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
                       <label className="text-sm text-white/60 mb-1 block">镜头角度</label>
                       <select
@@ -1436,9 +2073,6 @@ export default function ShotsPage() {
                         ))}
                       </select>
                     </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-sm text-white/60 mb-1 block">情绪</label>
                       <select
@@ -1480,21 +2114,94 @@ export default function ShotsPage() {
                       ))}
                     </select>
                   </div>
+                  </section>
+
+                  <section className="space-y-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                    <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <h3 className="text-sm font-semibold text-white">台词与声音</h3>
+                        <p className="mt-1 text-xs text-white/45">可从原文提炼、按角色润色或补一句适合当前镜头的台词。</p>
+                        {(editData.extra_data?.dialogue_speaker || selectedShot.extra_data?.dialogue_speaker) && (
+                          <p className="mt-1 text-xs text-blue-200/70">
+                            说话人：{editData.extra_data?.dialogue_speaker || selectedShot.extra_data?.dialogue_speaker}
+                            {(editData.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source) ? ` · 来源：${editData.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source}` : ''}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          ['extract', '从原文提炼'],
+                          ['polish', '按角色润色'],
+                          ['rewrite', '补一句台词'],
+                        ] as const).map(([mode, label]) => (
+                          <Button
+                            key={mode}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={Boolean(dialogueGenerating)}
+                            onClick={() => handleAssistDialogue(mode)}
+                            className="h-8 border-blue-500/30 text-blue-100 hover:bg-blue-500/10"
+                          >
+                            {dialogueGenerating === mode ? (
+                              <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                            ) : (
+                              <Sparkles className="w-3 h-3 mr-1" />
+                            )}
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+                    <Input
+                      value={editData.dialogue || ''}
+                      onChange={(e) => setEditData({ ...editData, dialogue: e.target.value })}
+                      placeholder="输入台词…"
+                      className="bg-white/5 border-white/10 text-white"
+                    />
+                    {dialogueAiWarnings.length > 0 && (
+                      <div className="mt-2 rounded-lg border border-yellow-500/20 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-100">
+                        {dialogueAiWarnings[0]}
+                      </div>
+                    )}
+                  </section>
 
                   <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-4 space-y-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <div className="text-white font-medium flex items-center gap-2">
                           <ShieldCheck className="w-4 h-4 text-cyan-300" />
-                          生产上下文
+                          一致性与审核
                         </div>
                         <div className="text-xs text-white/50 mt-1">
-                          资产版本锁、关键帧、多视图角色参考、实体引用、口型和审核状态会随媒体任务提交给生产适配器。
+                          用创作者能理解的方式维护本镜头的参考素材、关键画面、出镜对象和口型；保存后会随视频生成一起使用。
                         </div>
                       </div>
-                      {productionContext.updated_at && (
-                        <div className="text-xs text-white/40">已更新</div>
-                      )}
+                      <div className="flex flex-col items-end gap-2">
+                        {productionContext.updated_at && (
+                          <div className="text-xs text-white/40">已更新</div>
+                        )}
+                        <div className="flex rounded-lg border border-white/10 bg-black/20 p-1">
+                          <button
+                            type="button"
+                            onClick={() => setProductionEditMode('simple')}
+                            className={`rounded-md px-3 py-1 text-xs transition ${
+                              productionEditMode === 'simple' ? 'bg-cyan-500/25 text-cyan-100' : 'text-white/50 hover:text-white'
+                            }`}
+                          >
+                            简易模式
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setProductionEditMode('advanced')}
+                            className={`rounded-md px-3 py-1 text-xs transition ${
+                              productionEditMode === 'advanced' ? 'bg-cyan-500/25 text-cyan-100' : 'text-white/50 hover:text-white'
+                            }`}
+                          >
+                            高级设置
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1548,58 +2255,144 @@ export default function ShotsPage() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-sm text-white/60 mb-1 block">资产版本锁 JSON</label>
-                        <textarea
-                          rows={5}
-                          value={productionForm.assetLocksJson}
-                          onChange={(e) => setProductionForm({ ...productionForm, assetLocksJson: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
-                          placeholder='[{"asset_id":"...","role":"character_front","version":1}]'
-                        />
+                    {productionEditMode === 'simple' ? (
+                      <div className="space-y-3">
+                        {productionJsonHasError && (
+                          <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-3 py-2 text-xs text-yellow-100">
+                            高级设置里有格式错误，简易摘要可能不完整。请切到高级设置检查后再保存。
+                          </div>
+                        )}
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                          {productionSummaryItems.map(item => (
+                            <div key={item.title} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                              <div className="text-xs text-white/45">{item.title}</div>
+                              <div className="mt-1 text-sm font-medium text-white">{item.value}</div>
+                              <div className="mt-1 text-[11px] leading-4 text-white/45">{item.description}</div>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                          <div className="text-sm font-medium text-white">快捷补齐</div>
+                          <div className="mt-1 text-xs text-white/45">
+                            这些操作会把当前镜头信息整理成生成视频时可复用的约束，仍需点击“保存一致性设置”写入。
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleFillKeyframes}
+                              className="justify-start border-white/15 text-white hover:bg-white/10"
+                            >
+                              <Play className="w-4 h-4 mr-2 text-cyan-300" />
+                              补齐开头/结尾画面
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleLockCurrentReferenceImage}
+                              className="justify-start border-white/15 text-white hover:bg-white/10"
+                            >
+                              <ImageIcon className="w-4 h-4 mr-2 text-cyan-300" />
+                              固定当前参考图
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleFillEntityBindings}
+                              className="justify-start border-white/15 text-white hover:bg-white/10"
+                            >
+                              <Sparkles className="w-4 h-4 mr-2 text-cyan-300" />
+                              整理本镜头出镜对象
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleEnableLipSync}
+                              className="justify-start border-white/15 text-white hover:bg-white/10"
+                            >
+                              <Mic className="w-4 h-4 mr-2 text-cyan-300" />
+                              用当前台词开启口型
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-sm font-medium text-white">使用建议</div>
+                            <div className="mt-2 space-y-1 text-xs text-white/50">
+                              <div>1. 先补齐关键画面，明确开头和结尾画面。</div>
+                              <div>2. 有参考图时固定参考图，减少同镜头重生成跑偏。</div>
+                              <div>3. 有对白时开启口型，让嘴型跟台词同步。</div>
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                            <div className="text-sm font-medium text-white">一致性说明</div>
+                            <div className="mt-2 text-xs leading-5 text-white/50">
+                              这里保存的内容会进入视频生成参数，用来约束人物外观、场景环境、道具、动作起止和对白口型。对非专业用户，优先使用快捷补齐；需要精细控制时再切到高级设置。
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-sm text-white/60 mb-1 block">关键帧 JSON</label>
-                        <textarea
-                          rows={5}
-                          value={productionForm.keyframesJson}
-                          onChange={(e) => setProductionForm({ ...productionForm, keyframesJson: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
-                          placeholder='[{"time":0,"role":"start"},{"time":4,"role":"end"}]'
-                        />
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white/50">
+                          高级设置用于精细控制云渲染和视频模型输入。不了解字段时，建议切回简易模式使用快捷补齐。
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-sm text-white/60 mb-1 block">一致性素材（高级 JSON）</label>
+                            <textarea
+                              rows={5}
+                              value={productionForm.assetLocksJson}
+                              onChange={(e) => setProductionForm({ ...productionForm, assetLocksJson: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                              placeholder='[{"asset_id":"...","role":"character_front","version":1}]'
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-white/60 mb-1 block">关键画面（高级 JSON）</label>
+                            <textarea
+                              rows={5}
+                              value={productionForm.keyframesJson}
+                              onChange={(e) => setProductionForm({ ...productionForm, keyframesJson: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                              placeholder='[{"time":0,"role":"start"},{"time":4,"role":"end"}]'
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-white/60 mb-1 block">角色多角度参考（高级 JSON）</label>
+                            <textarea
+                              rows={5}
+                              value={productionForm.multiviewJson}
+                              onChange={(e) => setProductionForm({ ...productionForm, multiviewJson: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                              placeholder='[{"character":"主角","front":"...","side":"..."}]'
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-white/60 mb-1 block">出镜对象绑定（高级 JSON）</label>
+                            <textarea
+                              rows={5}
+                              value={productionForm.entityBindingsJson}
+                              onChange={(e) => setProductionForm({ ...productionForm, entityBindingsJson: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                              placeholder='[{"entity_id":"...","role":"character_primary","usage":"character_reference"}]'
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm text-white/60 mb-1 block">口型同步（高级 JSON）</label>
+                            <textarea
+                              rows={5}
+                              value={productionForm.lipSyncJson}
+                              onChange={(e) => setProductionForm({ ...productionForm, lipSyncJson: e.target.value })}
+                              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
+                              placeholder='{"mode":"provider","language":"zh-CN"}'
+                            />
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <label className="text-sm text-white/60 mb-1 block">多视图角色参考 JSON</label>
-                        <textarea
-                          rows={5}
-                          value={productionForm.multiviewJson}
-                          onChange={(e) => setProductionForm({ ...productionForm, multiviewJson: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
-                          placeholder='[{"character":"主角","front":"...","side":"..."}]'
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm text-white/60 mb-1 block">实体参考绑定 JSON</label>
-                        <textarea
-                          rows={5}
-                          value={productionForm.entityBindingsJson}
-                          onChange={(e) => setProductionForm({ ...productionForm, entityBindingsJson: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
-                          placeholder='[{"entity_id":"...","role":"character_primary","usage":"character_reference"}]'
-                        />
-                      </div>
-                      <div>
-                        <label className="text-sm text-white/60 mb-1 block">口型/唇形 JSON</label>
-                        <textarea
-                          rows={5}
-                          value={productionForm.lipSyncJson}
-                          onChange={(e) => setProductionForm({ ...productionForm, lipSyncJson: e.target.value })}
-                          className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs font-mono resize-none"
-                          placeholder='{"mode":"provider","language":"zh-CN"}'
-                        />
-                      </div>
-                    </div>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
@@ -1620,7 +2413,7 @@ export default function ShotsPage() {
                         <Input
                           value={productionForm.reviewAssignees}
                           onChange={(e) => setProductionForm({ ...productionForm, reviewAssignees: e.target.value })}
-                          placeholder="director, animator"
+                          placeholder="导演, 动画师"
                           className="bg-white/5 border-white/10 text-white"
                         />
                       </div>
@@ -1642,11 +2435,13 @@ export default function ShotsPage() {
                       className="border-cyan-500/40 text-cyan-100 hover:bg-cyan-500/10"
                     >
                       {productionSaving ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-1" />}
-                      保存生产上下文
+                      保存一致性设置
                     </Button>
                   </div>
 
-                  <div className="flex gap-3 pt-4">
+                </div>
+
+                  <div className="flex flex-col gap-3 border-t border-white/10 bg-slate-950 px-6 py-4 sm:flex-row">
                     <Button
                       variant="outline"
                       onClick={() => setIsEditing(false)}
@@ -1663,7 +2458,6 @@ export default function ShotsPage() {
                       保存
                     </Button>
                   </div>
-                </div>
             </DialogContent>
           )}
         </Dialog>

@@ -168,6 +168,10 @@ interface WorkflowData {
   editableTimelineId?: string;
   editableTimelineClipCount?: number;
   renderIssues?: any[];
+  renderIsPublishable?: boolean;
+  renderOutputKind?: string;
+  renderPublicationBlockers?: any[];
+  renderPublishBlockReason?: string;
   metadata?: any;
 }
 
@@ -490,6 +494,14 @@ function WorkflowPageContent() {
           editableTimelineId: latest?.extra_data?.timeline_id || status.metadata?.latest_timeline_id || prev.editableTimelineId,
           editableTimelineClipCount: latest?.extra_data?.timeline_clip_count || prev.editableTimelineClipCount,
           renderIssues: latest?.extra_data?.render_issues || prev.renderIssues,
+          renderIsPublishable: typeof latest?.is_publishable === 'boolean'
+            ? latest.is_publishable
+            : typeof latest?.extra_data?.is_publishable === 'boolean'
+              ? latest.extra_data.is_publishable
+              : prev.renderIsPublishable,
+          renderOutputKind: latest?.output_kind || latest?.extra_data?.output_kind || prev.renderOutputKind,
+          renderPublicationBlockers: latest?.publication_blockers || latest?.extra_data?.publication_blockers || prev.renderPublicationBlockers,
+          renderPublishBlockReason: latest?.publish_block_reason || latest?.extra_data?.publish_block_reason || prev.renderPublishBlockReason,
         }));
       }
     } catch (err) {
@@ -1211,7 +1223,7 @@ function ProductionControlPanel({
     setLoadingAction(action);
     try {
       const result = await fn();
-      if (action === 'assistant' || action === 'assistant-auto') setAssistant(result);
+      if (action === 'assistant' || action === 'assistant-auto' || action === 'assistant-next') setAssistant(result);
       if (action === 'pack') setPack(result.production_pack || result);
       if (action === 'media') setMediaAudit(result);
       if (action === 'quality') setQuality(result);
@@ -1239,6 +1251,7 @@ function ProductionControlPanel({
   }, [loadAssistant, refreshToken]);
 
   const nextAction = assistant?.summary?.next_action;
+  const nextActionCode = typeof nextAction?.code === 'string' ? nextAction.code : '';
   const qualitySummary = quality?.summary || assistant?.quality;
   const mediaSummary = mediaAudit?.summary || assistant?.media_audit;
   const packSummary = pack?.summary;
@@ -1274,6 +1287,24 @@ function ProductionControlPanel({
           <div className="rounded border border-cyan-500/25 bg-cyan-500/10 p-2 text-xs leading-5">
             <div className="text-cyan-100 font-medium">下一步：{nextAction.label}</div>
             <div className="text-white/60">{nextAction.detail}</div>
+            {nextActionCode && (
+              <Button
+                size="sm"
+                disabled={!canUseWorkflow || Boolean(loadingAction)}
+                onClick={() => runAction(
+                  'assistant-next',
+                  () => apiClient.runProducerAssistant(workflowId as string, {
+                    auto_fix: true,
+                    action_code: nextActionCode,
+                  }),
+                  '已执行下一步'
+                )}
+                className="mt-2 w-full bg-cyan-600 hover:bg-cyan-700 text-xs"
+              >
+                {loadingAction === 'assistant-next' ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Check className="w-3 h-3 mr-1" />}
+                执行下一步
+              </Button>
+            )}
           </div>
         )}
 
@@ -1417,7 +1448,7 @@ function ShortVideoProductionPanel({
     setIsLoading(true);
     setError(null);
     try {
-      const data = await apiClient.getWorkflowShortVideoReadiness(workflowId, {
+      const data = await apiClient.getWorkflowProductionStatus(workflowId, {
         target_duration_seconds: targetDuration,
         aspect_ratio: aspectRatio,
         style_asset_id: selectedStyleAssetId || undefined,
@@ -1439,7 +1470,7 @@ function ShortVideoProductionPanel({
     setError(null);
     try {
       await apiClient.refreshWorkflowShortVideoContracts(workflowId);
-      const data = await apiClient.getWorkflowShortVideoReadiness(workflowId, {
+      const data = await apiClient.getWorkflowProductionStatus(workflowId, {
         target_duration_seconds: targetDuration,
         aspect_ratio: aspectRatio,
         style_asset_id: selectedStyleAssetId || undefined,
@@ -3117,10 +3148,23 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
     timeline_url: renderResult?.timeline_url || workflowData.renderTimelineUrl,
     render_manifest_url: renderResult?.render_manifest_url || workflowData.renderManifestUrl,
   };
-  const renderStatus = renderResult?.status || workflowData.renderStatus;
+  const renderStatus = renderResult?.render_status || renderResult?.status || workflowData.renderStatus;
   const renderIssues = preflight?.issues || workflowData.renderIssues || [];
   const editableTimelineId = timelineResult?.timeline_id || workflowData.editableTimelineId;
   const currentRenderSource = renderResult?.render_source || preflight?.render_source;
+  const renderOutputKind = renderResult?.output_kind || preflight?.output_kind || workflowData.renderOutputKind;
+  const renderIsPublishable = typeof renderResult?.is_publishable === 'boolean'
+    ? renderResult.is_publishable
+    : typeof preflight?.is_publishable === 'boolean'
+      ? preflight.is_publishable
+      : workflowData.renderIsPublishable;
+  const renderPublicationBlockers = renderResult?.publication_blockers || preflight?.publication_blockers || workflowData.renderPublicationBlockers || [];
+  const renderPublishBlockReason = renderResult?.publish_block_reason
+    || preflight?.publish_block_reason
+    || workflowData.renderPublishBlockReason
+    || renderPublicationBlockers[0]?.message
+    || (renderOutputKind === 'preview_package' ? '当前只有本地预览包' : '');
+  const isReviewOnlyPackage = renderOutputKind === 'preview_package' || renderBackend === 'local_artifact_package';
   const clipsByTrack = timelineTracks.map((track) => ({
     track,
     clips: timelineClips.filter((clip) => clip.track_id === track.id),
@@ -3280,7 +3324,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
               <div>
                 <div className="text-white font-medium">渲染预检与执行</div>
                 <div className="text-white/60 text-sm">
-                  检查视频、音频、字幕和时间线，输出本地包或提交云渲染
+                  检查视频、音频、字幕和时间线，输出本地审阅包或提交云渲染
                 </div>
                 {renderStatus && (
                   <div className="mt-1 text-xs text-white/50">状态：{renderStatus}</div>
@@ -3301,7 +3345,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                   className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white"
                   title="渲染执行器"
                 >
-                  <option className="bg-gray-900" value="local_artifact_package">本地渲染包</option>
+                  <option className="bg-gray-900" value="local_artifact_package">本地审阅包</option>
                   <option className="bg-gray-900" value="ffmpeg_cloud">FFmpeg 云渲染</option>
                 </select>
                 {renderBackend === 'ffmpeg_cloud' && (
@@ -3344,7 +3388,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                 </Button>
                 <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => handleRender(Boolean(renderArtifacts.preview_url))} disabled={isRendering}>
                   {isRendering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-                  {renderBackend === 'ffmpeg_cloud' ? '提交云渲染' : (renderArtifacts.preview_url ? '重新渲染' : '生成渲染包')}
+                  {renderBackend === 'ffmpeg_cloud' ? '提交云渲染' : (renderArtifacts.preview_url ? '重新生成审阅包' : '生成审阅包')}
                 </Button>
               </div>
             </div>
@@ -3362,6 +3406,13 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                     {issue.message || issue.code}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {(isReviewOnlyPackage || renderIsPublishable === false) && (renderArtifacts.preview_url || renderResult || workflowData.renderStatus) && (
+              <div className="mt-3 rounded border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-100">
+                <div className="font-medium">审阅包 · 不可直接发布</div>
+                <div className="mt-1">{renderPublishBlockReason || '当前只有本地预览包'}</div>
               </div>
             )}
 

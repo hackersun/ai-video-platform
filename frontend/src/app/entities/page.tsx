@@ -657,6 +657,8 @@ export default function EntitiesPage() {
                     size="sm"
                     className="h-7 w-7 p-0 text-white/60 hover:text-white"
                     onClick={() => handleViewDetail(entity)}
+                    aria-label={`查看${entity.name}`}
+                    title={`查看${entity.name}`}
                   >
                     <Eye className="w-4 h-4" />
                   </Button>
@@ -665,6 +667,8 @@ export default function EntitiesPage() {
                     size="sm"
                     className="h-7 w-7 p-0 text-white/60 hover:text-white"
                     onClick={() => handleEditEntity(entity)}
+                    aria-label={`编辑${entity.name}`}
+                    title={`编辑${entity.name}`}
                   >
                     <Edit className="w-4 h-4" />
                   </Button>
@@ -674,6 +678,8 @@ export default function EntitiesPage() {
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0 text-white/60 hover:text-white"
+                        aria-label={`更多${entity.name}`}
+                        title={`更多${entity.name}`}
                       >
                         <MoreVertical className="w-4 h-4" />
                       </Button>

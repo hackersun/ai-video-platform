@@ -1209,15 +1209,26 @@ export default function AssetsPage() {
     setRegeneratingAssetId(asset.id);
     setMessage(null);
     try {
+      const params = asset.generation_params || {};
       const regenerated = await apiClient.regenerateAsset(asset.id, {
         style: selectedGenerationStyle,
-      });
+        source_asset_id: asset.id,
+        entity_id: asset.entity_id || params.entity_id,
+        entity_type: asset.entity_type || params.entity_type || asset.category,
+        view_key: params.view_key || params.asset_subtype || params.view_angle,
+        view_label: params.view_label || params.view_title,
+        visual_contract_id: params.visual_contract?.id,
+        reference_view_key: params.reference_view_key,
+        inherit_locked_settings: true,
+        was_locked: Boolean(asset.is_locked),
+        was_final: Boolean(asset.is_final),
+      } as any);
       setAssets((prev) => [regenerated, ...prev.filter((item) => item.id !== regenerated.id)]);
-      setMessage(`已按「${styleOptions.find((item) => item.value === selectedGenerationStyle)?.label || selectedGenerationStyle}」重新生成 ${asset.name}`);
       if (editingId === asset.id) {
         startEdit(regenerated);
       }
       await loadAssets();
+      setMessage(`已按「${styleOptions.find((item) => item.value === selectedGenerationStyle)?.label || selectedGenerationStyle}」重新生成 ${asset.name}`);
     } catch (err: any) {
       setMessage(err?.message || '重新生成失败，请检查图像模型配置和资产绑定关系');
     } finally {
@@ -1461,10 +1472,28 @@ export default function AssetsPage() {
     try {
       const versions = await apiClient.getEntityAssetVersions(entityId, entityType);
       setVersionHistory(versions || []);
+      const entity = entities.find((item) => item.id === entityId);
+      setVersionHistoryEntity({
+        id: entityId,
+        type: entityType,
+        name: entity?.name || entityLabel(entityId) || entityTypeLabel(entityType),
+      });
       setShowVersionHistory(true);
     } catch (err: any) {
       setMessage(err?.message || '版本历史加载失败');
     }
+  };
+
+  const applyVersionToForm = (asset: Asset) => {
+    setForm((current) => ({
+      ...current,
+      url: asset.url || current.url,
+      thumbnail_url: asset.thumbnail_url || asset.url || current.thumbnail_url,
+      generation_params: current.generation_params || stringifyJsonField(asset.generation_params),
+      source_prompt: current.source_prompt || asset.source_prompt || '',
+    }));
+    setShowVersionHistory(false);
+    setMessage(`已从历史版本「${asset.name}」回填资源地址`);
   };
 
   const toggleAssetSelection = (assetId: string) => {
@@ -1527,6 +1556,7 @@ export default function AssetsPage() {
   const wizardProgress = totalRequiredViewCount ? Math.round((completedViewCount / totalRequiredViewCount) * 100) : 0;
   const selectedStyleLabel = styleOptions.find((option) => option.value === selectedGenerationStyle)?.label || selectedGenerationStyle || '未选择';
   const selectedEntityTypeLabel = ENTITY_TYPE_LABELS[selectedEntityType] || selectedEntityType;
+  const generationButtonLabel = `生成${selectedEntityTypeLabel}缺失视图`;
 
   const resourcePreviewUrl = toMediaUrl(form.url);
   const thumbnailPreviewUrl = toMediaUrl(form.thumbnail_url);
@@ -1692,7 +1722,7 @@ export default function AssetsPage() {
                   onClick={generateMissingViews}
                 >
                   {generatingViews ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                  生成缺失视图
+                  {generationButtonLabel}
                 </Button>
                 <Button
                   type="button"
@@ -2084,16 +2114,28 @@ export default function AssetsPage() {
                         会沿用当前资产绑定的小说对象、视图方向、角色/场景/道具约束和参考血缘，生成一个新版本；旧版本仍保留在历史中。
                       </div>
                     </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="bg-pink-600 hover:bg-pink-700"
-                      disabled={regeneratingAssetId === editingAsset.id}
-                      onClick={() => regenerateAsset(editingAsset)}
-                    >
-                      {regeneratingAssetId === editingAsset.id ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}
-                      AI重新生成
-                    </Button>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-cyan-300/40 text-cyan-100"
+                        onClick={() => loadVersionHistory(editingAsset.entity_id!, editingAsset.entity_type || editingAsset.category)}
+                      >
+                        <History className="mr-1 h-3.5 w-3.5" />
+                        从生成历史选择
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="bg-pink-600 hover:bg-pink-700"
+                        disabled={regeneratingAssetId === editingAsset.id}
+                        onClick={() => regenerateAsset(editingAsset)}
+                      >
+                        {regeneratingAssetId === editingAsset.id ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <Sparkles className="mr-1 h-3.5 w-3.5" />}
+                        AI重新生成
+                      </Button>
+                    </div>
                   </div>
                   <ImageStyleTemplatePicker
                     templates={styleTemplates}
@@ -2385,6 +2427,91 @@ export default function AssetsPage() {
           </div>
         )}
       </div>
+      {showVersionHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-label="生成历史"
+            className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-white/15 bg-slate-950 shadow-2xl"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-sm text-white/45">生成历史</div>
+                <div className="truncate text-base font-semibold text-white">
+                  {versionHistoryEntity ? `${versionHistoryEntity.name} · ${entityTypeLabel(versionHistoryEntity.type)}` : '实体资产历史'}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-white/20 text-white"
+                onClick={() => setShowVersionHistory(false)}
+              >
+                <X className="mr-1 h-3.5 w-3.5" />
+                关闭
+              </Button>
+            </div>
+            <div className="min-h-0 space-y-3 overflow-auto p-4">
+              {versionHistory
+                .filter((asset) => !editingAsset || asset.category === editingAsset.category || asset.entity_type === editingAsset.entity_type)
+                .map((asset) => {
+                  const params = asset.generation_params || {};
+                  const previewUrl = toMediaUrl(asset.thumbnail_url || asset.url);
+                  return (
+                    <div key={asset.id} className="grid gap-3 rounded-lg border border-white/10 bg-white/[0.04] p-3 md:grid-cols-[112px_1fr_auto]">
+                      <div className="flex h-24 items-center justify-center overflow-hidden rounded-md bg-black/30">
+                        {previewUrl ? (
+                          <AssetImagePreview
+                            src={previewUrl}
+                            fallbackSrc={toMediaUrl(asset.url)}
+                            alt={asset.name}
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <ImageIcon className="h-7 w-7 text-white/25" />
+                        )}
+                      </div>
+                      <div className="min-w-0 space-y-1">
+                        <div className="font-medium text-white">{asset.name}</div>
+                        <div className="flex flex-wrap gap-1">
+                          <Badge variant="outline" className="border-white/20 text-white/65">版本 {asset.version || 1}</Badge>
+                          {(params.view_label || params.view_key) && (
+                            <Badge variant="outline" className="border-cyan-300/35 text-cyan-100">
+                              {params.view_label || VIEW_KEY_LABELS[params.view_key] || params.view_key}
+                            </Badge>
+                          )}
+                          {asset.is_locked && (
+                            <Badge variant="outline" className="border-emerald-400/40 text-emerald-200">已锁定</Badge>
+                          )}
+                        </div>
+                        <div className="line-clamp-2 text-xs leading-5 text-white/45">
+                          {asset.description || compactText(asset.source_prompt, 120) || '可回填资源 URL 和缩略图，保存后成为当前资产地址。'}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-end">
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="bg-cyan-600 hover:bg-cyan-700"
+                          disabled={!asset.url && !asset.thumbnail_url}
+                          onClick={() => applyVersionToForm(asset)}
+                        >
+                          使用此版本
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              {versionHistory.filter((asset) => !editingAsset || asset.category === editingAsset.category || asset.entity_type === editingAsset.entity_type).length === 0 && (
+                <div className="rounded-lg border border-dashed border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
+                  暂无同实体、同分类的历史资源。
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <MediaPreviewDialog media={previewMedia} onClose={() => setPreviewMedia(null)} />
     </MainLayout>
   );

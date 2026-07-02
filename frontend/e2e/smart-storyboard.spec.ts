@@ -91,11 +91,8 @@ test('smart storyboard page matches a template and generates reviewable shots fr
 
   await expect(modal.getByText(/匹配模板：/)).toBeVisible({ timeout: 10000 });
 
-  const dialogPromise = page.waitForEvent('dialog');
   await modal.getByRole('button', { name: /智能生成分镜与镜头/ }).click();
-  const dialog = await dialogPromise;
-  expect(dialog.message()).toContain('智能分镜已生成');
-  await dialog.accept();
+  await expect(page.getByText('智能分镜已生成')).toBeVisible({ timeout: 15_000 });
 
   await expect(page.getByText(storyboardTitle).first()).toBeVisible({ timeout: 15000 });
 

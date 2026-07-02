@@ -31,6 +31,14 @@ import {
 import * as d3 from 'd3';
 import { apiClient } from '@/lib/api-client';
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
+
 interface Novel {
   id: string;
   title: string;
@@ -737,7 +745,7 @@ export default function GraphPage() {
                 {nodeDetail.avatar_url && (
                   <div className="flex justify-center">
                     <img
-                      src={nodeDetail.avatar_url}
+                      src={toMediaUrl(nodeDetail.avatar_url)}
                       alt={nodeDetail.name}
                       className="w-32 h-32 rounded-full object-cover border-2 border-white/20"
                     />

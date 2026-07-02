@@ -227,6 +227,25 @@
 - 本轮最小可落地方案是“公开静态媒体出口”：用户配置一个公网 `public_base_url` 或基础地址，把本地 `/static/...` 映射成 `https://cdn.example.com/static/...`。如果该 CDN/对象存储已同步或反代本机静态目录，云端视频模型即可读取参考图。
 - 完整对象存储直传（S3/MinIO/OSS SDK 上传、本地文件同步、签名 URL 生命周期）可作为后续增强；本轮预留配置字段，但不引入新 SDK 和大迁移。
 
+## 2026-06-06 生产级全链路深度审计新增发现
+
+- 当前工程已经不是“缺基础模块”的状态：Novel/Chapter/Script/Storyboard/Shot、StoryBible/StoryEntity、Asset、多视图资产、Video/TTS/Media/Subtitles/Synthesis/Workflow、模型配置、生产适配、极速向导、AI 制片中心都已经存在。
+- 当前主要风险是“能力分散且可绕过”：视频端点具备最完整的 `_build_video_consistency_package()`，但章节、剧本、分镜、参考图、TTS、直生音视频等入口仍不同程度把一致性当作 prompt 增强或可选参数，而不是生产门禁。
+- `backend/app/services/consistency_context.py` 中 `auto_fill_shot_entity_refs()` 定义了两次，后面的 4 参数版本覆盖前面的 5 参数版本。虽然当前调用可能依赖后者，但这是误维护和误调用的高风险点。
+- `shot.extra_data.entity_refs` 的结构需要统一：部分路径写入 ID 列表，`build_shot_entity_context()`/视频响应倾向使用完整 dict refs，而 `AssetLockService.lock_shot_assets()` 又假设是 ID。结构混用会影响资产锁、提示词重建和批量生成。
+- `backend/app/services/asset_lock_service.py` 存在可执行风险：`await db.execute(...).scalar_one_or_none()` 的 await 优先级错误；`unlock_shot_assets()` 会解锁共享 Asset 本身，而不仅是解除某个 Shot 的引用；`_get_entity_locked_asset()` 接收 `entity_type` 但查询未使用。
+- 资产锁目前更多用于记录和部分视频 prompt 注入，不是所有生成路径的必经输入。`build_consistency_prompt()` 未传 `locked_assets` 给 `compose_generation_prompt()`，导致“重建 prompt/图片/部分媒体任务”可能丢失资产锁约束。
+- 媒体交付策略是合理的：无公网对象存储/CDN时跳过本地参考图，避免供应商 400；但生产路径应在预检阶段把“参考图不可公网访问”列为阻断或明确降级，而不是任务创建后才在 prompt 里备注。
+- 测试覆盖量较大，已覆盖 DEV_MODE 全流程、实体抽取、Story Bible、资产多视图、TTS 音色、媒体字幕、workflow manifest/render package；但多数验证是 DEV_MODE、元数据或 manifest 级，缺少真实生产门禁和最终 MP4 的可播放/音轨/字幕/顺序硬验收。
+- 样例风格图实际已落在 `backend/static/starter`，且 `asset_generation_service.py` 引用的 62 个 starter URL 都存在；若前端仍看不到样例，问题更可能是静态资源服务、URL 转换、懒加载容器或页面条件展示，而不是文件缺失。
+- 前端仍存在非专业用户不友好的技术字段：镜头编辑中可见 `asset_version_locks`、`keyframes`、`character_multiview_refs`、`reference_assets`、`provider_options` 等 JSON 输入；资产编辑也仍有变量配置/视图配置/生成参数 JSON，需要改成向导式表单和模板选择。
+
+## 2026-06-06 推荐架构结论
+
+- 不建议破坏性重构底层。应新增轻量 `GenerationOrchestrator` / `ConsistencyPreflightService`，复用既有 Story Prompt Context、Prompt Composer、Production Pack、Asset Lock、Voice Service、Media Delivery、Model Registry。
+- 所有生成端点统一调用预检：`novel_id/chapter_id/script_id/storyboard_id/shot_id/task_type` -> 解析 lineage -> 构建 story pack -> 规范 entity refs -> 锁定资产版本 -> 检查模型能力和媒体公网可达 -> 生成 prompt/seed/subtitle/voice/reference package -> 返回 blocking/warning/autofix actions。
+- 前端应把同一套 package 展示为“全局锁定状态”，而不是让用户读 JSON：人物已锁、场景已锁、道具已锁、画风已锁、音色已锁、字幕已就绪、参考图可用于云端、模型已验证。
+
 ## 2026-05-19 小说/剧本连续性审计发现
 
 - 章节生成链路相对完整：`chapters.generate_chapter_text()` 会加载小说、前后章节、Story Bible、StoryEntity、Character，并通过 `build_chapter_continuity_block()` 和 `build_consistency_prompt()` 形成连续性硬约束；生成后 `persist_story_context_from_chapter()` 会把人物、场景、道具、事件同步回 StoryEntity/Story Bible。
@@ -258,6 +277,16 @@
 - 修仙/仙侠题材常见生产元素：修炼境界、灵气、宗门、师徒/同门关系、法宝、丹药、灵兽、秘境、雷劫、突破和宗门审判。适合模板：突破、宗门议事/审判、御剑追逐、秘境发现。
 - 武侠题材常见生产元素：江湖、门派、侠义、恩怨、武林大会、客栈、镖局、山门、秘籍、名剑、轻功、刀剑对决。适合模板：江湖对峙、擂台比武、夜探门派、客栈冲突。
 - 玄幻题材常见生产元素：多族群/大陆、血脉觉醒、异兽、神器、古遗迹、元素能量、王朝/学院/圣地、跨地域冒险。适合模板：秘境探索、异兽遭遇、血脉觉醒、神器现世。
+
+## 2026-06-05 多视图资产与低门槛创作审计发现
+
+- 后端 `Asset` 已有 `novel_id/chapter_id/script_id/entity_id/entity_type/source_prompt/generation_params/is_locked`，足够承载小说实体级多视图资产，不需要新增大表。
+- 后端 `AssetGenerationService` 已能生成角色、场景、道具资产并落库，但当前角色生成的是 `avatar/full_body/expressions/poses`，不是生产一致性更需要的“正面/侧面/背面”三视图。
+- 场景生成当前只有 `main_scene/detail`，道具生成只有 `main`，都不足以支撑场景空间连续性、道具跨镜头比例和使用状态一致性。
+- 前端资产页已经支持上传、预览、编辑、锁定、作用域调整和小说/实体筛选，但核心编辑区仍暴露 `variables/shot_template/generation_params` JSON，普通创作者理解成本高。
+- 资产页已有“角色三视图/场景四视图/道具多视图”快速筛选和系统模板展示，但没有把这些模板变成“选择小说实体 -> 查看缺失视图 -> AI 生成/上传 -> 锁定定稿”的工作流。
+- 多视图与小说角色的关联目前依赖用户手工选 `entity_id` 或角色生成接口的 `character_id`，对 StoryEntity 中的角色、场景、道具没有统一的生成入口。
+- 低门槛方案应保留高级字段，但默认折叠；主流程只展示中文业务概念：所属小说、对象类型、对象名称、必备视图、生成风格、画面比例、参考图预览、定稿锁定。
 - 都市异能/现代都市题材常见生产元素：现代城市、学校/公司/医院/警局/实验室、隐藏组织、异能觉醒、都市追查、监控/手机/终端、夜巷、天台、地铁。适合模板：都市觉醒、夜巷追逐、调查推理、组织简报。
 - 当前工程已有通用模板和少量默认资产/实体，但题材模板还偏通用；扩展应直接落在 `storyboard_template_service.py` 与 `default_anime_library.py`，这样现有智能生成和资产/实体管理页面能立即使用。
 
@@ -510,3 +539,56 @@
 - Story Bible 状态机已经能描述人物服装/状态、场景天气光影、道具持有人/状态和事件时间线，是跨章节连续性的最佳来源；缺口是把上一章快照、当前章快照和最近事件线固定传入剧本、分镜、视频三层。
 - 新的实现边界是平台级“可验证一致性”：每次生成都传入并保存 `novel_series_seed/chapter_seed/continuity_lock/state_machine_summary`，真实模型输出仍需要参考图、多视图、LoRA 或视觉检测继续增强。
 - 小说级系列种子不应跟随临时视频模型变化，否则用户切换同类模型会把整部小说拆成多个视觉系列；模型 ID 应进入任务 metadata，章节/分镜/镜头 seed 再做局部派生。
+
+## 2026-05-30 智能剧本链路根因
+
+- 智能生成剧本的直接接口在 DEV_MODE 下可创建 Script；真正阻断“小说到视频”的问题出现在后续链路：智能分镜读取用户模板资产时，旧 SQLite 缺少 Asset 模型新增列，导致任意 Asset ORM 查询/插入都可能 500。
+- Asset 表需要和当前 ORM 保持一致：除 `novel_id/chapter_id/script_id/entity_id` 外，还必须迁移 `entity_type/source_url/generation_params/version/is_locked/locked_at/locked_by/is_final/replaced_by_id/source_job_id/source_prompt`。其中 `source_url/generation_params` 已被默认动漫资产库使用，不能只存在于旧库而不在模型中。
+- 对轻量化平台来说，不能要求用户先手动生成 Story Bible 才能得到一致性上下文。剧本生成的结构化摘要必须合并 `load_story_prompt_context()` 从小说简介和章节正文中抽取到的人物、场景、道具、事件，否则后续分镜、镜头、视频会缺少生产锚点。
+- 视频生成历史已经保存 lineage，但即时生成响应原先只返回 task/job/status，会让前端在刚生成完成时无法展示绑定关系。即时响应和历史响应都应携带同一组 `novel/chapter/script/storyboard/shot` ID。
+
+## 2026-05-30 章节生产链路重复剧本根因
+
+- 章节、剧本、分镜天然是版本化内容：用户多次点击智能生成剧本或重试一键生成后，同一章节出现多份 Script 是合理状态，不应被后端当成唯一记录读取。
+- `production-status`、`generate-storyboard`、`generate-all` 的旧实现使用 `scalar_one_or_none()` 查询 `Script.chapter_id == chapter_id`，一旦用户重试生成就会抛 `MultipleResultsFound`，前端只能看到不完整的 500 toast。
+- 一键生成还有第二个一致性问题：即使前半段选中了已有剧本，后半段调用智能分镜仍会新建一份“自动改编脚本”，导致返回的 `script_id` 和实际分镜绑定脚本不一致。后续视频生成再沿分镜推导 lineage 时，用户会看到剧本/分镜链路错位。
+- 当前修复选择“取最新版本继续生产”，符合前端列表按更新时间展示的心智，也保留用户旧版本；不做数据库唯一约束，避免破坏版本管理需求。
+- 边角风险：非常早期数据可能只写 `Script.extra_data.chapter_id` 而没有填 `Script.chapter_id`。当前新增迁移已有 `Script chapter lineage migration`，若线上仍发现老剧本漏字段，应补一次数据回填，而不是在每个热路径里做宽松 JSON 扫描。
+
+## 2026-05-30 角色智能提取 500 根因
+
+- 角色智能提取的文本解析、去重和入库本身可以成功；500 出现在“提取后自动生成头像”的后处理阶段。
+- 自动头像生成按角色逐个执行，失败时设计上应该吞掉异常并继续，让角色提取结果先落库。但旧逻辑在异常后执行 `rollback()`，随后继续复用同一批 ORM 对象读取 `char.avatar`。
+- SQLAlchemy async 会话中，回滚会让已加载对象进入过期状态；在普通属性访问里触发懒加载会离开 greenlet 上下文，最终抛 `MissingGreenlet`。这类错误不能靠前端重试解决，必须避免回滚后复用过期对象。
+- 稳定做法是：跨事务阶段只传递主键 ID，不传递 ORM 实例；每个阶段进入前重新查询需要的对象。角色提取现在按这个原则处理头像循环和最终响应。
+
+## 2026-05-31 轻量生产闭环审计发现
+
+- AI 制片中心已经有生产控制能力，但缺少一个用户能立即理解的“当前能不能出片”信号；短视频就绪度应作为前端第一屏信息，直接展示镜头数量、总时长、阻断项和下一步。
+- 工作流对非专业用户不应成为前置概念。选择小说和章节后，一键草片动作可以自动创建本集工程，再把剧本、分镜、镜头、媒体和发布产物挂到同一条链路。
+- 前端继续制作参数必须统一：目标页只识别 `script_id/storyboard_id` 时，来源页继续使用 `script/storyboard` 或死链 `/scripts/new` 会让用户误判为功能不可用。
+- “生成分镜”不能只是创建空 Storyboard。对小团队来说，按钮语义必须兑现为“剧本 -> 分镜 -> 镜头”可继续生产的结构化产物。
+- 发布记录不是只保存 JSON。用户关心的是几天后还能打开视频、字幕和导出包，所以 `Publication` 必须保存最终可播放 `video_url`，并且前端打开 `/static/...` 时必须访问后端静态服务。
+- `/synthesis/execute` 的真实合成路径原先没有写入 `SynthesisJob.video_url`，和模型非空约束冲突；这是生产闭环里比 UI 展示更底层的落库风险。
+
+## 2026-06-05 Quick Start 与整书计划入口发现
+
+- 整书多集计划能力已经落在小说详情页，但 Quick Start 完成后的默认后续入口仍是“打开作品/审核分镜/进入工作流/查看脚本”，用户容易继续停留在首集生产语义里。
+- 对个人或小团队来说，首集向导完成后最自然的下一步不是再手动找章节或工作流，而是直接进入整部小说的多集生产计划，确认章节拆集、剧情钩子、承接关系和每集生产状态。
+- 小说详情标签页需要支持 URL 参数激活；否则从 Quick Start、AI 制片、控制台、任务中心等跨页面跳转都只能落到默认章节标签，整书计划会像“已经实现但前端不可见”。
+- 本机验证环境发现 nvm/Codex 的 Node 加载 Next SWC 原生模块会触发 macOS Team ID 校验失败；Homebrew Node 22 可正常加载，后续前端构建/E2E/服务启动应优先使用该 PATH，避免误判业务代码失败。
+
+## 2026-06-05 多视图资产制片与低门槛编辑发现
+
+- 角色三视图、场景四视图、道具多视图如果只作为普通 Asset 存在，用户很难判断它们是否属于某部小说、某个角色/场景/道具；必须通过 `StoryEntity` 绑定 `entity_id/entity_type`，并把 `view_key/view_label` 写入生成参数，才能被后续镜头和视频一致性链路稳定复用。
+- 资产版本锁不能只按实体互斥；角色正面、侧面、背面都可能同时是定稿。合理互斥范围是“同一实体 + 同一视图 key”，否则锁定正面会误解锁侧面和背面。
+- 资产编辑页原先默认展示变量配置、视图配置、生成参数 JSON 和英文内部值，适合工程调试但不适合非专业创作者。普通路径应只展示名称、归属、上传/预览、说明、AI 提示词和公开状态，高级字段按需展开。
+- 前端资产页需要一个显眼的 AI 制片向导，而不是让用户先理解资产表结构；用户只需要选择小说、对象类型、小说对象和风格，然后生成缺失视图。
+- 资产列表中的 `image/character/prop` 等内部值会持续制造“后台配置感”；能映射的类型和实体都应显示中文业务标签。
+- 已补齐实体库、分镜镜头编辑页、视频生成前预检、题材化模板示例、多视图失败记录和重试入口；剩余真实生产增强集中在真实多图参考/LoRA/视觉检测模型接入。
+
+## 2026-06-05 Phase 242 多视图前端可见性复核
+
+- 实体库、分镜详情和镜头编辑弹窗现在都能展示角色/场景/道具的多视图定稿状态，用户不需要进入高级 JSON 才能判断参考资产是否缺失。
+- Phase 243 已把同一套状态前置到视频生成按钮前：缺角色正侧背、场景全景/布局/光影、道具主视图时提示风险和“去补齐”，但不在 DEV_MODE 中硬阻断完整流程。
+- Phase 244-246 已补齐题材化模板示例预览、生成失败记录/重试入口和轻量视觉一致性分数写回；下一步缺口是把真实视觉检测、多图参考模型或 LoRA 训练结果接入这些已可见的轻量入口。

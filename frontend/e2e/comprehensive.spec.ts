@@ -1,5 +1,25 @@
 import { test, expect } from '@playwright/test';
 
+function devToken(userId: string) {
+  const payload = Buffer.from(
+    JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 24 * 60 * 60 })
+  ).toString('base64url');
+  return `dev.${payload}.sig`;
+}
+
+test.beforeEach(async ({ page }) => {
+  const userId = `comprehensive-user-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const token = devToken(userId);
+  await page.addInitScript(({ authToken, authUserId }) => {
+    localStorage.setItem('auth_token', authToken);
+    localStorage.setItem('user', JSON.stringify({
+      id: authUserId,
+      username: authUserId,
+      email: `${authUserId}@example.test`,
+    }));
+  }, { authToken: token, authUserId: userId });
+});
+
 // 测试数据生成器
 const generateTestData = (prefix: string) => ({
   novel: {
@@ -32,18 +52,18 @@ test.describe('小说管理完整流程', () => {
     await page.goto('/novels');
     await page.waitForLoadState('networkidle');
 
-    // 点击创建小说按钮
-    await page.getByRole('button', { name: /创建小说/ }).first().click();
+    // 点击创建小说入口
+    await page.getByRole('link', { name: /创建小说/ }).first().click();
 
     // 等待导航到 /novels/new
     await page.waitForURL(/\/novels\/new/, { timeout: 5000 });
 
     // 填写表单
-    await page.fill('input[placeholder*="小说标题"]', testData.novel.title);
-    await page.fill('textarea[placeholder*="简介"]', testData.novel.description);
+    await page.getByPlaceholder('输入小说标题').fill(testData.novel.title);
+    await page.getByPlaceholder('简要介绍小说内容').fill(testData.novel.description);
 
     // 选择题材
-    await page.selectOption('select', '仙侠');
+    await page.locator('select').first().selectOption('xianxia');
 
     // 提交创建
     await page.getByRole('button', { name: /发布小说/ }).click();
@@ -84,54 +104,30 @@ test.describe('小说管理完整流程', () => {
     // 先创建一个小说
     await page.goto('/novels/new');
     await page.waitForLoadState('networkidle');
-    await page.fill('input[placeholder*="小说标题"]', testData.novel.title);
-    await page.selectOption('select', '仙侠');
+    await page.getByPlaceholder('输入小说标题').fill(testData.novel.title);
+    await page.locator('select').first().selectOption('xianxia');
     await page.getByRole('button', { name: /发布小说/ }).click();
     await page.waitForURL(/\/novels(?!\/new)/, { timeout: 10000 });
 
-    // 进入小说详情 - 使用Eye图标按钮
-    const viewButton = page.locator('button').filter({ has: page.locator('svg[class*="lucide-eye"]') }).first();
-    await viewButton.click();
+    const novelLink = page.getByRole('link', { name: new RegExp(testData.novel.title) }).first();
+    await novelLink.click();
     await page.waitForURL(/\/novels\/.+/, { timeout: 5000 });
     const novelId = page.url().split('/novels/')[1];
 
     // 创建章节
     const createChapterBtn = page.getByRole('button', { name: /新建章节/ });
     if (await createChapterBtn.isVisible({ timeout: 3000 })) {
-      page.on('dialog', async dialog => {
-        if (dialog.type() === 'prompt') {
-          await dialog.accept(testData.chapter.title);
-        }
-      });
-
       await createChapterBtn.click();
-      await page.waitForTimeout(1000);
+      await page.getByPlaceholder('章节标题').fill(testData.chapter.title);
+      await page.getByPlaceholder(/章节内容/).fill(testData.chapter.content);
+      await page.getByRole('button', { name: /^创建$/ }).click();
 
       // 验证章节出现
       const chapterItem = page.locator('text=' + testData.chapter.title);
       await expect(chapterItem.first()).toBeVisible({ timeout: 5000 });
       console.log('✅ 章节创建成功');
 
-      // 点击编写进入编辑页
-      const editChapterBtn = page.getByRole('button', { name: /编写/ }).first();
-      if (await editChapterBtn.isVisible({ timeout: 3000 })) {
-        await editChapterBtn.click();
-        await page.waitForURL(/\/novels\/.+\/chapters\/.+\/edit/, { timeout: 5000 });
-
-        // 填写章节内容
-        const contentTextarea = page.locator('textarea[placeholder*="编写"]');
-        if (await contentTextarea.isVisible({ timeout: 3000 })) {
-          await contentTextarea.fill(testData.chapter.content);
-
-          // 保存
-          await page.getByRole('button', { name: /保存/ }).first().click();
-          await page.waitForTimeout(1500);
-
-          // 验证跳回小说详情页
-          await expect(page.url()).toContain(`/novels/${novelId}`);
-          console.log('✅ 章节编辑保存成功');
-        }
-      }
+      await expect(page.url()).toContain(`/novels/${novelId}`);
     }
   });
 
@@ -289,7 +285,7 @@ test.describe('分镜管理完整流程', () => {
     await expect(page.locator('h1:has-text("分镜设计")')).toBeVisible({ timeout: 5000 });
 
     // 验证新建分镜按钮存在
-    await expect(page.getByRole('button', { name: /新建分镜/ })).toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole('button', { name: /新建分镜/ }).first()).toBeVisible({ timeout: 3000 });
 
     console.log('✅ 分镜页面加载成功');
   });
@@ -447,7 +443,7 @@ test.describe('视频生成完整流程', () => {
     await expect(h1).toBeVisible({ timeout: 5000 });
 
     // 验证视频描述输入框存在
-    const descInput = page.locator('textarea[placeholder*="描述"]');
+    const descInput = page.getByPlaceholder(/描述你想要生成的视频内容/);
     await expect(descInput).toBeVisible({ timeout: 3000 });
 
     // 验证参数配置区域存在
@@ -596,7 +592,7 @@ test.describe('综合导航测试', () => {
     await page.goForward();
     await page.waitForLoadState('networkidle');
 
-    const createBtn = page.getByRole('button', { name: /创建小说/ });
+    const createBtn = page.getByRole('link', { name: /创建小说/ });
     await expect(createBtn).toBeVisible({ timeout: 3000 });
     console.log('✅ 浏览器导航状态保持成功');
   });
@@ -610,8 +606,8 @@ test.describe('数据持久化验证', () => {
     // 创建小说
     await page.goto('/novels/new');
     await page.waitForLoadState('networkidle');
-    await page.fill('input[placeholder*="小说标题"]', testData.novel.title);
-    await page.selectOption('select', '仙侠');
+    await page.getByPlaceholder('输入小说标题').fill(testData.novel.title);
+    await page.locator('select').first().selectOption('xianxia');
     await page.getByRole('button', { name: /发布小说/ }).click();
     await page.waitForURL(/\/novels(?!\/new)/, { timeout: 10000 });
     await page.waitForLoadState('networkidle');

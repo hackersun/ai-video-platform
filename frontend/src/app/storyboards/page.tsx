@@ -9,7 +9,14 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import {
+  DEFAULT_IMAGE_STYLE_TEMPLATES,
+  ImageStyleTemplatePicker,
+  type ImageStyleTemplate,
+} from '@/components/media/image-style-template-picker';
+import { ReferenceImagePreview } from '@/components/media/reference-image-preview';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/components/ui/toast';
 import {
   getDefaultConfigForCapability,
@@ -44,7 +51,8 @@ import {
   Loader2,
   Save,
   RefreshCw,
-  Video
+  Video,
+  X
 } from 'lucide-react';
 
 // 分镜数据类型 - 与后端 Shot 模型匹配
@@ -62,6 +70,7 @@ interface Shot {
   audio_status: string;
   image_url?: string;
   image_status?: string;
+  image_asset_id?: string;
   // 精细化控制字段
   camera_movement?: string;
   movement_speed?: number;
@@ -94,6 +103,27 @@ interface Storyboard {
   script_title?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface StoryboardMergeResult {
+  job_id: string;
+  storyboard_id?: string;
+  output_url?: string;
+  manifest_url?: string;
+  srt_url?: string;
+  segment_count?: number;
+  duration_seconds?: number;
+  segments?: any[];
+  message?: string;
+  selected_shot_ids?: string[];
+  selected_shot_numbers?: number[];
+  skipped_shot_numbers?: number[];
+  version_number?: number;
+  parent_job_id?: string;
+  render_backend?: string;
+  is_real_merged?: boolean;
+  render_message?: string;
+  created_at?: string;
 }
 
 // 剧本数据
@@ -129,6 +159,35 @@ interface StoryboardTemplateMatch {
   reason: string;
 }
 
+interface Asset {
+  id: string;
+  name: string;
+  url?: string;
+  generation_params?: Record<string, any>;
+  is_locked?: boolean;
+}
+
+interface EntityAssetsResponse {
+  assets: Asset[];
+  locked_assets: Asset[];
+  total: number;
+}
+
+interface AssetViewPreset {
+  entity_type: string;
+  title: string;
+  views: {
+    key: string;
+    label: string;
+  }[];
+}
+
+interface ShotReferencedEntity {
+  id: string;
+  name: string;
+  entity_type: 'character' | 'scene' | 'prop';
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
 
@@ -136,6 +195,38 @@ const toMediaUrl = (url?: string | null) => {
   if (!url) return '';
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
 };
+
+const FALLBACK_VIEW_PRESETS: AssetViewPreset[] = [
+  {
+    entity_type: 'character',
+    title: '角色三视图',
+    views: [
+      { key: 'front', label: '正面' },
+      { key: 'side', label: '侧面' },
+      { key: 'back', label: '背面' },
+    ],
+  },
+  {
+    entity_type: 'scene',
+    title: '场景四视图',
+    views: [
+      { key: 'establishing', label: '全景定场' },
+      { key: 'layout', label: '空间布局' },
+      { key: 'detail', label: '关键细节' },
+      { key: 'lighting', label: '光影氛围' },
+    ],
+  },
+  {
+    entity_type: 'prop',
+    title: '道具多视图',
+    views: [
+      { key: 'main', label: '主视图' },
+      { key: 'detail', label: '细节纹理' },
+      { key: 'scale', label: '比例参考' },
+      { key: 'in_use', label: '使用状态' },
+    ],
+  },
+];
 
 export default function StoryboardsPage() {
   const { toast } = useToast();
@@ -170,6 +261,16 @@ export default function StoryboardsPage() {
   const [deleteStoryboardTarget, setDeleteStoryboardTarget] = useState<Storyboard | null>(null);
   const [deletingStoryboard, setDeletingStoryboard] = useState(false);
   const [confirmGenerateFromScript, setConfirmGenerateFromScript] = useState(false);
+  const [pendingGenerateScriptId, setPendingGenerateScriptId] = useState('');
+  const [mergingVideos, setMergingVideos] = useState(false);
+  const [mergeResult, setMergeResult] = useState<StoryboardMergeResult | null>(null);
+  const [selectedMergeShotIds, setSelectedMergeShotIds] = useState<string[]>([]);
+  const [mergeVersions, setMergeVersions] = useState<StoryboardMergeResult[]>([]);
+  const [loadingMergeVersions, setLoadingMergeVersions] = useState(false);
+  const [viewPresets, setViewPresets] = useState<AssetViewPreset[]>(FALLBACK_VIEW_PRESETS);
+  const [shotEntityAssetPacks, setShotEntityAssetPacks] = useState<Record<string, EntityAssetsResponse>>({});
+  const [imageStyleTemplates, setImageStyleTemplates] = useState<ImageStyleTemplate[]>(DEFAULT_IMAGE_STYLE_TEMPLATES);
+  const [shotImageStyle, setShotImageStyle] = useState('anime');
 
   const getScriptForStoryboard = (storyboard?: Storyboard | null) =>
     storyboard ? scripts.find((script) => script.id === storyboard.script_id) : undefined;
@@ -185,8 +286,37 @@ export default function StoryboardsPage() {
 
   const getChapterLabel = (chapterId?: string) => {
     const chapter = chapters.find((item) => item.id === chapterId);
-    return chapter ? `第${chapter.chapter_number}章 ${chapter.title}` : chapterId ? `章节 ${chapterId.slice(0, 8)}...` : '未绑定章节';
+    return chapter ? formatChapterLabel(chapter) : chapterId ? `章节 ${chapterId.slice(0, 8)}...` : '未绑定章节';
   };
+
+  const formatChapterLabel = (chapter: Chapter) => {
+    const title = (chapter.title || '').trim();
+    let remaining = title;
+    let explicitNumber = '';
+    const chapterPrefixPattern = /^\s*第\s*([一二三四五六七八九十百千万两\d\s]+?)\s*[章节卷集回]\s*[：:、.\s-]*/;
+    while (remaining) {
+      const match = remaining.match(chapterPrefixPattern);
+      if (!match) break;
+      explicitNumber = match[1].replace(/\s+/g, '');
+      remaining = remaining.slice(match[0].length).trim();
+    }
+    if (explicitNumber) {
+      return `第${explicitNumber}章${remaining ? ` ${remaining}` : ''}`;
+    }
+    return `第${chapter.chapter_number || 1}章${title ? ` ${title}` : ''}`;
+  };
+
+  const getScriptChapterId = (script?: Script | null) => script?.chapter_id || '';
+  const getScriptNovelId = (script?: Script | null) => script?.novel_id || '';
+
+  const filteredSmartScripts = scripts.filter((script) => {
+    const scriptNovelId = getScriptNovelId(script);
+    const scriptChapterId = getScriptChapterId(script);
+    if (smartNovelId && scriptNovelId && scriptNovelId !== smartNovelId) return false;
+    if (smartChapterId) return !scriptChapterId || scriptChapterId === smartChapterId;
+    if (smartNovelId) return !scriptNovelId || scriptNovelId === smartNovelId;
+    return true;
+  });
 
   const refNames = (refs?: any[]) =>
     (refs || [])
@@ -206,6 +336,90 @@ export default function StoryboardsPage() {
     };
   };
 
+  const getRefId = (ref: any) => ref?.entity_id || ref?.story_entity_id || (ref?.entity_type ? ref?.id : '');
+
+  const getRefName = (ref: any) => ref?.name || ref?.entity_name || ref?.character_name || ref?.title || '';
+
+  const getShotReferencedEntities = (shot?: Shot | null): ShotReferencedEntity[] => {
+    const refs = getShotEntityRefs(shot);
+    const seen = new Set<string>();
+    const result: ShotReferencedEntity[] = [];
+    const append = (items: any[], entityType: ShotReferencedEntity['entity_type']) => {
+      for (const item of items || []) {
+        const id = getRefId(item);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        result.push({
+          id,
+          name: getRefName(item) || `${entityType} ${id.slice(0, 8)}`,
+          entity_type: entityType,
+        });
+      }
+    };
+    append(refs.characters || [], 'character');
+    append(refs.scenes || [], 'scene');
+    append(refs.props || [], 'prop');
+    return result;
+  };
+
+  const assetViewKey = (asset?: Asset) => (
+    asset?.generation_params?.view_key || asset?.generation_params?.asset_subtype || ''
+  );
+
+  const assetWizardHref = (entity: ShotReferencedEntity) => {
+    const params = new URLSearchParams();
+    const novelId = getStoryboardNovelId(selectedStoryboard);
+    if (novelId) params.set('novel_id', novelId);
+    params.set('entity_type', entity.entity_type);
+    params.set('entity_id', entity.id);
+    return `/assets?${params.toString()}`;
+  };
+
+  const renderShotMultiviewStatus = (shot?: Shot | null) => {
+    const entities = getShotReferencedEntities(shot);
+    if (!entities.length) return null;
+
+    return (
+      <div data-testid="shot-multiview-status" className="mb-4 rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3">
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium text-white">
+          <ImageIcon className="h-4 w-4 text-cyan-100" />
+          参考资产完整度
+        </div>
+        <div className="space-y-2">
+          {entities.map((entity) => {
+            const preset = viewPresets.find((item) => item.entity_type === entity.entity_type)
+              || FALLBACK_VIEW_PRESETS.find((item) => item.entity_type === entity.entity_type);
+            if (!preset) return null;
+            const pack = shotEntityAssetPacks[entity.id] || { assets: [], locked_assets: [], total: 0 };
+            const lockedKeys = new Set((pack.locked_assets || []).map(assetViewKey).filter(Boolean));
+            const generatedKeys = new Set((pack.assets || []).map(assetViewKey).filter(Boolean));
+            const lockedCount = preset.views.filter((view) => lockedKeys.has(view.key)).length;
+            const missingLabels = preset.views
+              .filter((view) => !lockedKeys.has(view.key) && !generatedKeys.has(view.key))
+              .map((view) => view.label);
+            return (
+              <div key={entity.id} className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-white/80">
+                    {entity.name} · {preset.title} · {lockedCount}/{preset.views.length} 已定稿
+                  </div>
+                  <Link className="text-cyan-100 hover:text-white" href={assetWizardHref(entity)}>
+                    补齐参考图
+                  </Link>
+                </div>
+                {missingLabels.length > 0 ? (
+                  <div className="mt-1 text-amber-100">待补齐：{missingLabels.join('、')}</div>
+                ) : (
+                  <div className="mt-1 text-emerald-200">必备视图已补齐，可用于后续视频一致性生成。</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const videoGenerationHref = (shot?: Shot) => {
     if (!selectedStoryboard) return '/video-generation';
     const params = new URLSearchParams();
@@ -219,13 +433,82 @@ export default function StoryboardsPage() {
     return `/video-generation?${params.toString()}`;
   };
 
+  const getReferenceImageStatusText = (shot?: Shot | null) => {
+    if (!shot) return '';
+    const errorMessage = shot.extra_data?.image_generation_error;
+    if (shot.image_status === 'succeeded' && shot.image_url) {
+      return '参考图已生成，可用于保持后续图生视频画面一致。';
+    }
+    if (shot.image_status === 'failed') {
+      return errorMessage || '参考图生成失败，请检查图像模型配置、提示词或重新生成。';
+    }
+    if (shot.image_status === 'generating') {
+      return generatingImage
+        ? '正在等待图像模型返回图片，请稍候。'
+        : '上一次任务已提交但尚未返回图片；如果长时间无结果，可以重新生成。';
+    }
+    if (shot.image_status === 'pending') {
+      return '尚未生成参考图。';
+    }
+    return '';
+  };
+
   const handleGenerateShotImage = async (shotId: string) => {
     setGeneratingImage(true);
     try {
-      await fetchWithAuth(`${API_BASE}/shots/${shotId}/generate-image`, { method: 'POST' });
+      const response = await fetchWithAuth(`${API_BASE}/shots/${shotId}/generate-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ style: shotImageStyle }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || '参考图生成失败，请检查图像模型配置。');
+      }
+
+      if (data.status === 'succeeded' && data.image_url) {
+        setShots(prev => prev.map(shot => (
+          shot.id === shotId
+            ? { ...shot, image_url: data.image_url, image_status: 'succeeded', image_asset_id: data.image_asset_id }
+            : shot
+        )));
+        setSelectedShot(prev => prev && prev.id === shotId
+          ? { ...prev, image_url: data.image_url, image_status: 'succeeded', image_asset_id: data.image_asset_id }
+          : prev
+        );
+        toast({
+          title: '参考图已生成',
+          description: data.model ? `已使用图像模型 ${data.model}` : undefined,
+          type: 'success',
+        });
+        setGeneratingImage(false);
+        return;
+      }
+
+      setSelectedShot(prev => prev && prev.id === shotId ? { ...prev, image_status: data.status || 'generating' } : prev);
+      toast({
+        title: '参考图任务已提交',
+        description: data.message || '正在等待图像模型返回结果。',
+        type: 'info',
+      });
       pollShotImage(shotId);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Image generation failed:", err);
+      const message = err?.message || '请检查图像模型配置和后端服务日志。';
+      setShots(prev => prev.map(shot => (
+        shot.id === shotId
+          ? { ...shot, image_status: 'failed', extra_data: { ...(shot.extra_data || {}), image_generation_error: message } }
+          : shot
+      )));
+      setSelectedShot(prev => prev && prev.id === shotId
+        ? { ...prev, image_status: 'failed', extra_data: { ...(prev.extra_data || {}), image_generation_error: message } }
+        : prev
+      );
+      toast({
+        title: '生成参考图失败',
+        description: message,
+        type: 'error',
+      });
       setGeneratingImage(false);
     }
   };
@@ -244,10 +527,17 @@ export default function StoryboardsPage() {
             setShots(updated);
           }
           setSelectedShot(shot);
+          toast({ title: '参考图已生成', type: 'success' });
           setGeneratingImage(false);
           return;
         }
         if (shot.image_status === "failed") {
+          setSelectedShot(shot);
+          toast({
+            title: '参考图生成失败',
+            description: shot.extra_data?.image_generation_error || '图像模型任务失败，请调整提示词或检查模型配置后重试。',
+            type: 'error',
+          });
           setGeneratingImage(false);
           return;
         }
@@ -255,6 +545,12 @@ export default function StoryboardsPage() {
         // continue polling
       }
     }
+    toast({
+      title: '参考图仍在生成',
+      description: '暂未拿到图片结果，请稍后刷新镜头或检查图像生成历史。',
+      type: 'info',
+    });
+    setSelectedShot(prev => prev && prev.id === shotId ? { ...prev, image_status: 'generating' } : prev);
     setGeneratingImage(false);
   };
 
@@ -298,8 +594,6 @@ export default function StoryboardsPage() {
   const loadChapters = async (novelId: string) => {
     if (!novelId) {
       setChapters([]);
-      setSmartChapterId('');
-      setMatchedTemplate(null);
       return [];
     }
     try {
@@ -311,7 +605,6 @@ export default function StoryboardsPage() {
       const data = await res.json();
       const list = Array.isArray(data) ? data : [];
       setChapters(list);
-      setSmartChapterId(list[0]?.id || '');
       return list;
     } catch (error) {
       console.error('加载章节失败:', error);
@@ -376,7 +669,7 @@ export default function StoryboardsPage() {
       const urlParams = new URLSearchParams(window.location.search);
       const targetNovelId = urlParams.get('novel_id') || '';
       const targetChapterId = urlParams.get('chapter_id') || '';
-      const targetStoryboardId = urlParams.get('storyboard_id');
+      const targetStoryboardId = urlParams.get('storyboard_id') || urlParams.get('sb');
       const target = allStoryboards.find((storyboard) => storyboard.id === targetStoryboardId);
       if (target) {
         setSelectedStoryboard(target);
@@ -408,15 +701,37 @@ export default function StoryboardsPage() {
       const res = await fetchWithAuth(`${API_BASE}/shots/storyboard/${storyboardId}`);
       if (res.ok) {
         const data = await res.json();
-        setShots(Array.isArray(data) ? data : []);
+        const shotList = Array.isArray(data) ? data : [];
+        setShots(shotList);
+        setSelectedMergeShotIds(shotList.filter((shot: Shot) => shot.video_url).map((shot: Shot) => shot.id));
       } else {
         setShots([]);
+        setSelectedMergeShotIds([]);
       }
     } catch (error) {
       console.error('加载镜头失败:', error);
       setShots([]);
+      setSelectedMergeShotIds([]);
     } finally {
       setLoadingShots(false);
+    }
+  };
+
+  const loadMergeVersions = async (storyboardId: string) => {
+    setLoadingMergeVersions(true);
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/storyboards/${storyboardId}/merge-videos`);
+      if (!res.ok) {
+        setMergeVersions([]);
+        return;
+      }
+      const data = await res.json();
+      setMergeVersions(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('加载合并版本失败:', error);
+      setMergeVersions([]);
+    } finally {
+      setLoadingMergeVersions(false);
     }
   };
 
@@ -424,6 +739,64 @@ export default function StoryboardsPage() {
     loadStoryboards();
     loadModelConfigs();
   }, []);
+
+  useEffect(() => {
+    const loadViewPresets = async () => {
+      try {
+        const data = await apiClient.getAssetViewPresets();
+        const presets = Array.isArray(data?.presets) ? data.presets : FALLBACK_VIEW_PRESETS;
+        setViewPresets(presets.length ? presets : FALLBACK_VIEW_PRESETS);
+      } catch (error) {
+        console.error('加载多视图预设失败:', error);
+        setViewPresets(FALLBACK_VIEW_PRESETS);
+      }
+    };
+    loadViewPresets();
+  }, []);
+
+  useEffect(() => {
+    const loadImageStyleTemplates = async () => {
+      try {
+        const data = await apiClient.getAssetStyleTemplates();
+        const templates = Array.isArray(data?.templates) ? data.templates : DEFAULT_IMAGE_STYLE_TEMPLATES;
+        setImageStyleTemplates(templates.length ? templates : DEFAULT_IMAGE_STYLE_TEMPLATES);
+      } catch (error) {
+        console.error('加载画面风格模板失败:', error);
+        setImageStyleTemplates(DEFAULT_IMAGE_STYLE_TEMPLATES);
+      }
+    };
+    loadImageStyleTemplates();
+  }, []);
+
+  useEffect(() => {
+    const storyboardStyle = selectedStoryboard?.content?.style;
+    if (storyboardStyle) {
+      setShotImageStyle(storyboardStyle);
+    }
+  }, [selectedStoryboard?.id]);
+
+  useEffect(() => {
+    const loadShotEntityAssets = async () => {
+      const entities = getShotReferencedEntities(selectedShot);
+      if (!entities.length) {
+        setShotEntityAssetPacks({});
+        return;
+      }
+      const entries = await Promise.all(
+        entities.map(async (entity) => {
+          try {
+            const data = await apiClient.getEntityAssets(entity.id);
+            return [entity.id, data as EntityAssetsResponse] as const;
+          } catch (error) {
+            console.error(`加载镜头实体资产失败: ${entity.name}`, error);
+            return [entity.id, { assets: [], locked_assets: [], total: 0 }] as const;
+          }
+        })
+      );
+      setShotEntityAssetPacks(Object.fromEntries(entries));
+    };
+    loadShotEntityAssets();
+  }, [selectedShot?.id]);
 
   const loadModelConfigs = async () => {
     try {
@@ -442,8 +815,21 @@ export default function StoryboardsPage() {
   useEffect(() => {
     if (smartNovelId) {
       loadChapters(smartNovelId);
+    } else {
+      setChapters([]);
     }
   }, [smartNovelId]);
+
+  useEffect(() => {
+    if (!newStoryboardScriptId) return;
+    const selectedScript = scripts.find((script) => script.id === newStoryboardScriptId);
+    if (!selectedScript) return;
+    const scriptNovelId = getScriptNovelId(selectedScript);
+    const scriptChapterId = getScriptChapterId(selectedScript);
+    if ((smartNovelId && scriptNovelId && scriptNovelId !== smartNovelId) || (smartChapterId && scriptChapterId && scriptChapterId !== smartChapterId)) {
+      setNewStoryboardScriptId('');
+    }
+  }, [smartNovelId, smartChapterId, newStoryboardScriptId, scripts]);
 
   useEffect(() => {
     if (lineageNovelId) {
@@ -463,9 +849,27 @@ export default function StoryboardsPage() {
   useEffect(() => {
     if (selectedStoryboard) {
       loadShots(selectedStoryboard.id);
+      loadMergeVersions(selectedStoryboard.id);
       setSelectedShot(null);
+      const latestFinalVideo = selectedStoryboard.content?.latest_final_video;
+      setMergeResult(latestFinalVideo?.synthesis_job_id ? {
+        job_id: latestFinalVideo.synthesis_job_id,
+        storyboard_id: selectedStoryboard.id,
+        output_url: latestFinalVideo.output_url,
+        manifest_url: latestFinalVideo.manifest_url,
+        srt_url: latestFinalVideo.srt_url,
+        segment_count: latestFinalVideo.segment_count,
+        duration_seconds: latestFinalVideo.duration_seconds,
+        version_number: latestFinalVideo.version_number,
+        render_backend: latestFinalVideo.render_backend,
+        is_real_merged: latestFinalVideo.is_real_merged,
+        render_message: latestFinalVideo.render_message,
+      } : null);
     } else {
       setShots([]);
+      setMergeResult(null);
+      setSelectedMergeShotIds([]);
+      setMergeVersions([]);
     }
   }, [selectedStoryboard?.id]);
 
@@ -523,22 +927,34 @@ export default function StoryboardsPage() {
   };
 
   // AI 生成故事板（从剧本生成）
-  const handleAIGenerateStoryboard = async () => {
-    if (!newStoryboardScriptId) {
+  const handleAIGenerateStoryboard = async (scriptIdOverride?: string) => {
+    const effectiveScriptId = scriptIdOverride || pendingGenerateScriptId || newStoryboardScriptId;
+    if (!effectiveScriptId) {
       toast({ title: '请选择剧本', description: '需要先选择一个剧本。', type: 'error' });
       return;
     }
     setGeneratingStoryboard(true);
     try {
-      const response = await fetchWithAuth(`${API_BASE}/storyboards/generate`, {
+      const useSmartContext = Boolean(smartNovelId);
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/${useSmartContext ? 'generate-smart' : 'generate'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          script_id: newStoryboardScriptId,
+        body: JSON.stringify(useSmartContext ? {
+          novel_id: smartNovelId,
+          chapter_id: smartChapterId || undefined,
+          script_id: effectiveScriptId,
+          shot_count: smartShotCount || 5,
+          style: newStoryboardStyle || 'anime',
+          title: newStoryboardTitle.trim() || undefined,
+          template_id: matchedTemplate?.template.id,
+          use_ai_refine: true,
+          model_config_id: textModelConfigId || undefined,
+        } : {
+          script_id: effectiveScriptId,
           shot_count: 5,
           style: newStoryboardStyle || 'anime',
           model_config_id: textModelConfigId || undefined,
-        })
+        }),
       });
       if (response.ok) {
         const data = await response.json();
@@ -564,6 +980,23 @@ export default function StoryboardsPage() {
       toast({ title: '请选择小说', description: '需要先选择用于生成分镜的小说。', type: 'error' });
       return;
     }
+    const selectedScript = scripts.find((script) => script.id === newStoryboardScriptId);
+    if (newStoryboardScriptId && !selectedScript) {
+      toast({ title: '剧本不存在', description: '请重新选择当前小说章节下的剧本。', type: 'error' });
+      return;
+    }
+    if (selectedScript) {
+      const scriptNovelId = getScriptNovelId(selectedScript);
+      const scriptChapterId = getScriptChapterId(selectedScript);
+      if (scriptNovelId && scriptNovelId !== smartNovelId) {
+        toast({ title: '剧本与小说不匹配', description: '请只选择当前小说下的剧本，或不选剧本让系统自动创建。', type: 'error' });
+        return;
+      }
+      if (smartChapterId && scriptChapterId && scriptChapterId !== smartChapterId) {
+        toast({ title: '剧本与章节不匹配', description: '请只选择当前章节下的剧本，或不选剧本让系统自动创建。', type: 'error' });
+        return;
+      }
+    }
     setGeneratingSmartStoryboard(true);
     try {
       const response = await fetchWithAuth(`${API_BASE}/storyboards/generate-smart`, {
@@ -572,6 +1005,7 @@ export default function StoryboardsPage() {
         body: JSON.stringify({
           novel_id: smartNovelId,
           chapter_id: smartChapterId || undefined,
+          script_id: newStoryboardScriptId || undefined,
           shot_count: smartShotCount,
           style: newStoryboardStyle || 'anime',
           title: newStoryboardTitle.trim() || undefined,
@@ -612,11 +1046,17 @@ export default function StoryboardsPage() {
 
   const prepareGenerateFromScript = (storyboard?: Storyboard | null) => {
     const target = storyboard || selectedStoryboard;
+    const scriptId = target?.script_id || newStoryboardScriptId;
+    if (!scriptId) {
+      toast({ title: '请选择剧本', description: '需要先选择一个剧本。', type: 'error' });
+      return;
+    }
     if (target?.script_id) {
       setNewStoryboardScriptId(target.script_id);
       setNewStoryboardTitle(`${target.title || '分镜'} AI 重生成`);
       setNewStoryboardStyle((target.content?.style || newStoryboardStyle || 'anime'));
     }
+    setPendingGenerateScriptId(scriptId);
     setConfirmGenerateFromScript(true);
   };
 
@@ -731,6 +1171,95 @@ export default function StoryboardsPage() {
     }
   };
 
+  const toggleMergeShot = (shot: Shot, checked: boolean) => {
+    if (!shot.video_url) return;
+    setSelectedMergeShotIds(prev => {
+      if (checked) {
+        return prev.includes(shot.id) ? prev : [...prev, shot.id];
+      }
+      return prev.filter(id => id !== shot.id);
+    });
+  };
+
+  const handleMergeStoryboardVideos = async (parentJobId?: string) => {
+    if (!selectedStoryboard) return;
+    if (shots.length === 0) {
+      toast({ title: '没有可合并的镜头', description: '请先创建镜头并生成视频。', type: 'error' });
+      return;
+    }
+    const selectedShots = shots.filter((shot) => selectedMergeShotIds.includes(shot.id));
+    if (selectedShots.length === 0) {
+      toast({ title: '请选择要合并的镜头', description: '可以只勾选其中几个已有视频的镜头。', type: 'error' });
+      return;
+    }
+    const missing = selectedShots.filter((shot) => !shot.video_url);
+    if (missing.length > 0) {
+      toast({
+        title: '已选镜头还有视频缺失',
+        description: `缺少：${missing.map((shot) => `镜头 ${shot.shot_number}`).join('、')}`,
+        type: 'error',
+      });
+      return;
+    }
+
+    setMergingVideos(true);
+    try {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/${selectedStoryboard.id}/merge-videos`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: `${selectedStoryboard.title} - 分镜成片 V${(mergeVersions[0]?.version_number || 0) + 1}`,
+          shot_ids: selectedShots.map((shot) => shot.id),
+          include_subtitles: true,
+          subtitle_mode: 'soft',
+          transition_style: 'cut',
+          audio_mix_strategy: 'shot_audio_first',
+          quality_profile: 'review',
+          render_strategy: 'auto',
+          parent_job_id: parentJobId,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || '合并失败');
+      }
+
+      setMergeResult(data);
+      const latestFinalVideo = {
+        synthesis_job_id: data.job_id,
+        output_url: data.output_url,
+        manifest_url: data.manifest_url,
+        srt_url: data.srt_url,
+        segment_count: data.segment_count,
+        duration_seconds: data.duration_seconds,
+        version_number: data.version_number,
+        render_backend: data.render_backend,
+        is_real_merged: data.is_real_merged,
+        render_message: data.render_message,
+      };
+      setStoryboards(prev => prev.map(item => (
+        item.id === selectedStoryboard.id
+          ? { ...item, content: { ...(item.content || {}), latest_final_video: latestFinalVideo } }
+          : item
+      )));
+      setSelectedStoryboard(prev => prev ? {
+        ...prev,
+        content: { ...(prev.content || {}), latest_final_video: latestFinalVideo },
+      } : prev);
+      await loadMergeVersions(selectedStoryboard.id);
+      toast({
+        title: data.is_real_merged ? '分镜成片已真实合并' : '分镜成片清单已生成',
+        description: `已合并 ${data.segment_count || selectedShots.length} 个镜头，版本 V${data.version_number || 1}。`,
+        type: 'success',
+      });
+    } catch (err: any) {
+      console.error('合并分镜视频失败:', err);
+      toast({ title: '合并失败', description: err?.message || '请重试。', type: 'error' });
+    } finally {
+      setMergingVideos(false);
+    }
+  };
+
   // 移动镜头顺序
   const moveShot = async (index: number, direction: 'up' | 'down') => {
     const newIndex = direction === 'up' ? index - 1 : index + 1;
@@ -760,6 +1289,17 @@ export default function StoryboardsPage() {
 
   // 总时长
   const totalDuration = shots.reduce((sum, s) => sum + (s.duration || 0), 0);
+  const videoReadyCount = shots.filter(s => s.video_url).length;
+  const missingVideoShots = shots.filter(s => !s.video_url);
+  const selectedMergeShots = shots.filter(s => selectedMergeShotIds.includes(s.id));
+  const selectedMissingVideoShots = selectedMergeShots.filter(s => !s.video_url);
+  const mergeDisabledReason = !shots.length
+    ? '当前分镜还没有镜头'
+    : selectedMergeShots.length === 0
+      ? '请选择要合并的镜头'
+      : selectedMissingVideoShots.length > 0
+        ? `已选镜头中还有 ${selectedMissingVideoShots.length} 个未生成视频`
+      : '';
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -819,7 +1359,7 @@ export default function StoryboardsPage() {
           </Card>
           <Card className="bg-white/5 border-white/10">
             <CardContent className="p-4 text-center">
-              <div className="text-2xl font-bold text-blue-400">{shots.filter(s => s.video_url).length}</div>
+              <div className="text-2xl font-bold text-blue-400">{videoReadyCount}</div>
               <div className="text-sm text-white/60">已生成视频</div>
             </CardContent>
           </Card>
@@ -884,7 +1424,7 @@ export default function StoryboardsPage() {
                         <option value="">全部章节</option>
                         {chapters.map((chapter) => (
                           <option key={chapter.id} value={chapter.id}>
-                            第{chapter.chapter_number}章 {chapter.title}
+                            {formatChapterLabel(chapter)}
                           </option>
                         ))}
                       </select>
@@ -974,13 +1514,13 @@ export default function StoryboardsPage() {
               {selectedStoryboard ? (
                 <Card className="bg-white/5 border-white/10">
                   <CardHeader>
-                    <CardTitle className="text-white flex items-center justify-between">
-                      <div className="flex items-center gap-2">
+                    <CardTitle className="text-white flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                      <div className="flex min-w-0 items-center gap-2">
                         <LayoutGrid className="w-5 h-5 text-purple-400" />
-                        <span className="text-lg">{selectedStoryboard.title}</span>
+                        <span className="truncate text-lg">{selectedStoryboard.title}</span>
                         <span className="text-sm text-white/50">· {shots.length} 个镜头</span>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
                         <Button
                           variant="outline"
                           size="sm"
@@ -990,6 +1530,17 @@ export default function StoryboardsPage() {
                         >
                           {generatingStoryboard ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
                           从剧本生成
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleMergeStoryboardVideos()}
+                          disabled={mergingVideos || Boolean(mergeDisabledReason)}
+                          title={mergeDisabledReason || '按镜头顺序合并已勾选的视频'}
+                          className="border-emerald-500/50 text-emerald-300 hover:bg-emerald-600/20"
+                        >
+                          {mergingVideos ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Film className="w-4 h-4 mr-1" />}
+                          合并所选
                         </Button>
                         <Button
                           asChild
@@ -1038,9 +1589,148 @@ export default function StoryboardsPage() {
                       <div className="mt-1 text-white/50">
                         {getNovelLabel(getStoryboardNovelId(selectedStoryboard))} / {getChapterLabel(getStoryboardChapterId(selectedStoryboard))} / {selectedStoryboard.script_title || selectedStoryboard.script_id}
                       </div>
+                      <div className="mt-2 text-xs text-white/40">
+                        视频合并准备：已选 {selectedMergeShots.length} 个，{videoReadyCount}/{shots.length} 个镜头已有视频
+                        {missingVideoShots.length > 0 && `，缺少 ${missingVideoShots.map((shot) => `镜头 ${shot.shot_number}`).join('、')}`}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-white/20 text-xs text-white/70"
+                          onClick={() => setSelectedMergeShotIds(shots.filter((shot) => shot.video_url).map((shot) => shot.id))}
+                        >
+                          选择全部已有视频
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-white/20 text-xs text-white/70"
+                          onClick={() => setSelectedMergeShotIds([])}
+                        >
+                          清空选择
+                        </Button>
+                      </div>
                     </div>
+
+                    {mergeResult && (
+                      <div className="mb-4 rounded-lg border border-emerald-500/25 bg-emerald-500/10 p-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-sm font-medium text-emerald-200">
+                              <Film className="h-4 w-4 shrink-0" />
+                              <span>当前分镜成片</span>
+                              <span className={`rounded px-2 py-0.5 text-xs ${
+                                mergeResult.is_real_merged
+                                  ? 'bg-emerald-500/20 text-emerald-200'
+                                  : 'bg-yellow-500/20 text-yellow-200'
+                              }`}>
+                                {mergeResult.is_real_merged ? 'FFmpeg 真拼接' : '清单/占位'}
+                              </span>
+                            </div>
+                            <div className="mt-1 text-xs text-white/50">
+                              V{mergeResult.version_number || 1} · {mergeResult.segment_count || shots.length} 个镜头 · {formatTime(Math.round(mergeResult.duration_seconds || totalDuration))}
+                              {mergeResult.render_message && ` · ${mergeResult.render_message}`}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="border-emerald-500/40 text-emerald-200"
+                              onClick={() => handleMergeStoryboardVideos(mergeResult.job_id)}
+                              disabled={mergingVideos || Boolean(mergeDisabledReason)}
+                            >
+                              {mergingVideos ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                              重新合成
+                            </Button>
+                            {mergeResult.output_url && (
+                              <>
+                                <Button asChild size="sm" variant="outline" className="border-emerald-500/40 text-emerald-200">
+                                  <a href={toMediaUrl(mergeResult.output_url)} target="_blank" rel="noreferrer">
+                                    <Eye className="w-4 h-4 mr-1" />
+                                    播放
+                                  </a>
+                                </Button>
+                                <Button asChild size="sm" variant="outline" className="border-white/20 text-white/70">
+                                  <a href={toMediaUrl(mergeResult.output_url)} download>
+                                    <Download className="w-4 h-4 mr-1" />
+                                    下载视频
+                                  </a>
+                                </Button>
+                              </>
+                            )}
+                            {mergeResult.manifest_url && (
+                              <Button asChild size="sm" variant="outline" className="border-white/20 text-white/70">
+                                <a href={toMediaUrl(mergeResult.manifest_url)} target="_blank" rel="noreferrer">
+                                  <Download className="w-4 h-4 mr-1" />
+                                  Manifest
+                                </a>
+                              </Button>
+                            )}
+                            {mergeResult.srt_url && (
+                              <Button asChild size="sm" variant="outline" className="border-white/20 text-white/70">
+                                <a href={toMediaUrl(mergeResult.srt_url)} download>
+                                  <Download className="w-4 h-4 mr-1" />
+                                  字幕 SRT
+                                </a>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                        {mergeResult.output_url ? (
+                          <video
+                            controls
+                            className="mt-3 aspect-video w-full rounded-lg border border-white/10 bg-black"
+                            src={toMediaUrl(mergeResult.output_url)}
+                          />
+                        ) : (
+                          <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-sm text-white/50">
+                            已生成成片清单，等待生产渲染器输出最终视频。
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {mergeVersions.length > 0 && (
+                      <div className="mb-4 rounded-lg border border-white/10 bg-white/5 p-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-sm text-white/70">合并版本</div>
+                          {loadingMergeVersions && <Loader2 className="h-4 w-4 animate-spin text-white/40" />}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {mergeVersions.map((version) => (
+                            <button
+                              key={version.job_id}
+                              type="button"
+                              onClick={() => setMergeResult(version)}
+                              className={`rounded border px-3 py-2 text-left text-xs transition ${
+                                mergeResult?.job_id === version.job_id
+                                  ? 'border-emerald-400 bg-emerald-500/15 text-emerald-100'
+                                  : 'border-white/10 bg-black/10 text-white/60 hover:border-white/30'
+                              }`}
+                            >
+                              <div>V{version.version_number || 1} · {version.segment_count || 0} 镜头</div>
+                              <div className="mt-1 text-white/40">
+                                {version.is_real_merged ? '真拼接' : '清单/占位'}
+                                {version.selected_shot_numbers?.length ? ` · 镜头 ${version.selected_shot_numbers.join('、')}` : ''}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className={selectedShot ? 'grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,0.92fr)_minmax(380px,1.08fr)]' : 'space-y-3'}>
                     {/* 镜头列表 */}
                     <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium text-white">镜头列表</div>
+                          <div className="text-xs text-white/40">点击镜头后在右侧工作台编辑，勾选已有视频的镜头可合并成片。</div>
+                        </div>
+                        <div className="text-xs text-white/40">{shots.length} 个镜头</div>
+                      </div>
                       {loadingShots ? (
                         <div className="flex items-center justify-center py-8">
                           <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
@@ -1059,6 +1749,16 @@ export default function StoryboardsPage() {
                         >
                           <div className="flex items-start justify-between">
                             <div className="flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                aria-label={`选择镜头 ${shot.shot_number} 用于合并`}
+                                title={shot.video_url ? '选择用于合并成片' : '该镜头还没有视频，暂不能合并'}
+                                checked={selectedMergeShotIds.includes(shot.id)}
+                                disabled={!shot.video_url}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) => toggleMergeShot(shot, event.target.checked)}
+                                className="h-4 w-4 rounded border-white/20 bg-white/10 accent-emerald-500 disabled:cursor-not-allowed disabled:opacity-30"
+                              />
                               <span className="w-6 h-6 rounded bg-purple-600/30 text-purple-300 text-xs flex items-center justify-center">
                                 {shot.shot_number}
                               </span>
@@ -1137,8 +1837,23 @@ export default function StoryboardsPage() {
 
                     {/* 镜头详情编辑 */}
                     {selectedShot && (
-                      <div className="mt-6 pt-6 border-t border-white/10">
-                        <h4 className="text-white font-medium mb-4">镜头 {selectedShot.shot_number} 详情</h4>
+                      <div className="rounded-xl border border-purple-500/20 bg-purple-500/[0.06] p-4 xl:sticky xl:top-4 xl:max-h-[calc(100vh-150px)] xl:overflow-y-auto">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-white font-medium">镜头工作台</h4>
+                            <p className="mt-1 text-xs text-white/45">正在编辑镜头 {selectedShot.shot_number}，修改后点击保存镜头写入数据库。</p>
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="关闭镜头工作台"
+                            title="关闭"
+                            className="h-8 w-8 text-white/45 hover:text-white"
+                            onClick={() => setSelectedShot(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                        </div>
                         {(() => {
                           const refs = getShotEntityRefs(selectedShot);
                           return (refNames(refs.characters) || refNames(refs.scenes) || refNames(refs.props) || refNames(refs.events) || refs.subtitle) ? (
@@ -1151,6 +1866,8 @@ export default function StoryboardsPage() {
                             </div>
                           ) : null;
                         })()}
+
+                        {renderShotMultiviewStatus(selectedShot)}
 
                         {/* 快速操作按钮 */}
                         <div className="flex gap-2 mb-4">
@@ -1176,7 +1893,12 @@ export default function StoryboardsPage() {
                           </Button>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <section className="space-y-4 rounded-lg border border-white/10 bg-black/15 p-3">
+                        <div>
+                          <h5 className="text-sm font-semibold text-white">基础镜头</h5>
+                          <p className="mt-1 text-xs text-white/45">确认时长、景别和视频生成 Prompt。</p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                           <div>
                             <label className="text-sm text-white/60 mb-2 block">镜头时长（秒）</label>
                             <Input
@@ -1211,8 +1933,15 @@ export default function StoryboardsPage() {
                             className="bg-white/5 border-white/10 text-white"
                           />
                         </div>
+                        </section>
 
-                        <div className="mt-4">
+                        <section className="mt-4 space-y-4 rounded-lg border border-white/10 bg-black/15 p-3">
+                        <div>
+                          <h5 className="text-sm font-semibold text-white">画面与运镜</h5>
+                          <p className="mt-1 text-xs text-white/45">维护画面细节、参考图、运镜、情绪、光线和调色。</p>
+                        </div>
+
+                        <div>
                           <label className="text-sm text-white/60 mb-2 block">视觉描述</label>
                           <textarea
                             value={selectedShot.visual_description || ''}
@@ -1224,7 +1953,19 @@ export default function StoryboardsPage() {
                         </div>
 
                         {/* 参考图 */}
-                        <div className="mt-4">
+                        <div>
+                          <div className="mb-3">
+                            <ImageStyleTemplatePicker
+                              templates={imageStyleTemplates}
+                              value={shotImageStyle}
+                              onChange={setShotImageStyle}
+                              toMediaUrl={toMediaUrl}
+                              recommendedFor="shot"
+                              title="镜头参考图风格"
+                              compact
+                              layout="inline"
+                            />
+                          </div>
                           <div className="flex items-center justify-between mb-2">
                             <label className="text-sm font-medium text-white/60">参考图</label>
                             <button
@@ -1233,25 +1974,35 @@ export default function StoryboardsPage() {
                               disabled={generatingImage || !selectedShot.visual_description}
                               className="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              {generatingImage ? "生成中…" : "生成参考图"}
+                              {generatingImage
+                                ? "生成中…"
+                                : selectedShot.image_status === 'generating' || selectedShot.image_status === 'failed'
+                                  ? "重新生成参考图"
+                                  : "生成参考图"}
                             </button>
                           </div>
-                          {(selectedShot.image_status === "generating" || selectedShot.image_status === "pending") && (
-                            <div className="text-sm text-yellow-400">生成中…</div>
+                          {getReferenceImageStatusText(selectedShot) && (
+                            <div className={`text-sm ${
+                              selectedShot.image_status === 'failed'
+                                ? 'text-red-300'
+                                : selectedShot.image_status === 'succeeded'
+                                  ? 'text-emerald-300'
+                                  : 'text-yellow-300'
+                            }`}>
+                              {getReferenceImageStatusText(selectedShot)}
+                            </div>
                           )}
-                          {selectedShot.image_url && (
-                            <img
-                              src={toMediaUrl(selectedShot.image_url)}
-                              alt="Shot reference"
-                              width={640}
-                              height={192}
-                              loading="lazy"
-                              className="w-full max-h-48 object-cover rounded-lg border border-white/10"
-                            />
-                          )}
+                          <ReferenceImagePreview
+                            src={toMediaUrl(selectedShot.image_url)}
+                            title={`镜头 ${selectedShot.shot_number} 参考图`}
+                            alt={`镜头 ${selectedShot.shot_number} 参考图`}
+                            caption={selectedShot.visual_description || selectedShot.prompt}
+                            className="mt-2 h-48 w-full"
+                            thumbnailClassName="p-1"
+                          />
                         </div>
 
-                        <div className="mt-4">
+                        <div>
                           <label className="text-sm text-white/60 mb-2 block">台词/配音</label>
                           <Input
                             value={selectedShot.dialogue || ''}
@@ -1262,9 +2013,8 @@ export default function StoryboardsPage() {
                         </div>
 
                         {/* 精细化控制 */}
-                        <div className="mt-6 pt-4 border-t border-white/10">
-                          <h5 className="text-white font-medium mb-3">精细化控制</h5>
-                          <div className="grid grid-cols-2 gap-4">
+                        <div className="pt-2">
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                             <div>
                               <label className="text-sm text-white/60 mb-2 block">运镜方式</label>
                               <select
@@ -1315,7 +2065,7 @@ export default function StoryboardsPage() {
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-2 gap-4 mt-4">
+                          <div className="grid grid-cols-1 gap-4 mt-4 md:grid-cols-2">
                             <div>
                               <label className="text-sm text-white/60 mb-2 block">配乐提示</label>
                               <Input
@@ -1336,6 +2086,7 @@ export default function StoryboardsPage() {
                             </div>
                           </div>
                         </div>
+                        </section>
 
                         {/* 视频/音频URL */}
                         <div className="mt-6 pt-4 border-t border-white/10">
@@ -1387,6 +2138,7 @@ export default function StoryboardsPage() {
                         </div>
                       </div>
                     )}
+                    </div>
                   </CardContent>
                 </Card>
               ) : (
@@ -1426,10 +2178,14 @@ export default function StoryboardsPage() {
         description="将从所选剧本内容自动生成分镜镜头，生成完成后会在当前页面展示。"
         confirmText="开始生成"
         loading={generatingStoryboard}
-        onOpenChange={setConfirmGenerateFromScript}
+        onOpenChange={(open) => {
+          setConfirmGenerateFromScript(open);
+          if (!open) setPendingGenerateScriptId('');
+        }}
         onConfirm={async () => {
-          await handleAIGenerateStoryboard();
+          await handleAIGenerateStoryboard(pendingGenerateScriptId);
           setConfirmGenerateFromScript(false);
+          setPendingGenerateScriptId('');
         }}
       />
 
@@ -1489,7 +2245,12 @@ export default function StoryboardsPage() {
                   <label className="text-sm text-white/60 mb-2 block">选择小说</label>
                   <select
                     value={smartNovelId}
-                    onChange={(e) => setSmartNovelId(e.target.value)}
+                    onChange={(e) => {
+                      setSmartNovelId(e.target.value);
+                      setSmartChapterId('');
+                      setNewStoryboardScriptId('');
+                      setMatchedTemplate(null);
+                    }}
                     className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                   >
                     <option value="">请选择小说…</option>
@@ -1504,13 +2265,16 @@ export default function StoryboardsPage() {
                     <label className="text-sm text-white/60 mb-2 block">选择章节</label>
                     <select
                       value={smartChapterId}
-                      onChange={(e) => setSmartChapterId(e.target.value)}
+                      onChange={(e) => {
+                        setSmartChapterId(e.target.value);
+                        setNewStoryboardScriptId('');
+                      }}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                     >
                       <option value="">整部小说/简介</option>
                       {chapters.map(chapter => (
                         <option key={chapter.id} value={chapter.id}>
-                          第{chapter.chapter_number}章 {chapter.title}
+                          {formatChapterLabel(chapter)}
                         </option>
                       ))}
                     </select>
@@ -1598,10 +2362,15 @@ export default function StoryboardsPage() {
                   className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                 >
                   <option value="">请选择剧本…</option>
-                  {scripts.map(script => (
+                  {filteredSmartScripts.map(script => (
                     <option key={script.id} value={script.id}>{script.title}</option>
                   ))}
                 </select>
+                {smartNovelId && filteredSmartScripts.length === 0 && (
+                  <p className="mt-2 text-xs text-white/45">
+                    当前{smartChapterId ? '章节' : '小说'}还没有可用剧本；智能生成可不选择剧本，系统会基于所选章节自动创建。
+                  </p>
+                )}
               </div>
 
               <div>

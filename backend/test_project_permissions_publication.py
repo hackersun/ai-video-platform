@@ -4,11 +4,15 @@ Project member permissions and local publication tests.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.database import SyncSessionLocal
+from app.models.synthesis_job import SynthesisJob
 from init_db import init_db
 from main import app
 
@@ -45,6 +49,12 @@ def _add_member(client: TestClient, owner_id: str, project_id: str, member_id: s
         headers=_auth_headers(owner_id),
     )
     assert response.status_code == 201
+
+
+def _insert_synthesis_job(job: SynthesisJob) -> None:
+    with SyncSessionLocal() as db:
+        db.merge(job)
+        db.commit()
 
 
 def test_project_members_can_read_project_and_owner_can_manage_roles(client: TestClient) -> None:
@@ -121,19 +131,28 @@ def test_project_owner_cannot_be_demoted_or_removed(client: TestClient) -> None:
 def test_publish_creates_local_export_without_cloud_keys(client: TestClient) -> None:
     owner_id = "publish-owner"
     project_id = _create_project(client, owner_id, "Publish Project")
+    synthesis_job_id = f"publish-final-{uuid4()}"
 
-    synthesis_response = client.post(
-        "/api/v1/synthesis/create",
-        json={
-            "project_id": project_id,
-            "video_url": "https://example.com/source.mp4",
-            "audio_url": "https://example.com/audio.mp3",
-            "title": "Local Export Source",
-        },
-        headers=_auth_headers(owner_id),
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            project_id=project_id,
+            title="Local Export Source",
+            model_id="ffmpeg-local",
+            model_name="Local Final Render",
+            video_url="https://example.com/source.mp4",
+            audio_url="https://example.com/audio.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/local-final.mp4",
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "ffmpeg_local",
+                "output_kind": "final_video",
+            },
+        )
     )
-    assert synthesis_response.status_code == 200
-    synthesis_job_id = synthesis_response.json()["id"]
 
     publish_response = client.post(
         "/api/v1/synthesis/publish",
@@ -147,13 +166,294 @@ def test_publish_creates_local_export_without_cloud_keys(client: TestClient) -> 
     payload = publish_response.json()
     assert payload["provider"] == "local"
     assert payload["synthesis_job_id"] == synthesis_job_id
-    assert payload["video_url"] == synthesis_response.json()["output_url"]
+    assert payload["video_url"] == "/static/exports/local-final.mp4"
     assert payload["visibility"] == "private"
     assert payload["export_url"].startswith("/static/exports/")
 
     artifact_path = Path(__file__).resolve().parent / payload["export_url"].lstrip("/")
     assert artifact_path.exists()
     assert "local-test" in artifact_path.read_text(encoding="utf-8")
+
+
+def test_publish_rejects_dev_create_placeholder_without_final_render_status(client: TestClient) -> None:
+    owner_id = "publish-dev-placeholder-owner"
+    project_id = _create_project(client, owner_id, "Publish Dev Placeholder Project")
+
+    synthesis_response = client.post(
+        "/api/v1/synthesis/create",
+        json={
+            "project_id": project_id,
+            "video_url": "https://example.com/source.mp4",
+            "audio_url": "https://example.com/audio.mp3",
+            "title": "DEV Placeholder Source",
+        },
+        headers=_auth_headers(owner_id),
+    )
+    assert synthesis_response.status_code == 200
+    assert synthesis_response.json()["output_url"].endswith(".mp4")
+
+    publish_response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_response.json()["id"]},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert publish_response.status_code == 422
+    detail = publish_response.json()["detail"]
+    assert detail["code"] == "publication_not_ready"
+    assert detail["action"] == "render_final_video"
+    assert any(issue["code"] == "render_status_not_rendered" for issue in detail["issues"])
+
+
+def test_publish_rejects_job_without_final_render_output(client: TestClient) -> None:
+    owner_id = "publish-missing-output-owner"
+    synthesis_job_id = f"publish-missing-output-{uuid4()}"
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Source Clip Only",
+            model_id="ffmpeg-cloud",
+            model_name="Cloud Render",
+            video_url="https://example.com/source-only.mp4",
+            status="pending",
+            progress=20,
+            output_url=None,
+            extra_data={"render_status": "adapter_ready", "render_backend": "ffmpeg_cloud"},
+        )
+    )
+
+    response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_job_id},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "publication_not_ready"
+    assert "最终成片" in detail["message"]
+    assert detail["action"] == "wait_cloud_render"
+
+
+def test_publish_rejects_local_review_package_preview_output(client: TestClient) -> None:
+    owner_id = "publish-preview-package-owner"
+    synthesis_job_id = f"publish-preview-package-{uuid4()}"
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Local Review Package",
+            model_id="local-render",
+            model_name="Local Review Package",
+            video_url="https://example.com/source.mp4",
+            audio_url="https://example.com/source.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/render-preview.html",
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "local_artifact_package",
+                "output_kind": "preview_package",
+                "is_publishable": False,
+                "render_artifacts": {
+                    "preview_url": "/static/exports/render-preview.html",
+                    "srt_url": "/static/exports/render.srt",
+                    "timeline_url": "/static/exports/render-timeline.json",
+                    "render_manifest_url": "/static/exports/render-manifest.json",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_job_id},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "publication_not_ready"
+    assert detail["action"] == "render_final_video"
+    assert detail["render_status"] == "rendered"
+    assert any(issue["code"] == "preview_package_not_publishable" for issue in detail["issues"])
+
+
+def test_publish_rejects_cloud_render_until_final_video_ready(client: TestClient) -> None:
+    owner_id = "publish-cloud-pending-owner"
+    synthesis_job_id = f"publish-cloud-pending-{uuid4()}"
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Cloud Render Pending",
+            model_id="ffmpeg-cloud",
+            model_name="Cloud Render",
+            video_url="https://example.com/source.mp4",
+            status="pending",
+            progress=20,
+            output_url=None,
+            extra_data={
+                "render_status": "cloud_pending",
+                "render_backend": "ffmpeg_cloud",
+                "output_kind": "cloud_request",
+                "is_publishable": False,
+                "render_artifacts": {
+                    "render_manifest_url": "/static/exports/cloud-render-manifest.json",
+                    "srt_url": "/static/exports/cloud-render.srt",
+                    "timeline_url": "/static/exports/cloud-render-timeline.json",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_job_id},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "publication_not_ready"
+    assert detail["action"] == "wait_cloud_render"
+    assert detail["render_status"] == "cloud_pending"
+    assert any(issue["code"] == "final_video_missing" for issue in detail["issues"])
+
+
+def test_publish_rejects_metadata_only_preview_package(client: TestClient) -> None:
+    owner_id = "publish-metadata-preview-owner"
+    response = client.post(
+        "/api/v1/synthesis/publish",
+        json={
+            "title": "Metadata Preview Package",
+            "metadata": {
+                "source_output_url": "/static/exports/render-preview.html",
+                "render_status": "rendered",
+                "render_backend": "local_artifact_package",
+                "output_kind": "preview_package",
+            },
+        },
+        headers=_auth_headers(owner_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "publication_not_ready"
+    assert detail["render_status"] == "rendered"
+    assert detail["output_kind"] == "preview_package"
+    assert any(issue["code"] == "preview_package_not_publishable" for issue in detail["issues"])
+
+
+def test_publish_allows_cloud_render_final_video_and_preserves_provenance(client: TestClient) -> None:
+    owner_id = "publish-cloud-final-owner"
+    synthesis_job_id = f"publish-cloud-final-{uuid4()}"
+    render_artifacts = {
+        "render_manifest_url": "/static/exports/cloud-final-manifest.json",
+        "srt_url": "/static/exports/cloud-final.srt",
+        "timeline_url": "/static/exports/cloud-final-timeline.json",
+        "source_manifest_url": "/static/exports/source-sequence.json",
+    }
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Cloud Render Final",
+            model_id="ffmpeg-cloud",
+            model_name="Cloud Render",
+            video_url="https://example.com/source.mp4",
+            audio_url="https://example.com/source.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="https://cdn.example.com/final-episode.mp4",
+            duration_seconds=18.0,
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "ffmpeg_cloud",
+                "output_kind": "final_video",
+                "is_publishable": True,
+                "render_artifacts": render_artifacts,
+                "cloud_render_task_id": "cloud-task-final",
+            },
+        )
+    )
+
+    publish_response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_job_id, "metadata": {"channel": "cloud-final"}},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert publish_response.status_code == 201
+    payload = publish_response.json()
+    assert payload["video_url"] == "https://cdn.example.com/final-episode.mp4"
+    assert payload["metadata"]["is_publishable"] is True
+    assert payload["metadata"]["output_kind"] == "final_video"
+    assert payload["metadata"]["render_backend"] == "ffmpeg_cloud"
+    assert payload["metadata"]["render_manifest_url"] == render_artifacts["render_manifest_url"]
+
+
+def test_publish_export_preserves_render_artifact_provenance(client: TestClient) -> None:
+    owner_id = "publish-provenance-owner"
+    synthesis_job_id = f"publish-provenance-{uuid4()}"
+    render_artifacts = {
+        "preview_url": "/static/exports/render-preview.html",
+        "srt_url": "/static/exports/render-subtitles.srt",
+        "timeline_url": "/static/exports/render-timeline.json",
+        "render_manifest_url": "/static/exports/render-manifest.json",
+        "source_manifest_url": "/static/exports/source-sequence.json",
+    }
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Rendered Episode",
+            model_id="local-render",
+            model_name="Local Render",
+            video_url="https://example.com/source.mp4",
+            audio_url="https://example.com/source.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/final-render.mp4",
+            duration_seconds=12.5,
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "ffmpeg_local",
+                "render_source": "timeline",
+                "render_timeline_id": "timeline-001",
+                "manifest_url": "/static/exports/source-sequence.json",
+                "render_artifacts": render_artifacts,
+            },
+        )
+    )
+
+    publish_response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_job_id, "metadata": {"channel": "trace-test"}},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert publish_response.status_code == 201
+    payload = publish_response.json()
+    publication_metadata = payload["metadata"]
+    assert payload["video_url"] == "/static/exports/final-render.mp4"
+    assert publication_metadata["source_output_url"] == "/static/exports/final-render.mp4"
+    assert publication_metadata["render_artifacts"] == render_artifacts
+    assert publication_metadata["render_manifest_url"] == render_artifacts["render_manifest_url"]
+    assert publication_metadata["timeline_url"] == render_artifacts["timeline_url"]
+    assert publication_metadata["srt_url"] == render_artifacts["srt_url"]
+    assert publication_metadata["preview_url"] == render_artifacts["preview_url"]
+    assert publication_metadata["source_manifest_url"] == render_artifacts["source_manifest_url"]
+    assert publication_metadata["render_status"] == "rendered"
+    assert publication_metadata["render_backend"] == "ffmpeg_local"
+    assert publication_metadata["render_source"] == "timeline"
+    assert publication_metadata["timeline_id"] == "timeline-001"
+
+    artifact_path = Path(__file__).resolve().parent / payload["export_url"].lstrip("/")
+    artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    assert artifact_payload["render_artifacts"] == render_artifacts
+    assert artifact_payload["timeline_url"] == render_artifacts["timeline_url"]
 
 
 def test_execute_synthesis_persists_source_and_output_video_urls(client: TestClient) -> None:
@@ -187,19 +487,28 @@ def test_execute_synthesis_persists_source_and_output_video_urls(client: TestCli
 def test_publication_list_update_revoke_and_archive(client: TestClient) -> None:
     owner_id = "publish-manage-owner"
     project_id = _create_project(client, owner_id, "Publication Manage Project")
+    synthesis_job_id = f"publish-manage-{uuid4()}"
 
-    synthesis_response = client.post(
-        "/api/v1/synthesis/create",
-        json={
-            "project_id": project_id,
-            "video_url": "https://example.com/manage-source.mp4",
-            "audio_url": "https://example.com/manage-audio.mp3",
-            "title": "Manage Export Source",
-        },
-        headers=_auth_headers(owner_id),
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            project_id=project_id,
+            title="Manage Export Source",
+            model_id="ffmpeg-local",
+            model_name="Local Final Render",
+            video_url="https://example.com/manage-source.mp4",
+            audio_url="https://example.com/manage-audio.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/manage-final.mp4",
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "ffmpeg_local",
+                "output_kind": "final_video",
+            },
+        )
     )
-    assert synthesis_response.status_code == 200
-    synthesis_job_id = synthesis_response.json()["id"]
 
     publish_response = client.post(
         "/api/v1/synthesis/publish",

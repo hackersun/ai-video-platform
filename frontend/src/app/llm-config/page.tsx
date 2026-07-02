@@ -29,13 +29,16 @@ import {
   Globe,
   Network,
   KeyRound,
-  Edit2
+  Edit2,
+  ShieldCheck,
+  ClipboardList
 } from 'lucide-react';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import {
   MODEL_CAPABILITY_LABELS,
   getConfigsByCapability,
   getDefaultConfigForCapability,
+  getModelCapabilities,
   getModelCapability,
   modelStatusClass,
   modelStatusLabel,
@@ -68,10 +71,12 @@ interface Model {
   model_name: string;
   model_name_cn?: string;
   model_type: string;
+  capabilities?: string[];
   context_window: number;
   max_tokens: number;
   input_cost_per_1k: number;
   output_cost_per_1k: number;
+  base_url?: string | null;
   is_recommended?: boolean;
   description?: string;
   user_config_id?: string;
@@ -81,6 +86,7 @@ interface Model {
   user_is_default?: boolean;
   user_test_status?: string | null;
   user_test_message?: string | null;
+  user_key_available?: boolean;
 }
 
 interface SavedConfig {
@@ -100,9 +106,47 @@ interface SavedConfig {
   is_default: boolean;
   test_status?: string;
   test_message?: string;
+  key_available?: boolean;
   usage_count: number;
   api_key?: string;
 }
+
+const PRODUCTION_TASK_REQUIREMENTS: Array<{
+  name: string;
+  description: string;
+  capabilities: ModelCapability[];
+}> = [
+  {
+    name: '小说/章节/剧本生成',
+    description: '长文本、角色关系、剧情承接和结构化输出',
+    capabilities: ['text'],
+  },
+  {
+    name: '角色/实体/参考图分析',
+    description: '识别图片参考、外观一致性和视觉提示词辅助',
+    capabilities: ['vision', 'text'],
+  },
+  {
+    name: '封面/头像/场景参考图',
+    description: '真正输出图片资产，不能只用视觉理解模型',
+    capabilities: ['image'],
+  },
+  {
+    name: '镜头视频/动漫短剧',
+    description: '文生视频、图生视频和镜头一致性生产',
+    capabilities: ['video', 'image', 'text'],
+  },
+  {
+    name: '角色配音/旁白',
+    description: 'TTS、音色试听和声音克隆相关能力',
+    capabilities: ['audio'],
+  },
+  {
+    name: '素材检索/知识库',
+    description: '资产、实体、剧情记忆的向量检索',
+    capabilities: ['embedding'],
+  },
+];
 
 export default function LLMConfigPage() {
   const configFormRef = useRef<HTMLDivElement | null>(null);
@@ -114,7 +158,13 @@ export default function LLMConfigPage() {
   const [editingConfig, setEditingConfig] = useState<SavedConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [isTestingDefaults, setIsTestingDefaults] = useState(false);
   const [testResult, setTestResult] = useState<{success: boolean; message: string; response?: string} | null>(null);
+  const [lastPassedFormTest, setLastPassedFormTest] = useState<{
+    providerId: string;
+    modelId: string;
+    apiKey: string;
+  } | null>(null);
 
   // 配置表单状态
   const [selectedProvider, setSelectedProvider] = useState('');
@@ -126,18 +176,85 @@ export default function LLMConfigPage() {
   const [topP, setTopP] = useState(0.9);
   const [maxTokens, setMaxTokens] = useState(2048);
   const [isDefault, setIsDefault] = useState(false);
+  const [selectedCapabilityFilter, setSelectedCapabilityFilter] = useState<ModelCapability | 'all'>('all');
 
   const currentProvider = providers.find(p => p.id === selectedProvider);
   const providerTabs = providers.filter((provider) => provider.id !== 'external');
   const activeProvider = providers.find((provider) => provider.id === activeTab);
-  const filteredModels = models.filter(m => m.provider_id === selectedProvider);
+  const providerModels = models.filter(m => m.provider_id === selectedProvider);
+  const filteredModels = providerModels.filter((model) => (
+    selectedCapabilityFilter === 'all' || getModelCapabilities(model).includes(selectedCapabilityFilter)
+  ));
   const selectedModelInfo = models.find(m => m.id === selectedModel);
   const selectedModelExistingConfig = selectedModelInfo?.user_config_id
     ? savedConfigs.find(config => config.id === selectedModelInfo.user_config_id)
     : undefined;
+  const targetConfig = editingConfig || selectedModelExistingConfig;
+  const targetConfigModelId = targetConfig?.config_model_id || targetConfig?.model_id;
+  const hasSavedUsableKey = Boolean(targetConfig?.key_available && targetConfigModelId === selectedModel);
+  const apiKeyInput = apiKey.trim();
+  const requiresApiKey = !hasSavedUsableKey;
+  const canTestCurrentForm = Boolean(selectedModel && (apiKeyInput || hasSavedUsableKey));
+  const canSaveCurrentForm = Boolean(configName && selectedModel && (!requiresApiKey || apiKeyInput));
+  const formTestMatchesCurrentInput = Boolean(
+    lastPassedFormTest
+    && apiKeyInput
+    && lastPassedFormTest.providerId === selectedProvider
+    && lastPassedFormTest.modelId === selectedModel
+    && lastPassedFormTest.apiKey === apiKeyInput
+  );
   const agentPlanSelected = selectedProvider === 'volcano_agent_plan';
-  const capabilityOrder: ModelCapability[] = ['text', 'image', 'audio', 'video', 'embedding'];
+  const capabilityOrder: ModelCapability[] = ['text', 'image', 'vision', 'audio', 'video', 'embedding'];
+  const capabilityFilterOptions: Array<{ value: ModelCapability | 'all'; label: string; count: number }> = [
+    { value: 'all', label: '全部', count: providerModels.length },
+    ...capabilityOrder.map((capability) => ({
+      value: capability,
+      label: MODEL_CAPABILITY_LABELS[capability],
+      count: providerModels.filter((model) => getModelCapabilities(model).includes(capability)).length,
+    })),
+  ];
   const selectedCapability = selectedModelInfo ? getModelCapability(selectedModelInfo) : null;
+  const selectedCapabilities = selectedModelInfo ? getModelCapabilities(selectedModelInfo) : [];
+  const selectedModelIsVisionOnly = selectedCapabilities.includes('vision') && !selectedCapabilities.includes('image');
+  const activeDefaultConfigs = capabilityOrder
+    .map((capability) => ({ capability, config: getDefaultConfigForCapability(savedConfigs, capability) }))
+    .filter((item): item is { capability: ModelCapability; config: SavedConfig } => Boolean(item.config));
+  const missingDefaultCapabilities = capabilityOrder.filter((capability) => !getDefaultConfigForCapability(savedConfigs, capability));
+  const unverifiedDefaultConfigs = activeDefaultConfigs.filter((item) => item.config.test_status !== 'success');
+  const failedConfigs = savedConfigs.filter((config) => config.test_status === 'failed');
+  const duplicateConfigGroups = savedConfigs.reduce<Record<string, SavedConfig[]>>((groups, config) => {
+    const key = config.config_model_id || config.model_id || config.api_model_id || config.model_name;
+    if (!key) return groups;
+    groups[key] = [...(groups[key] || []), config];
+    return groups;
+  }, {});
+  const duplicateConfigCount = Object.values(duplicateConfigGroups).filter((group) => group.length > 1).length;
+  const healthIssues = [
+    ...missingDefaultCapabilities.map((capability) => ({
+      key: `missing-${capability}`,
+      level: 'warning' as const,
+      text: `缺少${MODEL_CAPABILITY_LABELS[capability]}默认配置`,
+    })),
+    ...unverifiedDefaultConfigs.map(({ capability, config }) => ({
+      key: `unverified-${capability}-${config.id}`,
+      level: 'warning' as const,
+      text: `${MODEL_CAPABILITY_LABELS[capability]}默认模型未验证：${config.name}`,
+    })),
+    ...failedConfigs.map((config) => ({
+      key: `failed-${config.id}`,
+      level: 'danger' as const,
+      text: `${config.name}：${config.test_message || '配置验证失败'}`,
+    })),
+    ...(duplicateConfigCount > 0 ? [{
+      key: 'duplicates',
+      level: 'warning' as const,
+      text: `存在 ${duplicateConfigCount} 类重复模型配置，建议保留一个默认配置`,
+    }] : []),
+  ];
+  const healthScore = healthIssues.length === 0
+    ? 100
+    : Math.max(0, 100 - missingDefaultCapabilities.length * 12 - unverifiedDefaultConfigs.length * 8 - failedConfigs.length * 15 - duplicateConfigCount * 6);
+  const healthLabel = healthScore >= 90 ? '健康' : healthScore >= 70 ? '可用但需整理' : '需要配置';
   const modelSelectOptions = filteredModels.map(m => {
     const markers = [
       m.user_is_default ? '默认' : null,
@@ -231,23 +348,30 @@ export default function LLMConfigPage() {
     const nextProvider = activeTab === 'external' ? '' : activeTab;
     setSelectedProvider(nextProvider);
     setSelectedModel('');
+    setLastPassedFormTest(null);
     fetchModels(nextProvider);
   }, [activeTab]);
 
   // 测试连接
   const handleTest = async () => {
-    if (!apiKey) {
-      setTestResult({ success: false, message: '请输入API Key' });
-      return;
-    }
-
     if (!selectedModel) {
       setTestResult({ success: false, message: '请先选择一个模型' });
       return;
     }
 
+    if (!apiKeyInput && hasSavedUsableKey && targetConfig) {
+      await handleTestConfig(targetConfig);
+      return;
+    }
+
+    if (!apiKeyInput) {
+      setTestResult({ success: false, message: '请输入API Key；已有配置如需沿用原 Key，请直接点击更新配置或测试已保存配置' });
+      return;
+    }
+
     setIsTesting(true);
     setTestResult(null);
+    setLastPassedFormTest(null);
 
     try {
       const model = models.find(m => m.id === selectedModel);
@@ -256,7 +380,7 @@ export default function LLMConfigPage() {
       const testRes = await fetchWithAuth(`${API_BASE_URL}/llm/configs/test`, {
         method: 'POST',
         body: JSON.stringify({
-          api_key: apiKey,
+          api_key: apiKeyInput,
           provider_id: selectedProvider,
           model_id: selectedModel,
           message: '你好，请介绍一下自己'
@@ -270,6 +394,13 @@ export default function LLMConfigPage() {
           message: result.message || (result.success ? `${provider?.name_cn || '模型'} API Key 验证通过` : '连接测试失败'),
           response: result.response
         });
+        if (result.success) {
+          setLastPassedFormTest({
+            providerId: selectedProvider,
+            modelId: selectedModel,
+            apiKey: apiKeyInput,
+          });
+        }
       } else {
         const error = await testRes.json().catch(() => ({}));
         setTestResult({
@@ -459,11 +590,11 @@ export default function LLMConfigPage() {
     // MiniMax测试
     if (provider.id === 'minimax') {
       try {
-        // MiniMax: 自动根据key前缀判断端点
-        const baseUrl = key.startsWith('sk-cp-')
-          ? 'https://api.minimax.io/v1'
-          : 'https://api.minimaxi.com/v1';
-        const res = await fetch(`${baseUrl}/chat/completions`, {
+        const baseUrl = 'https://api.minimaxi.com/v1';
+        const endpoint = model.model_id === 'MiniMax-M3'
+          ? '/text/chatcompletion_v2'
+          : '/chat/completions';
+        const res = await fetch(`${baseUrl}${endpoint}`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -551,7 +682,7 @@ export default function LLMConfigPage() {
       setTestResult({ success: false, message: '请输入配置名称' });
       return;
     }
-    if (!apiKey) {
+    if (requiresApiKey && !apiKeyInput) {
       setTestResult({ success: false, message: '请输入API Key' });
       return;
     }
@@ -562,34 +693,53 @@ export default function LLMConfigPage() {
 
     setIsLoading(true);
     try {
-      const updatingExisting = !editingConfig && selectedModelInfo?.user_config_id;
-      const url = editingConfig
-        ? `${API_BASE_URL}/llm/configs/${editingConfig.id}`
-        : updatingExisting
-          ? `${API_BASE_URL}/llm/configs/${selectedModelInfo.user_config_id}`
+      const updatingExisting = !editingConfig && selectedModelExistingConfig;
+      const existingConfigId = editingConfig?.id || selectedModelExistingConfig?.id;
+      const isUpdatingConfig = Boolean(editingConfig || updatingExisting);
+      const requestBody = {
+        model_id: selectedModel,
+        name: configName,
+        ...(apiKeyInput ? { api_key: apiKeyInput } : {}),
+        api_secret: apiSecret,
+        temperature,
+        top_p: topP,
+        max_tokens: maxTokens,
+        extra_params: agentPlanSelected ? { base_url: currentProvider?.base_url } : undefined,
+        is_default: isDefault
+      };
+      const url = isUpdatingConfig && existingConfigId
+        ? `${API_BASE_URL}/llm/configs/${existingConfigId}`
           : `${API_BASE_URL}/llm/configs`;
       const res = await fetchWithAuth(url, {
-        method: editingConfig || updatingExisting ? 'PUT' : 'POST',
-        body: JSON.stringify({
-          model_id: selectedModel,
-          name: configName,
-          api_key: apiKey,
-          api_secret: apiSecret,
-          temperature,
-          top_p: topP,
-          max_tokens: maxTokens,
-          extra_params: agentPlanSelected ? { base_url: currentProvider?.base_url } : undefined,
-          is_default: isDefault
-        })
+        method: isUpdatingConfig ? 'PUT' : 'POST',
+        body: JSON.stringify(requestBody)
       });
 
       if (res.ok) {
         const saved = await res.json();
-        setTestResult({ success: true, message: editingConfig || updatingExisting ? '已有配置已更新，不会重复创建。' : '配置已保存成功！' });
+        let saveMessage = isUpdatingConfig ? '配置已更新。' : '配置已保存成功。';
+        if (formTestMatchesCurrentInput) {
+          const verifyRes = await fetchWithAuth(`${API_BASE_URL}/llm/configs/${saved.id}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ message: '你好，请介绍一下自己' })
+          });
+          const verifyData = await verifyRes.json().catch(() => ({}));
+          saveMessage = verifyData.success
+            ? `${saveMessage} 已同步验证状态。`
+            : `${saveMessage} 但同步验证失败：${verifyData.message || '请稍后重新测试'}`;
+          setTestResult({
+            success: Boolean(verifyData.success),
+            message: saveMessage,
+            response: verifyData.response
+          });
+        } else {
+          setTestResult({ success: true, message: saveMessage });
+        }
         await fetchConfigs();
         await fetchModels(selectedProvider || undefined);
         setSelectedModel(saved.config_model_id || selectedModel);
         setEditingConfig(null);
+        setLastPassedFormTest(null);
         // 重置表单
         setConfigName('');
         setApiKey('');
@@ -627,10 +777,8 @@ export default function LLMConfigPage() {
         method: 'POST'
       });
       if (res.ok) {
-        setSavedConfigs(prev => prev.map(c => ({
-          ...c,
-          is_default: c.id === configId
-        })));
+        await fetchConfigs();
+        await fetchModels(selectedProvider || undefined);
         setTestResult({ success: true, message: '已设为默认配置' });
       }
     } catch (error) {
@@ -641,6 +789,8 @@ export default function LLMConfigPage() {
   // 编辑配置
   const handleEdit = (config: SavedConfig) => {
     setEditingConfig(config);
+    setLastPassedFormTest(null);
+    setTestResult(null);
     setConfigName(config.name);
     setSelectedModel(config.config_model_id || config.model_id);
     // 查找对应的provider
@@ -684,18 +834,80 @@ export default function LLMConfigPage() {
       });
 
       // 更新配置状态
-      if (data.success) {
-        setSavedConfigs(prev => prev.map(c =>
-          c.id === config.id
-            ? { ...c, test_status: 'success', test_message: data.message }
-            : c
-        ));
-      }
+      setSavedConfigs(prev => prev.map(c =>
+        c.id === config.id
+          ? { ...c, test_status: data.success ? 'success' : 'failed', test_message: data.message }
+          : c
+      ));
+      await fetchConfigs();
+      await fetchModels(config.provider_id || selectedProvider || undefined);
     } catch (error) {
       setTestResult({ success: false, message: '测试请求失败' });
+      setSavedConfigs(prev => prev.map(c =>
+        c.id === config.id
+          ? { ...c, test_status: 'failed', test_message: '测试请求失败' }
+          : c
+      ));
     }
 
     setIsTesting(false);
+  };
+
+  const handleTestDefaultConfigs = async () => {
+    const uniqueConfigs = Array.from(
+      new Map(activeDefaultConfigs.map(({ config }) => [config.id, config])).values()
+    );
+    if (uniqueConfigs.length === 0) {
+      setTestResult({ success: false, message: '还没有默认模型配置，请先至少配置文本、图像、视频或语音模型。' });
+      return;
+    }
+
+    setIsTestingDefaults(true);
+    setTestResult(null);
+
+    let successCount = 0;
+    let failedCount = 0;
+    const updatedConfigs: SavedConfig[] = [];
+
+    for (const config of uniqueConfigs) {
+      try {
+        const res = await fetchWithAuth(`${API_BASE_URL}/llm/configs/${config.id}/test`, {
+          method: 'POST',
+          body: JSON.stringify({ message: '你好，请用一句话说明当前模型可用。' })
+        });
+        const data = await res.json();
+        const nextConfig = {
+          ...config,
+          test_status: data.success ? 'success' : 'failed',
+          test_message: data.message || (data.success ? '测试成功' : '测试失败'),
+        };
+        updatedConfigs.push(nextConfig);
+        if (data.success) {
+          successCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      } catch {
+        failedCount += 1;
+        updatedConfigs.push({
+          ...config,
+          test_status: 'failed',
+          test_message: '测试请求失败',
+        });
+      }
+    }
+
+    setSavedConfigs(prev => prev.map(config => {
+      const updated = updatedConfigs.find(item => item.id === config.id);
+      return updated || config;
+    }));
+    await fetchConfigs();
+    await fetchModels(selectedProvider || undefined);
+    setTestResult({
+      success: failedCount === 0,
+      message: `默认模型验证完成：${successCount} 个通过，${failedCount} 个失败。`,
+    });
+    setIsTestingDefaults(false);
   };
 
   return (
@@ -714,6 +926,145 @@ export default function LLMConfigPage() {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 左侧：模型列表 */}
           <div className="lg:col-span-2 space-y-4">
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-emerald-300" />
+                  生产配置总览
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs text-white/45">健康度</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">{healthScore}</div>
+                    <div className="mt-1 text-xs text-white/55">{healthLabel}</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs text-white/45">默认能力</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">{activeDefaultConfigs.length}/{capabilityOrder.length}</div>
+                    <div className="mt-1 text-xs text-white/55">已配置能力默认</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs text-white/45">未验证默认</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">{unverifiedDefaultConfigs.length}</div>
+                    <div className="mt-1 text-xs text-white/55">建议生成前验证</div>
+                  </div>
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="text-xs text-white/45">重复配置</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">{duplicateConfigCount}</div>
+                    <div className="mt-1 text-xs text-white/55">同模型多条配置</div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-3 rounded-lg border border-white/10 bg-black/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-white">默认模型一键验证</div>
+                    <p className="mt-1 text-xs leading-5 text-white/50">
+                      只验证当前每类能力会被生产流程优先使用的配置，避免重复消耗额度。
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    onClick={handleTestDefaultConfigs}
+                    disabled={isTestingDefaults || activeDefaultConfigs.length === 0}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    {isTestingDefaults ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <TestTube className="w-4 h-4 mr-2" />
+                    )}
+                    验证默认模型
+                  </Button>
+                </div>
+
+                {healthIssues.length > 0 ? (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    {healthIssues.slice(0, 6).map((issue) => (
+                      <div
+                        key={issue.key}
+                        className={`rounded border px-3 py-2 text-xs ${
+                          issue.level === 'danger'
+                            ? 'border-red-400/20 bg-red-500/10 text-red-100'
+                            : 'border-amber-400/20 bg-amber-500/10 text-amber-100'
+                        }`}
+                      >
+                        {issue.text}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-100">
+                    当前默认模型配置完整且已验证，适合进入小说到动漫视频的生产流程。
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <ClipboardList className="w-5 h-5 text-cyan-300" />
+                  动漫制作任务推荐
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {PRODUCTION_TASK_REQUIREMENTS.map((task) => {
+                    const ready = task.capabilities.every((capability) => getDefaultConfigForCapability(savedConfigs, capability)?.test_status === 'success');
+                    return (
+                      <div key={task.name} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-white">{task.name}</div>
+                            <div className="mt-1 text-xs leading-5 text-white/45">{task.description}</div>
+                          </div>
+                          <span className={`shrink-0 rounded border px-2 py-0.5 text-xs ${
+                            ready
+                              ? 'border-emerald-400/20 bg-emerald-500/15 text-emerald-100'
+                              : 'border-yellow-400/20 bg-yellow-500/15 text-yellow-100'
+                          }`}>
+                            {ready ? '就绪' : '待完善'}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {task.capabilities.map((capability) => {
+                            const config = getDefaultConfigForCapability(savedConfigs, capability);
+                            const verified = config?.test_status === 'success';
+                            return (
+                              <button
+                                key={`${task.name}-${capability}`}
+                                type="button"
+	                        onClick={() => {
+	                          setLastPassedFormTest(null);
+	                          setTestResult(null);
+	                          setSelectedCapabilityFilter(capability);
+                                  requestAnimationFrame(() => {
+                                    configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                  });
+                                }}
+                                className={`rounded px-2 py-1 text-xs ${
+                                  verified
+                                    ? 'bg-emerald-500/15 text-emerald-100'
+                                    : config
+                                      ? 'bg-yellow-500/15 text-yellow-100'
+                                      : 'bg-white/10 text-white/45'
+                                }`}
+                              >
+                                {MODEL_CAPABILITY_LABELS[capability]}
+                                {verified ? ' 已验证' : config ? ' 未验证' : ' 未配置'}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+
             <Card ref={configFormRef} className="scroll-mt-6 bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
@@ -751,8 +1102,31 @@ export default function LLMConfigPage() {
                 {/* 服务商模型 */}
                 {activeTab !== 'external' && (
                   <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2 rounded-lg border border-white/10 bg-black/20 p-2">
+                      {capabilityFilterOptions
+                        .filter((option) => option.value === 'all' || option.count > 0 || selectedCapabilityFilter === option.value)
+                        .map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => setSelectedCapabilityFilter(option.value)}
+                            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors ${
+                              selectedCapabilityFilter === option.value
+                                ? 'bg-violet-600 text-white'
+                                : 'bg-white/5 text-white/60 hover:bg-white/10 hover:text-white'
+                            }`}
+                          >
+                            <span>{option.label}</span>
+                            <span className="rounded bg-black/20 px-1.5 py-0.5 text-[11px] text-white/60">
+                              {option.count}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
                     {filteredModels.length > 0 ? filteredModels.map((model) => {
-                      const capability = getModelCapability(model);
+                      const capabilities = getModelCapabilities(model);
+                      const primaryCapability = getModelCapability(model);
+                      const isVisionOnly = capabilities.includes('vision') && !capabilities.includes('image');
                       return (
                       <div
                         key={model.id}
@@ -780,9 +1154,18 @@ export default function LLMConfigPage() {
                                   推荐
                                 </span>
                               )}
-                              <span className="px-2 py-0.5 text-xs bg-white/10 text-white/55 rounded">
-                                {MODEL_CAPABILITY_LABELS[capability]}
-                              </span>
+                              {capabilities.map((capability) => (
+                                <span
+                                  key={capability}
+                                  className={`px-2 py-0.5 text-xs rounded ${
+                                    capability === primaryCapability
+                                      ? 'bg-white/15 text-white/70'
+                                      : 'bg-white/10 text-white/45'
+                                  }`}
+                                >
+                                  {MODEL_CAPABILITY_LABELS[capability]}
+                                </span>
+                              ))}
                               {model.user_configured && (
                                 <span className="px-2 py-0.5 text-xs bg-cyan-500/15 text-cyan-100 rounded">
                                   已配置
@@ -817,6 +1200,16 @@ export default function LLMConfigPage() {
                                 当前用户已保存配置：{model.user_config_name || '未命名配置'}
                                 {model.user_config_count && model.user_config_count > 1 ? `，共 ${model.user_config_count} 条` : ''}
                                 。再次保存会更新已有配置，避免重复配置。
+                              </div>
+                            )}
+                            {model.user_configured && model.user_test_status === 'failed' && model.user_test_message && (
+                              <div className="mt-2 rounded border border-red-400/20 bg-red-500/10 px-2 py-1 text-xs text-red-100">
+                                {model.user_test_message}
+                              </div>
+                            )}
+                            {isVisionOnly && (
+                              <div className="mt-2 rounded border border-amber-400/20 bg-amber-500/10 px-2 py-1 text-xs text-amber-100/90">
+                                该模型用于图片理解、多模态分析和提示词辅助，不直接生成小说封面、角色头像或场景参考图。
                               </div>
                             )}
                           </div>
@@ -890,17 +1283,48 @@ export default function LLMConfigPage() {
                               {modelStatusLabel(defaultConfig.test_status)}
                             </span>
                           </div>
+                          {defaultConfig.test_status === 'failed' && defaultConfig.test_message && (
+                            <div className="rounded border border-red-400/20 bg-red-500/10 px-2 py-1 text-red-100">
+                              {defaultConfig.test_message}
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="mt-2 text-xs text-yellow-100/70">
                           未配置，使用该能力时会提示先到本页新增并测试。
                         </div>
                       )}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setSelectedCapabilityFilter(capability);
+                          if (defaultConfig) {
+                            setSelectedProvider(defaultConfig.provider_id);
+                            setActiveTab(defaultConfig.provider_id);
+                            const matchedModel = models.find((model) => (
+                              model.id === (defaultConfig.config_model_id || defaultConfig.model_id)
+                              || model.model_id === defaultConfig.api_model_id
+                              || model.model_id === defaultConfig.model_id
+                            ));
+                            if (matchedModel) {
+                              setSelectedModel(matchedModel.id);
+                            }
+                          }
+                          requestAnimationFrame(() => {
+                            configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          });
+                        }}
+                        className="mt-3 h-8 w-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white"
+                      >
+                        {defaultConfig ? '查看/调整' : '配置该能力'}
+                      </Button>
                     </div>
                   );
                 })}
-                <p className="text-xs text-white/40">
-                  默认配置按能力类别独立生效，设置视频默认不会覆盖文本默认。
+                <p className="text-xs leading-5 text-white/40">
+                  默认配置按能力类别独立生效，视频、语音、文本互不覆盖。视觉多模态用于图片理解和参考分析，不替代真正的图像生成模型。
                 </p>
               </CardContent>
             </Card>
@@ -931,11 +1355,13 @@ export default function LLMConfigPage() {
                   <label className="block text-sm text-white/80 mb-2">服务商</label>
                   <Select
                     value={selectedProvider}
-                    onChange={(e) => {
-                      setSelectedProvider(e.target.value);
-                      setActiveTab(e.target.value);
-                      setSelectedModel('');
-                    }}
+	                    onChange={(e) => {
+	                      setSelectedProvider(e.target.value);
+	                      setActiveTab(e.target.value);
+	                      setSelectedModel('');
+	                      setLastPassedFormTest(null);
+	                      setTestResult(null);
+	                    }}
                     options={
                       providers.map(p => ({ value: p.id, label: p.name_cn || p.name }))
                     }
@@ -965,8 +1391,8 @@ export default function LLMConfigPage() {
                       )}
                       {selectedProvider === 'minimax' && (
                         <div className="mt-1 text-xs text-white/40">
-                          文本→/v1/chat/completions | 图像→/v1/image_generation | TTS→/v1/t2a_v2
-                          <br/>sk-api-前缀→国内(api.minimaxi.com) | sk-cp-前缀→海外(api.minimax.io)
+                          M3文本/多模态→api.minimaxi.com/v1/text/chatcompletion_v2 | 旧文本→/v1/chat/completions | 图像→/v1/image_generation | TTS→/v1/t2a_v2
+                          <br/>国内/Agent Plan 常见 key 默认走 api.minimaxi.com；如使用海外账号，可在配置高级参数里覆盖 base_url。
                         </div>
                       )}
                       {selectedProvider === 'qianlian' && (
@@ -993,7 +1419,10 @@ export default function LLMConfigPage() {
                   <label className="block text-sm text-white/80 mb-2">模型</label>
                   <Select
                     value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedModel(e.target.value);
+                      setLastPassedFormTest(null);
+                    }}
                     options={
                       modelSelectOptions
                     }
@@ -1005,8 +1434,30 @@ export default function LLMConfigPage() {
                   {selectedModelInfo && (
                     <div className="mt-1 space-y-1 text-xs">
                       <p className="text-white/45">API 模型 ID：{selectedModelInfo.model_id}</p>
-                      {selectedCapability && (
-                        <p className="text-white/45">能力类型：{MODEL_CAPABILITY_LABELS[selectedCapability]}</p>
+                      {selectedCapabilities.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 text-white/45">
+                          <span>能力类型：</span>
+                          {selectedCapabilities.map((capability) => (
+                            <span
+                              key={capability}
+                              className={`rounded px-2 py-0.5 ${
+                                capability === selectedCapability
+                                  ? 'bg-white/15 text-white/70'
+                                  : 'bg-white/10 text-white/45'
+                              }`}
+                            >
+                              {MODEL_CAPABILITY_LABELS[capability]}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {selectedModelInfo.base_url && (
+                        <p className="break-all text-white/45">模型专属 Base URL：{selectedModelInfo.base_url}</p>
+                      )}
+                      {selectedModelIsVisionOnly && (
+                        <p className="rounded border border-amber-400/20 bg-amber-500/10 px-2 py-1 text-amber-100/90">
+                          视觉多模态模型可用于图片理解、角色参考分析和图像提示词辅助；封面、头像、场景图生成仍请选择图像生成模型。
+                        </p>
                       )}
                       {selectedModelInfo.user_configured && (
                         <p className="text-cyan-100/80">
@@ -1021,16 +1472,24 @@ export default function LLMConfigPage() {
 
                 {/* API Key */}
                 <div>
-                  <label className="block text-sm text-white/80 mb-2">
-                    API Key <span className="text-red-400">*</span>
-                  </label>
-                  <Input
-                    type="password"
-                    placeholder={agentPlanSelected ? '请输入 Agent Plan 专属 API Key' : '请输入API Key'}
-                    value={apiKey}
-                    onChange={(e) => setApiKey(e.target.value)}
-                    className="bg-white/5 border-white/10"
-                  />
+	                  <label className="block text-sm text-white/80 mb-2">
+	                    API Key {requiresApiKey ? <span className="text-red-400">*</span> : <span className="text-white/40">(留空沿用原 Key)</span>}
+	                  </label>
+	                  <Input
+	                    type="password"
+	                    placeholder={requiresApiKey ? (agentPlanSelected ? '请输入 Agent Plan 专属 API Key' : '请输入API Key') : '不修改 Key 可留空；输入新 Key 后请先测试'}
+	                    value={apiKey}
+	                    onChange={(e) => {
+	                      setApiKey(e.target.value);
+	                      setLastPassedFormTest(null);
+	                    }}
+	                    className="bg-white/5 border-white/10"
+	                  />
+	                  {!requiresApiKey && (
+	                    <p className="mt-1 text-xs text-cyan-100/70">
+	                      当前配置已有可用密钥。直接更新会保留原验证状态；如输入新 Key，测试通过并更新后会自动同步验证状态。
+	                    </p>
+	                  )}
                   {agentPlanSelected && (
                     <p className="mt-1 text-xs text-amber-200/80">
                       PDF 文档说明 Agent Plan API Key 与普通火山方舟 API Key 不能混用，Base URL 必须包含 /api/plan/v3。图像/视频模型测试只验证端点，不提交生成任务。
@@ -1137,7 +1596,7 @@ export default function LLMConfigPage() {
                 <div className="flex gap-2">
                   <Button
                     onClick={handleTest}
-                    disabled={isTesting || !apiKey || !selectedModel}
+                    disabled={isTesting || !canTestCurrentForm}
                     variant="outline"
                     className="flex-1"
                   >
@@ -1155,7 +1614,7 @@ export default function LLMConfigPage() {
                   </Button>
                   <Button
                     onClick={handleSave}
-                    disabled={isLoading || !configName || !apiKey || !selectedModel}
+                    disabled={isLoading || !canSaveCurrentForm}
                     className="flex-1 bg-violet-600 hover:bg-violet-700"
                   >
                     {isLoading ? (

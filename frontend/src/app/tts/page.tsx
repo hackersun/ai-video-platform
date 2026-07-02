@@ -3,13 +3,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
 import { useToast } from '@/components/ui/toast';
 import {
   Volume2, Play, Pause, Download, Loader2, AlertCircle,
-  Copy, RefreshCw, Clock, Settings, User, ChevronRight, BookOpen, CheckCircle
+  Copy, RefreshCw, Clock, Settings, User, BookOpen, CheckCircle,
+  Headphones, Mic2, Upload
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
@@ -28,7 +31,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v
 
 // MiniMax 音色列表
 const MINIMAX_VOICES = [
-  { id: 'female-shaonj', label: '少女音', gender: '女' },
+  { id: 'female-shaonv', label: '少女音', gender: '女' },
   { id: 'female-tianmei', label: '甜美音', gender: '女' },
   { id: 'male-yunshu', label: '云书（男）', gender: '男' },
   { id: 'male-baba', label: '爸爸（男）', gender: '男' },
@@ -50,6 +53,7 @@ interface Novel { id: string; title: string; }
 interface Chapter { id: string; title: string; novel_id: string; }
 interface Script { id: string; title: string; novel_id?: string; chapter_id?: string; extra_data?: any; }
 interface Storyboard { id: string; title: string; script_id: string; }
+interface StoryBible { id: string; title: string; character_rules?: any[]; }
 interface Shot {
   id: string; shot_number: number; prompt: string; dialogue?: string;
   character_refs?: any[]; storyboard_id: string;
@@ -64,7 +68,20 @@ interface TTSJob {
 
 interface TTSSegment {
   character: string; text: string; voice: string;
+  voice_source?: string; speed?: number;
   audio_url?: string; duration?: number; error?: string;
+}
+
+interface VoiceOption {
+  id: string;
+  label: string;
+  gender: string;
+  lang?: string;
+  provider?: string;
+  is_custom?: boolean;
+  sample_audio_url?: string;
+  status?: string;
+  description?: string;
 }
 
 export default function TTSPage() {
@@ -72,7 +89,7 @@ export default function TTSPage() {
   const [selectedProvider, setSelectedProvider] = useState('minimax');
   const [llmConfigs, setLlmConfigs] = useState<SavedModelConfig[]>([]);
   const [selectedModelConfigId, setSelectedModelConfigId] = useState('');
-  const [selectedVoice, setSelectedVoice] = useState('female-shaonj');
+  const [selectedVoice, setSelectedVoice] = useState('female-shaonv');
   const [text, setText] = useState('');
   const [voiceSpeed, setVoiceSpeed] = useState(1.0);
   const [generating, setGenerating] = useState(false);
@@ -83,7 +100,24 @@ export default function TTSPage() {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TTSJob[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
+  const [previewingVoice, setPreviewingVoice] = useState(false);
+  const [voicePreviewAudio, setVoicePreviewAudio] = useState<string | null>(null);
+  const [cloneName, setCloneName] = useState('');
+  const [cloneDescription, setCloneDescription] = useState('');
+  const [cloneSampleUrl, setCloneSampleUrl] = useState('');
+  const [cloneSampleFile, setCloneSampleFile] = useState<File | null>(null);
+  const [cloneSampleSource, setCloneSampleSource] = useState<'upload' | 'recording' | 'url'>('upload');
+  const [cloneSamplePreviewAudio, setCloneSamplePreviewAudio] = useState<string | null>(null);
+  const [recordingVoiceClone, setRecordingVoiceClone] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [creatingClone, setCreatingClone] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<number | null>(null);
+  const cloneSamplePreviewUrlRef = useRef<string | null>(null);
 
   // 创作链路
   const [novels, setNovels] = useState<Novel[]>([]);
@@ -96,11 +130,15 @@ export default function TTSPage() {
   const [selectedStoryboard, setSelectedStoryboard] = useState('');
   const [shots, setShots] = useState<Shot[]>([]);
   const [selectedShot, setSelectedShot] = useState('');
+  const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
+  const [selectedStoryBible, setSelectedStoryBible] = useState('');
+  const [useStoryBibleVoice, setUseStoryBibleVoice] = useState(true);
 
   const [loadingChain, setLoadingChain] = useState(false);
 
   // 音色列表
-  const voiceList = selectedProvider === 'minimax' ? MINIMAX_VOICES : VOLCANO_VOICES;
+  const fallbackVoices: VoiceOption[] = selectedProvider === 'minimax' ? MINIMAX_VOICES : VOLCANO_VOICES;
+  const voiceList = availableVoices.length > 0 ? availableVoices : fallbackVoices;
   const ttsConfigs = getConfigsByCapability(llmConfigs, 'audio');
   const selectedTTSConfig = ttsConfigs.find(config => config.id === selectedModelConfigId);
 
@@ -109,16 +147,45 @@ export default function TTSPage() {
     loadNovels();
     loadHistory();
     loadLLMConfigs();
+    loadVoiceOptions('minimax');
   }, []);
 
   useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        window.clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      mediaRecorderRef.current = null;
+      mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+      if (cloneSamplePreviewUrlRef.current) {
+        URL.revokeObjectURL(cloneSamplePreviewUrlRef.current);
+        cloneSamplePreviewUrlRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    loadVoiceOptions(selectedProvider);
+  }, [selectedProvider]);
+
+  useEffect(() => {
     if (ttsConfigs.length === 0 || selectedModelConfigId) return;
-    const defaultConfig = getDefaultConfigForCapability(llmConfigs, 'audio');
-    if (defaultConfig) {
-      setSelectedModelConfigId(defaultConfig.id);
-      setSelectedProvider(defaultConfig.provider_id);
-    }
+      const defaultConfig = getDefaultConfigForCapability(llmConfigs, 'audio');
+      if (defaultConfig) {
+        setSelectedModelConfigId(defaultConfig.id);
+        setSelectedProvider(defaultConfig.provider_id);
+      }
   }, [llmConfigs, selectedModelConfigId]);
+
+  useEffect(() => {
+    if (voiceList.length === 0) return;
+    if (!voiceList.some((voice) => voice.id === selectedVoice)) {
+      setSelectedVoice(voiceList[0].id);
+      setVoicePreviewAudio(null);
+    }
+  }, [availableVoices, selectedProvider]);
 
   // 小说变化 → 加载章节
   useEffect(() => {
@@ -126,6 +193,10 @@ export default function TTSPage() {
       loadChapters(selectedNovel);
       setSelectedChapter(''); setScripts([]); setSelectedScript('');
       setStoryboards([]); setSelectedStoryboard(''); setShots([]); setSelectedShot('');
+      loadStoryBibles(selectedNovel);
+    } else {
+      setStoryBibles([]);
+      setSelectedStoryBible('');
     }
   }, [selectedNovel]);
 
@@ -206,6 +277,25 @@ export default function TTSPage() {
     } catch {}
   };
 
+  const loadStoryBibles = async (novelId: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/story-bibles?novel_id=${encodeURIComponent(novelId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : [];
+        setStoryBibles(list);
+        setSelectedStoryBible((current) => (
+          current && list.some((item: StoryBible) => item.id === current)
+            ? current
+            : list[0]?.id || ''
+        ));
+      }
+    } catch {
+      setStoryBibles([]);
+      setSelectedStoryBible('');
+    }
+  };
+
   const loadHistory = async () => {
     setLoadingHistory(true);
     try {
@@ -222,6 +312,29 @@ export default function TTSPage() {
         setLlmConfigs(Array.isArray(configs) ? configs : []);
       }
     } catch {}
+  };
+
+  const loadVoiceOptions = async (provider: string) => {
+    try {
+      const res = await fetchWithAuth(`${API_BASE}/tts/voices?provider=${encodeURIComponent(provider)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const voices = Array.isArray(data.voices) ? data.voices : [];
+        setAvailableVoices(voices.map((voice: any) => ({
+          id: voice.voice_id || voice.id,
+          label: voice.label || voice.name || voice.voice_id || voice.id,
+          gender: voice.gender || '未知',
+          lang: voice.lang,
+          provider: voice.provider,
+          is_custom: Boolean(voice.is_custom),
+          sample_audio_url: voice.sample_audio_url,
+          status: voice.status,
+          description: voice.description,
+        })).filter((voice: VoiceOption) => Boolean(voice.id)));
+        return;
+      }
+    } catch {}
+    setAvailableVoices([]);
   };
 
   const handleGenerate = async () => {
@@ -263,18 +376,22 @@ export default function TTSPage() {
           shot_id: selectedShot || undefined,
           storyboard_id: selectedStoryboard || undefined,
           script_id: selectedScript || undefined,
+          novel_id: selectedNovel || undefined,
+          chapter_id: selectedChapter || undefined,
+          story_bible_id: selectedStoryBible || undefined,
+          use_story_bible_voice: useStoryBibleVoice,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        if (data.status === 'completed') {
+        if (data.status === 'completed' || data.status === 'succeeded') {
           // 多角色
           if (data.extra_data?.segments?.length > 0) {
             setCurrentSegments(data.extra_data.segments);
           }
           if (data.audio_url) {
-            setCurrentAudio(`${API_BASE.replace('/api/v1', '')}${data.audio_url}`);
+            setCurrentAudio(getFullAudioUrl(data.audio_url));
           }
         } else if (data.status === 'failed') {
           throw new Error(data.error_message || 'TTS生成失败');
@@ -288,6 +405,210 @@ export default function TTSPage() {
       setError(err.message || '生成失败，请稍后重试');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const handlePreviewVoice = async () => {
+    setPreviewingVoice(true);
+    setVoicePreviewAudio(null);
+    try {
+      const sampleText = text.trim()
+        ? text.trim().slice(0, 100)
+        : `这是一段${voiceList.find(v => v.id === selectedVoice)?.label || '当前音色'}的试听。`;
+      const res = await fetchWithAuth(`${API_BASE}/tts/preview`, {
+        method: 'POST',
+        body: JSON.stringify({
+          text: sampleText,
+          voice_model: selectedVoice,
+          speed: voiceSpeed,
+          api_provider: selectedTTSConfig?.provider_id || selectedProvider || 'minimax',
+          model_config_id: selectedTTSConfig?.id || undefined,
+          model_id: selectedTTSConfig?.api_model_id || selectedTTSConfig?.model_id || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || '试听失败');
+      }
+      setVoicePreviewAudio(getFullAudioUrl(data.audio_url));
+      toast({ title: '试听音频已生成', description: data.message || '可以直接播放试听。', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '试听失败', description: err.message || '请检查 TTS 模型配置。', type: 'error' });
+    } finally {
+      setPreviewingVoice(false);
+    }
+  };
+
+  const formatRecordingSeconds = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const remain = (seconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${remain}`;
+  };
+
+  const setCloneSamplePreviewFromFile = (file: File | null) => {
+    if (cloneSamplePreviewUrlRef.current) {
+      URL.revokeObjectURL(cloneSamplePreviewUrlRef.current);
+      cloneSamplePreviewUrlRef.current = null;
+    }
+    if (!file) {
+      setCloneSamplePreviewAudio(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    cloneSamplePreviewUrlRef.current = url;
+    setCloneSamplePreviewAudio(url);
+  };
+
+  const stopRecordingResources = () => {
+    if (recordingTimerRef.current) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    mediaStreamRef.current?.getTracks().forEach(track => track.stop());
+    mediaStreamRef.current = null;
+  };
+
+  const handleCloneFileChange = (file: File | null) => {
+    if (recordingVoiceClone) {
+      toast({ title: '正在录音中', description: '请先停止录音，再选择上传文件。', type: 'info' });
+      return;
+    }
+    setCloneSampleFile(file);
+    setCloneSampleSource('upload');
+    setCloneSampleUrl('');
+    setRecordingSeconds(0);
+    setCloneSamplePreviewFromFile(file);
+  };
+
+  const startVoiceCloneRecording = async () => {
+    if (recordingVoiceClone) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      toast({ title: '当前浏览器不支持录音', description: '可以改用上传音频样本。', type: 'error' });
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const preferredMimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+      const recorder = preferredMimeType
+        ? new MediaRecorder(stream, { mimeType: preferredMimeType })
+        : new MediaRecorder(stream);
+
+      recordingChunksRef.current = [];
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      setCloneSampleFile(null);
+      setCloneSampleUrl('');
+      setCloneSampleSource('recording');
+      setCloneSamplePreviewFromFile(null);
+      setRecordingSeconds(0);
+
+      recorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) {
+          recordingChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        stopRecordingResources();
+        setRecordingVoiceClone(false);
+        const mimeType = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(recordingChunksRef.current, { type: mimeType });
+        recordingChunksRef.current = [];
+        if (!blob.size) {
+          toast({ title: '录音为空', description: '请重新录制一段清晰人声。', type: 'error' });
+          return;
+        }
+        const extension = mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a' : 'webm';
+        const file = new File([blob], `recorded-voice-${Date.now()}.${extension}`, { type: mimeType });
+        setCloneSampleFile(file);
+        setCloneSampleSource('recording');
+        setCloneSamplePreviewFromFile(file);
+        toast({ title: '录音已读取', description: '可以先试听样本，再创建克隆音色。', type: 'success' });
+      };
+      recorder.onerror = () => {
+        stopRecordingResources();
+        setRecordingVoiceClone(false);
+        toast({ title: '录音失败', description: '请检查麦克风权限后重试。', type: 'error' });
+      };
+
+      recorder.start();
+      setRecordingVoiceClone(true);
+      recordingTimerRef.current = window.setInterval(() => {
+        setRecordingSeconds(value => value + 1);
+      }, 1000);
+    } catch (err: any) {
+      stopRecordingResources();
+      setRecordingVoiceClone(false);
+      toast({ title: '无法读取麦克风', description: err?.message || '请允许浏览器访问麦克风。', type: 'error' });
+    }
+  };
+
+  const stopVoiceCloneRecording = () => {
+    if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+      stopRecordingResources();
+      setRecordingVoiceClone(false);
+      return;
+    }
+    mediaRecorderRef.current.stop();
+  };
+
+  const resetVoiceCloneRecording = () => {
+    if (recordingVoiceClone) {
+      stopVoiceCloneRecording();
+    }
+    setCloneSampleFile(null);
+    setCloneSampleSource('upload');
+    setRecordingSeconds(0);
+    setCloneSamplePreviewFromFile(null);
+  };
+
+  const handleCreateVoiceClone = async () => {
+    if (!cloneName.trim()) {
+      toast({ title: '请输入克隆音色名称', type: 'info' });
+      return;
+    }
+    if (!cloneSampleFile && !cloneSampleUrl.trim()) {
+      toast({ title: '请上传声音样本或填写样本 URL', description: '建议使用 10-30 秒干净人声。', type: 'info' });
+      return;
+    }
+    setCreatingClone(true);
+    try {
+      const form = new FormData();
+      form.append('name', cloneName.trim());
+      form.append('provider', selectedTTSConfig?.provider_id || selectedProvider || 'minimax');
+      if (cloneDescription.trim()) form.append('description', cloneDescription.trim());
+      if (cloneSampleUrl.trim()) form.append('sample_audio_url', cloneSampleUrl.trim());
+      if (cloneSampleFile) form.append('sample_audio', cloneSampleFile);
+      form.append('sample_source', cloneSampleFile ? cloneSampleSource : 'url');
+      if (selectedNovel) form.append('novel_id', selectedNovel);
+
+      const res = await fetchWithAuth(`${API_BASE}/tts/voice-clones`, {
+        method: 'POST',
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || '创建克隆音色失败');
+      }
+      await loadVoiceOptions(selectedTTSConfig?.provider_id || selectedProvider || 'minimax');
+      setSelectedVoice(data.voice_id);
+      setCloneName('');
+      setCloneDescription('');
+      setCloneSampleUrl('');
+      setCloneSampleFile(null);
+      setCloneSampleSource('upload');
+      setRecordingSeconds(0);
+      setCloneSamplePreviewFromFile(null);
+      setVoicePreviewAudio(data.sample_audio_url ? getFullAudioUrl(data.sample_audio_url) : null);
+      toast({ title: '克隆音色已创建', description: '已加入音色列表，可直接选择用于 TTS。', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '创建失败', description: err.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setCreatingClone(false);
     }
   };
 
@@ -435,7 +756,8 @@ export default function TTSPage() {
                       onClick={() => {
                         setSelectedModelConfigId(config.id);
                         setSelectedProvider(config.provider_id);
-                        setSelectedVoice(config.provider_id === 'volcano' ? 'female_nvsheng' : 'female-shaonj');
+                        setSelectedVoice(config.provider_id === 'volcano' ? 'female_nvsheng' : 'female-shaonv');
+                        setVoicePreviewAudio(null);
                       }}
                       className={`p-3 rounded-lg border cursor-pointer transition-colors ${
                         selectedModelConfigId === config.id
@@ -486,20 +808,51 @@ export default function TTSPage() {
             {/* 音色 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
-                <CardTitle className="text-white">音色选择</CardTitle>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Headphones className="w-5 h-5" />
+                  音色选择与试听
+                </CardTitle>
               </CardHeader>
-              <CardContent>
-                <select
-                  value={selectedVoice}
-                  onChange={e => setSelectedVoice(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm mb-4"
-                >
-                  {voiceList.map(v => (
-                    <option key={v.id} value={v.id}>{v.gender} - {v.label}</option>
-                  ))}
-                </select>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <select
+                    value={selectedVoice}
+                    onChange={e => {
+                      setSelectedVoice(e.target.value);
+                      setVoicePreviewAudio(null);
+                    }}
+                    className="min-w-0 flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
+                  >
+                    {voiceList.map(v => (
+                      <option key={v.id} value={v.id}>
+                        {v.is_custom ? '克隆' : v.gender} - {v.label}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handlePreviewVoice}
+                    disabled={previewingVoice || !selectedVoice}
+                    className="shrink-0 border-white/20"
+                  >
+                    {previewingVoice ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
+                    试听
+                  </Button>
+                </div>
+                {voiceList.find(v => v.id === selectedVoice)?.is_custom && (
+                  <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs text-cyan-50/80">
+                    当前选择的是克隆音色。平台会把该 voice_id 传给 TTS 服务；如需真实云端克隆效果，请确保对应服务商已完成音色训练或生产适配器已接入。
+                  </div>
+                )}
+                {voicePreviewAudio && (
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="mb-2 text-xs text-white/50">音色试听</div>
+                    <audio src={voicePreviewAudio} controls className="w-full" />
+                  </div>
+                )}
                 {/* 语速 */}
-                <div className="mb-2">
+                <div>
                   <div className="flex justify-between mb-1">
                     <label className="text-white/80 text-sm">语速</label>
                     <span className="text-white text-sm">{voiceSpeed.toFixed(1)}x</span>
@@ -510,6 +863,173 @@ export default function TTSPage() {
                     <span>慢</span><span>正常</span><span>快</span>
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Mic2 className="w-5 h-5" />
+                  声音克隆
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Input
+                  value={cloneName}
+                  onChange={e => setCloneName(e.target.value)}
+                  placeholder="克隆音色名称，例如：主角林舟"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/35"
+                />
+                <Input
+                  value={cloneDescription}
+                  onChange={e => setCloneDescription(e.target.value)}
+                  placeholder="声音描述，例如：少年感、冷静、语速稳定"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/35"
+                />
+                <Input
+                  value={cloneSampleUrl}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setCloneSampleUrl(value);
+                    if (value.trim()) {
+                      setCloneSampleFile(null);
+                      setCloneSampleSource('url');
+                      setRecordingSeconds(0);
+                      setCloneSamplePreviewFromFile(null);
+                    }
+                  }}
+                  placeholder="样本音频 URL，可选，也可直接上传或录音"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/35"
+                />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <label className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm transition ${
+                    cloneSampleSource === 'upload' && cloneSampleFile
+                      ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-50'
+                      : 'border-white/10 bg-white/5 text-white/65 hover:bg-white/10'
+                  }`}>
+                    <span className="min-w-0">
+                      <span className="block text-xs text-white/45">上传音频克隆</span>
+                      <span className="block truncate">
+                        {cloneSampleSource === 'upload' && cloneSampleFile ? cloneSampleFile.name : '选择 wav/mp3/m4a/webm'}
+                      </span>
+                    </span>
+                    <Upload className="h-4 w-4 shrink-0" />
+                    <input
+                      type="file"
+                      accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.webm"
+                      className="hidden"
+                      onChange={e => handleCloneFileChange(e.target.files?.[0] || null)}
+                    />
+                  </label>
+                  <div className={`rounded-lg border px-3 py-2 ${
+                    cloneSampleSource === 'recording'
+                      ? 'border-cyan-400/40 bg-cyan-500/10'
+                      : 'border-white/10 bg-white/5'
+                  }`}>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-xs text-white/45">读取录音克隆</div>
+                        <div className="truncate text-sm text-white/70">
+                          {recordingVoiceClone
+                            ? `录音中 ${formatRecordingSeconds(recordingSeconds)}`
+                            : cloneSampleSource === 'recording' && cloneSampleFile
+                              ? cloneSampleFile.name
+                              : '使用麦克风录一段样本'}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={recordingVoiceClone ? stopVoiceCloneRecording : startVoiceCloneRecording}
+                        disabled={creatingClone}
+                        className="shrink-0 border-white/20"
+                      >
+                        {recordingVoiceClone ? <Pause className="h-4 w-4 mr-1" /> : <Mic2 className="h-4 w-4 mr-1" />}
+                        {recordingVoiceClone ? '停止' : '录音'}
+                      </Button>
+                    </div>
+                    {cloneSampleSource === 'recording' && cloneSampleFile && !recordingVoiceClone && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={resetVoiceCloneRecording}
+                        className="h-7 px-2 text-xs text-white/65 hover:text-white"
+                      >
+                        <RefreshCw className="h-3.5 w-3.5 mr-1" />
+                        重录
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {cloneSamplePreviewAudio && (
+                  <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2 text-xs text-white/50">
+                      <span>{cloneSampleSource === 'recording' ? '录音样本试听' : '上传样本试听'}</span>
+                      <Badge className="bg-cyan-500/15 text-cyan-100 border-cyan-500/30">
+                        {cloneSampleSource === 'recording' ? '录音' : '上传'}
+                      </Badge>
+                    </div>
+                    <audio src={cloneSamplePreviewAudio} controls className="w-full" />
+                  </div>
+                )}
+                <Button
+                  type="button"
+                  onClick={handleCreateVoiceClone}
+                  disabled={creatingClone || recordingVoiceClone}
+                  className="w-full bg-cyan-600 hover:bg-cyan-700"
+                >
+                  {creatingClone ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Mic2 className="w-4 h-4 mr-2" />}
+                  创建克隆音色
+                </Button>
+                <p className="text-xs text-white/40">
+                  建议使用 10-30 秒干净人声。上传、录音和 URL 都会先登记为可复用克隆音色；云端训练由对应服务商或生产适配器执行。
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white">角色音色锁</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge className={useStoryBibleVoice ? 'bg-green-500/20 text-green-200 border-green-500/30' : 'bg-white/10 text-white/60 border-white/10'}>
+                      {useStoryBibleVoice ? '启用' : '关闭'}
+                    </Badge>
+                    {selectedStoryBible && (
+                      <Badge className="bg-violet-500/20 text-violet-100 border-violet-500/30">
+                        {storyBibles.find(item => item.id === selectedStoryBible)?.character_rules?.length || 0} 个角色
+                      </Badge>
+                    )}
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-white/70">
+                    <Checkbox
+                      checked={useStoryBibleVoice}
+                      onCheckedChange={(checked) => setUseStoryBibleVoice(Boolean(checked))}
+                      disabled={generating}
+                    />
+                    使用
+                  </label>
+                </div>
+                <select
+                  value={selectedStoryBible}
+                  onChange={e => setSelectedStoryBible(e.target.value)}
+                  disabled={generating || storyBibles.length === 0}
+                  className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm disabled:opacity-50"
+                >
+                  <option value="">自动/未选择 Story Bible</option>
+                  {storyBibles.map(item => (
+                    <option key={item.id} value={item.id}>
+                      {item.title}{item.character_rules?.length ? ` · ${item.character_rules.length} 角色` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-white/40 text-xs">
+                  多角色对白会优先按 Story Bible 的 voice 与 voice_speed 分段生成。
+                </p>
               </CardContent>
             </Card>
           </div>
@@ -594,8 +1114,16 @@ export default function TTSPage() {
                             <span className="text-violet-400 text-sm font-medium">{seg.character}</span>
                           )}
                           <span className="text-white/40 text-xs">{voiceList.find(v => v.id === seg.voice)?.label || seg.voice}</span>
+                          {seg.voice_source === 'story_bible' && (
+                            <Badge className="bg-green-500/20 text-green-200 border-green-500/30 text-[10px]">
+                              Story Bible
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-white/80 text-sm truncate">"{seg.text}"</p>
+                        {seg.audio_url && (
+                          <audio src={getFullAudioUrl(seg.audio_url)} controls className="mt-2 w-full" />
+                        )}
                       </div>
                       {seg.audio_url ? (
                         <Button variant="ghost" size="sm" onClick={() => playAudio(seg.audio_url!)}>
@@ -615,7 +1143,9 @@ export default function TTSPage() {
               <Card className="bg-white/5 border-white/10">
                 <CardHeader><CardTitle className="text-white">音频预览</CardTitle></CardHeader>
                 <CardContent>
-                  <div className="flex items-center gap-4">
+                  <div className="space-y-3">
+                    <audio src={currentAudio} controls className="w-full" />
+                    <div className="flex items-center gap-4">
                     <Button onClick={() => playing ? stopAudio() : playAudio(currentAudio)}
                       className="w-12 h-12 rounded-full bg-violet-600 hover:bg-violet-700">
                       {playing ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-0.5" />}
@@ -626,6 +1156,7 @@ export default function TTSPage() {
                     <Button variant="outline" onClick={() => window.open(getFullAudioUrl(currentAudio), '_blank')}>
                       <Download className="w-4 h-4 mr-2" />下载
                     </Button>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -671,6 +1202,9 @@ export default function TTSPage() {
                               preflight={job.extra_data?.generation_preflight}
                               testId={`history-preflight-${job.id}`}
                             />
+                            {job.audio_url && (
+                              <audio src={getFullAudioUrl(job.audio_url)} controls className="mt-2 w-full max-w-xl" />
+                            )}
                             {/* 多角色片段 */}
                             {job.extra_data?.segments?.length > 0 && (
                               <div className="mt-1 space-y-1">
@@ -678,6 +1212,11 @@ export default function TTSPage() {
                                   <div key={i} className="flex items-center gap-2 text-xs">
                                     {seg.character && <span className="text-violet-400">{seg.character}:</span>}
                                     <span className="text-white/60 truncate">"{seg.text.slice(0, 30)}"</span>
+                                    {seg.voice_source === 'story_bible' && (
+                                      <span className="rounded border border-green-500/30 bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-200">
+                                        Story Bible
+                                      </span>
+                                    )}
                                     {seg.audio_url ? (
                                       <button
                                         type="button"

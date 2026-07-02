@@ -203,15 +203,19 @@ def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Opti
 def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
     if model is None:
         return False
-    values = [
+    identifier_values = [
         getattr(model, "id", None),
         getattr(model, "provider_id", None),
         getattr(model, "model_id", None),
         getattr(model, "model_name", None),
+    ]
+    display_values = [
         getattr(model, "model_name_cn", None),
         getattr(model, "description", None),
     ]
-    text = " ".join(str(value or "").lower() for value in values)
+    identifier_text = " ".join(str(value or "").lower() for value in identifier_values)
+    display_text = " ".join(str(value or "").lower() for value in display_values)
+    text = f"{identifier_text} {display_text}".strip()
     if not text:
         return False
     return (
@@ -220,6 +224,13 @@ def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
         or "test-image-" in text
         or "test-text-" in text
         or text.startswith("test-")
+        or identifier_text.startswith("tts-model-")
+        or "tts-api-model" in identifier_text
+        or "tts api model" in identifier_text
+        or "-test-" in identifier_text
+        or identifier_text.endswith("-test")
+        or " test " in f" {identifier_text} "
+        or "测试" in display_text
         or "preflight-" in text
         or "preflight video model" in text
         or "doubao-seedance-test" in text
@@ -232,7 +243,7 @@ def _is_internal_test_provider(provider: Optional[LLMProvider]) -> bool:
     if provider is None:
         return False
     name_cn = (getattr(provider, "name_cn", None) or "").strip()
-    if name_cn in {"预检供应商", "测试供应商", "占位供应商"}:
+    if name_cn in {"预检供应商", "测试供应商", "占位供应商", "TTS开通供应商"}:
         return True
     values = [
         getattr(provider, "id", None),
@@ -245,6 +256,7 @@ def _is_internal_test_provider(provider: Optional[LLMProvider]) -> bool:
     return (
         "preflight-provider-" in text
         or "test-provider-" in text
+        or "tts-provider-" in text
         or "placeholder-provider-" in text
     )
 

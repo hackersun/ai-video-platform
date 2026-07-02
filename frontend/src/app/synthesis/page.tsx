@@ -37,6 +37,14 @@ const toMediaUrl = (url?: string) => {
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
 };
 
+type RenderArtifactLinks = {
+  preview_url?: string;
+  srt_url?: string;
+  timeline_url?: string;
+  render_manifest_url?: string;
+  source_manifest_url?: string;
+};
+
 const createEmptyHistoryFilters = () => ({
   novel_id: '',
   chapter_id: '',
@@ -82,6 +90,10 @@ interface SynthesisJob {
   render_manifest_url?: string;
   render_status?: string;
   render_backend?: string;
+  is_publishable?: boolean;
+  output_kind?: string;
+  publication_blockers?: Array<{ code?: string; message?: string }>;
+  publish_block_reason?: string;
   segment_count?: number;
   novel_id?: string;
   chapter_id?: string;
@@ -98,7 +110,9 @@ interface Publication {
   status: string;
   export_url: string;
   provider: string;
+  video_url?: string;
   synthesis_job_id?: string;
+  metadata?: Record<string, any>;
   created_at: string;
 }
 
@@ -258,11 +272,28 @@ export default function SynthesisPage() {
     setPublishingJobId(job.id);
     setPublishMessage(null);
     try {
-      await apiClient.publishSynthesis(job.id, { title: job.title, visibility: 'private' });
+      await apiClient.publishSynthesis(job.id, {
+        title: job.title,
+        visibility: 'private',
+        metadata: {
+          preview_url: job.preview_url,
+          srt_url: job.srt_url,
+          timeline_url: job.timeline_url,
+          render_manifest_url: job.render_manifest_url,
+          source_manifest_url: job.manifest_url,
+          render_artifacts: {
+            preview_url: job.preview_url,
+            srt_url: job.srt_url,
+            timeline_url: job.timeline_url,
+            render_manifest_url: job.render_manifest_url,
+            source_manifest_url: job.manifest_url,
+          },
+        },
+      });
       setPublishMessage(`《${job.title}》已发布`);
       loadPublications();
     } catch (err: any) {
-      setPublishMessage(err?.message || '发布失败');
+      setPublishMessage(publicationErrorMessage(err) || err?.message || '发布失败');
     } finally {
       setPublishingJobId(null);
     }
@@ -278,7 +309,7 @@ export default function SynthesisPage() {
       setPublishMessage(`《${job.title}》已创建导出`);
       loadPublications();
     } catch (err: any) {
-      setPublishMessage(err?.message || '导出失败');
+      setPublishMessage(publicationErrorMessage(err) || err?.message || '导出失败');
     } finally {
       setPublishingJobId(null);
     }
@@ -329,6 +360,44 @@ export default function SynthesisPage() {
   };
 
   const previewUrlFor = (job: SynthesisJob) => job.preview_url || job.output_url || job.video_url || '';
+  const isFinalVideoUrl = (url?: string) => Boolean(url && /\.(mp4|mov|webm)($|\?)/i.test(url));
+  const isPublishableJob = (job: SynthesisJob) => {
+    if (typeof job.is_publishable === 'boolean') return job.is_publishable;
+    if (job.output_kind === 'preview_package' || job.render_backend === 'local_artifact_package') return false;
+    if (job.render_status === 'adapter_ready' || job.render_status === 'cloud_pending' || job.render_status === 'preflight_failed') return false;
+    return isFinalVideoUrl(job.output_url);
+  };
+  const publicationBlockerText = (job: SynthesisJob) => {
+    const firstBlocker = Array.isArray(job.publication_blockers) ? job.publication_blockers[0] : null;
+    if (job.publish_block_reason) return job.publish_block_reason;
+    if (firstBlocker?.message) return firstBlocker.message;
+    if (job.output_kind === 'preview_package' || job.render_backend === 'local_artifact_package') return '当前只有本地预览包，生成真实视频文件后才能发布';
+    if (job.render_status === 'adapter_ready' || job.render_status === 'cloud_pending') return '等待云渲染完成后才能发布';
+    if (job.render_status === 'preflight_failed') return '渲染预检失败，修复问题后才能发布';
+    return '缺少最终视频文件，暂不能发布';
+  };
+  const publicationErrorMessage = (err: any) => {
+    const detail = err?.detail;
+    if (detail?.code !== 'publication_not_ready') return '';
+    const firstIssue = Array.isArray(detail.issues) ? detail.issues[0] : null;
+    return firstIssue?.message || detail.message || '最终成片尚未准备好，无法发布';
+  };
+  const publicationArtifactLinks = (publication: Publication): RenderArtifactLinks => {
+    const metadata = publication.metadata || {};
+    const nestedMetadata = metadata.metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {};
+    const artifacts = metadata.render_artifacts && typeof metadata.render_artifacts === 'object'
+      ? metadata.render_artifacts
+      : nestedMetadata.render_artifacts && typeof nestedMetadata.render_artifacts === 'object'
+        ? nestedMetadata.render_artifacts
+        : {};
+    return {
+      preview_url: artifacts.preview_url || metadata.preview_url || nestedMetadata.preview_url || publication.video_url,
+      srt_url: artifacts.srt_url || metadata.srt_url || nestedMetadata.srt_url,
+      timeline_url: artifacts.timeline_url || metadata.timeline_url || nestedMetadata.timeline_url,
+      render_manifest_url: artifacts.render_manifest_url || metadata.render_manifest_url || nestedMetadata.render_manifest_url,
+      source_manifest_url: artifacts.source_manifest_url || metadata.source_manifest_url || nestedMetadata.source_manifest_url,
+    };
+  };
   const isHtmlPreview = (url: string) => /\.html?($|\?)/i.test(url);
   const statusText = (status: string) => {
     if (status === 'succeeded') return '成功';
@@ -789,9 +858,12 @@ export default function SynthesisPage() {
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {history.map((job) => (
+                    {history.map((job) => {
+                      const publishable = isPublishableJob(job);
+                      return (
                       <div
                         key={job.id}
+                        data-testid={`synthesis-job-row-${job.id}`}
                         className={`rounded-lg border p-3 transition-colors ${
                           selectedHistoryJob?.id === job.id
                             ? 'border-violet-400/50 bg-violet-500/10'
@@ -808,6 +880,11 @@ export default function SynthesisPage() {
                               <div className="mt-1 text-white/60 text-sm">
                                 {new Date(job.created_at).toLocaleString()} · {statusText(job.status)} · {renderStatusText(job.render_status)}
                               </div>
+                              {!publishable && (
+                                <div className="mt-2 rounded border border-yellow-500/25 bg-yellow-500/10 px-2 py-1 text-xs text-yellow-100">
+                                  {publicationBlockerText(job)}
+                                </div>
+                              )}
                               <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/50">
                                 {job.novel_id && <span className="rounded bg-white/10 px-2 py-1">小说 {job.novel_id.slice(0, 8)}</span>}
                                 {job.chapter_id && <span className="rounded bg-white/10 px-2 py-1">章节 {job.chapter_id.slice(0, 8)}</span>}
@@ -836,10 +913,11 @@ export default function SynthesisPage() {
                                 <Eye className="w-4 h-4" />
                               </Button>
                             )}
-                            {job.output_url && (
+                            {publishable && job.output_url && (
                               <>
                                 <Button
                                   title="发布"
+                                  aria-label="发布"
                                   variant="ghost"
                                   size="sm"
                                   disabled={publishingJobId === job.id}
@@ -849,6 +927,7 @@ export default function SynthesisPage() {
                                 </Button>
                                 <Button
                                   title="导出"
+                                  aria-label="导出"
                                   variant="ghost"
                                   size="sm"
                                   disabled={publishingJobId === job.id}
@@ -871,13 +950,14 @@ export default function SynthesisPage() {
                           </div>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
             </Card>
 
-            <Card className="bg-white/5 border-white/10">
+            <Card className="bg-white/5 border-white/10" data-testid="publication-history">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-white flex items-center gap-2">
                   <Download className="w-5 h-5" />
@@ -895,27 +975,60 @@ export default function SynthesisPage() {
                   </div>
                 ) : (
                   <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {publications.map((publication) => (
-                      <div key={publication.id} className="flex items-center justify-between gap-3 p-3 bg-white/5 rounded-lg">
-                        <div className="min-w-0 flex-1">
-                          <div className="text-white font-medium truncate">{publication.title}</div>
-                          <div className="text-white/50 text-sm">
-                            {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
+                    {publications.map((publication) => {
+                      const artifactLinks = publicationArtifactLinks(publication);
+                      return (
+                        <div
+                          key={publication.id}
+                          data-testid={`publication-row-${publication.id}`}
+                          className="flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="text-white font-medium truncate">{publication.title}</div>
+                            <div className="text-white/50 text-sm">
+                              {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {artifactLinks.preview_url && (
+                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.preview_url)} target="_blank" rel="noreferrer">
+                                  <Eye className="w-3.5 h-3.5 mr-1" />
+                                  发布预览
+                                </a>
+                              )}
+                              {artifactLinks.srt_url && (
+                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.srt_url)} target="_blank" rel="noreferrer">
+                                  <FileText className="w-3.5 h-3.5 mr-1" />
+                                  发布字幕 SRT
+                                </a>
+                              )}
+                              {artifactLinks.timeline_url && (
+                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.timeline_url)} target="_blank" rel="noreferrer">
+                                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                                  发布时间线
+                                </a>
+                              )}
+                              {artifactLinks.render_manifest_url && (
+                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.render_manifest_url)} target="_blank" rel="noreferrer">
+                                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                                  发布渲染清单
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 self-end sm:self-auto">
+                            <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(toMediaUrl(publication.export_url), '_blank')}>
+                              <Download className="w-4 h-4" />
+                            </Button>
+                            <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
+                              <XCircle className="w-4 h-4" />
+                            </Button>
+                            <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(toMediaUrl(publication.export_url), '_blank')}>
-                            <Download className="w-4 h-4" />
-                          </Button>
-                          <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
-                            <XCircle className="w-4 h-4" />
-                          </Button>
-                          <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

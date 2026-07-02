@@ -23,6 +23,7 @@ from app.models.publication import Publication
 from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
+from app.services.publication_readiness import evaluate_publication_readiness
 
 router = APIRouter(tags=["音视频合成"])
 
@@ -81,6 +82,9 @@ class SynthesisJobResponse(BaseModel):
     render_manifest_url: Optional[str] = None
     render_status: Optional[str] = None
     render_backend: Optional[str] = None
+    is_publishable: bool = False
+    output_kind: str = "missing_final_video"
+    publication_blockers: List[Dict[str, Any]] = Field(default_factory=list)
     segment_count: Optional[int] = None
     cost: Optional[int] = 0
     error_message: Optional[str] = None
@@ -178,6 +182,7 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
     """Build a stable API response from the current SynthesisJob schema."""
     extra_data = job.extra_data or {}
     render_artifacts = extra_data.get("render_artifacts") if isinstance(extra_data.get("render_artifacts"), dict) else {}
+    publication_readiness = evaluate_publication_readiness(job.output_url, extra_data)
     return SynthesisJobResponse(
         id=job.id,
         job_id=job.id,
@@ -209,6 +214,9 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
         render_manifest_url=render_artifacts.get("render_manifest_url"),
         render_status=extra_data.get("render_status"),
         render_backend=extra_data.get("render_backend"),
+        is_publishable=publication_readiness["is_publishable"],
+        output_kind=publication_readiness["output_kind"],
+        publication_blockers=publication_readiness["publication_blockers"],
         segment_count=extra_data.get("segment_count"),
         cost=job.cost or 0,
         error_message=job.error_message,
@@ -348,6 +356,20 @@ def write_local_export_artifact(export_id: str, payload: Dict[str, Any]) -> tupl
     artifact_path = export_dir / f"{export_id}.json"
     artifact_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
     return artifact_path, f"/static/exports/{artifact_path.name}"
+
+
+def _raise_publication_not_ready(readiness: Dict[str, Any]) -> None:
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={
+            "code": "publication_not_ready",
+            "message": "最终成片尚未准备好，无法创建发布导出",
+            "render_status": readiness.get("render_status"),
+            "output_kind": readiness.get("output_kind"),
+            "issues": readiness.get("publication_blockers") or [],
+            "action": readiness.get("action") or "render_final_video",
+        },
+    )
 
 
 async def resolve_media_urls(
@@ -570,12 +592,27 @@ async def publish_export(
     export_id = str(uuid4())
     title = request.title or (synthesis_job.title if synthesis_job else None) or "本地导出"
     metadata = dict(request.metadata or {})
+    job_extra_data = synthesis_job.extra_data if synthesis_job and isinstance(synthesis_job.extra_data, dict) else {}
+    render_artifacts = (
+        job_extra_data.get("render_artifacts")
+        if isinstance(job_extra_data.get("render_artifacts"), dict)
+        else {}
+    )
     playback_video_url = synthesis_job.output_url if synthesis_job else metadata.get("source_output_url")
-    if not playback_video_url and synthesis_job:
-        playback_video_url = synthesis_job.video_url
+    if synthesis_job and not playback_video_url:
+        _raise_publication_not_ready(evaluate_publication_readiness(playback_video_url, job_extra_data))
+    if synthesis_job:
+        readiness = evaluate_publication_readiness(playback_video_url, job_extra_data)
+        if not readiness["is_publishable"]:
+            _raise_publication_not_ready(readiness)
+    else:
+        metadata_readiness = evaluate_publication_readiness(playback_video_url, metadata)
+        if not metadata_readiness["is_publishable"]:
+            _raise_publication_not_ready(metadata_readiness)
     visibility = str(metadata.get("visibility") or "private")
     if visibility not in {"private", "project", "public"}:
         visibility = "private"
+    source_manifest_url = render_artifacts.get("source_manifest_url") or job_extra_data.get("manifest_url")
     artifact_payload = {
         "id": export_id,
         "title": title,
@@ -589,6 +626,23 @@ async def publish_export(
         "metadata": metadata,
         "created_at": utc_now().isoformat(),
     }
+    if synthesis_job:
+        artifact_payload.update(
+            {
+                "render_artifacts": render_artifacts,
+                "preview_url": render_artifacts.get("preview_url"),
+                "srt_url": render_artifacts.get("srt_url"),
+                "timeline_url": render_artifacts.get("timeline_url"),
+                "render_manifest_url": render_artifacts.get("render_manifest_url"),
+                "source_manifest_url": source_manifest_url,
+                "render_status": job_extra_data.get("render_status"),
+                "render_backend": job_extra_data.get("render_backend"),
+                "render_source": job_extra_data.get("render_source"),
+                "timeline_id": job_extra_data.get("render_timeline_id") or job_extra_data.get("timeline_id"),
+                "is_publishable": True,
+                "output_kind": "final_video",
+            }
+        )
     artifact_path, export_url = write_local_export_artifact(export_id, artifact_payload)
 
     publication = Publication(

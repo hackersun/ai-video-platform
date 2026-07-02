@@ -82,7 +82,7 @@ class VideoGenerateRequest(BaseModel):
     story_bible_id: Optional[str] = Field(None, description="用于一致性约束的 Story Bible ID")
     character_ids: List[str] = Field(default_factory=list, description="需要注入一致性设定的角色ID列表")
     use_consistency_context: bool = Field(True, description="是否自动注入 Story Bible/项目/镜头/角色一致性上下文")
-    unsafe_skip_consistency_preflight: bool = Field(False, description="仅用于明确的生产降级调试：跳过一致性预检")
+    unsafe_skip_consistency_preflight: bool = Field(False, description="仅用于明确的生产降级调试：跳过一致性上下文注入；生产硬预检仍会执行")
 
 
 class VideoGenerateResponse(BaseModel):
@@ -1496,8 +1496,10 @@ async def generate_video(
         final_prompt = request.prompt
         consistency_metadata = {}
         shot_context = _extract_shot_generation_context(lineage.get("shot"))
-        effective_image_url = request.image_url
+        effective_image_url = request.image_url or getattr(lineage.get("shot"), "image_url", None)
         reference_image_source = "request" if request.image_url else None
+        if effective_image_url and reference_image_source is None:
+            reference_image_source = "shot_image"
         preflight_package = None
         if request.use_consistency_context:
             package = await _build_video_consistency_package(
@@ -1511,12 +1513,12 @@ async def generate_video(
             shot_context = package["context"]
             effective_image_url = package["reference_image"]
             reference_image_source = package["reference_image_source"]
-        if not is_dev_mode() and not request.unsafe_skip_consistency_preflight:
+        if not is_dev_mode():
             preflight_package = await build_generation_context_package(
                 db,
                 user_id,
                 task_type="shot_video",
-                model_config_id=request.model_config_id,
+                model_config_id=video_model_config.get("model_config_id"),
                 image_url=effective_image_url,
                 production_mode=True,
                 require_public_reference_image=bool(effective_image_url),

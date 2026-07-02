@@ -19,6 +19,12 @@ import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
+
+const toMediaUrl = (url?: string | null) => {
+  if (!url) return '';
+  return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
 
 interface UserProfile {
   id: string;
@@ -166,7 +172,7 @@ export default function ProfileSettingsPage() {
               <div className="relative">
                 {profile?.avatar ? (
                   <img
-                    src={profile.avatar}
+                    src={toMediaUrl(profile.avatar)}
                     alt={profile.username}
                     width={96}
                     height={96}

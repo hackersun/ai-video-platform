@@ -41,10 +41,11 @@ export function ModelCapabilitySelector({
   const defaultConfig = getDefaultConfigForCapability(configs, capability);
   const selectedConfig = scopedConfigs.find((config) => config.id === value) || defaultConfig;
   const selectableConfigs = requireVerified
-    ? scopedConfigs.filter((config) => config.test_status === 'success')
+    ? scopedConfigs.filter((config) => config.test_status === 'success' && config.key_available !== false)
     : scopedConfigs;
   const hasConfiguredModel = scopedConfigs.length > 0;
-  const verified = selectedConfig?.test_status === 'success';
+  const verified = selectedConfig?.test_status === 'success' && selectedConfig.key_available !== false;
+  const failed = selectedConfig?.test_status === 'failed' || selectedConfig?.key_available === false;
   const configLabel = selectedConfig
     ? `${selectedConfig.name} · ${selectedConfig.provider_name || selectedConfig.provider_id} / ${selectedConfig.model_name}`
     : `未配置${MODEL_CAPABILITY_LABELS[capability]}模型`;
@@ -74,7 +75,9 @@ export function ModelCapabilitySelector({
                 'inline-flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs',
                 verified
                   ? 'border-emerald-400/30 bg-emerald-500/15 text-emerald-100'
-                  : 'border-yellow-400/30 bg-yellow-500/15 text-yellow-100',
+                  : failed
+                    ? 'border-red-400/30 bg-red-500/15 text-red-100'
+                    : 'border-yellow-400/30 bg-yellow-500/15 text-yellow-100',
               )}
             >
               {verified ? (
@@ -89,6 +92,9 @@ export function ModelCapabilitySelector({
             {description || '生成时会优先使用该能力的默认模型，也可切换到其他已保存配置。'}
           </p>
           <p className="mt-1 truncate text-xs text-white/40">{configLabel}</p>
+          {failed && selectedConfig?.test_message && (
+            <p className="mt-1 break-words text-xs leading-5 text-red-100/80">{selectedConfig.test_message}</p>
+          )}
         </div>
 
         <div className="flex min-w-0 flex-col gap-2">

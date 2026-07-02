@@ -7,6 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import {
+  DEFAULT_IMAGE_STYLE_TEMPLATES,
+  ImageStyleTemplatePicker,
+  type ImageStyleTemplate,
+} from '@/components/media/image-style-template-picker';
 import { useToast } from '@/components/ui/toast';
 import { 
   BookOpen, 
@@ -22,6 +27,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
+import { apiClient } from '@/lib/api-client';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
@@ -54,6 +60,8 @@ const STYLE_OPTIONS = [
   { value: 'heroic', label: '热血' }
 ];
 
+const FALLBACK_IMAGE_STYLES: ImageStyleTemplate[] = DEFAULT_IMAGE_STYLE_TEMPLATES;
+
 export default function NewNovelPage() {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
@@ -62,6 +70,8 @@ export default function NewNovelPage() {
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [imageModelConfigId, setImageModelConfigId] = useState('');
+  const [imageStyle, setImageStyle] = useState('anime');
+  const [styleTemplates, setStyleTemplates] = useState<ImageStyleTemplate[]>(FALLBACK_IMAGE_STYLES);
   const [novel, setNovel] = useState({
     title: '',
     description: '',
@@ -74,7 +84,18 @@ export default function NewNovelPage() {
 
   useEffect(() => {
     loadModelConfigs();
+    loadStyleTemplates();
   }, []);
+
+  const loadStyleTemplates = async () => {
+    try {
+      const data = await apiClient.getAssetStyleTemplates();
+      const templates = Array.isArray(data?.templates) ? data.templates : FALLBACK_IMAGE_STYLES;
+      setStyleTemplates(templates.length ? templates : FALLBACK_IMAGE_STYLES);
+    } catch {
+      setStyleTemplates(FALLBACK_IMAGE_STYLES);
+    }
+  };
 
   const loadModelConfigs = async () => {
     try {
@@ -186,7 +207,7 @@ export default function NewNovelPage() {
         body: JSON.stringify({
           title: novel.title,
           genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
-          style: novel.style || 'anime',
+          style: imageStyle,
           description: novel.intro || novel.description,
           model_config_id: imageModelConfigId || undefined,
         }),
@@ -396,6 +417,17 @@ export default function NewNovelPage() {
                   description="封面会使用图像生成能力，并结合题材、主角线索、关键场景和故事冲突生成。"
                   className="mb-4"
                 />
+                <div className="mb-4">
+                  <ImageStyleTemplatePicker
+                    templates={styleTemplates}
+                    value={imageStyle}
+                    onChange={setImageStyle}
+                    toMediaUrl={toMediaUrl}
+                    recommendedFor="cover"
+                    title="封面画面风格"
+                    compact
+                  />
+                </div>
                 <div className="border-2 border-dashed border-white/20 rounded-lg p-4 text-center min-h-[220px] flex items-center justify-center">
                   {novel.cover ? (
                     <div className="relative w-full">

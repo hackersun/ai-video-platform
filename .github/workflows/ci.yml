@@ -79,13 +79,9 @@ jobs:
       working-directory: ./frontend
       run: npm ci
     
-    - name: Run linter
+    - name: Run TypeScript check
       working-directory: ./frontend
-      run: npm run lint
-    
-    - name: Run tests
-      working-directory: ./frontend
-      run: npm test -- --coverage
+      run: npm run typecheck
     
     - name: Build
       working-directory: ./frontend

@@ -7,6 +7,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import {
+  DEFAULT_IMAGE_STYLE_TEMPLATES,
+  ImageStyleTemplatePicker,
+  type ImageStyleTemplate,
+} from '@/components/media/image-style-template-picker';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/components/ui/toast';
@@ -30,11 +35,13 @@ import {
   FileText
 } from 'lucide-react';
 import { fetchJsonWithAuth, fetchWithAuth } from '@/lib/fetch-with-auth';
+import { apiClient } from '@/lib/api-client';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
 } from '@/lib/model-configs';
+import { formatChapterLabel } from '@/lib/chapter-label';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
@@ -43,6 +50,8 @@ const toMediaUrl = (url?: string | null) => {
   if (!url) return '';
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
 };
+
+const FALLBACK_IMAGE_STYLES: ImageStyleTemplate[] = DEFAULT_IMAGE_STYLE_TEMPLATES;
 
 // 小说类型
 interface Novel {
@@ -109,6 +118,8 @@ function CharactersPageContent() {
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [imageModelConfigId, setImageModelConfigId] = useState('');
+  const [imageStyle, setImageStyle] = useState('anime');
+  const [styleTemplates, setStyleTemplates] = useState<ImageStyleTemplate[]>(FALLBACK_IMAGE_STYLES);
 
   // Sync selectedCharacter when characters array changes (e.g., after avatar generation)
   useEffect(() => {
@@ -145,7 +156,18 @@ function CharactersPageContent() {
   useEffect(() => {
     loadNovels();
     loadModelConfigs();
+    loadStyleTemplates();
   }, []);
+
+  const loadStyleTemplates = async () => {
+    try {
+      const data = await apiClient.getAssetStyleTemplates();
+      const templates = Array.isArray(data?.templates) ? data.templates : FALLBACK_IMAGE_STYLES;
+      setStyleTemplates(templates.length ? templates : FALLBACK_IMAGE_STYLES);
+    } catch {
+      setStyleTemplates(FALLBACK_IMAGE_STYLES);
+    }
+  };
 
   const loadModelConfigs = async () => {
     try {
@@ -330,7 +352,7 @@ function CharactersPageContent() {
             const data = await fetchJsonWithAuth(`${API_BASE}/characters/${newChar.id}/generate-avatar`, {
               method: 'POST',
               body: JSON.stringify({
-                style: 'anime',
+                style: imageStyle,
                 model_config_id: imageModelConfigId || undefined,
               })
             }) as any;
@@ -390,7 +412,7 @@ function CharactersPageContent() {
       const data = await fetchJsonWithAuth(`${API_BASE}/characters/${characterId}/generate-avatar`, {
         method: 'POST',
         body: JSON.stringify({
-          style: 'anime',
+          style: imageStyle,
           model_config_id: imageModelConfigId || undefined,
         })
       }) as any;
@@ -699,6 +721,15 @@ function CharactersPageContent() {
                       <div className="flex items-center gap-2 text-white/80 mb-2">
                         <ImageIcon className="w-4 h-4" /><span className="font-medium">角色头像</span>
                       </div>
+                      <ImageStyleTemplatePicker
+                        templates={styleTemplates}
+                        value={imageStyle}
+                        onChange={setImageStyle}
+                        toMediaUrl={toMediaUrl}
+                        recommendedFor="avatar"
+                        title="头像画面风格"
+                        compact
+                      />
                       <div className="flex items-center gap-4">
                         {selectedCharacter?.avatar ? (
                           <img src={toMediaUrl(selectedCharacter.avatar)} alt={selectedCharacter.name} width={80} height={80} loading="lazy"
@@ -837,7 +868,7 @@ function CharactersPageContent() {
                     <option value="">选择章节...</option>
                     {chapters.map(ch => (
                       <option key={ch.id} value={ch.id}>
-                        第{ch.chapter_number}章：{ch.title}（{ch.word_count || 0}字）
+                        {formatChapterLabel(ch)}（{ch.word_count || 0}字）
                       </option>
                     ))}
                   </select>

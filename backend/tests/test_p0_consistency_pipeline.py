@@ -257,6 +257,15 @@ def test_normalize_entity_refs_converts_legacy_ids_and_preserves_dict_refs():
     assert entity_ref_ids(normalized, "characters") == ["char-1", "char-2"]
 
 
+def test_auto_fill_shot_entity_refs_has_single_definition():
+    import inspect
+    import app.services.consistency_context as consistency_context
+
+    source = inspect.getsource(consistency_context)
+
+    assert source.count("async def auto_fill_shot_entity_refs(") == 1
+
+
 @pytest.mark.asyncio
 async def test_asset_lock_service_handles_normalized_refs_without_unlocking_shared_assets():
     from app.services.asset_lock_service import AssetLockService
@@ -306,6 +315,104 @@ async def test_asset_lock_service_handles_normalized_refs_without_unlocking_shar
 
 
 @pytest.mark.asyncio
+async def test_unlock_shot_assets_persists_shot_binding_removal():
+    from app.services.asset_lock_service import AssetLockService
+
+    user_id = f"asset-unlock-persist-user-{uuid4()}"
+    novel_id = f"novel-{uuid4()}"
+    script_id = f"script-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    shot_id = f"shot-{uuid4()}"
+    service = AssetLockService()
+
+    async with AsyncSessionLocal() as db:
+        db.add(Novel(id=novel_id, user_id=user_id, title="资产解锁小说", description=""))
+        db.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="资产解锁剧本", content=""))
+        db.add(Storyboard(id=storyboard_id, user_id=user_id, script_id=script_id, novel_id=novel_id, title="资产解锁分镜"))
+        shot = Shot(
+            id=shot_id,
+            user_id=user_id,
+            storyboard_id=storyboard_id,
+            shot_number=1,
+            duration=4,
+            prompt="镜头",
+            extra_data={
+                "locked_assets": {"character-char-1": {"asset_id": "asset-char-1"}},
+                "other_data": "preserve-me",
+            },
+        )
+        db.add(shot)
+        await db.commit()
+
+        persisted_shot = await db.get(Shot, shot_id)
+        assert persisted_shot is not None
+        result = await service.unlock_shot_assets(db, persisted_shot)
+        assert result["unlocked_count"] == 1
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        reloaded = await db.get(Shot, shot_id)
+        assert reloaded is not None
+        assert "locked_assets" not in (reloaded.extra_data or {})
+        assert reloaded.extra_data["other_data"] == "preserve-me"
+
+
+@pytest.mark.asyncio
+async def test_lock_shot_assets_rejects_category_fallback_when_entity_type_conflicts():
+    from app.services.asset_lock_service import AssetLockService
+
+    user_id = f"asset-type-conflict-user-{uuid4()}"
+    entity_id = f"entity-{uuid4()}"
+    service = AssetLockService()
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(delete(Asset).where(Asset.user_id == user_id))
+        conflicting_asset = Asset(
+            id=f"asset-conflict-{uuid4()}",
+            user_id=user_id,
+            category="character",
+            entity_id=entity_id,
+            entity_type="scene",
+            name="错误类型角色资产",
+            asset_type="image",
+            url="https://cdn.example.com/wrong-character.png",
+            is_locked=True,
+            is_final=True,
+            is_active=True,
+            locked_at=datetime(2026, 1, 2, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 2, tzinfo=UTC),
+        )
+        legacy_asset = Asset(
+            id=f"asset-legacy-{uuid4()}",
+            user_id=user_id,
+            category="character",
+            entity_id=entity_id,
+            entity_type=None,
+            name="旧数据角色资产",
+            asset_type="image",
+            url="https://cdn.example.com/legacy-character.png",
+            is_locked=True,
+            is_final=True,
+            is_active=True,
+            locked_at=datetime(2026, 1, 1, tzinfo=UTC),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
+        db.add_all([conflicting_asset, legacy_asset])
+        await db.flush()
+
+        shot = SimpleNamespace(
+            id=f"shot-{uuid4()}",
+            user_id=user_id,
+            extra_data={"entity_refs": {"characters": [{"entity_id": entity_id, "name": "沈砚"}]}},
+        )
+        result = await service.lock_shot_assets(db, shot)
+
+        assert result["count"] == 1
+        locked = shot.extra_data["locked_assets"][f"character_{entity_id}"]
+        assert locked["asset_id"] == legacy_asset.id
+
+
+@pytest.mark.asyncio
 async def test_build_consistency_prompt_includes_shot_locked_assets():
     from app.services.consistency_context import build_consistency_prompt
 
@@ -346,6 +453,142 @@ async def test_build_consistency_prompt_includes_shot_locked_assets():
     assert "锁定资产一致性约束" in context["prompt"]
     assert "沈砚正面定稿" in context["prompt"]
     assert context["metadata"]["locked_assets"][0]["name"] == "沈砚正面定稿"
+
+
+@pytest.mark.asyncio
+async def test_build_consistency_prompt_includes_production_context_asset_locks():
+    from app.services.consistency_context import build_consistency_prompt
+
+    user_id = f"production-lock-prompt-user-{uuid4()}"
+    novel_id = f"novel-{uuid4()}"
+    script_id = f"script-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    shot_id = f"shot-{uuid4()}"
+
+    async with AsyncSessionLocal() as db:
+        db.add(Novel(id=novel_id, user_id=user_id, title="雾港铜铃", description="悬疑动漫"))
+        db.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="第一章剧本", content="沈砚追查铜铃"))
+        db.add(Storyboard(id=storyboard_id, user_id=user_id, script_id=script_id, novel_id=novel_id, title="旧码头分镜"))
+        db.add(
+            Shot(
+                id=shot_id,
+                user_id=user_id,
+                storyboard_id=storyboard_id,
+                shot_number=1,
+                prompt="沈砚站在旧码头",
+                extra_data={
+                    "production_context": {
+                        "asset_version_locks": [
+                            {
+                                "asset_id": "asset-prod-1",
+                                "category": "scene",
+                                "entity_id": "scene-1",
+                                "entity_name": "旧码头",
+                                "name": "旧码头场景定稿",
+                                "description": "雾气、木栈桥、冷色灯光",
+                                "url": "https://cdn.example.com/old-dock.png",
+                                "version": 5,
+                            }
+                        ]
+                    }
+                },
+            )
+        )
+        await db.commit()
+
+        context = await build_consistency_prompt(db, user_id, task="shot_video", shot_id=shot_id)
+
+    assert "锁定资产一致性约束" in context["prompt"]
+    assert "旧码头" in context["prompt"]
+    assert context["metadata"]["locked_assets"][0]["asset_id"] == "asset-prod-1"
+    assert context["metadata"]["locked_assets"][0]["url"] == "https://cdn.example.com/old-dock.png"
+
+
+@pytest.mark.asyncio
+async def test_consistency_preflight_accepts_locked_asset_compatible_sources():
+    from app.services.consistency_preflight import build_generation_context_package
+
+    user_id = f"preflight-lock-user-{uuid4()}"
+    novel_id = f"novel-{uuid4()}"
+    script_id = f"script-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    shot_with_extra_lock_id = f"shot-{uuid4()}"
+    shot_with_production_lock_id = f"shot-{uuid4()}"
+    entity_refs = {"characters": [{"entity_id": "char-1", "name": "沈砚"}], "scenes": [], "props": [], "events": []}
+
+    async with AsyncSessionLocal() as db:
+        db.add(Novel(id=novel_id, user_id=user_id, title="资产锁预检小说", description="资产锁预检"))
+        db.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="资产锁预检剧本", content="沈砚追查铜铃"))
+        db.add(Storyboard(id=storyboard_id, user_id=user_id, script_id=script_id, novel_id=novel_id, title="资产锁预检分镜"))
+        db.add(
+            Shot(
+                id=shot_with_extra_lock_id,
+                user_id=user_id,
+                storyboard_id=storyboard_id,
+                shot_number=1,
+                prompt="沈砚回头",
+                extra_data={
+                    "entity_refs": entity_refs,
+                    "locked_assets": {
+                        "character_char-1": {
+                            "asset_id": "asset-extra-1",
+                            "entity_type": "character",
+                            "entity_id": "char-1",
+                            "asset_name": "沈砚角色定稿",
+                            "asset_url": "https://cdn.example.com/shenyan.png",
+                        }
+                    },
+                },
+            )
+        )
+        db.add(
+            Shot(
+                id=shot_with_production_lock_id,
+                user_id=user_id,
+                storyboard_id=storyboard_id,
+                shot_number=2,
+                prompt="沈砚站在旧码头",
+                extra_data={
+                    "entity_refs": entity_refs,
+                    "production_context": {
+                        "asset_version_locks": [
+                            {
+                                "asset_id": "asset-prod-1",
+                                "category": "scene",
+                                "entity_id": "scene-1",
+                                "entity_name": "旧码头",
+                                "url": "https://cdn.example.com/old-dock.png",
+                            }
+                        ]
+                    },
+                },
+            )
+        )
+        await db.commit()
+
+        packages = [
+            await build_generation_context_package(
+                db,
+                user_id,
+                task_type="shot_video",
+                production_mode=True,
+                shot_id=shot_with_extra_lock_id,
+            ),
+            await build_generation_context_package(
+                db,
+                user_id,
+                task_type="shot_video",
+                production_mode=True,
+                shot_id=shot_with_production_lock_id,
+            ),
+        ]
+
+    lock_names = [package["asset_version_locks"][0]["name"] for package in packages]
+    assert lock_names == ["沈砚角色定稿", "旧码头"]
+    for package in packages:
+        codes = {issue["code"] for issue in package["issues"]}
+        assert "missing_entity_refs" not in codes
+        assert "missing_asset_locks" not in codes
 
 
 @pytest.fixture(scope="module", autouse=True)

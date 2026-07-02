@@ -25,21 +25,25 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   BookOpen,
   FileText,
   LayoutGrid,
   Filter,
+  Search,
   PlugZap,
   ShieldCheck
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import apiClient from '@/lib/api-client';
+import { formatChapterLabel } from '@/lib/chapter-label';
 import { CAMERA_ANGLE_LABELS, getShotAttributeLabel } from '@/lib/shot-labels';
 import { isInternalTestModelConfig, modelStatusClass, modelStatusLabel } from '@/lib/model-configs';
 import { useToast } from '@/components/ui/toast';
 import { PreflightIssueList } from '@/components/production/preflight-issue-list';
-import { HistoryPreflightEvidence } from '@/components/production/history-preflight-evidence';
+import { HistoryPreflightEvidence, getPreflightSummaryText } from '@/components/production/history-preflight-evidence';
 
 // 视频生成状态
 type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
@@ -194,6 +198,7 @@ interface VideoJob {
   prop_refs?: any[];
   event_refs?: any[];
   environment_context?: string;
+  character_multiview_refs?: any[];
   consistency?: any;
   seed?: number;
   source_prompt?: string;
@@ -226,6 +231,33 @@ interface MediaJob {
   extra_data?: any;
 }
 
+interface Asset {
+  id: string;
+  name: string;
+  generation_params?: any;
+}
+
+interface EntityAssetsResponse {
+  assets: Asset[];
+  locked_assets: Asset[];
+  total: number;
+}
+
+interface AssetViewPreset {
+  entity_type: string;
+  title: string;
+  views: {
+    key: string;
+    label: string;
+  }[];
+}
+
+interface ShotReferencedEntity {
+  id: string;
+  name: string;
+  entity_type: 'character' | 'scene' | 'prop';
+}
+
 // 视频生成参数
 interface VideoGenerateParams {
   shot_id?: string;
@@ -241,6 +273,38 @@ interface VideoGenerateParams {
   model: string;
   character_ids?: string[];
 }
+
+const FALLBACK_VIEW_PRESETS: AssetViewPreset[] = [
+  {
+    entity_type: 'character',
+    title: '角色三视图',
+    views: [
+      { key: 'front', label: '正面' },
+      { key: 'side', label: '侧面' },
+      { key: 'back', label: '背面' },
+    ],
+  },
+  {
+    entity_type: 'scene',
+    title: '场景四视图',
+    views: [
+      { key: 'establishing', label: '全景定场' },
+      { key: 'layout', label: '空间布局' },
+      { key: 'detail', label: '关键细节' },
+      { key: 'lighting', label: '光影氛围' },
+    ],
+  },
+  {
+    entity_type: 'prop',
+    title: '道具多视图',
+    views: [
+      { key: 'main', label: '主视图' },
+      { key: 'detail', label: '细节纹理' },
+      { key: 'scale', label: '比例参考' },
+      { key: 'in_use', label: '使用状态' },
+    ],
+  },
+];
 
 const refNames = (refs?: any[]) =>
   (refs || [])
@@ -263,13 +327,42 @@ const entityRefsFromShot = (shot?: Shot | null) => {
   };
 };
 
+const getRefId = (ref: any) => ref?.entity_id || ref?.story_entity_id || (ref?.entity_type ? ref?.id : '');
+const getRefName = (ref: any) => ref?.name || ref?.entity_name || ref?.character_name || ref?.title || '';
+
+const getShotReferencedEntities = (shot?: Shot | null): ShotReferencedEntity[] => {
+  const refs = entityRefsFromShot(shot);
+  const seen = new Set<string>();
+  const result: ShotReferencedEntity[] = [];
+  const append = (items: any[], entityType: ShotReferencedEntity['entity_type']) => {
+    for (const item of items || []) {
+      const id = getRefId(item);
+      if (!id || seen.has(id)) continue;
+      seen.add(id);
+      result.push({
+        id,
+        name: getRefName(item) || `${entityType} ${id.slice(0, 8)}`,
+        entity_type: entityType,
+      });
+    }
+  };
+  append(refs.characters || [], 'character');
+  append(refs.scenes || [], 'scene');
+  append(refs.props || [], 'prop');
+  return result;
+};
+
+const assetViewKey = (asset?: Asset) => (
+  asset?.generation_params?.view_key || asset?.generation_params?.asset_subtype || ''
+);
+
 function VideoGenerationPageInner() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
 
   // ====== URL 参数 ======
-  const urlScriptId = searchParams.get('script_id');
-  const urlStoryboardId = searchParams.get('storyboard_id');
+  const urlScriptId = searchParams.get('script_id') || searchParams.get('script');
+  const urlStoryboardId = searchParams.get('storyboard_id') || searchParams.get('storyboard');
   const urlShotId = searchParams.get('shot_id');
   const urlNovelId = searchParams.get('novel_id');
   const urlChapterId = searchParams.get('chapter_id');
@@ -298,6 +391,8 @@ function VideoGenerationPageInner() {
   const [lipSyncMode, setLipSyncMode] = useState('off');
   const [reviewRequired, setReviewRequired] = useState(false);
   const [generationPreflight, setGenerationPreflight] = useState<any>(null);
+  const [viewPresets, setViewPresets] = useState<AssetViewPreset[]>(FALLBACK_VIEW_PRESETS);
+  const [shotEntityAssetPacks, setShotEntityAssetPacks] = useState<Record<string, EntityAssetsResponse>>({});
 
   // 关联数据
   const [novels, setNovels] = useState<Novel[]>([]);
@@ -329,6 +424,15 @@ function VideoGenerationPageInner() {
   // 历史记录
   const [history, setHistory] = useState<VideoJob[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+  const [expandedHistoryJobId, setExpandedHistoryJobId] = useState<string | null>(null);
+  const [expandedMediaJobId, setExpandedMediaJobId] = useState<string | null>(null);
+  const [playingHistory, setPlayingHistory] = useState<{
+    type: 'video' | 'media';
+    id: string;
+    url: string;
+    title: string;
+  } | null>(null);
 
   // 检查火山视频 API Key 是否已配置，密钥只保存在后端
   const loadApiConfigStatus = async () => {
@@ -678,6 +782,7 @@ function VideoGenerationPageInner() {
   const scriptOptionsForPage = selectedScriptForOptions && !pagedScripts.some((script) => script.id === selectedScriptForOptions.id)
     ? [selectedScriptForOptions, ...pagedScripts]
     : pagedScripts;
+  const historyScriptOptions = filteredScripts;
 
   // 初始化
   useEffect(() => {
@@ -724,6 +829,43 @@ function VideoGenerationPageInner() {
   useEffect(() => {
     loadHistory();
   }, [workflowId, selectedNovel, selectedChapter, scriptId, storyboardId, currentShotId]);
+
+  useEffect(() => {
+    const loadViewPresets = async () => {
+      try {
+        const data = await apiClient.getAssetViewPresets();
+        const presets = Array.isArray(data?.presets) ? data.presets : FALLBACK_VIEW_PRESETS;
+        setViewPresets(presets.length ? presets : FALLBACK_VIEW_PRESETS);
+      } catch (err) {
+        console.error('加载多视图预设失败:', err);
+        setViewPresets(FALLBACK_VIEW_PRESETS);
+      }
+    };
+    loadViewPresets();
+  }, []);
+
+  useEffect(() => {
+    const loadShotEntityAssets = async () => {
+      const entities = getShotReferencedEntities(shot);
+      if (!entities.length) {
+        setShotEntityAssetPacks({});
+        return;
+      }
+      const entries = await Promise.all(
+        entities.map(async (entity) => {
+          try {
+            const data = await apiClient.getEntityAssets(entity.id, { entity_type: entity.entity_type });
+            return [entity.id, data as EntityAssetsResponse] as const;
+          } catch (err) {
+            console.error(`加载视频生成参考资产失败: ${entity.name}`, err);
+            return [entity.id, { assets: [], locked_assets: [], total: 0 }] as const;
+          }
+        })
+      );
+      setShotEntityAssetPacks(Object.fromEntries(entries));
+    };
+    loadShotEntityAssets();
+  }, [shot?.id]);
 
   useEffect(() => {
     setScriptPage(1);
@@ -888,7 +1030,7 @@ function VideoGenerationPageInner() {
       const referenceImageUrl = imageUrl?.trim();
       const preflight = await apiClient.preflightGeneration({
         task_type: 'shot_video',
-        model_config_id: selectedVideoModel?.config_id || selectedModel || undefined,
+        model_config_id: selectedVideoModel?.config_id || undefined,
         image_url: referenceImageUrl || undefined,
         production_mode: !devModeEnabled,
         require_public_reference_image: Boolean(referenceImageUrl),
@@ -1098,6 +1240,22 @@ function VideoGenerationPageInner() {
     setStatus('completed');
   };
 
+  const handlePlayHistoryVideo = (
+    type: 'video' | 'media',
+    id: string,
+    sourceUrl?: string | null,
+    title?: string | null,
+  ) => {
+    const resolvedUrl = resolveMediaUrl(sourceUrl);
+    if (!resolvedUrl) return;
+    setPlayingHistory({ type, id, url: resolvedUrl, title: title || '历史视频预览' });
+    if (type === 'video') {
+      setExpandedHistoryJobId(id);
+    } else {
+      setExpandedMediaJobId(id);
+    }
+  };
+
   const canAttachHistoryVideo = (status?: string, sourceUrl?: string | null, targetShotId?: string | null) => (
     ['succeeded', 'completed'].includes(status || '') && Boolean(sourceUrl && (targetShotId || currentShotId))
   );
@@ -1216,12 +1374,135 @@ function VideoGenerationPageInner() {
     ].filter(Boolean);
     return parts.join(' / ');
   };
+  const historyLineageText = (job: VideoJob) => {
+    const parts = [
+      job.novel_title,
+      job.chapter_title ? `第${job.chapter_number || ''}章 ${job.chapter_title}` : null,
+      job.script_title,
+      (job as any).storyboard_title,
+      job.shot_number ? `镜头${job.shot_number}` : null,
+    ].filter(Boolean);
+    return parts.join(' / ');
+  };
+  const normalizedHistorySearch = historySearch.trim().toLowerCase();
+  const matchesHistorySearch = (values: Array<string | number | null | undefined>) => {
+    if (!normalizedHistorySearch) return true;
+    return values
+      .filter((value) => value !== null && value !== undefined)
+      .some((value) => String(value).toLowerCase().includes(normalizedHistorySearch));
+  };
+  const filteredHistory = history.filter((job) => (
+    matchesHistorySearch([
+      job.title,
+      job.prompt,
+      job.task_id,
+      job.model_name,
+      job.api_model_id,
+      job.provider_id,
+      historyLineageText(job),
+      refNames(job.character_refs),
+      refNames(job.scene_refs),
+      refNames(job.prop_refs),
+      job.subtitle_text,
+      getPreflightSummaryText(job.extra_data?.generation_preflight || job.consistency?.generation_preflight),
+    ])
+  ));
+  const filteredMediaHistory = mediaHistory.filter((job) => (
+    matchesHistorySearch([
+      job.title,
+      job.prompt,
+      job.task_id,
+      job.model_name,
+      job.model_id,
+      job.provider_id,
+      mediaLineageText(job),
+      job.extra_data?.subtitle_text,
+      getPreflightSummaryText(job.extra_data?.generation_preflight),
+    ])
+  ));
   const productionContextUsage = [
     { label: '资产锁', value: shotProductionContext.asset_version_locks?.length || 0 },
     { label: '关键帧', value: shotProductionContext.keyframes?.length || shot?.keyframes?.length || 0 },
     { label: '多视图', value: shotProductionContext.character_multiview_refs?.length || 0 },
     { label: '审核', value: reviewRequired ? '进入审核' : (shotProductionContext.review_state || '未启用') },
   ];
+  const assetWizardHref = (entity: ShotReferencedEntity) => {
+    const params = new URLSearchParams();
+    if (selectedNovel) params.set('novel_id', selectedNovel);
+    if (selectedChapter) params.set('chapter_id', selectedChapter);
+    if (scriptId) params.set('script_id', scriptId);
+    params.set('entity_type', entity.entity_type);
+    params.set('entity_id', entity.id);
+    return `/assets?${params.toString()}`;
+  };
+  const renderReferencePreflight = () => {
+    const entities = getShotReferencedEntities(shot);
+    if (!currentShotId || !entities.length) return null;
+
+    const rows = entities
+      .map((entity) => {
+        const preset = viewPresets.find((item) => item.entity_type === entity.entity_type)
+          || FALLBACK_VIEW_PRESETS.find((item) => item.entity_type === entity.entity_type);
+        if (!preset) return null;
+        const pack = shotEntityAssetPacks[entity.id] || { assets: [], locked_assets: [], total: 0 };
+        const lockedKeys = new Set((pack.locked_assets || []).map(assetViewKey).filter(Boolean));
+        const generatedKeys = new Set((pack.assets || []).map(assetViewKey).filter(Boolean));
+        const lockedCount = preset.views.filter((view) => lockedKeys.has(view.key)).length;
+        const missingLabels = preset.views
+          .filter((view) => !lockedKeys.has(view.key) && !generatedKeys.has(view.key))
+          .map((view) => view.label);
+        return { entity, preset, lockedCount, missingLabels };
+      })
+      .filter(Boolean) as Array<{
+        entity: ShotReferencedEntity;
+        preset: AssetViewPreset;
+        lockedCount: number;
+        missingLabels: string[];
+      }>;
+
+    if (!rows.length) return null;
+    const hasMissing = rows.some((row) => row.missingLabels.length > 0);
+
+    return (
+      <Card data-testid="video-reference-preflight" className={`border ${hasMissing ? 'border-amber-500/25 bg-amber-500/10' : 'border-emerald-500/25 bg-emerald-500/10'}`}>
+        <CardContent className="p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium text-white">
+                <ShieldCheck className={`h-4 w-4 ${hasMissing ? 'text-amber-200' : 'text-emerald-200'}`} />
+                生成前参考资产预检
+              </div>
+              <div className="mt-1 text-xs text-white/50">
+                这些参考图会帮助同一小说、章节和镜头保持角色、场景、道具外观一致；缺失时仍可生成，但更容易漂移。
+              </div>
+            </div>
+            <span className={`rounded px-2 py-1 text-xs ${hasMissing ? 'bg-amber-500/20 text-amber-100' : 'bg-emerald-500/20 text-emerald-100'}`}>
+              {hasMissing ? '建议补齐' : '参考完整'}
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {rows.map((row) => (
+              <div key={row.entity.id} className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-white/80">
+                    {row.entity.name} · {row.preset.title} · {row.lockedCount}/{row.preset.views.length} 已定稿
+                  </div>
+                  <Link className="text-cyan-100 hover:text-white" href={assetWizardHref(row.entity)}>
+                    去补齐参考图
+                  </Link>
+                </div>
+                {row.missingLabels.length > 0 ? (
+                  <div className="mt-1 text-amber-100">待补齐：{row.missingLabels.join('、')}</div>
+                ) : (
+                  <div className="mt-1 text-emerald-200">必备视图已补齐，可用于后续视频一致性生成。</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <MainLayout>
@@ -1358,7 +1639,7 @@ function VideoGenerationPageInner() {
                         <option value="">全部章节</option>
                         {chapters.map((chapter) => (
                           <option key={chapter.id} value={chapter.id}>
-                            第{chapter.chapter_number}章 {chapter.title}
+                            {formatChapterLabel(chapter)}
                           </option>
                         ))}
                       </select>
@@ -1498,6 +1779,7 @@ function VideoGenerationPageInner() {
                       )}
                     </div>
                   )}
+                  {renderReferencePreflight()}
                 </CardContent>
               </Card>
 
@@ -1977,7 +2259,7 @@ function VideoGenerationPageInner() {
                       <option value="">全部章节</option>
                       {chapters.map((chapter) => (
                         <option key={chapter.id} value={chapter.id}>
-                          第{chapter.chapter_number}章 {chapter.title}
+                          {formatChapterLabel(chapter)}
                         </option>
                       ))}
                     </select>
@@ -2014,11 +2296,10 @@ function VideoGenerationPageInner() {
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white text-sm"
                     >
                       <option value="">全部剧本</option>
-                      {scriptOptionsForPage.map((script) => (
+                      {historyScriptOptions.map((script) => (
                         <option key={script.id} value={script.id}>{script.title}</option>
                       ))}
                     </select>
-                    {renderScriptPager()}
                   </div>
                   <div>
                     <label className="text-white/50 text-xs mb-1 block">分镜</label>
@@ -2085,120 +2366,182 @@ function VideoGenerationPageInner() {
                   </Button>
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
+                <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2">
+                  <Search className="h-4 w-4 text-white/35" />
+                  <Input
+                    value={historySearch}
+                    onChange={(event) => setHistorySearch(event.target.value)}
+                    placeholder="搜索标题、小说、章节、镜头、角色、字幕或模型"
+                    className="h-8 border-0 bg-transparent px-0 text-sm text-white placeholder:text-white/35 focus-visible:ring-0"
+                  />
+                  <span className="shrink-0 text-xs text-white/35">
+                    {filteredHistory.length + filteredMediaHistory.length}/{history.length + mediaHistory.length}
+                  </span>
+                </div>
                 {isLoadingHistory && history.length === 0 ? (
                   <div className="text-center py-8">
                     <Loader2 className="w-8 h-8 mx-auto mb-2 animate-spin text-white/40" />
                     <p className="text-white/40">加载中…</p>
                   </div>
                 ) : history.length > 0 ? (
-                  <div className="space-y-3 max-h-80 overflow-y-auto">
-                    {history.map(job => (
-                      <div key={job.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5 hover:bg-white/10 transition-colors">
-                        <div className="flex items-center gap-3 flex-1 min-w-0">
-                          <div className="w-12 h-12 rounded bg-violet-500/20 flex items-center justify-center flex-shrink-0">
-                            {job.status === 'succeeded' ? (
-                              <Video className="w-6 h-6 text-violet-400" />
-                            ) : job.status === 'failed' ? (
-                              <AlertCircle className="w-6 h-6 text-red-400" />
-                            ) : job.status === 'running' ? (
-                              <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
-                            ) : (
-                              <Clock className="w-6 h-6 text-yellow-400" />
-                            )}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <div className="text-white font-medium truncate">
-                              {job.title || job.prompt?.slice(0, 40) || '视频生成'}
+                  filteredHistory.length > 0 ? (
+                  <div className="space-y-2 max-h-[34rem] overflow-y-auto pr-1">
+                    {filteredHistory.map(job => {
+                      const isExpanded = expandedHistoryJobId === job.id;
+                      const isPlaying = playingHistory?.type === 'video' && playingHistory.id === job.id;
+                      const lineage = historyLineageText(job);
+                      return (
+                      <div key={job.id} className="rounded-lg border border-white/10 bg-white/5 p-2.5 transition-colors hover:bg-white/10">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex min-w-0 flex-1 items-start gap-2.5">
+                            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded bg-violet-500/20">
+                              {job.status === 'succeeded' ? (
+                                <Video className="h-5 w-5 text-violet-400" />
+                              ) : job.status === 'failed' ? (
+                                <AlertCircle className="h-5 w-5 text-red-400" />
+                              ) : job.status === 'running' ? (
+                                <Loader2 className="h-5 w-5 animate-spin text-blue-400" />
+                              ) : (
+                                <Clock className="h-5 w-5 text-yellow-400" />
+                              )}
                             </div>
-                            <div className="text-white/60 text-sm flex items-center gap-2">
-                              <span>{formatTime(job.created_at)}</span>
-                              {job.duration && <span>{job.duration}秒</span>}
-                              {job.resolution && <span>{job.resolution}</span>}
+                            <div className="min-w-0 flex-1">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <div className="truncate text-sm font-medium text-white">
+                                  {job.title || job.prompt?.slice(0, 48) || '视频生成'}
+                                </div>
+                                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${
+                                  job.status === 'succeeded' ? 'bg-green-500/20 text-green-300' :
+                                  job.status === 'failed' ? 'bg-red-500/20 text-red-300' :
+                                  job.status === 'running' ? 'bg-blue-500/20 text-blue-300' :
+                                  'bg-yellow-500/20 text-yellow-300'
+                                }`}>
+                                  {job.status === 'succeeded' ? '完成' :
+                                   job.status === 'failed' ? '失败' :
+                                   job.status === 'running' ? '生成中' : '等待'}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-white/45">
+                                <span>{formatTime(job.created_at)}</span>
+                                {job.duration && <span>{job.duration}秒</span>}
+                                {job.resolution && <span>{job.resolution}</span>}
+                                {lineage && <span className="truncate text-white/55">{lineage}</span>}
+                              </div>
+                              <HistoryPreflightEvidence
+                                preflight={job.extra_data?.generation_preflight || job.consistency?.generation_preflight}
+                                testId={`history-preflight-${job.id}`}
+                              />
+                              {isExpanded && (
+                                <div className="mt-2 space-y-1 text-xs text-white/40">
+                                  {(job.provider_id || job.api_model_id || job.model_endpoint_id || job.model_test_status) && (
+                                    <div className="flex flex-wrap gap-2">
+                                      {job.provider_id && <span>Provider: {job.provider_id}</span>}
+                                      {job.api_model_id && <span>API模型: {job.api_model_id}</span>}
+                                      {job.model_endpoint_id && <span>Endpoint: {job.model_endpoint_id}</span>}
+                                      {job.model_test_status && <span>验证: {statusLabel(job.model_test_status)}</span>}
+                                    </div>
+                                  )}
+                                  {job.prompt_parameters && Object.keys(job.prompt_parameters).length > 0 && (
+                                    <div>
+                                      参数：{job.prompt_parameters.duration || job.duration}秒 · {job.prompt_parameters.resolution || job.resolution} · seed {job.prompt_parameters.seed || job.seed || '自动'} · 参考图{job.prompt_parameters.image_url_sent ? '已传入' : '未传入'}
+                                    </div>
+                                  )}
+                                  {job.character_multiview_refs && job.character_multiview_refs.length > 0 && (
+                                    <div className="text-blue-200/70">
+                                      多视图参考：{job.character_multiview_refs.length} 张
+                                    </div>
+                                  )}
+                                  {(refNames(job.character_refs) || refNames(job.scene_refs) || refNames(job.prop_refs) || refNames(job.event_refs) || job.subtitle_text) && (
+                                    <div className="space-y-0.5">
+                                      {refNames(job.character_refs) && <div>人物：{refNames(job.character_refs)}</div>}
+                                      {refNames(job.scene_refs) && <div>场景：{refNames(job.scene_refs)}</div>}
+                                      {refNames(job.prop_refs) && <div>道具：{refNames(job.prop_refs)}</div>}
+                                      {refNames(job.event_refs) && <div>事件：{refNames(job.event_refs)}</div>}
+                                      {job.subtitle_text && <div className="text-green-200/70">字幕：{job.subtitle_text}</div>}
+                                    </div>
+                                  )}
+                                  {job.error_message && <div className="text-red-300/80">错误：{job.error_message}</div>}
+                                </div>
+                              )}
                             </div>
-                            {(job.provider_id || job.api_model_id || job.model_endpoint_id || job.model_test_status) && (
-                              <div className="text-white/40 text-xs flex flex-wrap gap-2">
-                                {job.provider_id && <span>Provider: {job.provider_id}</span>}
-                                {job.api_model_id && <span>API模型: {job.api_model_id}</span>}
-                                {job.model_endpoint_id && <span>Endpoint: {job.model_endpoint_id}</span>}
-                                {job.model_test_status && <span>验证: {statusLabel(job.model_test_status)}</span>}
-                              </div>
-                            )}
-                            {job.prompt_parameters && Object.keys(job.prompt_parameters).length > 0 && (
-                              <div className="text-white/35 text-xs">
-                                参数：{job.prompt_parameters.duration || job.duration}秒 · {job.prompt_parameters.resolution || job.resolution} · seed {job.prompt_parameters.seed || job.seed || '自动'} · 参考图{job.prompt_parameters.image_url_sent ? '已传入' : '未传入'}
-                              </div>
-                            )}
-                            {(job.novel_title || job.chapter_title || job.script_title || job.shot_number) && (
-                              <div className="text-white/40 text-xs flex items-center gap-2">
-                                {job.novel_title && <span>{job.novel_title}</span>}
-                                {job.chapter_title && <span> / 第{job.chapter_number || ''}章 {job.chapter_title}</span>}
-                                {job.script_title && <span> / {job.script_title}</span>}
-                                {job.shot_number && <span> / 镜头{job.shot_number}</span>}
-                              </div>
-                            )}
-                            {(refNames(job.character_refs) || refNames(job.scene_refs) || refNames(job.prop_refs) || refNames(job.event_refs) || job.subtitle_text) && (
-                              <div className="mt-1 text-white/40 text-xs space-y-0.5">
-                                {refNames(job.character_refs) && <div>人物：{refNames(job.character_refs)}</div>}
-                                {refNames(job.scene_refs) && <div>场景：{refNames(job.scene_refs)}</div>}
-                                {refNames(job.prop_refs) && <div>道具：{refNames(job.prop_refs)}</div>}
-                                {refNames(job.event_refs) && <div>事件：{refNames(job.event_refs)}</div>}
-                                {job.subtitle_text && <div className="text-green-200/70">字幕：{job.subtitle_text}</div>}
-                              </div>
-                            )}
-                            <HistoryPreflightEvidence
-                              preflight={job.extra_data?.generation_preflight || job.consistency?.generation_preflight}
-                              testId={`history-preflight-${job.id}`}
-                            />
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <span className={`px-2 py-1 text-xs rounded ${
-                            job.status === 'succeeded' ? 'bg-green-500/20 text-green-400' :
-                            job.status === 'failed' ? 'bg-red-500/20 text-red-400' :
-                            job.status === 'running' ? 'bg-blue-500/20 text-blue-400' :
-                            'bg-yellow-500/20 text-yellow-400'
-                          }`}>
-                            {job.status === 'succeeded' ? '已完成' :
-                             job.status === 'failed' ? '失败' :
-                             job.status === 'running' ? '生成中' : '等待'}
-                          </span>
-                          {(job.status === 'pending' || job.status === 'running') && (
-                            <Button variant="ghost" size="sm" onClick={() => handleRefreshStatus(job)}>
-                              <RefreshCw className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {job.video_url && (
-                            <Button variant="ghost" size="sm" title="播放视频" onClick={() => handlePlayVideo(job.video_url)}>
-                              <Play className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {job.video_url && (
+                          <div className="flex shrink-0 items-center gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              title="下载视频"
-                              onClick={() => handleDownload(job.video_url, job.title || job.task_id || 'video')}
+                              title={isExpanded ? '收起详情' : '查看详情'}
+                              onClick={() => setExpandedHistoryJobId(isExpanded ? null : job.id)}
+                              className="h-8 w-8 p-0"
                             >
-                              <Download className="w-4 h-4" />
+                              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             </Button>
-                          )}
-                          {canAttachHistoryVideo(job.status, job.video_url, job.shot_id) && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              title="设为镜头视频"
-                              aria-label={`设为镜头视频：${job.title || job.prompt || job.task_id || '视频生成'}`}
-                              onClick={() => handleAttachHistoryVideoToShot(job.video_url, job.shot_id, job.title || job.prompt || '视频生成')}
-                              className="text-green-300 hover:text-green-200"
-                            >
-                              <ShieldCheck className="w-4 h-4" />
-                            </Button>
-                          )}
+                            {(job.status === 'pending' || job.status === 'running') && (
+                              <Button variant="ghost" size="sm" onClick={() => handleRefreshStatus(job)} className="h-8 w-8 p-0" title="刷新状态">
+                                <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {job.video_url && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="在此播放"
+                                onClick={() => handlePlayHistoryVideo('video', job.id, job.video_url, job.title || job.prompt)}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Play className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {job.video_url && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="下载视频"
+                                onClick={() => handleDownload(job.video_url, job.title || job.task_id || 'video')}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {canAttachHistoryVideo(job.status, job.video_url, job.shot_id) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="设为镜头视频"
+                                aria-label={`设为镜头视频：${job.title || job.prompt || job.task_id || '视频生成'}`}
+                                onClick={() => handleAttachHistoryVideoToShot(job.video_url, job.shot_id, job.title || job.prompt || '视频生成')}
+                                className="h-8 w-8 p-0 text-green-300 hover:text-green-200"
+                              >
+                                <ShieldCheck className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
+                        {isPlaying && (
+                          <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-2">
+                            <div className="mb-2 flex items-center justify-between gap-2 text-xs text-white/50">
+                              <span className="truncate">{playingHistory.title}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setPlayingHistory(null)}
+                                className="h-7 px-2 text-white/50"
+                              >
+                                关闭
+                              </Button>
+                            </div>
+                            <video src={playingHistory.url} controls autoPlay className="max-h-72 w-full rounded bg-black" />
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  ) : (
+                    <div className="rounded-lg border border-white/10 bg-white/5 py-8 text-center text-white/40">
+                      没有匹配的生成历史
+                    </div>
+                  )
                 ) : (
                   <div className="text-center py-8 text-white/40">
                     <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -2218,64 +2561,122 @@ function VideoGenerationPageInner() {
               </CardHeader>
               <CardContent>
                 {mediaHistory.length > 0 ? (
-                  <div className="space-y-3 max-h-72 overflow-y-auto">
-                    {mediaHistory.map(job => (
-                      <div key={job.id} className="flex items-center justify-between p-3 rounded-lg bg-white/5">
-                        <div className="min-w-0">
-                          <div className="text-white font-medium truncate">{job.title || '音视频直生'}</div>
-                          <div className="text-white/50 text-xs">
-                            {formatTime(job.created_at)} · {job.duration_seconds || duration}秒 · {job.model_name || job.model_id}
+                  filteredMediaHistory.length > 0 ? (
+                  <div className="space-y-2 max-h-[28rem] overflow-y-auto pr-1">
+                    {filteredMediaHistory.map(job => {
+                      const isExpanded = expandedMediaJobId === job.id;
+                      const isPlaying = playingHistory?.type === 'media' && playingHistory.id === job.id;
+                      const lineage = mediaLineageText(job);
+                      return (
+                      <div key={job.id} className="rounded-lg border border-white/10 bg-white/5 p-2.5">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <div className="truncate text-sm font-medium text-white">{job.title || '音视频直生'}</div>
+                              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] ${
+                                job.status === 'succeeded' ? 'bg-green-500/20 text-green-300' :
+                                job.status === 'failed' ? 'bg-red-500/20 text-red-300' :
+                                job.status === 'running' ? 'bg-blue-500/20 text-blue-300' :
+                                'bg-yellow-500/20 text-yellow-300'
+                              }`}>
+                                {job.status === 'succeeded' ? '完成' :
+                                 job.status === 'failed' ? '失败' :
+                                 job.status === 'running' ? '生成中' : '等待'}
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-white/45">
+                              <span>{formatTime(job.created_at)}</span>
+                              <span>{job.duration_seconds || duration}秒</span>
+                              {(job.model_name || job.model_id) && <span>{job.model_name || job.model_id}</span>}
+                              {lineage && <span className="truncate text-white/55">{lineage}</span>}
+                            </div>
+                            <HistoryPreflightEvidence
+                              preflight={job.extra_data?.generation_preflight}
+                              testId={`history-preflight-${job.id}`}
+                            />
+                            {isExpanded && (
+                              <div className="mt-2 space-y-1 text-xs text-white/40">
+                                {(job.provider_id || job.extra_data?.external_config_id || job.extra_data?.lip_sync_mode || job.extra_data?.asset_version_locks?.length || job.extra_data?.keyframes?.length) && (
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {job.provider_id && <span>Provider: {job.provider_id}</span>}
+                                    {job.extra_data?.external_config_id && <span>适配配置已传入</span>}
+                                    {job.extra_data?.asset_version_locks?.length > 0 && <span>资产锁 {job.extra_data.asset_version_locks.length}</span>}
+                                    {job.extra_data?.keyframes?.length > 0 && <span>关键帧 {job.extra_data.keyframes.length}</span>}
+                                    {job.extra_data?.character_multiview_refs?.length > 0 && <span>多视图 {job.extra_data.character_multiview_refs.length}</span>}
+                                    {job.extra_data?.lip_sync_mode && job.extra_data.lip_sync_mode !== 'off' && <span>口型 {job.extra_data.lip_sync_mode}</span>}
+                                  </div>
+                                )}
+                                {job.extra_data?.subtitle_text && (
+                                  <div className="text-green-200/70">字幕：{job.extra_data.subtitle_text}</div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                          {mediaLineageText(job) && (
-                            <div className="mt-1 text-white/40 text-xs">
-                              {mediaLineageText(job)}
-                            </div>
-                          )}
-                          {(job.provider_id || job.extra_data?.external_config_id || job.extra_data?.lip_sync_mode || job.extra_data?.asset_version_locks?.length || job.extra_data?.keyframes?.length) && (
-                            <div className="mt-1 flex flex-wrap gap-1.5 text-xs text-white/40">
-                              {job.provider_id && <span>Provider: {job.provider_id}</span>}
-                              {job.extra_data?.external_config_id && <span>适配配置已传入</span>}
-                              {job.extra_data?.asset_version_locks?.length > 0 && <span>资产锁 {job.extra_data.asset_version_locks.length}</span>}
-                              {job.extra_data?.keyframes?.length > 0 && <span>关键帧 {job.extra_data.keyframes.length}</span>}
-                              {job.extra_data?.character_multiview_refs?.length > 0 && <span>多视图 {job.extra_data.character_multiview_refs.length}</span>}
-                              {job.extra_data?.lip_sync_mode && job.extra_data.lip_sync_mode !== 'off' && <span>口型 {job.extra_data.lip_sync_mode}</span>}
-                            </div>
-                          )}
-                          {job.extra_data?.subtitle_text && (
-                            <div className="text-green-200/70 text-xs mt-1">字幕：{job.extra_data.subtitle_text}</div>
-                          )}
-                          <HistoryPreflightEvidence
-                            preflight={job.extra_data?.generation_preflight}
-                            testId={`history-preflight-${job.id}`}
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          {job.output_video_url && (
-                            <Button variant="ghost" size="sm" title="播放音视频" onClick={() => handlePlayVideo(job.output_video_url)}>
-                              <Play className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {canAttachHistoryVideo(job.status, job.output_video_url, job.shot_id) && (
+                          <div className="flex shrink-0 gap-1">
                             <Button
                               variant="ghost"
                               size="sm"
-                              title="设为镜头视频"
-                              aria-label={`设为镜头视频：${job.title || job.prompt || job.task_id || '音视频直生'}`}
-                              onClick={() => handleAttachHistoryVideoToShot(job.output_video_url, job.shot_id, job.title || job.prompt || '音视频直生')}
-                              className="text-green-300 hover:text-green-200"
+                              title={isExpanded ? '收起详情' : '查看详情'}
+                              onClick={() => setExpandedMediaJobId(isExpanded ? null : job.id)}
+                              className="h-8 w-8 p-0"
                             >
-                              <ShieldCheck className="w-4 h-4" />
+                              {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             </Button>
-                          )}
-                          {job.subtitle_track_id && (
-                            <Button variant="ghost" size="sm" title="导出字幕" onClick={() => handleExportSubtitle(job.subtitle_track_id)}>
-                              <Download className="w-4 h-4" />
-                            </Button>
-                          )}
+                            {job.output_video_url && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="在此播放"
+                                onClick={() => handlePlayHistoryVideo('media', job.id, job.output_video_url, job.title || '音视频直生')}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Play className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {canAttachHistoryVideo(job.status, job.output_video_url, job.shot_id) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="设为镜头视频"
+                                aria-label={`设为镜头视频：${job.title || job.prompt || job.task_id || '音视频直生'}`}
+                                onClick={() => handleAttachHistoryVideoToShot(job.output_video_url, job.shot_id, job.title || job.prompt || '音视频直生')}
+                                className="h-8 w-8 p-0 text-green-300 hover:text-green-200"
+                              >
+                                <ShieldCheck className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {job.subtitle_track_id && (
+                              <Button variant="ghost" size="sm" title="导出字幕" onClick={() => handleExportSubtitle(job.subtitle_track_id)} className="h-8 w-8 p-0">
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
+                        {isPlaying && (
+                          <div className="mt-3 rounded-lg border border-white/10 bg-black/30 p-2">
+                            <div className="mb-2 flex items-center justify-between gap-2 text-xs text-white/50">
+                              <span className="truncate">{playingHistory.title}</span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setPlayingHistory(null)}
+                                className="h-7 px-2 text-white/50"
+                              >
+                                关闭
+                              </Button>
+                            </div>
+                            <video src={playingHistory.url} controls autoPlay className="max-h-72 w-full rounded bg-black" />
+                          </div>
+                        )}
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
+                  ) : (
+                    <div className="rounded-lg border border-white/10 bg-white/5 py-8 text-center text-white/40">
+                      没有匹配的音视频历史
+                    </div>
+                  )
                 ) : (
                   <div className="text-center py-6 text-white/40">
                     <Sparkles className="w-8 h-8 mx-auto mb-2 opacity-50" />

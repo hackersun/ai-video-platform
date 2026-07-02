@@ -40,6 +40,22 @@ docker-compose up -d
 # API文档: http://localhost:8000/docs
 ```
 
+## 本地验收
+
+```bash
+# 快速验收：前端类型检查 + 构建
+npm run verify:quick
+
+# 后端测试
+npm run verify:backend
+
+# 前端类型检查 + 构建
+npm run verify:frontend
+
+# 端到端测试（需先启动前端服务）
+npm run verify:e2e
+```
+
 ## 开发指南
 
 见 [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md)

@@ -266,15 +266,15 @@ export default function ChapterDetailPage() {
     <MainLayout>
       <div className="space-y-6">
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
             <Button variant="ghost" onClick={() => router.push(`/novels/${novelId}`)}>
               <ArrowLeft className="w-4 h-4 mr-2" />
               返回
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                <FileText className="w-6 h-6" />
+            <div className="min-w-0">
+              <h1 className="flex items-center gap-2 break-words text-2xl font-bold text-white">
+                <FileText className="w-6 h-6 shrink-0" />
                 {chapter.novel_id ? `第${chapter.chapter_number}章` : '章节编辑'}
               </h1>
               {novel && (
@@ -285,7 +285,7 @@ export default function ChapterDetailPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             <Badge variant="outline" className="text-white/60 border-white/20">
               <Clock className="w-3 h-3 mr-1" />
               {wordCount} 字
@@ -399,7 +399,7 @@ export default function ChapterDetailPage() {
 
         {/* 章节内容编辑 */}
         <Card className="bg-white/5 border-white/10">
-          <CardContent className="p-6 space-y-4">
+          <CardContent className="space-y-4 p-4 sm:p-6">
             <div>
               <label className="text-white/80 mb-2 block">章节标题</label>
               <Input
@@ -416,8 +416,11 @@ export default function ChapterDetailPage() {
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 placeholder="开始创作您的章节内容…"
-                className="bg-white/10 border-white/20 text-white min-h-[500px] resize-none"
+                className="min-h-[clamp(420px,58vh,760px)] resize-y bg-white/10 border-white/20 text-base leading-7 text-white"
               />
+              <p className="mt-2 text-xs text-white/40">
+                长章节可直接在页面滚动，也可以拖动正文框右下角调整写作区高度。
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -443,7 +446,7 @@ export default function ChapterDetailPage() {
             </Link>
           </Card>
           <Card className="bg-gradient-to-br from-green-600/20 to-emerald-600/20 border-green-500/30 cursor-pointer hover:border-green-500/50 transition-colors">
-            <Link href={`/scripts/new?novel_id=${novelId}&chapter_id=${chapterId}`}>
+            <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapterId}`}>
               <CardContent className="p-4 text-center">
                 <Film className="w-8 h-8 mx-auto mb-2 text-green-400" />
                 <div className="text-white font-medium">基于本章创作</div>

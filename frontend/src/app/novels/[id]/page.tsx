@@ -9,8 +9,21 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import {
+  DEFAULT_IMAGE_STYLE_TEMPLATES,
+  ImageStyleTemplatePicker,
+  type ImageStyleTemplate,
+} from '@/components/media/image-style-template-picker';
 import { useToast } from '@/components/ui/toast';
 import { 
   BookOpen, 
@@ -32,6 +45,7 @@ import {
   Play,
   Settings,
   ImageIcon,
+  Edit2,
   RefreshCw,
   ShieldCheck,
   ListChecks
@@ -52,6 +66,16 @@ const toMediaUrl = (url?: string | null) => {
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
 };
 
+const FALLBACK_IMAGE_STYLES: ImageStyleTemplate[] = DEFAULT_IMAGE_STYLE_TEMPLATES;
+
+const DETAIL_TAB_VALUES = new Set(['chapters', 'series-plan', 'characters', 'scripts', 'story-bible', 'settings']);
+
+const normalizeDetailTab = (value?: string | null) => {
+  if (!value) return '';
+  if (value === 'series') return 'series-plan';
+  return DETAIL_TAB_VALUES.has(value) ? value : '';
+};
+
 interface Novel {
   id: string;
   title: string;
@@ -66,10 +90,12 @@ interface Novel {
 interface Chapter {
   id: string;
   title: string;
+  content?: string;
   chapter_number: number;
   word_count?: number;
   status: string;
   created_at: string;
+  updated_at?: string;
 }
 
 interface Character {
@@ -206,6 +232,93 @@ const statusLabels: Record<string, string> = {
   media_ready: '可合成',
 };
 
+const GENRE_OPTIONS = [
+  '玄幻',
+  '修仙',
+  '仙侠',
+  '都市',
+  '武侠',
+  '奇幻',
+  '科幻',
+  '历史',
+  '言情',
+  '悬疑',
+  '恐怖',
+  '末世',
+  '校园',
+  '短剧',
+  '其他',
+];
+
+const GENRE_ALIAS_MAP: Record<string, string> = {
+  xianxia: '仙侠',
+  urban: '都市',
+  scifi: '科幻',
+  science_fiction: '科幻',
+  historical: '历史',
+  romance: '言情',
+  mystery: '悬疑',
+  fantasy: '奇幻',
+  wuxia: '武侠',
+  horror: '恐怖',
+  anime: '动漫',
+};
+
+const NOVEL_STATUS_OPTIONS = [
+  { value: 'draft', label: '草稿' },
+  { value: 'writing', label: '创作中' },
+  { value: 'completed', label: '已完成' },
+];
+
+const NOVEL_STATUS_LABELS = Object.fromEntries(
+  NOVEL_STATUS_OPTIONS.map((item) => [item.value, item.label])
+);
+
+const CHAPTER_STATUS_LABELS: Record<string, string> = {
+  draft: '草稿',
+  writing: '创作中',
+  completed: '已完成',
+};
+
+const SCRIPT_STATUS_LABELS: Record<string, string> = {
+  draft: '草稿',
+  writing: '创作中',
+  completed: '已完成',
+  generated: '已生成',
+  reviewed: '已审核',
+};
+
+const normalizeGenre = (genre?: string | null) => {
+  const value = (genre || '').trim();
+  if (!value) return '';
+  return GENRE_ALIAS_MAP[value.toLowerCase()] || value;
+};
+
+const getGenreLabel = (genre?: string | null) => normalizeGenre(genre) || '未设置题材';
+
+const suggestChapterTitle = (content: string, chapterNumber: number, novelTitle?: string) => {
+  const cleaned = content
+    .split('\n')
+    .map((line) => line.replace(/^[\s#【\[]+|[\]】\s]+$/g, '').trim())
+    .find((line) => line.length > 0);
+
+  if (cleaned) {
+    const sentence = cleaned
+      .replace(/^第[一二三四五六七八九十百千万\d]+\s*[章节卷集回]?[：:、.\s-]*/, '')
+      .split(/[。！？!?；;，,]/)[0]
+      .replace(/[《》“”"'`]/g, '')
+      .trim();
+    if (sentence.length >= 2) {
+      return `第${chapterNumber}章 ${sentence.slice(0, 18)}`;
+    }
+  }
+
+  if (novelTitle) {
+    return `第${chapterNumber}章 ${novelTitle.slice(0, 8)}新篇`;
+  }
+  return `第${chapterNumber}章 新的转折`;
+};
+
 const entriesOf = (value?: Record<string, any> | null) => Object.entries(value || {});
 
 export default function NovelDetailPage() {
@@ -231,20 +344,26 @@ export default function NovelDetailPage() {
   const [showChapterForm, setShowChapterForm] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState('');
   const [newChapterContent, setNewChapterContent] = useState('');
+  const [newChapterInstruction, setNewChapterInstruction] = useState('');
+  const [newChapterTargetWordCount, setNewChapterTargetWordCount] = useState(1800);
   const [creatingChapter, setCreatingChapter] = useState(false);
+  const [chapterAiAction, setChapterAiAction] = useState<'continue' | 'polish' | 'expand' | null>(null);
   
   // 新角色表单
   const [showCharacterForm, setShowCharacterForm] = useState(false);
   const [newCharacterName, setNewCharacterName] = useState('');
   const [newCharacterDesc, setNewCharacterDesc] = useState('');
+  const [activeTab, setActiveTab] = useState('chapters');
   const [creatingCharacter, setCreatingCharacter] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
   const [settingsDescription, setSettingsDescription] = useState('');
   const [settingsGenre, setSettingsGenre] = useState('');
+  const [settingsStatus, setSettingsStatus] = useState('draft');
   const [savingNovelSettings, setSavingNovelSettings] = useState(false);
   
   // 封面生成
   const [generatingCover, setGeneratingCover] = useState(false);
+  const [coverStyleDialogOpen, setCoverStyleDialogOpen] = useState(false);
   const [coverPreview, setCoverPreview] = useState<string | null>(novel?.cover_url || null);
   const [extractingEntities, setExtractingEntities] = useState(false);
   const [entityMessage, setEntityMessage] = useState<string | null>(null);
@@ -262,13 +381,34 @@ export default function NovelDetailPage() {
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [imageModelConfigId, setImageModelConfigId] = useState('');
+  const [imageStyle, setImageStyle] = useState('anime');
+  const [styleTemplates, setStyleTemplates] = useState<ImageStyleTemplate[]>(FALLBACK_IMAGE_STYLES);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const requestedTab = normalizeDetailTab(new URLSearchParams(window.location.search).get('tab'));
+    if (requestedTab) {
+      setActiveTab(requestedTab);
+    }
+  }, []);
 
   useEffect(() => {
     if (novelId) {
       loadNovelData();
       loadModelConfigs();
+      loadStyleTemplates();
     }
   }, [novelId]);
+
+  const loadStyleTemplates = async () => {
+    try {
+      const data = await apiClient.getAssetStyleTemplates();
+      const templates = Array.isArray(data?.templates) ? data.templates : FALLBACK_IMAGE_STYLES;
+      setStyleTemplates(templates.length ? templates : FALLBACK_IMAGE_STYLES);
+    } catch {
+      setStyleTemplates(FALLBACK_IMAGE_STYLES);
+    }
+  };
 
   const loadModelConfigs = async () => {
     try {
@@ -304,7 +444,8 @@ export default function NovelDetailPage() {
         setNovel(novelData);
         setSettingsTitle(novelData.title || '');
         setSettingsDescription(novelData.description || '');
-        setSettingsGenre(novelData.genre || '');
+        setSettingsGenre(normalizeGenre(novelData.genre));
+        setSettingsStatus(novelData.status || 'draft');
       }
       
       if (chaptersRes.ok) {
@@ -377,29 +518,132 @@ export default function NovelDetailPage() {
     }
   };
 
+  const nextChapterNumber = () => {
+    const maxNumber = chapters.reduce((max, chapter) => Math.max(max, chapter.chapter_number || 0), 0);
+    return maxNumber + 1;
+  };
+
+  const resetChapterForm = () => {
+    setNewChapterTitle('');
+    setNewChapterContent('');
+    setNewChapterInstruction('');
+    setNewChapterTargetWordCount(1800);
+    setShowChapterForm(false);
+  };
+
+  const resolvedNewChapterTitle = (content = newChapterContent) => (
+    newChapterTitle.trim() || suggestChapterTitle(content, nextChapterNumber(), novel?.title)
+  );
+
+  const handleSuggestNewChapterTitle = () => {
+    const title = resolvedNewChapterTitle();
+    setNewChapterTitle(title);
+    toast({ title: '已提炼章节标题', description: title, type: 'success' });
+  };
+
   const createChapter = async () => {
-    if (!newChapterTitle.trim()) return;
-    
+    if (!newChapterTitle.trim() && !newChapterContent.trim()) {
+      toast({ title: '请填写标题或正文', description: '也可以直接点击 AI 续写下一章。', type: 'info' });
+      return;
+    }
+
     setCreatingChapter(true);
     try {
-      const res = await fetchWithAuth(`${API_BASE}/chapters`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          novel_id: novelId,
-          title: newChapterTitle,
-          content: newChapterContent || ' '
-        })
+      await apiClient.createChapter({
+        novel_id: novelId,
+        title: resolvedNewChapterTitle(),
+        content: newChapterContent || '',
+        chapter_number: nextChapterNumber(),
       });
-      
-      if (res.ok) {
-        setNewChapterTitle('');
-        setNewChapterContent('');
-        setShowChapterForm(false);
-        loadNovelData();
-      }
+      resetChapterForm();
+      await loadNovelData();
+      toast({ title: '章节已创建', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '章节创建失败', description: err?.message || '请稍后重试。', type: 'error' });
     } finally {
       setCreatingChapter(false);
+    }
+  };
+
+  const handleAIContinueChapter = async () => {
+    setChapterAiAction('continue');
+    try {
+      const instructionParts = [
+        '请作为下一章继续创作，必须承接当前小说简介、已有章节结尾、Story Bible、人物关系、场景、道具和事件线。',
+        '章节结尾要留下可继续进入下一章或后续分镜的视频化悬念。',
+      ];
+      if (newChapterContent.trim()) {
+        instructionParts.push(`用户提供的章节方向或草稿：${newChapterContent.trim()}`);
+      }
+      if (newChapterInstruction.trim()) {
+        instructionParts.push(`额外要求：${newChapterInstruction.trim()}`);
+      }
+
+      const chapter = await apiClient.generateChapter(novelId, {
+        chapter_title: newChapterTitle.trim() || undefined,
+        instruction: instructionParts.join('\n'),
+        target_word_count: newChapterTargetWordCount,
+        model_config_id: textModelConfigId || undefined,
+      });
+      resetChapterForm();
+      await loadNovelData();
+      toast({
+        title: 'AI 已续写下一章',
+        description: chapter?.title ? `已保存为「${chapter.title}」` : '已保存到章节列表。',
+        type: 'success',
+      });
+    } catch (err: any) {
+      toast({ title: 'AI 续写失败', description: err?.message || '请检查文本模型配置。', type: 'error' });
+    } finally {
+      setChapterAiAction(null);
+    }
+  };
+
+  const handleCreateChapterWithAI = async (action: 'polish' | 'expand') => {
+    if (!newChapterContent.trim()) {
+      toast({ title: '请先填写章节草稿', description: '润色和扩写需要一段已有正文。', type: 'info' });
+      return;
+    }
+
+    setChapterAiAction(action);
+    try {
+      const created = await apiClient.createChapter({
+        novel_id: novelId,
+        title: resolvedNewChapterTitle(),
+        content: newChapterContent,
+        chapter_number: nextChapterNumber(),
+      });
+      const mode = action === 'polish' ? 'polish' : 'rewrite';
+      const instruction = [
+        action === 'polish'
+          ? '在不改变关键剧情、人物关系、场景和道具状态的前提下润色正文，增强画面感、节奏和对白。'
+          : '保留用户草稿中的关键剧情、人物、场景、事件和道具，将其扩写成完整章节，并自然承接前文。',
+        newChapterInstruction.trim() ? `额外要求：${newChapterInstruction.trim()}` : '',
+      ].filter(Boolean).join('\n');
+
+      const updated = await apiClient.aiAssistChapter(created.id, {
+        mode,
+        instruction,
+        target_word_count: newChapterTargetWordCount,
+        sync_story_bible: true,
+        model_config_id: textModelConfigId || undefined,
+      });
+      resetChapterForm();
+      await loadNovelData();
+      toast({
+        title: action === 'polish' ? '章节已润色并保存' : '章节已扩写并保存',
+        description: updated?.title ? `已保存为「${updated.title}」` : '已同步到章节列表。',
+        type: 'success',
+      });
+    } catch (err: any) {
+      await loadNovelData();
+      toast({
+        title: action === 'polish' ? 'AI 润色失败' : 'AI 扩写失败',
+        description: err?.message || '章节草稿可能已保存，请检查文本模型配置后重试。',
+        type: 'error',
+      });
+    } finally {
+      setChapterAiAction(null);
     }
   };
 
@@ -441,6 +685,7 @@ export default function NovelDetailPage() {
         body: JSON.stringify({
           title: novel.title,
           genre: novel.genre || '通用',
+          style: imageStyle,
           description: novel.description || '',
           prompt: '优先呈现主要人物、核心场景、关键道具和故事冲突',
           model_config_id: imageModelConfigId || undefined,
@@ -455,6 +700,7 @@ export default function NovelDetailPage() {
         setCoverPreview(data.cover_url);
         setNovel({ ...novel, cover_url: data.cover_url });
       }
+      setCoverStyleDialogOpen(false);
       toast({ title: '封面生成成功', description: data.message || '已根据小说简介和故事上下文生成。', type: 'success' });
     } catch (err: any) {
       console.error('生成封面失败:', err);
@@ -645,11 +891,13 @@ export default function NovelDetailPage() {
         title: settingsTitle.trim(),
         description: settingsDescription,
         genre: settingsGenre,
+        status: settingsStatus,
       });
       setNovel(updated);
       setSettingsTitle(updated.title || '');
       setSettingsDescription(updated.description || '');
-      setSettingsGenre(updated.genre || '');
+      setSettingsGenre(normalizeGenre(updated.genre));
+      setSettingsStatus(updated.status || 'draft');
       toast({ title: '小说设置已保存', type: 'success' });
     } catch (err: any) {
       toast({ title: '保存失败', description: err?.message || '请稍后重试。', type: 'error' });
@@ -710,6 +958,19 @@ export default function NovelDetailPage() {
     );
   }
 
+  const coverUrl = coverPreview || novel.cover_url;
+  const novelDescription = novel.description?.trim()
+    || '暂无小说简介。建议在“设置”中补充题材、主角、核心冲突和世界观，便于后续章节、剧本、分镜和视频生成保持一致。';
+  const totalWordCount = chapters.reduce((sum, chapter) => sum + (chapter.word_count || 0), 0);
+  const overviewStats = [
+    { label: '章节', value: chapters.length },
+    { label: '角色', value: characters.length },
+    { label: '剧本', value: scripts.length },
+    { label: '分镜', value: storyboardSummaries.length },
+    { label: '视频', value: videoSummaries.length },
+    { label: '设定', value: storyBibles.length },
+  ];
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -726,7 +987,7 @@ export default function NovelDetailPage() {
                 {novel.title}
               </h1>
               <p className="text-white/60 text-sm mt-1">
-                {novel.genre} · {novel.status === 'draft' ? '草稿' : novel.status === 'writing' ? '创作中' : '已完成'}
+                {getGenreLabel(novel.genre)} · {NOVEL_STATUS_LABELS[novel.status] || novel.status || '草稿'}
               </p>
             </div>
           </div>
@@ -736,7 +997,7 @@ export default function NovelDetailPage() {
             <Button 
               variant="outline" 
               className="border-violet-500/50"
-              onClick={handleGenerateCover}
+              onClick={() => setCoverStyleDialogOpen(true)}
               disabled={generatingCover}
             >
               {generatingCover ? (
@@ -768,23 +1029,150 @@ export default function NovelDetailPage() {
           </div>
         </div>
 
-        {/* 封面图预览 */}
-        {(novel.cover_url || coverPreview) && (
-          <Card className="bg-white/5 border-white/10 overflow-hidden">
-            <CardContent className="p-4">
-              <div className="relative aspect-video max-w-md mx-auto rounded-lg overflow-hidden bg-black/20">
-                <img 
-                  src={toMediaUrl(coverPreview || novel.cover_url)}
-                  alt={novel.title}
-                  width={640}
-                  height={360}
-                  loading="lazy"
-                  className="w-full h-full object-contain"
-                />
+        {/* 作品概览 */}
+        <Card data-testid="novel-overview-card" className="bg-white/5 border-white/10 overflow-hidden">
+          <CardContent className="p-4 sm:p-5">
+            <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)]">
+              <div data-testid="novel-cover-panel" className="mx-auto w-full max-w-[220px] xl:max-w-[248px]">
+                <div className="relative aspect-[3/4] overflow-hidden rounded-xl border border-white/10 bg-black/30 shadow-lg shadow-black/20">
+                  {coverUrl ? (
+                    <img
+                      src={toMediaUrl(coverUrl)}
+                      alt={novel.title}
+                      width={480}
+                      height={640}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center text-white/45">
+                      <ImageIcon className="h-10 w-10" />
+                      <div className="text-sm">还没有封面</div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-violet-500/50"
+                        onClick={() => setCoverStyleDialogOpen(true)}
+                        disabled={generatingCover}
+                      >
+                        {generatingCover ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
+                        生成封面
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </CardContent>
-          </Card>
-        )}
+
+              <div data-testid="novel-summary-panel" className="min-w-0 space-y-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="border-violet-400/40 text-violet-100">
+                        {getGenreLabel(novel.genre)}
+                      </Badge>
+                      <Badge variant="outline" className="border-white/20 text-white/60">
+                        {NOVEL_STATUS_LABELS[novel.status] || novel.status || '草稿'}
+                      </Badge>
+                      {seriesPlan?.episodes?.length ? (
+                        <Badge variant="outline" className="border-blue-400/40 text-blue-100">
+                          已规划 {seriesPlan.episodes.length} 集
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <h2 className="mt-3 text-lg font-semibold text-white">作品简介</h2>
+                    <p className="mt-2 max-w-4xl whitespace-pre-wrap break-words text-sm leading-7 text-white/68">
+                      {novelDescription}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="shrink-0 border-white/20"
+                    onClick={() => setActiveTab('settings')}
+                  >
+                      <Edit2 className="mr-2 h-4 w-4" />
+                      编辑简介
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+                  {overviewStats.map((item) => (
+                    <div key={item.label} className="rounded-lg border border-white/10 bg-black/15 px-3 py-2">
+                      <div className="text-xs text-white/40">{item.label}</div>
+                      <div className="mt-1 text-base font-semibold text-white">{item.label} {item.value}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-3">
+                  <div className="rounded-lg bg-white/[0.04] p-3">
+                    <div className="text-xs text-white/40">正文规模</div>
+                    <div className="mt-1 text-sm font-medium text-white">{totalWordCount || 0} 字</div>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.04] p-3">
+                    <div className="text-xs text-white/40">一致性状态</div>
+                    <div className="mt-1 text-sm font-medium text-white">
+                      {storyBibles.length > 0 ? 'Story Bible 已建立' : '建议生成 Story Bible'}
+                    </div>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.04] p-3">
+                    <div className="text-xs text-white/40">下一步建议</div>
+                    <div className="mt-1 text-sm font-medium text-white">
+                      {chapters.length === 0 ? '先创建章节' : seriesPlan?.episodes?.length ? '按集推进制作' : '生成整书计划'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Dialog
+          open={coverStyleDialogOpen}
+          onOpenChange={(open) => {
+            if (!generatingCover) setCoverStyleDialogOpen(open);
+          }}
+        >
+          <DialogContent className="max-w-[min(100vw-1.5rem,1100px)]">
+            <DialogHeader>
+              <DialogTitle>生成封面图片</DialogTitle>
+              <DialogDescription>
+                先选择封面画面风格。系统会把小说题材、简介、主要人物、核心场景和所选风格一起写入 AI 生图提示词，生成后自动保存为当前作品封面。
+              </DialogDescription>
+            </DialogHeader>
+            <ImageStyleTemplatePicker
+              templates={styleTemplates}
+              value={imageStyle}
+              onChange={setImageStyle}
+              toMediaUrl={toMediaUrl}
+              recommendedFor="cover"
+              title="选择封面画面风格"
+              compact
+            />
+            <DialogFooter>
+              <Button
+                variant="outline"
+                className="border-white/15"
+                onClick={() => setCoverStyleDialogOpen(false)}
+                disabled={generatingCover}
+              >
+                取消
+              </Button>
+              <Button
+                className="bg-violet-600 hover:bg-violet-700"
+                onClick={handleGenerateCover}
+                disabled={generatingCover}
+              >
+                {generatingCover ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="mr-2 h-4 w-4" />
+                )}
+                开始生成封面
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
           <ModelCapabilitySelector
@@ -808,7 +1196,7 @@ export default function NovelDetailPage() {
         </div>
 
         {/* 标签页 */}
-        <Tabs defaultValue="chapters" className="space-y-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList className="h-auto max-w-full flex-wrap justify-start bg-white/5">
             <TabsTrigger value="chapters" className="data-[state=active]:bg-violet-600">
               <FileText className="w-4 h-4 mr-2" />
@@ -850,32 +1238,94 @@ export default function NovelDetailPage() {
                 {/* 新建章节表单 */}
                 {showChapterForm && (
                   <div className="p-4 bg-white/5 rounded-lg space-y-3">
-                    <Input
-                      placeholder="章节标题"
-                      value={newChapterTitle}
-                      onChange={(e) => setNewChapterTitle(e.target.value)}
-                      className="bg-white/10 border-white/20 text-white"
-                    />
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                      <Input
+                        placeholder={`章节标题，可留空后点击提炼标题，例如：第${nextChapterNumber()}章 山门试炼`}
+                        value={newChapterTitle}
+                        onChange={(e) => setNewChapterTitle(e.target.value)}
+                        className="bg-white/10 border-white/20 text-white"
+                      />
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleSuggestNewChapterTitle}
+                        disabled={creatingChapter || chapterAiAction !== null}
+                        className="border-white/20"
+                      >
+                        <Sparkles className="w-4 h-4 mr-1" />
+                        提炼标题
+                      </Button>
+                    </div>
                     <Textarea
-                      placeholder="章节内容（可选，后续可编辑）"
+                      placeholder="章节内容或创作方向（可选）。如果直接点 AI 续写，系统会读取小说简介、前文、Story Bible、人物、场景、道具和事件线来生成下一章。"
                       value={newChapterContent}
                       onChange={(e) => setNewChapterContent(e.target.value)}
-                      className="bg-white/10 border-white/20 text-white min-h-[100px]"
+                      className="bg-white/10 border-white/20 text-white min-h-[160px] resize-y"
                     />
-                    <div className="flex gap-2">
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+                      <Input
+                        placeholder="AI 辅助要求，例如：承接上一章悬念、强化主角危机、结尾留反转"
+                        value={newChapterInstruction}
+                        onChange={(e) => setNewChapterInstruction(e.target.value)}
+                        className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
+                      />
+                      <Input
+                        type="number"
+                        min={300}
+                        max={8000}
+                        value={newChapterTargetWordCount}
+                        onChange={(e) => setNewChapterTargetWordCount(Math.max(300, Math.min(8000, parseInt(e.target.value) || 1800)))}
+                        className="bg-white/10 border-white/20 text-white"
+                        title="目标字数"
+                      />
+                    </div>
+                    <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-3 text-sm text-violet-100">
+                      AI 辅助会优先使用上方“文本生成默认”模型，并自动带入本小说已有章节、Story Bible、人物、场景、道具和事件上下文，尽量保持下一章剧情承接。
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        onClick={handleAIContinueChapter}
+                        disabled={creatingChapter || chapterAiAction !== null}
+                        className="bg-violet-600 hover:bg-violet-700"
+                      >
+                        {chapterAiAction === 'continue' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        AI 续写下一章
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCreateChapterWithAI('expand')}
+                        disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
+                        className="border-blue-500/50 text-blue-200 hover:bg-blue-500/10"
+                      >
+                        {chapterAiAction === 'expand' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                        扩写成章
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleCreateChapterWithAI('polish')}
+                        disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
+                        className="border-green-500/50 text-green-200 hover:bg-green-500/10"
+                      >
+                        {chapterAiAction === 'polish' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        润色后创建
+                      </Button>
                       <Button 
                         size="sm" 
                         onClick={createChapter}
-                        disabled={creatingChapter || !newChapterTitle.trim()}
+                        disabled={creatingChapter || chapterAiAction !== null || (!newChapterTitle.trim() && !newChapterContent.trim())}
                         className="bg-violet-600 hover:bg-violet-700"
                       >
                         {creatingChapter && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                        创建
+                        手动创建
                       </Button>
                       <Button 
                         size="sm" 
                         variant="ghost"
-                        onClick={() => setShowChapterForm(false)}
+                        onClick={resetChapterForm}
+                        disabled={creatingChapter || chapterAiAction !== null}
                       >
                         取消
                       </Button>
@@ -902,7 +1352,7 @@ export default function NovelDetailPage() {
                             <div className="min-w-0">
                               <div className="break-words text-white font-medium">{chapter.title}</div>
                               <div className="text-white/40 text-sm">
-                                {chapter.word_count || 0} 字 · {chapter.status || '草稿'}
+                                {chapter.word_count || 0} 字 · {CHAPTER_STATUS_LABELS[chapter.status] || chapter.status || '草稿'}
                               </div>
                             </div>
                           </Link>
@@ -921,6 +1371,12 @@ export default function NovelDetailPage() {
                                 </>
                               );
                             })()}
+                            <Button asChild size="sm" variant="outline" className="border-white/20">
+                              <Link href={`/novels/${novelId}/chapters/${chapter.id}/edit`}>
+                                <Edit2 className="w-4 h-4 mr-1" />
+                                编辑
+                              </Link>
+                            </Button>
                             <Button
                               size="sm"
                               variant="outline"
@@ -1388,7 +1844,7 @@ export default function NovelDetailPage() {
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-white">剧本管理</CardTitle>
                 <Button asChild size="sm">
-                  <Link href={`/scripts/new?novel_id=${novelId}`}>
+                  <Link href={`/scripts?novel_id=${novelId}`}>
                     <Plus className="w-4 h-4 mr-2" />
                     新建剧本
                   </Link>
@@ -1411,7 +1867,7 @@ export default function NovelDetailPage() {
                         <div>
                           <div className="text-white font-medium">{script.title}</div>
                           <div className="text-white/40 text-sm">
-                            {script.genre} · {script.status || '草稿'}
+                            {getGenreLabel(script.genre)} · {SCRIPT_STATUS_LABELS[script.status] || script.status || '草稿'}
                           </div>
                         </div>
                         <div className="flex gap-2">
@@ -1457,11 +1913,33 @@ export default function NovelDetailPage() {
                 </div>
                 <div>
                   <label className="text-white/80 mb-2 block">类型</label>
-                  <Input 
+                  <select
                     value={settingsGenre}
                     onChange={(event) => setSettingsGenre(event.target.value)}
-                    className="bg-white/10 border-white/20 text-white"
-                  />
+                    className="w-full rounded-md border border-white/20 bg-slate-900 px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  >
+                    <option value="">选择小说题材</option>
+                    {!GENRE_OPTIONS.includes(settingsGenre) && settingsGenre && (
+                      <option value={settingsGenre}>{settingsGenre}</option>
+                    )}
+                    {GENRE_OPTIONS.map((genre) => (
+                      <option key={genre} value={genre}>{genre}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-white/80 mb-2 block">创作状态</label>
+                  <select
+                    value={settingsStatus}
+                    onChange={(event) => setSettingsStatus(event.target.value)}
+                    className="w-full rounded-md border border-white/20 bg-slate-900 px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-violet-500"
+                  >
+                    {NOVEL_STATUS_OPTIONS.map((statusOption) => (
+                      <option key={statusOption.value} value={statusOption.value}>
+                        {statusOption.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <Button
                   className="bg-violet-600 hover:bg-violet-700"

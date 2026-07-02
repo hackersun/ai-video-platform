@@ -8,7 +8,10 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.core.database import SyncSessionLocal
+from app.models import Script
 from init_db import init_db
 from main import app
 
@@ -100,6 +103,79 @@ def test_list_scripts_supports_pagination(client: TestClient) -> None:
     )
     assert page2.status_code == 200
     assert len(page2.json()) == 1
+
+
+def test_list_scripts_filters_by_novel_and_chapter_with_legacy_extra_data(client: TestClient) -> None:
+    user_id = f"script-chapter-filter-user-{uuid4()}"
+    novel_id = create_novel(client, user_id)
+    first_chapter = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第一章",
+            "content": "第一章内容",
+            "chapter_number": 1,
+        },
+        headers=auth_headers(user_id),
+    ).json()["id"]
+    second_chapter = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第二章",
+            "content": "第二章内容",
+            "chapter_number": 2,
+        },
+        headers=auth_headers(user_id),
+    ).json()["id"]
+
+    first_script = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": first_chapter,
+            "title": "第一章剧本",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert first_script.status_code == 201
+    second_script = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": second_chapter,
+            "title": "第二章剧本",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert second_script.status_code == 201
+
+    legacy_script = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": second_chapter,
+            "title": "旧数据第二章剧本",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert legacy_script.status_code == 201
+    with SyncSessionLocal() as db:
+        script = db.execute(
+            select(Script).where(Script.id == legacy_script.json()["id"])
+        ).scalar_one()
+        script.chapter_id = None
+        script.extra_data = {"chapter_id": second_chapter}
+        db.commit()
+
+    response = client.get(
+        f"/api/v1/scripts?novel_id={novel_id}&chapter_id={second_chapter}",
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    titles = {script["title"] for script in response.json()}
+    assert titles == {"第二章剧本", "旧数据第二章剧本"}
 
 
 def create_storyboard(client: TestClient, user_id: str) -> str:

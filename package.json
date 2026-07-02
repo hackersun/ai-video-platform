@@ -4,7 +4,11 @@
   "description": "## 项目概述",
   "main": "test-frontend-direct.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run verify:quick",
+    "verify:backend": "cd backend && python -m pytest",
+    "verify:frontend": "npm --prefix frontend run typecheck && npm --prefix frontend run build",
+    "verify:e2e": "npm --prefix e2e test",
+    "verify:quick": "npm run verify:frontend"
   },
   "keywords": [],
   "author": "",

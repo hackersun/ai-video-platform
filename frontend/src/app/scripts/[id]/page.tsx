@@ -32,6 +32,28 @@ import { apiClient } from '@/lib/api-client';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
+const GENRE_LABELS: Record<string, string> = {
+  xianxia: '仙侠',
+  xuanhuan: '玄幻',
+  wuxia: '武侠',
+  urban: '都市',
+  fantasy: '奇幻',
+  sci_fi: '科幻',
+  suspense: '悬疑',
+  romance: '情感',
+  adventure: '冒险',
+};
+
+const STYLE_LABELS: Record<string, string> = {
+  anime: '动漫',
+  cinematic_anime: '电影感动漫',
+  chinese_fantasy: '国风幻想',
+  ink_wash: '水墨国风',
+  hot_blooded: '热血爽感',
+  light_comedy: '轻喜剧',
+  realistic: '写实',
+};
+
 interface Script {
   id: string;
   title: string;
@@ -212,23 +234,24 @@ export default function ScriptDetailPage() {
     
     setGeneratingStoryboard(true);
     try {
-      const response = await fetchWithAuth(`${API_BASE}/storyboards`, {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: `${script.title} - 分镜`,
-          description: script.description,
-          script_id: script.id
+          script_id: script.id,
+          shot_count: 5,
+          style: script.style || 'anime',
         })
       });
       
       if (response.ok) {
         const newStoryboard = await response.json();
-        toast({ title: '分镜创建成功', type: 'success' });
+        toast({ title: 'AI 分镜已生成', description: `已生成 ${newStoryboard.shot_count || 0} 个镜头。`, type: 'success' });
         // 刷新分镜列表
         loadStoryboards(scriptId);
       } else {
-        throw new Error('创建失败');
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || error.message || '生成失败');
       }
     } catch (err: any) {
       toast({ title: '生成分镜失败', description: err.message || '请稍后重试。', type: 'error' });
@@ -301,7 +324,10 @@ export default function ScriptDetailPage() {
                   {STATUS_LABELS[script.status]}
                 </Badge>
                 {script.genre && (
-                  <span className="text-white/60 text-sm">{script.genre}</span>
+                  <span className="text-white/60 text-sm">题材：{GENRE_LABELS[script.genre] || script.genre}</span>
+                )}
+                {script.style && (
+                  <span className="text-white/60 text-sm">风格：{STYLE_LABELS[script.style] || script.style}</span>
                 )}
               </div>
             </div>
@@ -366,7 +392,7 @@ export default function ScriptDetailPage() {
                   <div>
                     <label className="text-white/80 mb-2 block">题材</label>
                     <Input
-                      value={script.genre || ''}
+                      value={GENRE_LABELS[script.genre || ''] || script.genre || ''}
                       disabled
                       className="bg-white/5 border-white/20 text-white/60"
                     />
@@ -522,13 +548,13 @@ export default function ScriptDetailPage() {
                         </div>
                         <div className="flex gap-2">
                           <Button asChild variant="ghost" size="sm">
-                            <Link href={`/storyboards?sb=${sb.id}`}>
+                            <Link href={`/storyboards?storyboard_id=${sb.id}`}>
                               <Eye className="w-4 h-4 mr-1" />
                               查看
                             </Link>
                           </Button>
                           <Button asChild variant="ghost" size="sm" className="text-purple-400">
-                            <Link href={`/video-generation?storyboard=${sb.id}`}>
+                            <Link href={`/video-generation?storyboard_id=${sb.id}`}>
                               <Film className="w-4 h-4 mr-1" />
                               生成视频
                             </Link>
@@ -556,7 +582,7 @@ export default function ScriptDetailPage() {
               </Link>
             </Card>
             <Card className="bg-gradient-to-br from-violet-600/20 to-indigo-600/20 border-violet-500/30 cursor-pointer hover:border-violet-500/50 transition-colors">
-              <Link href={`/video-generation?script=${scriptId}`}>
+              <Link href={`/video-generation?script_id=${scriptId}`}>
                 <CardContent className="p-4 text-center">
                   <Film className="w-8 h-8 mx-auto mb-2 text-violet-400" />
                   <div className="text-white font-medium">生成视频</div>

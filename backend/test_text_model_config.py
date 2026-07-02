@@ -109,6 +109,146 @@ async def test_llm_catalog_hides_preflight_test_provider_data() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_catalog_hides_internal_test_models_on_visible_provider() -> None:
+    user_id = f"llm-catalog-visible-provider-user-{uuid4()}"
+    model_id = f"internal-test-model-{uuid4()}"
+    config_id = f"internal-test-config-{uuid4()}"
+
+    async with AsyncSessionLocal() as db:
+        provider = await db.get(LLMProvider, "volcano")
+        if provider is None:
+            db.add(
+                LLMProvider(
+                    id="volcano",
+                    name="volcano",
+                    name_cn="火山引擎",
+                    base_url="https://ark.cn-beijing.volces.com/api/v3",
+                    is_active=True,
+                )
+            )
+        db.add(
+            LLMModel(
+                id=model_id,
+                provider_id="volcano",
+                model_id="doubao-seedance-local-ref-test",
+                model_name="Doubao Seedance Local Ref Test",
+                model_name_cn="豆包Seedance本地参考测试",
+                model_type="video",
+                capabilities=["text_to_video", "image_to_video"],
+                is_active=True,
+            )
+        )
+        config = LLMConfig(
+            id=config_id,
+            user_id=user_id,
+            model_id=model_id,
+            name="本地参考测试模型配置",
+            is_active=True,
+            is_default=True,
+            test_status="success",
+        )
+        config.set_api_key_encrypted("sk-local-ref-test")
+        db.add(config)
+        await db.commit()
+
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    try:
+        models_response = client.get("/api/v1/llm/models?provider=volcano", headers=headers)
+        assert models_response.status_code == 200
+        model_ids = {model["id"] for model in models_response.json()}
+        api_model_ids = {model["model_id"] for model in models_response.json()}
+        assert model_id not in model_ids
+        assert "doubao-seedance-local-ref-test" not in api_model_ids
+
+        configs_response = client.get("/api/v1/llm/configs", headers=headers)
+        assert configs_response.status_code == 200
+        assert all(config["id"] != config_id for config in configs_response.json())
+    finally:
+        async with AsyncSessionLocal() as db:
+            config = await db.get(LLMConfig, config_id)
+            if config is not None:
+                await db.delete(config)
+            model = await db.get(LLMModel, model_id)
+            if model is not None:
+                await db.delete(model)
+            await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_llm_catalog_hides_placeholder_tts_models_and_providers() -> None:
+    user_id = f"llm-catalog-tts-placeholder-user-{uuid4()}"
+    provider_id = f"tts-provider-{uuid4()}"
+    model_id = f"tts-model-{uuid4()}"
+    visible_provider_model_id = f"tts-model-{uuid4()}"
+
+    async with AsyncSessionLocal() as db:
+        db.add(
+            LLMProvider(
+                id=provider_id,
+                name=provider_id,
+                name_cn="TTS开通供应商",
+                base_url="https://example.invalid/tts",
+                is_active=True,
+            )
+        )
+        db.add(
+            LLMModel(
+                id=model_id,
+                provider_id=provider_id,
+                model_id=f"tts-api-model-{uuid4()}",
+                model_name="tts API Model",
+                model_type="tts",
+                capabilities=["text-to-speech"],
+                is_active=True,
+            )
+        )
+        db.add(
+            LLMModel(
+                id=visible_provider_model_id,
+                provider_id="minimax",
+                model_id="tts-api-model",
+                model_name="tts API Model",
+                model_type="tts",
+                capabilities=["text-to-speech"],
+                is_active=True,
+            )
+        )
+        await db.commit()
+
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    try:
+        providers_response = client.get("/api/v1/llm/providers")
+        assert providers_response.status_code == 200
+        assert provider_id not in {provider["id"] for provider in providers_response.json()}
+
+        all_models_response = client.get("/api/v1/llm/models", headers=headers)
+        assert all_models_response.status_code == 200
+        all_model_ids = {model["id"] for model in all_models_response.json()}
+        assert model_id not in all_model_ids
+        assert visible_provider_model_id not in all_model_ids
+
+        minimax_models_response = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
+        assert minimax_models_response.status_code == 200
+        minimax_model_ids = {model["id"] for model in minimax_models_response.json()}
+        assert visible_provider_model_id not in minimax_model_ids
+        assert "minimax-speech-2.6-hd" in minimax_model_ids or "minimax-speech-2-6-hd" in minimax_model_ids
+    finally:
+        async with AsyncSessionLocal() as db:
+            for item_id in [model_id, visible_provider_model_id]:
+                model = await db.get(LLMModel, item_id)
+                if model is not None:
+                    await db.delete(model)
+            provider = await db.get(LLMProvider, provider_id)
+            if provider is not None:
+                await db.delete(provider)
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_default_minimax_chat_model_is_resolved_as_text_config() -> None:
     user_id = "text-default-minimax-user"
 

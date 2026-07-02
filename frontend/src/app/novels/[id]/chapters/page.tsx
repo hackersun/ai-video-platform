@@ -27,6 +27,7 @@ import {
   Trash2,
   Sparkles,
   ArrowLeft,
+  Eye,
   Search,
   Clock
 } from 'lucide-react';
@@ -336,13 +337,18 @@ function ChaptersContent() {
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-1 sm:justify-end">
-                        <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`编辑章节 ${chapter.title}`} title="编辑章节">
+                        <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`查看章节 ${chapter.title}`} title="查看章节">
                           <Link href={`/novels/${novelId}/chapters/${chapter.id}`}>
+                            <Eye className="w-4 h-4" />
+                          </Link>
+                        </Button>
+                        <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`编辑章节 ${chapter.title}`} title="编辑章节">
+                          <Link href={`/novels/${novelId}/chapters/${chapter.id}/edit`}>
                             <Edit2 className="w-4 h-4" />
                           </Link>
                         </Button>
                         <Button asChild variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
-                          <Link href={`/scripts?chapter_id=${chapter.id}`}>
+                          <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapter.id}`}>
                             <FileText className="w-4 h-4 mr-1" />
                             剧本
                           </Link>

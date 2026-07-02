@@ -162,13 +162,18 @@ export function StudioShell() {
       {!workflowId && !loading ? (
         <Card className="border-white/10 bg-white/5">
           <CardContent className="p-8 text-center">
-            <div className="text-lg font-medium text-white">先创建或选择本集工程</div>
+            <div className="text-lg font-medium text-white">先创建首集工程</div>
             <div className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/55">
-              工作台不会自动创建工程。你可以从工作流页面选择小说、章节、剧本和分镜，再回到这里进行统一检查。
+              还没有可继续制作的本集工程。先用极速向导生成首集工程，完成后会带着工作流回到这里继续检查和修复。
             </div>
-            <Button className="mt-5 bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/workflow')}>
-              去创建工作流
-            </Button>
+            <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
+              <Button className="bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/quick-start')}>
+                极速创建首集工程
+              </Button>
+              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/workflow')}>
+                手动创建工作流
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ) : (

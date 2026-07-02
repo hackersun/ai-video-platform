@@ -552,6 +552,59 @@ async def build_workflow_quality_report(
     }
 
 
+async def refresh_workflow_production_contracts(
+    db: AsyncSession,
+    user_id: str,
+    workflow_id: str,
+    *,
+    shot_ids: Optional[List[str]] = None,
+    force: bool = False,
+    persist: bool = True,
+) -> Dict[str, Any]:
+    workflow = await _load_workflow(db, user_id, workflow_id)
+    shots = await _shots_for_workflow(db, user_id, workflow)
+    requested_ids = {str(shot_id) for shot_id in (shot_ids or []) if str(shot_id).strip()}
+    refreshed: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+
+    for shot in shots:
+        if requested_ids and shot.id not in requested_ids:
+            continue
+        production_context = _json_dict(_json_dict(shot.extra_data).get("production_context"))
+        if production_context.get("production_contract") and not force and not requested_ids:
+            skipped.append({"shot_id": shot.id, "shot_number": shot.shot_number, "reason": "contract_exists"})
+            continue
+        contract = await build_shot_production_contract(db, user_id, shot.id)
+        contract["lineage"] = {**_json_dict(contract.get("lineage")), "workflow_id": workflow.id}
+        persist_contract_to_shot(shot, contract)
+        refreshed.append({
+            "shot_id": shot.id,
+            "shot_number": shot.shot_number,
+            "contract_version": contract.get("contract_version"),
+            "seed": contract.get("seed"),
+        })
+
+    if persist:
+        metadata = dict(_json_dict(workflow.metadata_))
+        metadata["production_contracts"] = {
+            "refreshed_at": utc_now().isoformat(),
+            "refreshed_count": len(refreshed),
+            "skipped_count": len(skipped),
+        }
+        workflow.metadata_ = metadata
+        workflow.updated_at = utc_now()
+        await db.commit()
+
+    return {
+        "workflow_id": workflow.id,
+        "storyboard_id": workflow.storyboard_id,
+        "refreshed_count": len(refreshed),
+        "skipped_count": len(skipped),
+        "refreshed_shots": refreshed,
+        "skipped_shots": skipped,
+    }
+
+
 def _quality_recommendations(summary: Dict[str, Any]) -> List[str]:
     if not summary["shot_count"]:
         return ["当前工作流还没有镜头，请先生成分镜和镜头。"]
@@ -610,11 +663,14 @@ async def build_ai_producer_assistant(
     if workflow.storyboard_id and missing_contracts:
         actions.append({"code": "refresh_contracts", "label": "刷新镜头生产合约", "priority": "P0", "status": "ready", "detail": f"{len(missing_contracts)} 个镜头缺少 Production Contract。"})
         if should_execute("refresh_contracts"):
-            for shot in missing_contracts:
-                contract = await build_shot_production_contract(db, user_id, shot.id)
-                persist_contract_to_shot(shot, contract)
-            await db.commit()
-            executed.append({"code": "refresh_contracts", "result": {"refreshed_count": len(missing_contracts)}})
+            result = await refresh_workflow_production_contracts(
+                db,
+                user_id,
+                workflow.id,
+                shot_ids=[shot.id for shot in missing_contracts],
+                persist=True,
+            )
+            executed.append({"code": "refresh_contracts", "result": {"refreshed_count": result["refreshed_count"]}})
 
     media_audit = await audit_and_persist_workflow_media(db, user_id, workflow.id, persist_remote=False, dry_run=True)
     if media_audit["summary"]["missing_count"]:

@@ -1111,10 +1111,30 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert render_resp.status_code == 200
     render_payload = render_resp.json()
     assert render_payload["status"] == "rendered"
+    assert render_payload["render_status"] == "rendered"
+    assert render_payload["render_backend"] == "local_artifact_package"
+    assert render_payload["is_publishable"] is False
+    assert render_payload["output_kind"] == "preview_package"
+    assert render_payload["publication_blockers"][0]["code"] == "preview_package_not_publishable"
     assert render_payload["preview_url"].endswith("-preview.html")
     assert render_payload["srt_url"].endswith(".srt")
     assert render_payload["timeline_url"].endswith("-timeline.json")
     assert render_payload["render_manifest_url"].startswith("/static/exports/")
+
+    preview_resp = client.get(render_payload["preview_url"])
+    assert preview_resp.status_code == 200
+    assert "连续成片" in preview_resp.text
+
+    render_manifest_resp = client.get(render_payload["render_manifest_url"])
+    assert render_manifest_resp.status_code == 200
+    render_manifest = render_manifest_resp.json()
+    assert render_manifest["output_url"] == render_payload["preview_url"]
+    assert render_manifest["playable_url"] == render_payload["preview_url"]
+    assert render_manifest["artifacts"]["preview_url"] == render_payload["preview_url"]
+    assert [segment["index"] for segment in render_manifest["segments"]] == [1, 2]
+    assert render_manifest["segments"][0]["audio"]["text"] == "第 1 个镜头台词"
+    assert render_manifest["tracks"]["audio"][0]["url"]
+    assert render_manifest["tracks"]["subtitle"][0]["text"] == "第 1 个镜头台词"
 
     srt_resp = client.get(render_payload["srt_url"])
     assert srt_resp.status_code == 200
@@ -1205,6 +1225,9 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
         headers=_auth_headers(user_id),
     ).json()
     assert rendered_job["output_url"] == timeline_render["preview_url"]
+    assert rendered_job["is_publishable"] is False
+    assert rendered_job["output_kind"] == "preview_package"
+    assert rendered_job["publication_blockers"][0]["code"] == "preview_package_not_publishable"
     assert rendered_job["extra_data"]["render_status"] == "rendered"
     assert rendered_job["extra_data"]["render_artifacts"]["srt_url"] == timeline_render["srt_url"]
     assert rendered_job["extra_data"]["render_source"] == "editable_timeline"
@@ -1214,6 +1237,15 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
         headers=_auth_headers(user_id),
     ).json()
     assert 10 in rendered_status["completed_steps"]
+    rendered_status_job = rendered_status["synthesis_jobs"][0]
+    assert rendered_status_job["render_status"] == "rendered"
+    assert rendered_status_job["is_publishable"] is False
+    assert rendered_status_job["output_kind"] == "preview_package"
+    assert rendered_status_job["preview_url"] == timeline_render["preview_url"]
+    assert rendered_status_job["srt_url"] == timeline_render["srt_url"]
+    assert rendered_status_job["timeline_url"] == timeline_render["timeline_url"]
+    assert rendered_status_job["render_manifest_url"] == timeline_render["render_manifest_url"]
+    assert rendered_status_job["segment_count"] == 2
 
 
 def test_workflow_media_batch_separate_video_tts_uses_selected_models(

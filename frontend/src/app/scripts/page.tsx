@@ -96,6 +96,50 @@ const STATUS_COLORS = {
   completed: 'bg-green-500/20 text-green-400'
 };
 
+const formatChapterLabel = (chapter: Chapter) => {
+  const title = (chapter.title || '').trim();
+  let remaining = title;
+  let explicitNumber = '';
+  const chapterPrefixPattern = /^\s*第\s*([一二三四五六七八九十百千万两\d\s]+?)\s*[章节卷集回]\s*[：:、.\s-]*/;
+  while (remaining) {
+    const match = remaining.match(chapterPrefixPattern);
+    if (!match) break;
+    explicitNumber = match[1].replace(/\s+/g, '');
+    remaining = remaining.slice(match[0].length).trim();
+  }
+  if (explicitNumber) {
+    return `第${explicitNumber}章${remaining ? ` ${remaining}` : ''}`;
+  }
+  return chapter.chapter_number ? `第${chapter.chapter_number}章${title ? ` ${title}` : ''}` : title || '未命名章节';
+};
+
+const GENRE_OPTIONS = [
+  { value: 'xianxia', label: '仙侠' },
+  { value: 'xuanhuan', label: '玄幻' },
+  { value: 'wuxia', label: '武侠' },
+  { value: 'urban', label: '都市' },
+  { value: 'fantasy', label: '奇幻' },
+  { value: 'sci_fi', label: '科幻' },
+  { value: 'suspense', label: '悬疑' },
+  { value: 'romance', label: '情感' },
+  { value: 'adventure', label: '冒险' },
+];
+
+const STYLE_OPTIONS = [
+  { value: 'anime', label: '动漫' },
+  { value: 'cinematic_anime', label: '电影感动漫' },
+  { value: 'chinese_fantasy', label: '国风幻想' },
+  { value: 'ink_wash', label: '水墨国风' },
+  { value: 'hot_blooded', label: '热血爽感' },
+  { value: 'light_comedy', label: '轻喜剧' },
+  { value: 'realistic', label: '写实' },
+];
+
+const optionLabel = (options: Array<{ value: string; label: string }>, value?: string) => {
+  if (!value) return '';
+  return options.find((item) => item.value === value)?.label || value;
+};
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 export default function ScriptsPage() {
@@ -116,6 +160,7 @@ export default function ScriptsPage() {
   const [editingScript, setEditingScript] = useState<Script | null>(null);
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
+  const [scriptAssistLoading, setScriptAssistLoading] = useState<'polish_description' | 'polish_content' | 'short_drama' | null>(null);
   
   // AI生成相关状态
   const [showAIGenerateModal, setShowAIGenerateModal] = useState(false);
@@ -160,6 +205,7 @@ export default function ScriptsPage() {
   const [formData, setFormData] = useState({
     title: '',
     description: '',
+    content: '',
     genre: '',
     style: ''
   });
@@ -249,6 +295,7 @@ export default function ScriptsPage() {
     setFormData({
       title: '',
       description: '',
+      content: '',
       genre: '',
       style: ''
     });
@@ -352,8 +399,7 @@ export default function ScriptsPage() {
       const contextChapterId = selectedFilterChapterId || selectedChapterId || undefined;
       const contextNovel = novels.find((item) => item.id === contextNovelId);
       const contextChapter = [...aiChapters, ...chapters].find((item) => item.id === contextChapterId);
-      const chapterTitle = contextChapter?.title?.trim();
-      const draftTitle = chapterTitle ? `${chapterTitle} 剧本` : '自定义剧本';
+      const draftTitle = contextChapter ? `${formatChapterLabel(contextChapter)} 剧本` : '自定义剧本';
       const draftGenre = formData.genre || contextNovel?.genre || '';
       const draftStyle = formData.style || 'anime';
 
@@ -438,10 +484,46 @@ export default function ScriptsPage() {
     setFormData({
       title: script.title,
       description: script.description || '',
+      content: script.content || '',
       genre: script.genre || '',
       style: script.style || ''
     });
     setShowModal(true);
+  };
+
+  const handleScriptAssist = async (mode: 'polish_description' | 'polish_content' | 'short_drama') => {
+    if (!formData.title.trim() && !formData.description.trim() && !formData.content.trim()) {
+      toast({ title: '先写一点内容', description: '标题、简介或正文至少填写一项，再使用 AI 辅助。', type: 'error' });
+      return;
+    }
+    setScriptAssistLoading(mode);
+    try {
+      const result = await apiClient.assistScriptEdit({
+        title: formData.title,
+        description: formData.description,
+        content: formData.content,
+        genre: formData.genre,
+        style: formData.style,
+        mode,
+        model_config_id: textModelConfigId || undefined,
+      });
+      setFormData(prev => ({
+        ...prev,
+        title: result.title || prev.title,
+        description: result.description ?? prev.description,
+        content: result.content ?? prev.content,
+      }));
+      const warnings = Array.isArray(result.warnings) ? result.warnings : [];
+      toast({
+        title: mode === 'polish_description' ? '简介已优化' : mode === 'short_drama' ? '短剧节奏已加强' : '正文已润色',
+        description: warnings[0] || '请检查结果，确认后再保存入库。',
+        type: warnings.length ? 'info' : 'success',
+      });
+    } catch (err: any) {
+      toast({ title: 'AI 辅助失败', description: err?.message || '请检查文本模型配置后重试。', type: 'error' });
+    } finally {
+      setScriptAssistLoading(null);
+    }
   };
 
   // 保存剧本
@@ -456,6 +538,7 @@ export default function ScriptsPage() {
       const payload = {
         title: formData.title,
         description: formData.description,
+        content: formData.content,
         genre: formData.genre || undefined,
         style: formData.style || undefined
       };
@@ -519,6 +602,7 @@ export default function ScriptsPage() {
         body: JSON.stringify({
           title: `${script.title} (副本)`,
           description: script.description,
+          content: script.content,
           genre: script.genre,
           style: script.style
         })
@@ -539,23 +623,24 @@ export default function ScriptsPage() {
   // 生成分镜
   const handleGenerateStoryboard = async (script: Script) => {
     try {
-      // 调用AI生成storyboard
-      const response = await fetchWithAuth(`${API_BASE}/storyboards`, {
+      const response = await fetchWithAuth(`${API_BASE}/storyboards/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          title: `${script.title} - 分镜`,
-          description: script.description,
-          script_id: script.id
+          script_id: script.id,
+          shot_count: 5,
+          style: script.style || 'anime',
+          model_config_id: textModelConfigId || undefined,
         })
       });
 
       if (response.ok) {
-        await response.json();
-        toast({ title: '分镜已创建', description: '正在跳转到分镜页面。', type: 'success' });
-        window.location.href = '/storyboards';
+        const data = await response.json();
+        toast({ title: 'AI 分镜已生成', description: `已生成 ${data.shot_count || 0} 个镜头。`, type: 'success' });
+        window.location.href = `/storyboards?storyboard_id=${data.id}`;
       } else {
-        throw new Error('创建失败');
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || error.message || '生成失败');
       }
     } catch (err) {
       console.error('生成分镜失败:', err);
@@ -667,7 +752,7 @@ export default function ScriptsPage() {
                 <option value="">全部章节</option>
                 {chapters.map((chapter) => (
                   <option key={chapter.id} value={chapter.id}>
-                    {chapter.chapter_number ? `第${chapter.chapter_number}章 ` : ''}{chapter.title}
+                    {formatChapterLabel(chapter)}
                   </option>
                 ))}
               </select>
@@ -730,8 +815,8 @@ export default function ScriptsPage() {
                               <p className="mt-1 break-words text-sm text-white/40">{script.description}</p>
                             )}
                             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-white/40">
-                              {script.genre && <span>{script.genre}</span>}
-                              {script.style && <span>{script.style}</span>}
+                              {script.genre && <span>题材：{optionLabel(GENRE_OPTIONS, script.genre)}</span>}
+                              {script.style && <span>风格：{optionLabel(STYLE_OPTIONS, script.style)}</span>}
                               {script.novel_id && (
                                 <span>{novels.find((novel) => novel.id === script.novel_id)?.title || '已绑定小说'}</span>
                               )}
@@ -770,7 +855,7 @@ export default function ScriptsPage() {
                             )}
                             {script.status === 'completed' && (
                               <Button asChild variant="ghost" size="sm" className="text-violet-400 hover:text-violet-300">
-                                <Link href={`/video-generation?script=${script.id}`}>
+                                <Link href={`/video-generation?script_id=${script.id}`}>
                                   <Play className="w-4 h-4 mr-1" />
                                   生成视频
                                 </Link>
@@ -884,82 +969,158 @@ export default function ScriptsPage() {
 
       {/* 创建/编辑剧本弹窗 */}
       <Dialog open={showModal} onOpenChange={setShowModal}>
-        <DialogContent className="max-w-lg border-white/20 bg-slate-950/95">
-            <DialogHeader className="pr-10">
-              <DialogTitle>
-                {editingScript ? '编辑剧本' : '创建剧本'}
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
+        <DialogContent className="max-h-[88vh] max-w-4xl overflow-y-auto border-white/20 bg-slate-950/95">
+          <DialogHeader className="pr-10">
+            <DialogTitle>
+              {editingScript ? '编辑剧本' : '创建剧本'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5">
+            <div className="grid gap-4 md:grid-cols-[1.2fr_0.8fr]">
               <div>
                 <label className="text-sm text-white/60 mb-2 block">剧本标题 *</label>
                 <Input
-                  placeholder="例如：第一章：星际启航"
+                  placeholder="例如：逆天至尊·第一章 重生之路"
                   value={formData.title}
-                  onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                   className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
               </div>
-              
-              <div>
-                <label className="text-sm text-white/60 mb-2 block">剧本描述</label>
-                <Textarea
-                  placeholder="简要描述剧本内容…"
-                  value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  rows={3}
-                  className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-                />
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-sm text-white/60 mb-2 block">题材</label>
-                  <Input
-                    placeholder="例如：仙侠"
+                  <select
                     value={formData.genre}
-                    onChange={(e) => setFormData({...formData, genre: e.target.value})}
-                    className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-                  />
+                    onChange={(e) => setFormData({ ...formData, genre: e.target.value })}
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white"
+                  >
+                    <option value="">选择题材</option>
+                    {formData.genre && !GENRE_OPTIONS.some((item) => item.value === formData.genre) && (
+                      <option value={formData.genre}>{formData.genre}</option>
+                    )}
+                    {GENRE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-sm text-white/60 mb-2 block">风格</label>
-                  <Input
-                    placeholder="例如：热血"
+                  <select
                     value={formData.style}
-                    onChange={(e) => setFormData({...formData, style: e.target.value})}
-                    className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-                  />
+                    onChange={(e) => setFormData({ ...formData, style: e.target.value })}
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-white"
+                  >
+                    <option value="">选择风格</option>
+                    {formData.style && !STYLE_OPTIONS.some((item) => item.value === formData.style) && (
+                      <option value={formData.style}>{formData.style}</option>
+                    )}
+                    {STYLE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
-              
-              <div className="flex gap-3 pt-4">
-                <Button 
-                  variant="outline" 
-                  onClick={() => setShowModal(false)}
-                  className="flex-1 border-white/20 text-white"
-                >
-                  取消
-                </Button>
-                <Button 
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700"
-                >
-                  {isSaving ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      保存中…
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4 mr-2" />
-                      保存剧本
-                    </>
-                  )}
-                </Button>
-              </div>
             </div>
+
+            <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex items-center gap-2 font-medium text-white">
+                    <Sparkles className="h-4 w-4 text-blue-300" />
+                    AI 辅助编辑
+                  </div>
+                  <p className="mt-1 text-xs text-white/50">
+                    AI 只回填当前窗口草稿，确认满意后再保存入库。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {([
+                    ['polish_description', '润色简介'],
+                    ['polish_content', '润色正文'],
+                    ['short_drama', '加强短剧节奏'],
+                  ] as const).map(([mode, label]) => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={Boolean(scriptAssistLoading)}
+                      onClick={() => handleScriptAssist(mode)}
+                      className="border-blue-500/30 text-blue-100 hover:bg-blue-500/10"
+                    >
+                      {scriptAssistLoading === mode ? (
+                        <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                      ) : (
+                        <Wand2 className="mr-1 h-3 w-3" />
+                      )}
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <ModelCapabilitySelector
+                capability="text"
+                configs={modelConfigs}
+                value={textModelConfigId}
+                onChange={setTextModelConfigId}
+                disabled={Boolean(scriptAssistLoading)}
+                title="AI 辅助使用的文本模型"
+                description="润色简介、正文和短剧节奏时使用该模型。"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm text-white/60 mb-2 block">剧本简介</label>
+              <Textarea
+                placeholder="简要描述本章改编重点、主要冲突、人物情绪和画面风格…"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                rows={4}
+                className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
+              />
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <label className="text-sm text-white/60">剧本正文</label>
+                <span className="text-xs text-white/40">{formData.content.length} 字</span>
+              </div>
+              <Textarea
+                placeholder="写入剧本正文、角色对白、旁白、动作、场景和镜头提示。示例：\n【场景】雨夜山门\n林澈：这一次，我不会再退。\n（旁白）命运的裂缝，在铜铃声中重新打开。"
+                value={formData.content}
+                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                rows={14}
+                className="min-h-[320px] bg-white/5 border-white/10 text-white placeholder:text-white/40"
+              />
+            </div>
+
+            <div className="flex gap-3 border-t border-white/10 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => setShowModal(false)}
+                className="flex-1 border-white/20 text-white"
+              >
+                取消
+              </Button>
+              <Button
+                onClick={handleSave}
+                disabled={isSaving}
+                className="flex-1 bg-blue-600 hover:bg-blue-700"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    保存中…
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4 mr-2" />
+                    保存剧本
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -1050,7 +1211,7 @@ export default function ScriptsPage() {
                         <option value="">选择章节…</option>
                         {aiChapters.map((chapter) => (
                           <option key={chapter.id} value={chapter.id}>
-                            {chapter.chapter_number ? `第${chapter.chapter_number}章 ` : ''}{chapter.title}
+                            {formatChapterLabel(chapter)}
                           </option>
                         ))}
                       </select>

@@ -29,8 +29,8 @@ test.describe('小说管理模块', () => {
     // 验证页面标题
     await expect(page.locator('h1')).toContainText('小说管理');
 
-    // 验证"创建小说"按钮存在
-    const createButton = page.getByRole('button', { name: /创建小说/ });
+    // 验证"创建小说"入口存在
+    const createButton = page.getByRole('link', { name: /创建小说/ });
     await expect(createButton.first()).toBeVisible();
   });
 

@@ -26,6 +26,7 @@ from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
+from app.services.publication_readiness import evaluate_publication_readiness
 
 router = APIRouter(tags=["工作流"])
 
@@ -1069,6 +1070,10 @@ async def _build_render_preflight_payload(
             })
 
     blocking_count = len([issue for issue in issues if issue.get("blocking")])
+    publication_readiness = evaluate_publication_readiness(
+        synthesis_job.output_url if synthesis_job else None,
+        extra,
+    )
     return {
         "workflow_id": workflow.id,
         "synthesis_job_id": synthesis_job.id if synthesis_job else None,
@@ -1084,6 +1089,9 @@ async def _build_render_preflight_payload(
         "render_source": source,
         "timeline_id": render_source.get("timeline_id"),
         "timeline_updated_at": render_source.get("timeline_updated_at"),
+        "is_publishable": publication_readiness["is_publishable"],
+        "output_kind": publication_readiness["output_kind"],
+        "publication_blockers": publication_readiness["publication_blockers"],
     }
 
 
@@ -1194,6 +1202,33 @@ def _build_timeline_edl(workflow: Workflow, synthesis_job: SynthesisJob, segment
         ],
         "duration_seconds": synthesis_job.duration_seconds,
         "created_at": utc_now().isoformat(),
+    }
+
+
+def _build_render_tracks(segments: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    video_tracks: List[Dict[str, Any]] = []
+    audio_tracks: List[Dict[str, Any]] = []
+    subtitle_tracks: List[Dict[str, Any]] = []
+    for segment in segments:
+        segment_index = segment.get("index")
+        video = segment.get("video") or {}
+        audio = segment.get("audio") or {}
+        subtitle_items = segment.get("subtitles")
+        subtitle = segment.get("subtitle") or {}
+        if video.get("url"):
+            video_tracks.append({"segment_index": segment_index, **video})
+        if audio.get("url"):
+            audio_tracks.append({"segment_index": segment_index, **audio})
+        if isinstance(subtitle_items, list) and subtitle_items:
+            for subtitle_item in subtitle_items:
+                if isinstance(subtitle_item, dict) and subtitle_item.get("text"):
+                    subtitle_tracks.append({"segment_index": segment_index, **subtitle_item})
+        elif subtitle.get("text"):
+            subtitle_tracks.append({"segment_index": segment_index, **subtitle})
+    return {
+        "video": video_tracks,
+        "audio": audio_tracks,
+        "subtitle": subtitle_tracks,
     }
 
 
@@ -1361,6 +1396,9 @@ class RenderPreflightResponse(BaseModel):
     render_source: str = "manifest"
     timeline_id: Optional[str] = None
     timeline_updated_at: Optional[str] = None
+    is_publishable: bool = False
+    output_kind: str = "missing_final_video"
+    publication_blockers: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class RenderRequest(BaseModel):
@@ -1379,6 +1417,8 @@ class RenderResponse(BaseModel):
     synthesis_job_id: str
     status: str
     message: str
+    render_status: Optional[str] = None
+    render_backend: Optional[str] = None
     output_url: Optional[str] = None
     manifest_url: Optional[str] = None
     preview_url: Optional[str] = None
@@ -1390,6 +1430,9 @@ class RenderResponse(BaseModel):
     issues: List[Dict[str, Any]] = Field(default_factory=list)
     render_source: str = "manifest"
     timeline_id: Optional[str] = None
+    is_publishable: bool = False
+    output_kind: str = "missing_final_video"
+    publication_blockers: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class WorkflowTimelineSyncRequest(BaseModel):
@@ -2245,26 +2288,39 @@ async def get_workflow_status(
     else:
         synthesis_query = synthesis_query.where(SynthesisJob.workflow_id == workflow_id)
     synthesis_result = await db.execute(synthesis_query.order_by(desc(SynthesisJob.created_at)).limit(20))
-    synthesis_jobs = [
-        {
+    synthesis_jobs = []
+    for job in synthesis_result.scalars().all():
+        extra = _extra(job)
+        render_artifacts = extra.get("render_artifacts") if isinstance(extra.get("render_artifacts"), dict) else {}
+        publication_readiness = evaluate_publication_readiness(job.output_url, extra)
+        synthesis_jobs.append({
             "id": job.id,
             "task_id": job.task_id,
             "title": job.title,
             "status": job.status,
             "progress": job.progress,
+            "video_url": job.video_url,
+            "audio_url": job.audio_url,
             "output_url": job.output_url,
             "duration_seconds": job.duration_seconds,
             "created_at": str(job.created_at),
-            "project_id": job.project_id or _extra(job).get("project_id"),
-            "workflow_id": job.workflow_id or _extra(job).get("workflow_id"),
-            "video_job_id": _extra(job).get("video_job_id"),
-            "tts_job_id": _extra(job).get("tts_job_id"),
-            "manifest_url": _extra(job).get("manifest_url"),
-            "segment_count": _extra(job).get("segment_count"),
-            "extra_data": _extra(job),
-        }
-        for job in synthesis_result.scalars().all()
-    ]
+            "project_id": job.project_id or extra.get("project_id"),
+            "workflow_id": job.workflow_id or extra.get("workflow_id"),
+            "video_job_id": extra.get("video_job_id"),
+            "tts_job_id": extra.get("tts_job_id"),
+            "manifest_url": extra.get("manifest_url") or render_artifacts.get("source_manifest_url"),
+            "preview_url": render_artifacts.get("preview_url"),
+            "srt_url": render_artifacts.get("srt_url"),
+            "timeline_url": render_artifacts.get("timeline_url"),
+            "render_manifest_url": render_artifacts.get("render_manifest_url"),
+            "render_status": extra.get("render_status"),
+            "render_backend": extra.get("render_backend"),
+            "is_publishable": publication_readiness["is_publishable"],
+            "output_kind": publication_readiness["output_kind"],
+            "publication_blockers": publication_readiness["publication_blockers"],
+            "segment_count": extra.get("segment_count"),
+            "extra_data": extra,
+        })
 
     return WorkflowStatusResponse(
         workflow_id=workflow.id,
@@ -2559,6 +2615,10 @@ async def render_workflow_package(
         extra_data = dict(synthesis_job.extra_data or {})
         extra_data["render_status"] = "preflight_failed"
         extra_data["render_issues"] = preflight["issues"]
+        failed_readiness = evaluate_publication_readiness(synthesis_job.output_url, extra_data)
+        extra_data["is_publishable"] = failed_readiness["is_publishable"]
+        extra_data["output_kind"] = failed_readiness["output_kind"]
+        extra_data["publication_blockers"] = failed_readiness["publication_blockers"]
         synthesis_job.extra_data = extra_data
         synthesis_job.status = "failed"
         synthesis_job.error_message = "渲染预检失败"
@@ -2573,12 +2633,17 @@ async def render_workflow_package(
             synthesis_job_id=synthesis_job.id,
             status="preflight_failed",
             message="渲染预检失败",
+            render_status="preflight_failed",
+            render_backend=request.render_backend,
             manifest_url=preflight.get("manifest_url"),
             segment_count=preflight.get("segment_count") or 0,
             duration_seconds=preflight.get("duration_seconds"),
             issues=preflight["issues"],
             render_source=preflight.get("render_source") or "manifest",
             timeline_id=preflight.get("timeline_id"),
+            is_publishable=failed_readiness["is_publishable"],
+            output_kind=failed_readiness["output_kind"],
+            publication_blockers=failed_readiness["publication_blockers"],
         )
 
     extra_data = dict(synthesis_job.extra_data or {})
@@ -2598,11 +2663,14 @@ async def render_workflow_package(
         and extra_data.get("render_backend") == request.render_backend
         and extra_data.get("render_source_key") == render_source_key
     ):
+        existing_readiness = evaluate_publication_readiness(synthesis_job.output_url, extra_data)
         return RenderResponse(
             workflow_id=workflow.id,
             synthesis_job_id=synthesis_job.id,
             status=extra_data.get("render_status") or "rendered",
             message="渲染包已存在",
+            render_status=extra_data.get("render_status") or "rendered",
+            render_backend=extra_data.get("render_backend"),
             output_url=synthesis_job.output_url,
             manifest_url=extra_data.get("manifest_url"),
             preview_url=existing_artifacts.get("preview_url"),
@@ -2614,6 +2682,9 @@ async def render_workflow_package(
             issues=[],
             render_source=extra_data.get("render_source") or "manifest",
             timeline_id=extra_data.get("render_timeline_id"),
+            is_publishable=existing_readiness["is_publishable"],
+            output_kind=existing_readiness["output_kind"],
+            publication_blockers=existing_readiness["publication_blockers"],
         )
 
     segments = render_source["segments"]
@@ -2654,6 +2725,7 @@ async def render_workflow_package(
             "render_backend": "ffmpeg_cloud",
             "render_source": render_source.get("source"),
             "timeline_id": render_source.get("timeline_id"),
+            "tracks": _build_render_tracks(segments),
             "segments": segments,
             "created_at": utc_now().isoformat(),
         }
@@ -2700,6 +2772,13 @@ async def render_workflow_package(
         extra_data["cloud_render_task_id"] = provider_task_id
         extra_data["external_config_id"] = cloud_config.id if cloud_config else request.external_config_id
         extra_data["burn_subtitles"] = request.burn_subtitles
+        cloud_readiness = evaluate_publication_readiness(output_url, {
+            **extra_data,
+            "output_kind": "final_video" if output_url else "cloud_request",
+        })
+        extra_data["is_publishable"] = cloud_readiness["is_publishable"]
+        extra_data["output_kind"] = cloud_readiness["output_kind"]
+        extra_data["publication_blockers"] = cloud_readiness["publication_blockers"]
         synthesis_job.extra_data = extra_data
         synthesis_job.task_id = provider_task_id or synthesis_job.task_id
         synthesis_job.status = "succeeded" if output_url else ("failed" if render_status == "failed" else "pending")
@@ -2725,6 +2804,8 @@ async def render_workflow_package(
             synthesis_job_id=synthesis_job.id,
             status=render_status,
             message="云渲染请求包已生成" if render_status != "failed" else "云渲染提交失败",
+            render_status=render_status,
+            render_backend="ffmpeg_cloud",
             output_url=output_url,
             manifest_url=extra_data.get("manifest_url"),
             srt_url=srt_url,
@@ -2735,6 +2816,9 @@ async def render_workflow_package(
             issues=[],
             render_source=render_source.get("source") or "manifest",
             timeline_id=render_source.get("timeline_id"),
+            is_publishable=cloud_readiness["is_publishable"],
+            output_kind=cloud_readiness["output_kind"],
+            publication_blockers=cloud_readiness["publication_blockers"],
         )
 
     render_manifest = {
@@ -2755,6 +2839,8 @@ async def render_workflow_package(
         "render_backend": "local_artifact_package",
         "render_source": render_source.get("source"),
         "timeline_id": render_source.get("timeline_id"),
+        "tracks": _build_render_tracks(segments),
+        "segments": segments,
         "created_at": utc_now().isoformat(),
     }
     render_manifest_url = _write_sequence_manifest(render_id, render_manifest)
@@ -2772,6 +2858,8 @@ async def render_workflow_package(
         **preview_artifacts,
         "preview_url": preview_url,
     }
+    render_manifest["output_url"] = preview_url
+    render_manifest["playable_url"] = preview_url
     render_manifest["artifacts"] = render_artifacts
     render_manifest_url = _write_sequence_manifest(render_id, render_manifest)
     render_artifacts["render_manifest_url"] = render_manifest_url
@@ -2785,6 +2873,12 @@ async def render_workflow_package(
     extra_data["render_timeline_id"] = render_source.get("timeline_id")
     extra_data["render_artifacts"] = render_artifacts
     extra_data["render_issues"] = []
+    extra_data["is_publishable"] = False
+    extra_data["output_kind"] = "preview_package"
+    extra_data["publication_blockers"] = [{
+        "code": "preview_package_not_publishable",
+        "message": "当前只有本地审阅包，需要生成真实视频文件后才能发布",
+    }]
     synthesis_job.extra_data = extra_data
     synthesis_job.status = "succeeded"
     synthesis_job.progress = 100
@@ -2808,6 +2902,8 @@ async def render_workflow_package(
         synthesis_job_id=synthesis_job.id,
         status="rendered",
         message="本地渲染包已生成",
+        render_status="rendered",
+        render_backend="local_artifact_package",
         output_url=synthesis_job.output_url,
         manifest_url=extra_data.get("manifest_url"),
         preview_url=preview_url,
@@ -2819,6 +2915,9 @@ async def render_workflow_package(
         issues=[],
         render_source=render_source.get("source") or "manifest",
         timeline_id=render_source.get("timeline_id"),
+        is_publishable=False,
+        output_kind="preview_package",
+        publication_blockers=extra_data["publication_blockers"],
     )
 
 

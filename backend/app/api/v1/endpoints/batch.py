@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models import BatchJob, BatchJobItem, Shot
 
-router = APIRouter(prefix="/batch", tags=["批量任务"])
+router = APIRouter(tags=["批量任务"])
 
 
 # ============== Pydantic 模型 ==============

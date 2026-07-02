@@ -245,3 +245,75 @@ test('workflow shows continuous video evidence after synthesis manifest generati
   await expect(evidence).toContainText('片段 2');
   await expect(evidence).toContainText('8 秒');
 });
+
+test('workflow marks local artifact render package as review-only and keeps artifact links', async ({ page }) => {
+  const renderRequests: Array<Record<string, unknown>> = [];
+  await mockCommonWorkflowRoutes(page, {
+    currentStep: 9,
+    scriptId: 'script-001',
+    storyboardId: 'storyboard-001',
+    videoJobs: [{ id: 'video-job-001', script_id: 'script-001', novel_id: 'novel-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    ttsJobs: [{ id: 'tts-job-001', script_id: 'script-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    synthesisJobs: [{
+      id: 'synthesis-001',
+      job_id: 'synthesis-001',
+      title: '第一章连续成片清单',
+      status: 'succeeded',
+      manifest_url: '/static/exports/synthesis-001.json',
+      output_url: '/static/exports/synthesis-001-preview.html',
+      segment_count: 2,
+      duration_seconds: 8,
+      extra_data: {
+        render_backend: 'local_artifact_package',
+        output_kind: 'preview_package',
+        is_publishable: false,
+        publish_block_reason: '当前只有本地预览包',
+        render_artifacts: {
+          preview_url: '/static/exports/synthesis-001-preview.html',
+          srt_url: '/static/exports/synthesis-001.srt',
+          timeline_url: '/static/exports/synthesis-001-timeline.json',
+          render_manifest_url: '/static/exports/synthesis-001-render.json',
+        },
+      },
+    }],
+    extraRoute: async (route, path, request) => {
+      if (path === '/api/v1/workflow/wf-269/render') {
+        const body = request.postData() ? JSON.parse(request.postData() || '{}') : {};
+        renderRequests.push(body);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            job_id: 'synthesis-001',
+            status: 'succeeded',
+            render_backend: 'local_artifact_package',
+            output_kind: 'preview_package',
+            is_publishable: false,
+            publish_block_reason: '当前只有本地预览包',
+            output_url: '/static/exports/synthesis-001-preview.html',
+            preview_url: '/static/exports/synthesis-001-preview.html',
+            srt_url: '/static/exports/synthesis-001.srt',
+            timeline_url: '/static/exports/synthesis-001-timeline.json',
+            render_manifest_url: '/static/exports/synthesis-001-render.json',
+          }),
+        });
+        return true;
+      }
+      return false;
+    },
+  });
+
+  await page.goto('/workflow?workflow_id=wf-269');
+  await page.getByRole('button', { name: /生成审阅包|重新生成审阅包/ }).click();
+
+  await expect.poll(() => renderRequests.length).toBe(1);
+  expect(renderRequests[0]).toMatchObject({ render_backend: 'local_artifact_package' });
+
+  const reviewOnlyNotice = page.getByText('审阅包 · 不可直接发布');
+  await expect(reviewOnlyNotice).toBeVisible();
+  await expect(reviewOnlyNotice.locator('..')).toContainText('当前只有本地预览包');
+  await expect(page.getByRole('link', { name: 'HTML 预览' })).toHaveAttribute('href', /synthesis-001-preview\.html$/);
+  await expect(page.getByRole('link', { name: 'SRT 字幕' })).toHaveAttribute('href', /synthesis-001\.srt$/);
+  await expect(page.getByRole('link', { name: '时间线 EDL' })).toHaveAttribute('href', /synthesis-001-timeline\.json$/);
+  await expect(page.getByRole('link', { name: '渲染清单' })).toHaveAttribute('href', /synthesis-001-render\.json$/);
+});
