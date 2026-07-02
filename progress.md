@@ -1051,3 +1051,14 @@
 - `/synthesis` 历史与发布入口透出 `is_publishable/output_kind/publication_blockers`，前端仅对可发布最终视频显示发布动作；失败时展示后端结构化原因。
 - 并行只读审查发现 metadata-only 发布绕过和 RenderResponse 字段契约缺口，已补红灯回归并修复；未清理或暂存大量无关脏文件。
 - 验证通过：`DEV_MODE=true PYTHONPATH=. pytest -q test_project_permissions_publication.py test_workflow_routes.py` 55 passed；`python3 -m compileall app` 通过；`npm run typecheck` 通过；`npm run build` 通过；`npx playwright test e2e/synthesis-history.spec.ts e2e/workflow-production-guidance.spec.ts --project=chromium --workers=1 --timeout=90000` 6 passed；`npx playwright test e2e/workflow-step-generation-evidence.spec.ts --project=chromium --workers=1 --timeout=90000` 4 passed；相关文件 `git diff --check` 通过。
+
+## 2026-07-02 连续动漫制作方案分析
+- 已提交 checkpoint: a9314f1 chore: checkpoint anime production workflow draft。
+- 提交前验证：frontend `npm run typecheck` 通过；backend LLM 目录过滤相关 4 个测试通过。
+- 开始使用 planning-with-files + codegraph 分析小说到多集动漫连续制作链路。
+
+## 2026-07-02 连续动漫制作优化方案文档
+
+- 已完成现有架构与业务流程复核，重点确认 `episode-preview-production.ts`、`workflow.py`、`production_control.py`、`consistency_preflight.py`、`prompt_composer.py`、`default_anime_library.py`、`volcano_config.py` 等能力边界。
+- 已结合火山 Seedance 2.0/fast、Runway、Kling、Luma、OpenAI Sora、Google 视频生成文档形成模型路由与平台对标结论。
+- 新增方案文档：`docs/continuous-anime-production-optimization.md`，给出 Series Studio、Production Bible、多集计划、资产/声音锁、模型策略、质量门禁、P0-P5 落地路线和验收标准。
