@@ -56,6 +56,26 @@ function studioSnapshot(mode: 'test' | 'production' = 'production') {
   };
 }
 
+function finalQualityMissingLocksSnapshot() {
+  const base = studioSnapshot('production');
+  return {
+    ...base,
+    workflow: {
+      ...base.workflow,
+      latest_production_strategy: 'final_quality',
+      latest_production_strategy_label: '高质量终稿',
+      latest_production_strategy_intent: 'final',
+    },
+    production_bible_summary: {
+      story_bible_id: 'bible-gates',
+      asset_readiness: { asset_count: 2, missing_asset_count: 2, ready: false },
+      voices: [],
+      counts: { characters: 1, scenes: 1, props: 0, events: 1 },
+    },
+    assets: { total_count: 2, locked_count: 0, final_count: 0, by_category: { character: 1 } },
+  };
+}
+
 test.beforeEach(async ({ page }) => {
   const userId = `studio-gates-user-${Date.now()}`;
   const token = devToken(userId);
@@ -177,4 +197,46 @@ test('production mode blocks temporary skip and keeps repair action visible', as
   await expect(page.getByText('生产出片模式会强制执行资产锁、模型验证、公开素材地址和一致性要求。')).toBeVisible();
   await expect(page.getByRole('button', { name: '应用资产锁' })).toBeVisible();
   await expect(page.getByRole('button', { name: '确认临时跳过并继续验证' })).toHaveCount(0);
+});
+
+test('final quality snapshot shows blocking asset and voice lock requirements', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '');
+    if (path === '/api/v1/workflow') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ workflow_id: 'wf-gates', title: '门禁验证工作流', status: 'active' }]),
+      });
+      return;
+    }
+    if (path === '/api/v1/studio/workflows/wf-gates/snapshot') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(finalQualityMissingLocksSnapshot()),
+      });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ items: [], count: 0 }),
+      });
+      return;
+    }
+    throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
+  });
+
+  await page.goto('/studio?workflow_id=wf-gates');
+
+  await expect(page.getByText('终稿门禁：缺少定稿参考图、资产锁覆盖或角色声线时会阻断终稿生产。')).toBeVisible();
+  await expect(page.getByText('缺失 · 定稿参考图')).toBeVisible();
+  await expect(page.getByText('缺失 · 资产锁覆盖')).toBeVisible();
+  await expect(page.getByText('缺失 · 角色声线')).toBeVisible();
+  await expect(page.getByText('缺角色声线，回 Story Bible/角色设定绑定。')).toBeVisible();
+  await expect(page.getByRole('link', { name: '补齐资产/声线' })).toHaveAttribute('href', '/assets');
+  await expect(page.getByText(/缺锁会阻断终稿/)).toBeVisible();
 });

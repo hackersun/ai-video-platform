@@ -54,6 +54,9 @@ export type StudioSnapshot = {
     chapter_id?: string | null;
     script_id?: string | null;
     storyboard_id?: string | null;
+    latest_production_strategy?: 'draft_fast' | 'final_quality' | 'low_cost' | 'separate_video_tts' | 'direct_av_first' | string | null;
+    latest_production_strategy_label?: string | null;
+    latest_production_strategy_intent?: string | null;
     updated_at?: string;
   };
   story_context?: {

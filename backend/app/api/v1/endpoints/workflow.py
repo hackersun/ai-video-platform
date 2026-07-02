@@ -440,6 +440,102 @@ async def _resolve_tts_voice_for_workflow_shot(
     return resolved
 
 
+def _asset_locks_for_workflow_shot(shot: Shot) -> List[Dict[str, Any]]:
+    production_context = _production_context_for_shot(shot)
+    locks = production_context.get("asset_version_locks")
+    return [dict(item) for item in locks if isinstance(item, dict)] if isinstance(locks, list) else []
+
+
+async def _voice_lock_snapshot_for_workflow_shot(
+    db: AsyncSession,
+    user_id: str,
+    workflow: Workflow,
+    shot: Shot,
+    requested_story_bible_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    character_name = _primary_tts_character_name(shot, _shot_audio_text(shot))
+    story_bible_id = await _resolve_story_bible_id_for_workflow_shot(
+        db,
+        user_id,
+        workflow,
+        shot,
+        requested_story_bible_id=requested_story_bible_id,
+    )
+    if not character_name or not story_bible_id:
+        return None
+
+    from app.services.voice_service import get_character_voice_from_story_bible
+
+    voice_config = await get_character_voice_from_story_bible(db, character_name, story_bible_id)
+    if not voice_config:
+        return None
+    voice = voice_config.get("voice") or voice_config.get("voice_model") or voice_config.get("voice_profile") or voice_config.get("voice_id")
+    if not voice:
+        return None
+    return {
+        "character_name": character_name,
+        "story_bible_id": story_bible_id,
+        "voice": voice,
+        "voice_source": "story_bible",
+    }
+
+
+async def _final_quality_lock_snapshots(
+    db: AsyncSession,
+    user_id: str,
+    workflow: Workflow,
+    shots: List[Shot],
+    requested_story_bible_id: Optional[str] = None,
+) -> Dict[str, Dict[str, Any]]:
+    snapshots: Dict[str, Dict[str, Any]] = {}
+    missing_assets: List[Dict[str, Any]] = []
+    missing_voices: List[Dict[str, Any]] = []
+
+    for shot in shots:
+        asset_locks = _asset_locks_for_workflow_shot(shot)
+        voice_lock = await _voice_lock_snapshot_for_workflow_shot(
+            db,
+            user_id,
+            workflow,
+            shot,
+            requested_story_bible_id=requested_story_bible_id,
+        )
+        snapshots[shot.id] = {
+            "asset_version_locks": asset_locks,
+            "voice_lock_snapshot": voice_lock,
+        }
+        if not asset_locks:
+            missing_assets.append({"shot_id": shot.id, "shot_number": shot.shot_number})
+        if _shot_audio_text(shot).strip() and not voice_lock:
+            missing_voices.append({
+                "shot_id": shot.id,
+                "shot_number": shot.shot_number,
+                "character_name": _primary_tts_character_name(shot, _shot_audio_text(shot)),
+            })
+
+    if missing_assets or missing_voices:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "final_quality_locks_missing",
+                "message": "final_quality 生成前必须锁定镜头资产和相关角色声线",
+                "missing_assets": missing_assets,
+                "missing_voices": missing_voices,
+                "issues": [
+                    *[
+                        {"code": "asset_lock_missing", **item}
+                        for item in missing_assets
+                    ],
+                    *[
+                        {"code": "voice_lock_missing", **item}
+                        for item in missing_voices
+                    ],
+                ],
+            },
+        )
+    return snapshots
+
+
 def _shot_generation_prompt(shot: Shot) -> str:
     subtitle_text = _shot_subtitle_text(shot)
     parts = [
@@ -1635,6 +1731,16 @@ async def generate_workflow_media_batch(
     if not shots:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="没有可生成的镜头")
 
+    final_quality_snapshots: Dict[str, Dict[str, Any]] = {}
+    if request.production_strategy == "final_quality":
+        final_quality_snapshots = await _final_quality_lock_snapshots(
+            db,
+            user_id,
+            workflow,
+            shots,
+            requested_story_bible_id=request.story_bible_id,
+        )
+
     if request.strategy == "separate_video_tts":
         from app.api.v1.endpoints.video import (
             VIDEO_MODEL_ID,
@@ -1795,6 +1901,11 @@ async def generate_workflow_media_batch(
             extra_data.update(_production_strategy_job_extra(request.production_strategy, request.model_config_id))
             extra_data["generation_strategy"] = request.strategy
             extra_data["audio_model_config_id"] = request.audio_model_config_id
+            lock_snapshot = final_quality_snapshots.get(shot.id) or {}
+            extra_data["asset_version_locks"] = lock_snapshot.get("asset_version_locks") or _asset_locks_for_workflow_shot(shot)
+            extra_data["asset_lock_snapshot"] = extra_data["asset_version_locks"]
+            if lock_snapshot.get("voice_lock_snapshot"):
+                extra_data["voice_lock_snapshot"] = lock_snapshot["voice_lock_snapshot"]
             if prepared.get("video_preflight_package") is not None:
                 video_preflight_package = prepared["video_preflight_package"]
                 extra_data["generation_preflight"] = {
@@ -1886,6 +1997,12 @@ async def generate_workflow_media_batch(
                 )
                 if resolved_voice.get("voice_source") == "story_bible":
                     tts_voice_lock_count += 1
+                voice_lock_snapshot = {
+                    "character_name": resolved_voice.get("character_name"),
+                    "story_bible_id": resolved_voice.get("story_bible_id"),
+                    "voice": resolved_voice.get("voice"),
+                    "voice_source": resolved_voice.get("voice_source"),
+                } if resolved_voice.get("voice_source") == "story_bible" else None
                 tts_voice = str(resolved_voice.get("voice") or request.voice_model)
                 tts_speed = float(resolved_voice.get("speed") or request.speed)
                 tts_job_id = str(uuid4())
@@ -1961,6 +2078,8 @@ async def generate_workflow_media_batch(
                         "voice_source": resolved_voice.get("voice_source"),
                         "voice_character_name": resolved_voice.get("character_name"),
                         "story_bible_id": resolved_voice.get("story_bible_id"),
+                        "voice_lock": voice_lock_snapshot,
+                        "voice_lock_snapshot": voice_lock_snapshot,
                         "lineage": {
                             **_lineage_for_workflow_shot(workflow, shot),
                             "story_bible_id": resolved_voice.get("story_bible_id"),
@@ -2055,6 +2174,9 @@ async def generate_workflow_media_batch(
             if isinstance(production_context.get("asset_version_locks"), list)
             else []
         )
+        lock_snapshot = final_quality_snapshots.get(shot.id) or {}
+        asset_lock_snapshot = lock_snapshot.get("asset_version_locks") or asset_version_locks
+        voice_lock_snapshot = lock_snapshot.get("voice_lock_snapshot")
         keyframes = shot.keyframes or production_context.get("keyframes") or []
         character_multiview_refs = (
             production_context.get("character_multiview_refs")
@@ -2095,7 +2217,10 @@ async def generate_workflow_media_batch(
                 **_production_strategy_job_extra(request.production_strategy, request.model_config_id),
                 "model_config_id": request.model_config_id,
                 "model_test_status": runtime_model.get("test_status"),
-                "asset_version_locks": asset_version_locks,
+                "asset_version_locks": asset_lock_snapshot,
+                "asset_lock_snapshot": asset_lock_snapshot,
+                "voice_lock_snapshot": voice_lock_snapshot,
+                "voice_lock": voice_lock_snapshot,
                 "keyframes": keyframes,
                 "character_multiview_refs": character_multiview_refs,
                 "production_contract": production_context.get("production_contract"),

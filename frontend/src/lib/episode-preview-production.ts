@@ -35,6 +35,11 @@ export type EpisodePreviewProductionResult = {
   workflowId: string;
   novelId: string;
   chapterId: string;
+  productionStrategy: ProductionStrategy;
+  productionStrategyLabel: string;
+  productionStrategyContract: string;
+  requiresFinalLocks: boolean;
+  allowsDraftGaps: boolean;
   scriptId?: string;
   storyboardId?: string;
   videoJobIds: string[];
@@ -93,6 +98,13 @@ function issueMessage(preflight: any) {
     .map((issue: any) => issue.message || issue.detail || issue.code)
     .filter(Boolean)
     .join('；');
+}
+
+function getStrategyContractFlags(strategy: ProductionStrategy) {
+  return {
+    requiresFinalLocks: strategy === 'final_quality',
+    allowsDraftGaps: strategy === 'draft_fast' || strategy === 'low_cost',
+  };
 }
 
 async function mark(
@@ -199,21 +211,36 @@ export async function runEpisodePreviewProduction(params: {
   await apiClient.runProducerAssistant(workflowId, { auto_fix: true });
   await mark(onStage, 'assistant', 'done', '制片检查和安全补齐已完成');
 
-  await mark(onStage, 'contracts', 'running', '正在应用资产锁和镜头生产合约');
-  await apiClient.applyWorkflowAssetLocks(workflowId, { create_missing_assets: true, persist: true });
-  await apiClient.refreshWorkflowShortVideoContracts(workflowId);
-  await mark(onStage, 'contracts', 'done', '人物、场景、道具、字幕和模型路线已锁定');
-
   const productionStrategy = params.productionStrategy || DEFAULT_PRODUCTION_STRATEGY;
   const strategy = params.generationStrategy || getGenerationStrategyForProduction(productionStrategy);
   const strategyCopy = getProductionStrategyCopy(productionStrategy);
+  const strategyContract = getStrategyContractFlags(productionStrategy);
+
+  await mark(
+    onStage,
+    'contracts',
+    'running',
+    strategyContract.requiresFinalLocks
+      ? '正在应用终稿资产锁、声线锁和镜头生产合约'
+      : '正在应用资产锁和镜头生产合约，并保留草稿缺口提示'
+  );
+  await apiClient.applyWorkflowAssetLocks(workflowId, { create_missing_assets: true, persist: true });
+  await apiClient.refreshWorkflowShortVideoContracts(workflowId);
+  await mark(
+    onStage,
+    'contracts',
+    'done',
+    strategyContract.requiresFinalLocks
+      ? '终稿所需人物、场景、道具、声线、字幕和模型路线已锁定'
+      : '草稿生产合约已应用；未锁定资产/声线缺口会随结果保留'
+  );
   await mark(
     onStage,
     'media',
     'running',
     strategy === 'separate_video_tts'
-      ? `正在按「${strategyCopy.label}」分别调用视频模型和声音模型生成镜头草稿`
-      : `正在按「${strategyCopy.label}」调用直生音视频模型生成镜头草稿`
+      ? `正在按「${strategyCopy.label}」分别调用视频模型和声音模型；${strategyCopy.contractHint}`
+      : `正在按「${strategyCopy.label}」调用直生音视频模型；${strategyCopy.contractHint}`
   );
   const mediaBatch = await apiClient.generateWorkflowMediaBatch(workflowId, {
     production_strategy: productionStrategy,
@@ -238,6 +265,10 @@ export async function runEpisodePreviewProduction(params: {
       workflowId,
       novelId,
       chapterId,
+      productionStrategy,
+      productionStrategyLabel: strategyCopy.label,
+      productionStrategyContract: strategyCopy.contractHint,
+      ...strategyContract,
       scriptId,
       storyboardId,
       videoJobIds,
@@ -303,6 +334,10 @@ export async function runEpisodePreviewProduction(params: {
     workflowId,
     novelId,
     chapterId,
+    productionStrategy,
+    productionStrategyLabel: strategyCopy.label,
+    productionStrategyContract: strategyCopy.contractHint,
+    ...strategyContract,
     scriptId,
     storyboardId,
     videoJobIds,

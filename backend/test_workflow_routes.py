@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.media_generation_job import MediaGenerationJob
+from app.models.shot import Shot
 from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
@@ -219,6 +220,17 @@ def _get_media_job_extra(job_id: str) -> dict:
             return job.extra_data or {}
 
     return asyncio.run(_get())
+
+
+def _set_shot_extra_data(shot_id: str, extra_data: dict) -> None:
+    async def _update() -> None:
+        async with AsyncSessionLocal() as session:
+            shot = await session.get(Shot, shot_id)
+            assert shot is not None
+            shot.extra_data = extra_data
+            await session.commit()
+
+    asyncio.run(_update())
 
 
 def _insert_model_config(
@@ -2817,9 +2829,25 @@ def test_timeline_clip_create_uses_nested_clip_route(client: TestClient) -> None
 def test_workflow_media_batch_tracks_final_quality_production_strategy(client: TestClient) -> None:
     user_id = f"strategy-trace-{uuid4()}"
     script_id = _create_script(client, user_id)
+    story_bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "title": "策略追踪 Story Bible",
+            "style": "测试风格",
+            "character_rules": [{"name": "策略角色", "voice": "strategy-voice"}],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert story_bible_resp.status_code == 201
+    story_bible_id = story_bible_resp.json()["id"]
     storyboard_resp = client.post(
         "/api/v1/storyboards",
-        json={"script_id": script_id, "title": "策略追踪分镜", "description": "test storyboard"},
+        json={
+            "script_id": script_id,
+            "title": "策略追踪分镜",
+            "description": "test storyboard",
+            "content": {"story_bible_id": story_bible_id},
+        },
         headers=_auth_headers(user_id),
     )
     assert storyboard_resp.status_code == 201
@@ -2830,12 +2858,31 @@ def test_workflow_media_batch_tracks_final_quality_production_strategy(client: T
             "storyboard_id": storyboard_id,
             "shot_number": 1,
             "duration": 4,
-            "prompt": "策略追踪镜头",
-            "dialogue": "最终质量策略应被记录。",
+            "prompt": "策略角色追踪镜头",
+            "dialogue": "策略角色：最终质量策略应被记录。",
+            "character_refs": [{"name": "策略角色"}],
         },
         headers=_auth_headers(user_id),
     )
     assert shot_resp.status_code == 201
+    shot_id = shot_resp.json()["id"]
+    _set_shot_extra_data(
+        shot_id,
+        {
+            "story_bible_id": story_bible_id,
+            "subtitle_text": "策略角色：最终质量策略应被记录。",
+            "production_context": {
+                "asset_version_locks": [
+                    {
+                        "asset_id": "strategy-asset-v1",
+                        "asset_version_id": "strategy-asset-version-1",
+                        "entity_name": "策略角色",
+                        "category": "character",
+                    }
+                ]
+            },
+        },
+    )
 
     workflow_resp = client.post(
         "/api/v1/workflow/start",
@@ -2940,3 +2987,147 @@ def test_synthesis_generate_and_list_job(client: TestClient, fake_synthesis_serv
     jobs = jobs_response.json()
     assert any(job["id"] == payload["job_id"] for job in jobs)
     assert any(job["output_url"] == "https://example.com/video.mp4" for job in jobs)
+
+def _create_final_quality_workflow(
+    client: TestClient,
+    user_id: str,
+    *,
+    asset_locks: list[dict] | None = None,
+    character_rules: list[dict] | None = None,
+) -> tuple[str, str]:
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 终稿锁")
+    bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "novel_id": novel_id,
+            "title": "终稿锁 Story Bible",
+            "style": "国风动画",
+            "character_rules": character_rules if character_rules is not None else [{"name": "孙剑"}],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert bible_resp.status_code == 201
+    story_bible_id = bible_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "终稿锁剧本",
+            "content": "孙剑在雨夜确认计划。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "title": "终稿锁分镜",
+            "content": {"chapter_id": chapter_id, "story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+
+    extra_data: dict = {"story_bible_id": story_bible_id}
+    if asset_locks is not None:
+        extra_data["production_context"] = {"asset_version_locks": asset_locks}
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_resp.json()["id"],
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "孙剑雨夜拔剑",
+            "dialogue": "孙剑：这次我要赢。",
+            "character_refs": [{"name": "孙剑"}],
+            "extra_data": extra_data,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+    shot_id = shot_resp.json()["id"]
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "终稿锁工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_resp.json()["id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    _set_shot_extra_data(shot_id, extra_data)
+    return workflow_resp.json()["workflow_id"], story_bible_id
+
+
+def test_final_quality_media_batch_requires_asset_and_voice_locks(client: TestClient) -> None:
+    user_id = f"final-locks-missing-{uuid4()}"
+    workflow_id, _ = _create_final_quality_workflow(client, user_id)
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first", "production_strategy": "final_quality"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "final_quality_locks_missing"
+    assert detail["missing_assets"]
+    assert detail["missing_voices"]
+
+
+def test_draft_fast_media_batch_does_not_require_final_quality_locks(client: TestClient) -> None:
+    user_id = f"draft-locks-open-{uuid4()}"
+    workflow_id, _ = _create_final_quality_workflow(client, user_id)
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first", "production_strategy": "draft_fast"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["created_count"] == 1
+
+
+def test_final_quality_media_batch_saves_asset_and_voice_lock_snapshots(client: TestClient) -> None:
+    user_id = f"final-locks-snapshot-{uuid4()}"
+    asset_locks = [
+        {
+            "asset_id": "asset-sunjian-v1",
+            "asset_version_id": "asset-sunjian-version-1",
+            "entity_name": "孙剑",
+            "category": "character",
+        }
+    ]
+    workflow_id, story_bible_id = _create_final_quality_workflow(
+        client,
+        user_id,
+        asset_locks=asset_locks,
+        character_rules=[{"name": "孙剑", "voice": "story-bible-sunjian", "voice_speed": 1.1}],
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first", "production_strategy": "final_quality"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    extra = _get_media_job_extra(response.json()["media_job_ids"][0])
+    assert extra["asset_version_locks"] == asset_locks
+    assert extra["asset_lock_snapshot"] == asset_locks
+    assert extra["voice_lock_snapshot"] == {
+        "character_name": "孙剑",
+        "story_bible_id": story_bible_id,
+        "voice": "story-bible-sunjian",
+        "voice_source": "story_bible",
+    }

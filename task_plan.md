@@ -1344,3 +1344,17 @@
 - [x] 生产策略追踪增强：workflow/status/studio/job metadata 暴露策略意图和推荐模型提示。
 - [x] 主线集成验证：审查补丁、解决冲突、运行后端/前端聚焦验证。
 - [x] 阶段提交：提交 P1 稳定切片。
+
+## 2026-07-02 P2 资产和声音锁强制化并行执行
+
+### 假设
+- 不做数据库迁移，继续复用 `Shot.extra_data.production_context.asset_version_locks`、`StoryEntity.attributes.voice_profile`、任务 `extra_data` 和 `Workflow.metadata_`。
+- P2 本轮只做“终稿模式可用门禁 + 快照追踪 + UI 显示”，不接入视觉模型检测、跨集风格漂移检测或完整资产版本生效范围管理。
+- `draft_fast` 允许先跑草稿，但 `final_quality` 必须对缺资产锁/声线锁给出结构化阻断。
+
+### 并行任务
+- [x] 后端 final_quality 门禁：缺资产锁或声线锁时阻断，生成任务保存资产/声线快照。
+- [x] 前端 Studio 可见化：资产/声音锁显示终稿门禁语义和缺口行动入口。
+- [x] 策略与文档契约：production strategy 文案说明草稿/终稿锁要求，文档更新 P2 当前边界。
+- [x] 主线集成验证：审查补丁、解决冲突、运行后端/前端聚焦验证。
+- [x] 阶段提交：提交 P2 稳定切片。

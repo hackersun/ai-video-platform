@@ -1089,3 +1089,11 @@
 - 生产策略追踪：`workflow/status/detail`、Studio snapshot 和生成任务 extra_data 透出 `production_strategy`、label、intent 与未指定模型时的 `recommended_model_hint`，`final_quality` 默认提示 Seedance-2.0。
 - 集成修正：前端 helper 已兼容后端真实结构化字段（message/count、角色/场景/道具/事件连续性、资产/声线缺口），避免只在 mock 字段下显示。
 - 验证通过：`cd backend && python3 -m pytest test_series_production.py test_workflow_routes.py test_studio_snapshot.py tests/test_production_preflight_gates.py -q`，60 passed；`cd frontend && npm run typecheck` 通过；`cd frontend && npx playwright test e2e/quick-start-series-plan.spec.ts --project=chromium --workers=1 --timeout=90000`，3 passed。
+
+## 2026-07-02 P2 资产和声音锁强制化集成
+
+- 后端终稿门禁：`/workflow/{id}/generate-media-batch` 在 `production_strategy=final_quality` 时会在生成前检查镜头资产锁和相关角色 Story Bible 声线锁；缺失时返回结构化 `422 final_quality_locks_missing`，`draft_fast` 不触发该终稿门禁。
+- 任务快照：VideoJob/MediaGenerationJob extra_data 写入 `asset_version_locks`、`asset_lock_snapshot`；TTSJob/直生音视频任务写入 `voice_lock`、`voice_lock_snapshot`，用于追溯当次终稿生产使用的资产/声线锁。
+- Studio 可见化：Series Studio 的资产/声音锁卡片显示终稿必需项 checklist（定稿参考图、资产锁覆盖、角色声线），`final_quality` 下缺锁会显示“终稿门禁”阻断文案；草稿模式提示可先跑但终稿前必须补齐。
+- 策略契约：`production-strategy.ts` 和 `runEpisodePreviewProduction()` 增加草稿/终稿锁要求文案与 result metadata；方案文档明确 P2 本轮不做视觉模型检测，只做终稿锁门禁和快照追溯。
+- 验证通过：`cd backend && python3 -m pytest test_workflow_routes.py test_studio_snapshot.py tests/test_production_preflight_gates.py -q`，61 passed；`cd frontend && npm run typecheck` 通过；`cd frontend && npx playwright test e2e/studio-mode-gates.spec.ts --project=chromium --workers=1 --timeout=90000`，3 passed。

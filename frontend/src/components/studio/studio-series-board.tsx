@@ -8,6 +8,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { StudioIssue, StudioSnapshot } from '@/lib/studio-types';
 
 type StageTone = 'ready' | 'working' | 'blocked';
+type Requirement = {
+  label: string;
+  ready: boolean;
+  value: string;
+};
 
 function hasIssue(issues: StudioIssue[], needles: string[]) {
   return issues.some((issue) => {
@@ -28,11 +33,16 @@ function statusLabel(tone: StageTone) {
   return '进行中';
 }
 
+function requirementClass(ready: boolean) {
+  return ready ? 'border-emerald-300/20 bg-emerald-400/10 text-emerald-50' : 'border-red-300/25 bg-red-400/10 text-red-50';
+}
+
 function SeriesStage({
   icon: Icon,
   title,
   description,
   detail,
+  requirements,
   tone,
   href,
   actionLabel,
@@ -41,6 +51,7 @@ function SeriesStage({
   title: string;
   description: string;
   detail: string;
+  requirements?: Requirement[];
   tone: StageTone;
   href: string;
   actionLabel: string;
@@ -59,6 +70,16 @@ function SeriesStage({
             </div>
             <div className="mt-1 text-sm leading-6 text-white/70">{description}</div>
             <div className="mt-2 text-xs text-white/50">{detail}</div>
+            {requirements && requirements.length > 0 ? (
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {requirements.map((item) => (
+                  <div key={item.label} className={`rounded-lg border px-3 py-2 text-xs ${requirementClass(item.ready)}`}>
+                    <div className="font-medium">{item.ready ? '已满足' : '缺失'} · {item.label}</div>
+                    <div className="mt-1 text-white/55">{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
         <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
@@ -82,6 +103,7 @@ export function StudioSeriesBoard({
   const production = snapshot?.production || {};
   const assets = snapshot?.assets || {};
   const jobs = snapshot?.jobs?.summary || {};
+  const strategy = snapshot?.workflow?.latest_production_strategy;
   const blockingCount = snapshot?.mode_policy?.blocking_issue_count || 0;
   const mediaCount = (jobs.video_count || 0) + (jobs.tts_count || 0) + (jobs.media_count || 0) + (jobs.synthesis_count || 0);
   const bibleRuleCount =
@@ -100,8 +122,27 @@ export function StudioSeriesBoard({
   const assetCoverageLabel = assetCoverage >= 1 ? '全量覆盖' : assetCoverage > 0 ? '部分覆盖' : '未覆盖';
   const missingAssetCount = productionBible?.asset_readiness?.missing_asset_count;
   const voiceCount = productionBible?.voices?.length || 0;
+  const hasFinalReference = (assets.final_count || 0) > 0;
+  const hasAssetLocks = Boolean(productionBible?.asset_readiness?.ready || assetCoverage >= 1);
+  const hasVoiceProfiles = voiceCount > 0;
+  const missingFinalGateLocks = !hasFinalReference || !hasAssetLocks || !hasVoiceProfiles;
   const assetIssue = hasIssue(issues, ['asset', '资产', 'lock', 'voice', '声音', 'tts']);
   const qualityBlocked = blockingCount > 0 || hasIssue(issues, ['model', 'preflight', 'gate', '门禁', '验证']);
+  const isFinalQuality = strategy === 'final_quality';
+  const isDraftFast = strategy === 'draft_fast' || !strategy;
+  const finalGateTone: StageTone = missingFinalGateLocks || assetIssue ? 'blocked' : 'ready';
+  const strategyLabel = snapshot?.workflow?.latest_production_strategy_label || (isFinalQuality ? '高质量终稿' : '快速草稿');
+  const strategyGateCopy = isFinalQuality
+    ? missingFinalGateLocks
+      ? '终稿门禁：缺少定稿参考图、资产锁覆盖或角色声线时会阻断终稿生产。'
+      : '终稿门禁：定稿参考图、资产锁覆盖和角色声线已满足，可进入终稿生产。'
+    : isDraftFast
+      ? '草稿模式：草片可先跑；进入终稿前必须补齐定稿参考图、资产锁覆盖和角色声线。'
+      : `${strategyLabel}：终稿导出前仍会校验定稿参考图、资产锁覆盖和角色声线。`;
+  const assetLockDetail = [
+    strategyGateCopy,
+    `资产锁${assetCoverageLabel} · 已锁定 ${assets.locked_count || 0} · 定稿 ${assets.final_count || 0} · 声线 ${voiceCount} · 缺资产 ${missingAssetCount ?? '未知'}`,
+  ].join(' ');
   const producerHref = workflowId ? `/producer?workflow_id=${workflowId}` : '/producer';
   const quickStartHref = '/quick-start';
 
@@ -150,18 +191,23 @@ export function StudioSeriesBoard({
         <SeriesStage
           icon={Lock}
           title="资产/声音锁"
-          description="检查角色、场景、道具定稿资产和 TTS 声线是否足以支撑连续制作。"
-          detail={`资产锁${assetCoverageLabel} · 已锁定 ${assets.locked_count || 0} · 定稿 ${assets.final_count || 0} · 声线 ${voiceCount} · 缺资产 ${missingAssetCount ?? '未知'}`}
-          tone={(productionBible?.asset_readiness?.ready || assetCoverage >= 1) && !assetIssue ? 'ready' : assetCoverage > 0 || (assets.locked_count || 0) > 0 || voiceCount > 0 ? 'working' : 'blocked'}
+          description="终稿模式需要定稿参考图、资产锁覆盖和角色 voice profile；缺任一项都会阻断终稿出片。"
+          detail={assetLockDetail}
+          requirements={[
+            { label: '定稿参考图', ready: hasFinalReference, value: hasFinalReference ? `${assets.final_count || 0} 个定稿资产` : '缺定稿参考图，先在资产页补齐。' },
+            { label: '资产锁覆盖', ready: hasAssetLocks, value: hasAssetLocks ? assetCoverageLabel : `缺资产 ${missingAssetCount ?? '未知'}，进入 Producer 应用锁。` },
+            { label: '角色声线', ready: hasVoiceProfiles, value: hasVoiceProfiles ? `${voiceCount} 个 voice profile` : '缺角色声线，回 Story Bible/角色设定绑定。' },
+          ]}
+          tone={finalGateTone}
           href="/assets"
-          actionLabel="补齐资产"
+          actionLabel={missingFinalGateLocks ? '补齐资产/声线' : '查看资产'}
         />
         <SeriesStage
           icon={qualityBlocked ? ShieldAlert : CheckCircle2}
-          title="质量门禁"
-          description="生产模式下汇总资产锁、模型验证、公开素材地址和一致性风险，防止带病出片。"
-          detail={qualityBlocked ? `${blockingCount || issues.length} 个阻断/风险项需要处理` : '当前没有阻断项，可继续草片审阅或终稿生产。'}
-          tone={qualityBlocked ? 'blocked' : 'ready'}
+          title={isFinalQuality ? '终稿门禁' : '质量门禁'}
+          description={isFinalQuality ? '高质量终稿会强制执行资产/声音锁、模型验证、公开素材地址和一致性要求。' : '生产模式下汇总资产锁、模型验证、公开素材地址和一致性风险，防止带病出片。'}
+          detail={qualityBlocked || (isFinalQuality && missingFinalGateLocks) ? `${blockingCount || issues.length || 1} 个阻断/风险项需要处理；缺锁会阻断终稿。` : isDraftFast ? '草稿可继续生成和审阅；终稿前需要完成资产/声音锁。' : '当前没有阻断项，可继续草片审阅或终稿生产。'}
+          tone={qualityBlocked || (isFinalQuality && missingFinalGateLocks) ? 'blocked' : 'ready'}
           href="#studio-agent-panel"
           actionLabel="查看门禁"
         />
