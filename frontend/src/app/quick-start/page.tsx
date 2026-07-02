@@ -673,6 +673,42 @@ export default function QuickStartPage() {
                       首集预览草片、字幕和渲染包已生成，可直接审阅或进入工作流继续调整。
                     </div>
                   )}
+                  <div className="rounded-xl border border-cyan-400/20 bg-cyan-500/10 p-3">
+                    <div className="text-sm font-semibold text-white">下一步制作路径</div>
+                    <div className="mt-1 text-xs text-cyan-100/70">建议按顺序完成审核、整书规划和一致性资产检查，降低后续多集制作返工。</div>
+                    <div className="mt-3 grid grid-cols-1 gap-2">
+                      <Link
+                        href={`/studio?workflow_id=${result.workflowId}`}
+                        className="rounded-lg border border-white/10 bg-white/5 p-3 transition hover:border-cyan-300/50 hover:bg-white/10"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium text-white">
+                          <Route className="h-4 w-4 text-cyan-200" />
+                          1. 进入连续动漫工作台继续审核
+                        </div>
+                        <div className="mt-1 text-xs text-white/55">审阅首集工作流、分镜、镜头生产状态和预览结果。</div>
+                      </Link>
+                      <Link
+                        href={`/novels/${result.novelId}?tab=series-plan`}
+                        className="rounded-lg border border-white/10 bg-white/5 p-3 transition hover:border-cyan-300/50 hover:bg-white/10"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium text-white">
+                          <BookOpen className="h-4 w-4 text-cyan-200" />
+                          2. 进入整书/下一集计划
+                        </div>
+                        <div className="mt-1 text-xs text-white/55">规划后续集数、章节覆盖、关键角色和下一集制作节奏。</div>
+                      </Link>
+                      <Link
+                        href={`/novels/${result.novelId}?tab=story-bible`}
+                        className="rounded-lg border border-white/10 bg-white/5 p-3 transition hover:border-cyan-300/50 hover:bg-white/10"
+                      >
+                        <div className="flex items-center gap-2 text-sm font-medium text-white">
+                          <CheckCircle className="h-4 w-4 text-cyan-200" />
+                          3. 进入一致性资产检查/角色设定
+                        </div>
+                        <div className="mt-1 text-xs text-white/55">检查 Story Bible、角色规则、场景道具和状态机一致性。</div>
+                      </Link>
+                    </div>
+                  </div>
                   {(result.previewUrl || result.outputUrl || result.srtUrl || result.timelineUrl) && (
                     <div className="grid grid-cols-1 gap-2">
                       {result.previewUrl && (

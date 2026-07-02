@@ -149,6 +149,32 @@ const PRODUCTION_TASK_REQUIREMENTS: Array<{
   },
 ];
 
+const ANIME_MODEL_PRESETS: Array<{
+  name: string;
+  description: string;
+  target: string;
+  capabilities: ModelCapability[];
+}> = [
+  {
+    name: '快速预览',
+    description: '适合先跑几秒草片，确认角色、画风、镜头节奏和声音方向。',
+    target: '建议准备文本、图像、视频、语音默认模型',
+    capabilities: ['text', 'image', 'video', 'audio'],
+  },
+  {
+    name: '高质量成片',
+    description: '适合草片确认后重生关键镜头，更关注画面稳定和多集一致性。',
+    target: '建议默认模型全部已验证，并优先选择推荐视频模型',
+    capabilities: ['text', 'vision', 'image', 'video', 'audio'],
+  },
+  {
+    name: '低成本试错',
+    description: '适合大量试镜头、长章节拆解和提示词探索，先保留可替换空间。',
+    target: '至少保证文本、图像、视频模型可用；语音可后补',
+    capabilities: ['text', 'image', 'video'],
+  },
+];
+
 export default function LLMConfigPage() {
   const configFormRef = useRef<HTMLDivElement | null>(null);
   const configNameInputRef = useRef<HTMLInputElement | null>(null);
@@ -1017,6 +1043,81 @@ export default function LLMConfigPage() {
                     当前默认模型配置完整且已验证，适合进入小说到动漫视频的生产流程。
                   </div>
                 )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-violet-300" />
+                  动漫模型预设
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-3 md:grid-cols-3">
+                  {ANIME_MODEL_PRESETS.map((preset) => {
+                    const missingCapabilities = preset.capabilities.filter((capability) => {
+                      const config = getDefaultConfigForCapability(productionSavedConfigs, capability);
+                      return config?.test_status !== 'success';
+                    });
+                    const ready = missingCapabilities.length === 0;
+                    const nextCapability = missingCapabilities[0] || preset.capabilities[0];
+                    return (
+                      <div key={preset.name} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-medium text-white">{preset.name}</div>
+                            <div className="mt-1 text-xs leading-5 text-white/45">{preset.description}</div>
+                          </div>
+                          <span className={`shrink-0 rounded border px-2 py-0.5 text-xs ${
+                            ready
+                              ? 'border-emerald-400/20 bg-emerald-500/15 text-emerald-100'
+                              : 'border-yellow-400/20 bg-yellow-500/15 text-yellow-100'
+                          }`}>
+                            {ready ? '可用' : `缺 ${missingCapabilities.length} 项`}
+                          </span>
+                        </div>
+                        <div className="mt-3 text-xs leading-5 text-white/50">{preset.target}</div>
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          {preset.capabilities.map((capability) => {
+                            const config = getDefaultConfigForCapability(productionSavedConfigs, capability);
+                            const verified = config?.test_status === 'success';
+                            return (
+                              <span
+                                key={`${preset.name}-${capability}`}
+                                className={`rounded px-2 py-1 text-xs ${
+                                  verified
+                                    ? 'bg-emerald-500/15 text-emerald-100'
+                                    : config
+                                      ? 'bg-yellow-500/15 text-yellow-100'
+                                      : 'bg-white/10 text-white/45'
+                                }`}
+                              >
+                                {MODEL_CAPABILITY_LABELS[capability]}
+                              </span>
+                            );
+                          })}
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setLastPassedFormTest(null);
+                            setTestResult(null);
+                            setSelectedCapabilityFilter(nextCapability);
+                            requestAnimationFrame(() => {
+                              configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            });
+                          }}
+                          className="mt-3 h-8 w-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white"
+                        >
+                          {ready ? '查看默认模型' : `补齐${MODEL_CAPABILITY_LABELS[nextCapability]}`}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                </div>
               </CardContent>
             </Card>
 
