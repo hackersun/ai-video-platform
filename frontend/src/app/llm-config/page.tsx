@@ -954,6 +954,40 @@ export default function LLMConfigPage() {
     setIsTestingDefaults(false);
   };
 
+  const focusCapabilitySetup = (capability: ModelCapability) => {
+    const defaultConfig = getDefaultConfigForCapability(productionSavedConfigs, capability);
+    setLastPassedFormTest(null);
+    setTestResult(null);
+    setSelectedCapabilityFilter(capability);
+
+    if (defaultConfig) {
+      setSelectedProvider(defaultConfig.provider_id);
+      setActiveTab(defaultConfig.provider_id);
+      const matchedModel = models.find((model) => (
+        model.id === (defaultConfig.config_model_id || defaultConfig.model_id)
+        || model.model_id === defaultConfig.api_model_id
+        || model.model_id === defaultConfig.model_id
+      ));
+      if (matchedModel) {
+        setSelectedModel(matchedModel.id);
+      }
+    } else {
+      const candidate = visibleProviderModels.find((model) => getModelCapabilities(model).includes(capability) && model.is_recommended)
+        || models.find((model) => getModelCapabilities(model).includes(capability) && model.is_recommended)
+        || visibleProviderModels.find((model) => getModelCapabilities(model).includes(capability))
+        || models.find((model) => getModelCapabilities(model).includes(capability));
+      if (candidate) {
+        setSelectedProvider(candidate.provider_id);
+        setActiveTab(candidate.provider_id);
+        setSelectedModel(candidate.id);
+      }
+    }
+
+    requestAnimationFrame(() => {
+      configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -1102,14 +1136,7 @@ export default function LLMConfigPage() {
                           type="button"
                           size="sm"
                           variant="ghost"
-                          onClick={() => {
-                            setLastPassedFormTest(null);
-                            setTestResult(null);
-                            setSelectedCapabilityFilter(nextCapability);
-                            requestAnimationFrame(() => {
-                              configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                            });
-                          }}
+                          onClick={() => focusCapabilitySetup(nextCapability)}
                           className="mt-3 h-8 w-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white"
                         >
                           {ready ? '查看默认模型' : `补齐${MODEL_CAPABILITY_LABELS[nextCapability]}`}
@@ -1155,14 +1182,7 @@ export default function LLMConfigPage() {
                               <button
                                 key={`${task.name}-${capability}`}
                                 type="button"
-	                        onClick={() => {
-	                          setLastPassedFormTest(null);
-	                          setTestResult(null);
-	                          setSelectedCapabilityFilter(capability);
-                                  requestAnimationFrame(() => {
-                                    configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                                  });
-                                }}
+	                        onClick={() => focusCapabilitySetup(capability)}
                                 className={`rounded px-2 py-1 text-xs ${
                                   verified
                                     ? 'bg-emerald-500/15 text-emerald-100'
@@ -1438,24 +1458,7 @@ export default function LLMConfigPage() {
                         type="button"
                         size="sm"
                         variant="ghost"
-                        onClick={() => {
-                          setSelectedCapabilityFilter(capability);
-                          if (defaultConfig) {
-                            setSelectedProvider(defaultConfig.provider_id);
-                            setActiveTab(defaultConfig.provider_id);
-                            const matchedModel = models.find((model) => (
-                              model.id === (defaultConfig.config_model_id || defaultConfig.model_id)
-                              || model.model_id === defaultConfig.api_model_id
-                              || model.model_id === defaultConfig.model_id
-                            ));
-                            if (matchedModel) {
-                              setSelectedModel(matchedModel.id);
-                            }
-                          }
-                          requestAnimationFrame(() => {
-                            configFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                          });
-                        }}
+                        onClick={() => focusCapabilitySetup(capability)}
                         className="mt-3 h-8 w-full border border-white/10 text-white/70 hover:bg-white/10 hover:text-white"
                       >
                         {defaultConfig ? '查看/调整' : '配置该能力'}
