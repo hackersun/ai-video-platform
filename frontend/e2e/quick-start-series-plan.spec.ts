@@ -310,8 +310,28 @@ test('novel detail opens the whole-book plan tab from query params', async ({ pa
           episode_number: 1,
           title: '第一集 星光密信',
           status: 'planned',
+          workflow_id: 'workflow-existing-e2e',
           chapters: [{ id: 'chapter-series-e2e', chapter_number: 1, title: '第一章' }],
           narrative: { hook: '密信亮起星光。' },
+          production_readiness: {
+            has_workflow: true,
+            has_storyboard: true,
+            asset_ready: false,
+            missing_asset_count: 2,
+            voice_count: 0,
+          },
+          missing_requirements: [
+            { message: '声线锁定' },
+            { message: '质量门禁', count: 1 },
+          ],
+          continuity_summary: {
+            style: '旧城雨夜视觉',
+            characters: ['阿月'],
+            scenes: ['旧城雨夜'],
+            props: ['密信'],
+            events: ['密信亮起星光'],
+            voice_count: 0,
+          },
         },
       ],
     },
@@ -319,5 +339,12 @@ test('novel detail opens the whole-book plan tab from query params', async ({ pa
 
   await page.goto('/novels/novel-series-e2e?tab=series-plan');
   await expect(page.getByRole('tab', { name: /整书计划/ })).toHaveAttribute('data-state', 'active', { timeout: 10_000 });
+  await expect(page.getByText('连续动漫制作线')).toBeVisible();
   await expect(page.getByText('第一集 星光密信')).toBeVisible();
+  await expect(page.getByText('待锁定 2 个资产')).toBeVisible();
+  await expect(page.getByText('声线锁定、质量门禁（1）')).toBeVisible();
+  await expect(page.getByText(/风格：旧城雨夜视觉/)).toBeVisible();
+  await expect(page.getByText(/角色：阿月/)).toBeVisible();
+  await page.getByRole('button', { name: '继续本集工程' }).click();
+  await expect(page).toHaveURL(/\/studio\?workflow_id=workflow-existing-e2e/);
 });

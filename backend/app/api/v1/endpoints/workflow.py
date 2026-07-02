@@ -473,6 +473,66 @@ def _lineage_for_workflow_shot(workflow: Workflow, shot: Shot) -> Dict[str, Any]
     }
 
 
+def _production_strategy_metadata(strategy: Optional[str]) -> Dict[str, Any]:
+    if not strategy:
+        return {}
+    strategy_map = {
+        "draft_fast": {
+            "production_strategy_label": "Draft Fast",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": "Seedance-2.0-fast",
+        },
+        "final_quality": {
+            "production_strategy_label": "Final Quality",
+            "production_strategy_intent": "final",
+            "recommended_model_hint": "Seedance-2.0",
+        },
+        "low_cost": {
+            "production_strategy_label": "Low Cost",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": "low-cost configuration",
+        },
+        "separate_video_tts": {
+            "production_strategy_label": "Separate Video + TTS",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": None,
+        },
+        "direct_av_first": {
+            "production_strategy_label": "Direct AV First",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": None,
+        },
+    }
+    metadata = strategy_map.get(strategy, {})
+    return {
+        "production_strategy": strategy,
+        **metadata,
+    }
+
+
+def _production_strategy_job_extra(strategy: Optional[str], model_config_id: Optional[str]) -> Dict[str, Any]:
+    metadata = _production_strategy_metadata(strategy)
+    if not metadata:
+        return {}
+    if model_config_id:
+        metadata.pop("recommended_model_hint", None)
+    return metadata
+
+
+def _merge_latest_production_strategy(metadata: Dict[str, Any], strategy: Optional[str]) -> Dict[str, Any]:
+    strategy_metadata = _production_strategy_metadata(strategy)
+    if not strategy_metadata:
+        return metadata
+    return {
+        **metadata,
+        "latest_production_strategy": strategy,
+        "latest_production_strategy_label": strategy_metadata.get("production_strategy_label"),
+        "latest_production_strategy_intent": strategy_metadata.get("production_strategy_intent"),
+        "latest_recommended_model_hint": strategy_metadata.get("recommended_model_hint"),
+        "production_strategy_metadata": strategy_metadata,
+    }
+
+
 def _make_subtitle_track_for_media_job(
     *,
     db: AsyncSession,
@@ -1732,7 +1792,7 @@ async def generate_workflow_media_batch(
             prompt_parameters["reference_image_source"] = package.get("reference_image_source")
             extra_data["prompt_parameters"] = prompt_parameters
             extra_data["source_prompt"] = video_request.prompt
-            extra_data["production_strategy"] = request.production_strategy
+            extra_data.update(_production_strategy_job_extra(request.production_strategy, request.model_config_id))
             extra_data["generation_strategy"] = request.strategy
             extra_data["audio_model_config_id"] = request.audio_model_config_id
             if prepared.get("video_preflight_package") is not None:
@@ -1891,7 +1951,7 @@ async def generate_workflow_media_batch(
                         "api_model_id": selected_audio_model.get("model_id") if selected_audio_model else None,
                         "provider_id": selected_audio_model.get("provider_id") if selected_audio_model else None,
                         "model_test_status": selected_audio_model.get("test_status") if selected_audio_model else None,
-                        "production_strategy": request.production_strategy,
+                        **_production_strategy_job_extra(request.production_strategy, request.audio_model_config_id),
                         "generation_strategy": request.strategy,
                         "generation_preflight": {
                             "ready": prepared["tts_preflight_package"].get("ready"),
@@ -1941,9 +2001,8 @@ async def generate_workflow_media_batch(
         workflow.tts_job_ids = list(dict.fromkeys((workflow.tts_job_ids or []) + tts_job_ids))
         metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
         workflow.metadata_ = {
-            **metadata,
+            **_merge_latest_production_strategy(metadata, request.production_strategy),
             "subtitle_track_ids": list(dict.fromkeys((metadata.get("subtitle_track_ids") or []) + subtitle_track_ids)),
-            "latest_production_strategy": request.production_strategy,
             "latest_media_batch_strategy": request.strategy,
             "latest_media_batch_count": len(video_job_ids),
             "latest_media_batch_model_config_id": request.model_config_id,
@@ -2033,7 +2092,7 @@ async def generate_workflow_media_batch(
                 "subtitle_text": subtitle_text,
                 "subtitle_mode": request.subtitle_mode,
                 "audio_mode": request.audio_mode,
-                "production_strategy": request.production_strategy,
+                **_production_strategy_job_extra(request.production_strategy, request.model_config_id),
                 "model_config_id": request.model_config_id,
                 "model_test_status": runtime_model.get("test_status"),
                 "asset_version_locks": asset_version_locks,
@@ -2105,10 +2164,9 @@ async def generate_workflow_media_batch(
 
     metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
     workflow.metadata_ = {
-        **metadata,
+        **_merge_latest_production_strategy(metadata, request.production_strategy),
         "media_job_ids": list(dict.fromkeys((metadata.get("media_job_ids") or []) + media_job_ids)),
         "subtitle_track_ids": list(dict.fromkeys((metadata.get("subtitle_track_ids") or []) + subtitle_track_ids)),
-        "latest_production_strategy": request.production_strategy,
         "latest_media_batch_strategy": request.strategy,
         "latest_media_batch_count": len(media_job_ids),
         "latest_media_batch_model_config_id": request.model_config_id,
@@ -2221,6 +2279,7 @@ async def get_workflow_status(
     ]
 
     metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+    metadata = _merge_latest_production_strategy(metadata, metadata.get("latest_production_strategy"))
     media_query = select(MediaGenerationJob).where(MediaGenerationJob.user_id == user_id, MediaGenerationJob.is_active == True)
     media_ids = _job_ids(metadata.get("media_job_ids"))
     if media_ids:
@@ -2415,7 +2474,10 @@ async def update_workflow_step(
         video_job_ids=workflow.video_job_ids or [],
         tts_job_ids=workflow.tts_job_ids or [],
         synthesis_job_ids=workflow.synthesis_job_ids or [],
-        metadata=workflow.metadata_ or {},
+        metadata=_merge_latest_production_strategy(
+            workflow.metadata_ if isinstance(workflow.metadata_, dict) else {},
+            (workflow.metadata_ or {}).get("latest_production_strategy") if isinstance(workflow.metadata_, dict) else None,
+        ),
         production_bible_summary=(workflow.metadata_ or {}).get("production_snapshot", {}).get("summary")
         if isinstance((workflow.metadata_ or {}).get("production_snapshot"), dict)
         else None,
@@ -2452,7 +2514,10 @@ async def get_workflow_detail(
         video_job_ids=workflow.video_job_ids or [],
         tts_job_ids=workflow.tts_job_ids or [],
         synthesis_job_ids=workflow.synthesis_job_ids or [],
-        metadata=workflow.metadata_ or {},
+        metadata=_merge_latest_production_strategy(
+            workflow.metadata_ if isinstance(workflow.metadata_, dict) else {},
+            (workflow.metadata_ or {}).get("latest_production_strategy") if isinstance(workflow.metadata_, dict) else None,
+        ),
         production_bible_summary=(workflow.metadata_ or {}).get("production_snapshot", {}).get("summary")
         if isinstance((workflow.metadata_ or {}).get("production_snapshot"), dict)
         else None,

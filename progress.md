@@ -1076,3 +1076,16 @@
 - 生产策略：新增 `draft_fast/final_quality/low_cost/separate_video_tts/direct_av_first` 文案与透传；一键草片默认 `draft_fast`，仍兼容旧 `strategy` 字段。
 - 集成修正：Studio snapshot 返回 `production_bible_summary`；Producer/Quick Start 不再硬编码覆盖生成策略，由 production strategy 映射生成策略。
 - 验证通过：`cd backend && python3 -m pytest tests/test_production_preflight_gates.py test_studio_snapshot.py test_studio_actions.py test_workflow_routes.py -q`，64 passed；`cd frontend && npm run typecheck` 通过；`cd frontend && npx playwright test e2e/producer-preview-production.spec.ts --project=chromium --workers=1 --timeout=90000`，1 passed；前一次组合 E2E 中 `quick-start-series-plan` 与 3 个 Studio 用例 7 passed，唯一失败为 Producer 测试选择器歧义，已修复并单独通过。
+
+## 2026-07-02 P1 并行优化启动
+
+- 已启动 3 个并行 worker：后端整书多集计划增强、前端小说详情整书计划增强、生产策略可追踪性增强。
+- 本阶段继续避免迁移和大模型路由重构，目标是让现有 series_plan、Production Bible、Series Studio 和一键草片形成更顺的用户路径。
+
+## 2026-07-02 P1 并行优化集成
+
+- 后端整书计划：`series_plan` 现在附带 compact `production_bible_summary`；每集增加 `production_readiness`、`continuity_summary`、`missing_requirements`，用于判断本集是否已有工程、分镜、镜头、资产和声线条件。
+- 前端小说详情：整书计划页新增“连续动漫制作线”说明卡；每集卡片展示制作就绪度、连续性摘要和进入 Producer 前待补齐项；已有 workflow 跳 `/studio`，新建 workflow 跳 `/producer`。
+- 生产策略追踪：`workflow/status/detail`、Studio snapshot 和生成任务 extra_data 透出 `production_strategy`、label、intent 与未指定模型时的 `recommended_model_hint`，`final_quality` 默认提示 Seedance-2.0。
+- 集成修正：前端 helper 已兼容后端真实结构化字段（message/count、角色/场景/道具/事件连续性、资产/声线缺口），避免只在 mock 字段下显示。
+- 验证通过：`cd backend && python3 -m pytest test_series_production.py test_workflow_routes.py test_studio_snapshot.py tests/test_production_preflight_gates.py -q`，60 passed；`cd frontend && npm run typecheck` 通过；`cd frontend && npx playwright test e2e/quick-start-series-plan.spec.ts --project=chromium --workers=1 --timeout=90000`，3 passed。

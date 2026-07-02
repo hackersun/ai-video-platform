@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
+from app.models.media_generation_job import MediaGenerationJob
 from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
@@ -208,6 +209,16 @@ def _insert_synthesis_job(job: SynthesisJob) -> None:
             await session.commit()
 
     asyncio.run(_insert())
+
+
+def _get_media_job_extra(job_id: str) -> dict:
+    async def _get() -> dict:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(MediaGenerationJob, job_id)
+            assert job is not None
+            return job.extra_data or {}
+
+    return asyncio.run(_get())
 
 
 def _insert_model_config(
@@ -2801,6 +2812,87 @@ def test_timeline_clip_create_uses_nested_clip_route(client: TestClient) -> None
         headers=_auth_headers(user_id),
     )
     assert mismatch_resp.status_code == 422
+
+
+def test_workflow_media_batch_tracks_final_quality_production_strategy(client: TestClient) -> None:
+    user_id = f"strategy-trace-{uuid4()}"
+    script_id = _create_script(client, user_id)
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={"script_id": script_id, "title": "策略追踪分镜", "description": "test storyboard"},
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_id = storyboard_resp.json()["id"]
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_id,
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "策略追踪镜头",
+            "dialogue": "最终质量策略应被记录。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "策略追踪工作流",
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "direct_av_first",
+            "production_strategy": "final_quality",
+            "subtitle_mode": "shot_dialogue",
+            "audio_mode": "model_audio",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert batch_resp.status_code == 200, batch_resp.text
+    batch_payload = batch_resp.json()
+    assert batch_payload["production_strategy"] == "final_quality"
+    assert len(batch_payload["media_job_ids"]) == 1
+
+    status_resp = client.get(f"/api/v1/workflow/status/{workflow_id}", headers=_auth_headers(user_id))
+    assert status_resp.status_code == 200
+    metadata = status_resp.json()["metadata"]
+    assert metadata["latest_production_strategy"] == "final_quality"
+    assert metadata["latest_production_strategy_intent"] == "final"
+    assert metadata["latest_recommended_model_hint"] == "Seedance-2.0"
+    assert metadata["production_strategy_metadata"]["production_strategy_label"] == "Final Quality"
+    status_media_extra = status_resp.json()["media_jobs"][0]["extra_data"]
+    assert status_media_extra["production_strategy"] == "final_quality"
+    assert status_media_extra["production_strategy_intent"] == "final"
+    assert status_media_extra["recommended_model_hint"] == "Seedance-2.0"
+
+    detail_resp = client.get(f"/api/v1/workflow/{workflow_id}", headers=_auth_headers(user_id))
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["metadata"]["latest_production_strategy_label"] == "Final Quality"
+
+    snapshot_resp = client.get(f"/api/v1/studio/workflows/{workflow_id}/snapshot", headers=_auth_headers(user_id))
+    assert snapshot_resp.status_code == 200
+    snapshot = snapshot_resp.json()
+    assert snapshot["workflow"]["latest_production_strategy"] == "final_quality"
+    assert snapshot["workflow"]["latest_production_strategy_intent"] == "final"
+    assert snapshot["workflow"]["metadata"]["latest_recommended_model_hint"] == "Seedance-2.0"
+    assert snapshot["jobs"]["media_jobs"][0]["production_strategy_label"] == "Final Quality"
+
+    extra = _get_media_job_extra(batch_payload["media_job_ids"][0])
+    assert extra["production_strategy"] == "final_quality"
+    assert extra["production_strategy_label"] == "Final Quality"
+    assert extra["production_strategy_intent"] == "final"
+    assert extra["recommended_model_hint"] == "Seedance-2.0"
 
 
 def test_tts_generate_and_list_job(client: TestClient, fake_tts_service: None) -> None:

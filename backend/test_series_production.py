@@ -169,6 +169,16 @@ def test_series_plan_generates_and_persists_episode_plan(client: TestClient) -> 
     assert plan["episodes"][0]["narrative"]["cliffhanger"]
     assert plan["episodes"][0]["next_action"]["code"] == "generate_media"
     assert "shot_video" in plan["model_route"]
+    assert plan["production_bible_summary"]["novel_id"] == fixture["novel_id"]
+    assert plan["production_bible_summary"]["asset_readiness"]["missing_asset_count"] >= 1
+    assert plan["episodes"][0]["production_readiness"]["has_workflow"] is True
+    assert plan["episodes"][0]["production_readiness"]["has_storyboard"] is True
+    assert plan["episodes"][0]["production_readiness"]["shot_count"] == 1
+    assert plan["episodes"][0]["production_readiness"]["missing_asset_count"] >= 1
+    assert plan["episodes"][0]["production_readiness"]["voice_count"] >= 0
+    assert plan["episodes"][0]["production_readiness"]["next_action"]["code"] == "generate_media"
+    assert plan["episodes"][0]["continuity_summary"]["characters"]
+    assert plan["episodes"][0]["missing_requirements"]
 
     saved = client.get(
         f"/api/v1/novels/{fixture['novel_id']}/series-plan",
@@ -178,6 +188,8 @@ def test_series_plan_generates_and_persists_episode_plan(client: TestClient) -> 
     saved_plan = saved.json()
     assert saved_plan["generated_at"] == plan["generated_at"]
     assert saved_plan["episodes"][0]["chapter_ids"] == fixture["chapter_ids"][:2]
+    assert saved_plan["production_bible_summary"]["novel_id"] == fixture["novel_id"]
+    assert saved_plan["episodes"][0]["production_readiness"]["shot_count"] == 1
 
 
 def test_series_plan_requires_chapters(client: TestClient) -> None:

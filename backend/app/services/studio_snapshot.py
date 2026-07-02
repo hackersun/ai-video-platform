@@ -51,6 +51,70 @@ def _job_ids(values: Any) -> List[str]:
     return [str(value) for value in (values or []) if value]
 
 
+def _production_strategy_metadata(strategy: Optional[str]) -> Dict[str, Any]:
+    if not strategy:
+        return {}
+    strategy_map = {
+        "draft_fast": {
+            "production_strategy_label": "Draft Fast",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": "Seedance-2.0-fast",
+        },
+        "final_quality": {
+            "production_strategy_label": "Final Quality",
+            "production_strategy_intent": "final",
+            "recommended_model_hint": "Seedance-2.0",
+        },
+        "low_cost": {
+            "production_strategy_label": "Low Cost",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": "low-cost configuration",
+        },
+        "separate_video_tts": {
+            "production_strategy_label": "Separate Video + TTS",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": None,
+        },
+        "direct_av_first": {
+            "production_strategy_label": "Direct AV First",
+            "production_strategy_intent": "draft",
+            "recommended_model_hint": None,
+        },
+    }
+    metadata = strategy_map.get(strategy, {})
+    return {
+        "production_strategy": strategy,
+        **metadata,
+    }
+
+
+def _merge_latest_production_strategy(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    strategy = metadata.get("latest_production_strategy")
+    strategy_metadata = _production_strategy_metadata(strategy)
+    if not strategy_metadata:
+        return metadata
+    return {
+        **metadata,
+        "latest_production_strategy_label": strategy_metadata.get("production_strategy_label"),
+        "latest_production_strategy_intent": strategy_metadata.get("production_strategy_intent"),
+        "latest_recommended_model_hint": strategy_metadata.get("recommended_model_hint"),
+        "production_strategy_metadata": strategy_metadata,
+    }
+
+
+def _job_strategy_summary(job: Any) -> Dict[str, Any]:
+    extra = _json_dict(getattr(job, "extra_data", None))
+    strategy = extra.get("production_strategy")
+    if not strategy:
+        return {}
+    return {
+        "production_strategy": strategy,
+        "production_strategy_label": extra.get("production_strategy_label"),
+        "production_strategy_intent": extra.get("production_strategy_intent"),
+        "recommended_model_hint": extra.get("recommended_model_hint"),
+    }
+
+
 def _issue(
     code: str,
     message: str,
@@ -271,8 +335,26 @@ async def _load_jobs(db: AsyncSession, user_id: str, workflow: Workflow) -> Dict
             "media_count": len(media_jobs),
             "completed_media_count": len([job for job in media_jobs if job.status in {"completed", "succeeded"}]),
         },
-        "video_jobs": [{"id": job.id, "status": job.status, "video_url": job.video_url, "created_at": _dt(job.created_at)} for job in video_jobs],
-        "tts_jobs": [{"id": job.id, "status": job.status, "audio_url": job.audio_url, "created_at": _dt(job.created_at)} for job in tts_jobs],
+        "video_jobs": [
+            {
+                "id": job.id,
+                "status": job.status,
+                "video_url": job.video_url,
+                "created_at": _dt(job.created_at),
+                **_job_strategy_summary(job),
+            }
+            for job in video_jobs
+        ],
+        "tts_jobs": [
+            {
+                "id": job.id,
+                "status": job.status,
+                "audio_url": job.audio_url,
+                "created_at": _dt(job.created_at),
+                **_job_strategy_summary(job),
+            }
+            for job in tts_jobs
+        ],
         "synthesis_jobs": [
             {"id": job.id, "status": job.status, "output_url": job.output_url, "created_at": _dt(job.created_at)}
             for job in synthesis_jobs
@@ -286,6 +368,7 @@ async def _load_jobs(db: AsyncSession, user_id: str, workflow: Workflow) -> Dict
                 "output_video_url": job.output_video_url,
                 "output_audio_url": job.output_audio_url,
                 "created_at": _dt(job.created_at),
+                **_job_strategy_summary(job),
             }
             for job in media_jobs
         ],
@@ -407,6 +490,7 @@ async def build_studio_snapshot(
     jobs = await _load_jobs(db, user_id, workflow)
     timeline = await _load_timeline(db, user_id, workflow.project_id)
     metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+    metadata = _merge_latest_production_strategy(metadata)
     production_snapshot = metadata.get("production_snapshot") if isinstance(metadata.get("production_snapshot"), dict) else {}
     production_bible_summary = (
         production_snapshot.get("summary")
@@ -431,6 +515,10 @@ async def build_studio_snapshot(
             "chapter_id": workflow.chapter_id,
             "script_id": workflow.script_id,
             "storyboard_id": workflow.storyboard_id,
+            "latest_production_strategy": metadata.get("latest_production_strategy"),
+            "latest_production_strategy_label": metadata.get("latest_production_strategy_label"),
+            "latest_production_strategy_intent": metadata.get("latest_production_strategy_intent"),
+            "latest_recommended_model_hint": metadata.get("latest_recommended_model_hint"),
             "metadata": metadata,
             "updated_at": _dt(workflow.updated_at),
         },

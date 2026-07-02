@@ -206,6 +206,42 @@ interface SeriesEpisode {
   };
   primary_chapter_id?: string;
   workflow_id?: string | null;
+  production_readiness?: string | {
+    has_workflow?: boolean;
+    has_storyboard?: boolean;
+    asset_ready?: boolean;
+    missing_asset_count?: number;
+    voice_count?: number;
+    shot_count?: number;
+    next_action?: {
+      label?: string;
+    };
+    status?: string;
+    label?: string;
+    summary?: string;
+    ready?: boolean;
+  } | null;
+  missing_requirements?: Array<string | {
+    label?: string;
+    name?: string;
+    message?: string;
+    code?: string;
+    description?: string;
+    count?: number;
+  }> | null;
+  continuity_summary?: string | {
+    summary?: string;
+    bible?: string;
+    assets?: string;
+    voices?: string;
+    quality_gates?: string;
+    style?: string;
+    characters?: string[];
+    scenes?: string[];
+    props?: string[];
+    events?: string[];
+    voice_count?: number;
+  } | null;
 }
 
 interface SeriesPlan {
@@ -320,6 +356,49 @@ const suggestChapterTitle = (content: string, chapterNumber: number, novelTitle?
 };
 
 const entriesOf = (value?: Record<string, any> | null) => Object.entries(value || {});
+
+const getEpisodeReadinessLabel = (episode: SeriesEpisode) => {
+  const readiness = episode.production_readiness;
+  if (!readiness) return '';
+  if (typeof readiness === 'string') return readiness;
+  if (readiness.label || readiness.summary || readiness.status) {
+    return readiness.label || readiness.summary || readiness.status || '';
+  }
+  if (readiness.ready || (readiness.has_workflow && readiness.has_storyboard && readiness.asset_ready)) {
+    return '生产条件就绪';
+  }
+  if (!readiness.has_workflow) return '待创建本集工程';
+  if (!readiness.has_storyboard) return '待生成分镜';
+  if ((readiness.missing_asset_count || 0) > 0) return `待锁定 ${readiness.missing_asset_count} 个资产`;
+  if ((readiness.voice_count ?? 1) === 0) return '待绑定声线';
+  return readiness.next_action?.label || '';
+};
+
+const getEpisodeMissingRequirements = (episode: SeriesEpisode) => (
+  episode.missing_requirements || []
+).map((item) => {
+  if (typeof item === 'string') return item;
+  const text = item.label || item.name || item.message || item.description || item.code || '';
+  return item.count ? `${text}（${item.count}）` : text;
+}).filter(Boolean);
+
+const getEpisodeContinuitySummary = (episode: SeriesEpisode) => {
+  const summary = episode.continuity_summary;
+  if (!summary) return '';
+  if (typeof summary === 'string') return summary;
+  if (summary.summary || summary.bible || summary.assets || summary.voices || summary.quality_gates) {
+    return summary.summary || summary.bible || summary.assets || summary.voices || summary.quality_gates || '';
+  }
+  const parts = [
+    summary.style ? `风格：${summary.style}` : '',
+    summary.characters?.length ? `角色：${summary.characters.slice(0, 4).join('、')}` : '',
+    summary.scenes?.length ? `场景：${summary.scenes.slice(0, 3).join('、')}` : '',
+    summary.props?.length ? `道具：${summary.props.slice(0, 3).join('、')}` : '',
+    summary.events?.length ? `事件：${summary.events.slice(0, 3).join('、')}` : '',
+    typeof summary.voice_count === 'number' ? `声线：${summary.voice_count}` : '',
+  ].filter(Boolean);
+  return parts.join('；');
+};
 
 export default function NovelDetailPage() {
   const { toast } = useToast();
@@ -854,7 +933,7 @@ export default function NovelDetailPage() {
   };
 
   const handleContinueEpisode = async (episode: SeriesEpisode) => {
-    const chapterId = episode.primary_chapter_id || episode.chapter_ids?.[0];
+    const chapterId = episode.primary_chapter_id || episode.chapter_ids?.[0] || episode.chapters?.[0]?.id;
     if (!chapterId) {
       toast({ title: '无法继续本集', description: '该集没有关联章节。', type: 'error' });
       return;
@@ -862,7 +941,7 @@ export default function NovelDetailPage() {
     setStartingEpisodeNumber(episode.episode_number);
     try {
       if (episode.workflow_id) {
-        router.push(`/workflow?workflow_id=${episode.workflow_id}&novel_id=${novelId}&chapter_id=${chapterId}`);
+        router.push(`/studio?workflow_id=${episode.workflow_id}&novel_id=${novelId}&chapter_id=${chapterId}`);
         return;
       }
       const workflow = await apiClient.startWorkflow({
@@ -871,8 +950,11 @@ export default function NovelDetailPage() {
         chapter_id: chapterId,
       });
       const workflowId = workflow?.workflow_id || workflow?.id;
+      if (!workflowId) {
+        throw new Error('后端未返回本集工程 ID');
+      }
       await loadNovelData();
-      router.push(`/workflow?workflow_id=${workflowId}&novel_id=${novelId}&chapter_id=${chapterId}`);
+      router.push(`/producer?workflow_id=${workflowId}&novel_id=${novelId}&chapter_id=${chapterId}`);
     } catch (err: any) {
       toast({ title: '本集工程创建失败', description: err?.message || '请稍后重试。', type: 'error' });
     } finally {
@@ -1465,6 +1547,45 @@ export default function NovelDetailPage() {
                   </div>
                 ) : (
                   <>
+                    <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 text-sm font-medium text-blue-100">
+                            <Film className="h-4 w-4" />
+                            连续动漫制作线
+                          </div>
+                          <p className="mt-1 text-sm text-white/60">
+                            整书计划会把多集拆分接入 Series Studio / Producer：先锁定 Production Bible，再逐集推进资产、声线、本集工程和质量门禁。
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="w-fit border-blue-300/40 text-blue-100">
+                          Series Studio Ready
+                        </Badge>
+                      </div>
+                      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                        <div className="rounded-lg bg-black/15 p-3">
+                          <div className="text-xs text-white/40">Production Bible</div>
+                          <div className="mt-1 text-sm text-white">{storyBibles.length > 0 ? '已绑定世界观/规则' : '待生成故事圣经'}</div>
+                        </div>
+                        <div className="rounded-lg bg-black/15 p-3">
+                          <div className="text-xs text-white/40">角色/场景资产</div>
+                          <div className="mt-1 text-sm text-white">{characters.length > 0 ? `${characters.length} 个角色可复用` : '待提取角色资产'}</div>
+                        </div>
+                        <div className="rounded-lg bg-black/15 p-3">
+                          <div className="text-xs text-white/40">声线连续性</div>
+                          <div className="mt-1 text-sm text-white">进入 Producer 后锁定配音与字幕节奏</div>
+                        </div>
+                        <div className="rounded-lg bg-black/15 p-3">
+                          <div className="text-xs text-white/40">本集工程</div>
+                          <div className="mt-1 text-sm text-white">继续本集工程会进入系列生产线</div>
+                        </div>
+                        <div className="rounded-lg bg-black/15 p-3">
+                          <div className="text-xs text-white/40">质量门禁</div>
+                          <div className="mt-1 text-sm text-white">检查剧本、分镜、镜头、媒体完整性</div>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                       <div className="rounded-lg bg-white/5 p-3">
                         <div className="text-xs text-white/40">计划集数</div>
@@ -1487,6 +1608,9 @@ export default function NovelDetailPage() {
                     <div className="space-y-3">
                       {seriesPlan.episodes.map((episode) => {
                         const counts = episode.production_counts || {};
+                        const readinessLabel = getEpisodeReadinessLabel(episode);
+                        const missingRequirements = getEpisodeMissingRequirements(episode);
+                        const continuitySummary = getEpisodeContinuitySummary(episode);
                         return (
                           <div key={episode.episode_number} className="rounded-lg bg-white/5 p-4">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -1499,6 +1623,11 @@ export default function NovelDetailPage() {
                                   <Badge variant="outline" className="border-white/20 text-white/60">
                                     {episode.chapter_range?.label || `${episode.chapters?.length || 0} 章`}
                                   </Badge>
+                                  {readinessLabel && (
+                                    <Badge variant="outline" className="border-green-400/40 text-green-200">
+                                      {readinessLabel}
+                                    </Badge>
+                                  )}
                                 </div>
                                 <p className="mt-2 text-sm text-white/55 line-clamp-2">{episode.narrative?.summary || episode.narrative?.hook}</p>
                               </div>
@@ -1516,6 +1645,23 @@ export default function NovelDetailPage() {
                                 {episode.workflow_id ? '继续本集工程' : episode.next_action?.label || '创建本集工程'}
                               </Button>
                             </div>
+
+                            {(continuitySummary || missingRequirements.length > 0) && (
+                              <div className="mt-3 grid gap-2 text-sm text-white/60 md:grid-cols-2">
+                                {continuitySummary && (
+                                  <div className="rounded-md border border-blue-400/20 bg-blue-500/10 p-3">
+                                    <div className="mb-1 text-blue-100">连续性摘要</div>
+                                    <div className="line-clamp-3">{continuitySummary}</div>
+                                  </div>
+                                )}
+                                {missingRequirements.length > 0 && (
+                                  <div className="rounded-md border border-amber-400/20 bg-amber-500/10 p-3">
+                                    <div className="mb-1 text-amber-100">进入 Producer 前待补齐</div>
+                                    <div>{missingRequirements.slice(0, 4).join('、')}</div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             <div className="mt-3 grid gap-2 text-sm text-white/60 md:grid-cols-2">
                               <div className="rounded-md bg-black/10 p-3">

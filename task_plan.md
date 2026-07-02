@@ -1330,3 +1330,17 @@
 - [x] 模型/生产策略：新增 draft/final 等生产策略文案与一键草片默认策略，保持现有接口兼容。
 - [x] 主线集成：审查代理补丁、解决冲突、运行针对性验证。
 - [x] 阶段提交：每个稳定切片独立提交，记录验证结果。
+
+## 2026-07-02 P1 连续动漫制作优化并行执行
+
+### 假设
+- 继续不做迁移，整书多集计划使用现有 `Novel.extra_data.series_plan`。
+- P1 目标是把“整书计划 -> 每集工程 -> Series Studio/Producer -> Production Bible 快照”串得更顺，不一次性做复杂模型自动路由。
+- 保持旧 API 字段兼容，新增字段必须是可选/附加。
+
+### 并行任务
+- [x] 后端 series plan 增强：接入 Production Bible 摘要、每集 readiness/continuity/missing requirements。
+- [x] 前端小说详情增强：整书计划更明确导向 Series Studio/Producer，兼容展示 readiness。
+- [x] 生产策略追踪增强：workflow/status/studio/job metadata 暴露策略意图和推荐模型提示。
+- [x] 主线集成验证：审查补丁、解决冲突、运行后端/前端聚焦验证。
+- [x] 阶段提交：提交 P1 稳定切片。

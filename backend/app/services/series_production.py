@@ -24,6 +24,7 @@ from app.models import (
     VideoJob,
     Workflow,
 )
+from app.services.production_bible import build_production_bible_summary
 from app.services.short_video_production import build_short_video_model_route
 
 
@@ -115,6 +116,117 @@ def _video_lineage_id(job: VideoJob, key: str) -> Optional[str]:
     return _json_dict(job.extra_data).get(key)
 
 
+def _compact_production_bible_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "version": summary.get("version"),
+        "novel_id": summary.get("novel_id"),
+        "novel_title": summary.get("novel_title"),
+        "story_bible_id": summary.get("story_bible_id"),
+        "generated_at": summary.get("generated_at"),
+        "style": summary.get("style"),
+        "counts": summary.get("counts") or {},
+        "anchors": summary.get("anchors") or {},
+        "asset_readiness": summary.get("asset_readiness") or {},
+        "voices": _json_list(summary.get("voices"))[:12],
+        "state_machine": summary.get("state_machine") or {},
+        "missing_requirements": _json_list(summary.get("missing_requirements"))[:12],
+    }
+
+
+def _episode_voice_count(summary: Dict[str, Any], episode: Dict[str, Any]) -> int:
+    voices = _json_list(summary.get("voices"))
+    character_names = set(_json_list(episode.get("key_characters")))
+    if not character_names:
+        return len(voices)
+    return len([voice for voice in voices if voice.get("character_name") in character_names])
+
+
+def _episode_missing_asset_count(summary: Dict[str, Any], episode: Dict[str, Any]) -> int:
+    episode_names = set(
+        _json_list(episode.get("key_characters"))
+        + _json_list(episode.get("key_scenes"))
+        + _json_list(episode.get("key_props"))
+    )
+    if not episode_names:
+        return int(_json_dict(summary.get("asset_readiness")).get("missing_asset_count") or 0)
+
+    missing = 0
+    for group in ("characters", "scenes", "props"):
+        for item in _json_list(summary.get(group)):
+            if item.get("missing_asset") and item.get("name") in episode_names:
+                missing += 1
+    return missing
+
+
+def _episode_continuity_summary(summary: Dict[str, Any], episode: Dict[str, Any]) -> Dict[str, Any]:
+    anchors = _json_dict(summary.get("anchors"))
+    state_machine = _json_dict(summary.get("state_machine"))
+    return {
+        "style": _json_dict(summary.get("style")).get("style") or episode.get("style"),
+        "characters": _json_list(episode.get("key_characters")) or _json_list(anchors.get("character_names")),
+        "scenes": _json_list(episode.get("key_scenes")) or _json_list(anchors.get("scene_names")),
+        "props": _json_list(episode.get("key_props")) or _json_list(anchors.get("prop_names")),
+        "events": _json_list(episode.get("key_events")),
+        "voice_count": _episode_voice_count(summary, episode),
+        "state_machine_available": bool(state_machine.get("available")),
+        "state_counts": _json_dict(state_machine.get("current_state_counts")),
+        "latest_events": _json_list(state_machine.get("latest_events"))[:4],
+    }
+
+
+def _episode_missing_requirements(
+    summary: Dict[str, Any],
+    episode: Dict[str, Any],
+    readiness: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    requirements: List[Dict[str, Any]] = []
+    if not readiness["has_workflow"]:
+        requirements.append({"code": "workflow_missing", "message": "该集尚未创建生产工作流"})
+    if not readiness["has_storyboard"]:
+        requirements.append({"code": "storyboard_missing", "message": "该集尚未生成分镜"})
+    if readiness["missing_asset_count"] > 0:
+        requirements.append({
+            "code": "episode_assets_missing",
+            "message": "该集角色/场景/道具存在未定稿资产",
+            "count": readiness["missing_asset_count"],
+        })
+    if episode.get("key_characters") and readiness["voice_count"] == 0:
+        requirements.append({"code": "voice_cast_missing", "message": "该集角色尚未绑定声线"})
+    requirements.extend(_json_list(summary.get("missing_requirements"))[:6])
+    return requirements
+
+
+def _with_production_bible_summary(plan: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any]:
+    if not plan:
+        return plan
+
+    enriched = dict(plan)
+    compact_summary = _compact_production_bible_summary(summary)
+    enriched["production_bible_summary"] = compact_summary
+    episodes = []
+    for episode in _json_list(plan.get("episodes")):
+        if not isinstance(episode, dict):
+            episodes.append(episode)
+            continue
+        episode_payload = dict(episode)
+        missing_asset_count = _episode_missing_asset_count(summary, episode_payload)
+        readiness = {
+            "has_workflow": bool(episode_payload.get("workflow_id")),
+            "has_storyboard": int(_json_dict(episode_payload.get("production_counts")).get("storyboards") or 0) > 0,
+            "shot_count": int(_json_dict(episode_payload.get("production_counts")).get("shots") or 0),
+            "asset_ready": missing_asset_count == 0,
+            "missing_asset_count": missing_asset_count,
+            "voice_count": _episode_voice_count(summary, episode_payload),
+            "next_action": episode_payload.get("next_action") or _next_action(str(episode_payload.get("status") or "planned")),
+        }
+        episode_payload["production_readiness"] = readiness
+        episode_payload["continuity_summary"] = _episode_continuity_summary(summary, episode_payload)
+        episode_payload["missing_requirements"] = _episode_missing_requirements(summary, episode_payload, readiness)
+        episodes.append(episode_payload)
+    enriched["episodes"] = episodes
+    return enriched
+
+
 def _episode_narrative(
     novel: Novel,
     chapters: List[Chapter],
@@ -156,7 +268,11 @@ async def _load_novel(db: AsyncSession, user_id: str, novel_id: str) -> Novel:
 
 async def get_series_plan(db: AsyncSession, user_id: str, novel_id: str) -> Dict[str, Any]:
     novel = await _load_novel(db, user_id, novel_id)
-    return _json_dict(_json_dict(novel.extra_data).get(SERIES_PLAN_KEY))
+    plan = _json_dict(_json_dict(novel.extra_data).get(SERIES_PLAN_KEY))
+    if not plan:
+        return plan
+    summary = await build_production_bible_summary(db, user_id, novel_id)
+    return _with_production_bible_summary(plan, summary)
 
 
 async def build_series_plan(
@@ -296,6 +412,8 @@ async def build_series_plan(
         if workflow.chapter_id:
             workflows_by_chapter[workflow.chapter_id].append(workflow)
 
+    production_bible_summary = await build_production_bible_summary(db, user_id, novel_id)
+
     episodes: List[Dict[str, Any]] = []
     for episode_index, start in enumerate(range(0, total_chapters, chunk_size), start=1):
         episode_chapters = chapters[start : start + chunk_size]
@@ -409,6 +527,7 @@ async def build_series_plan(
         ],
         "episodes": episodes,
     }
+    plan = _with_production_bible_summary(plan, production_bible_summary)
 
     if persist:
         extra_data = dict(_json_dict(novel.extra_data))
