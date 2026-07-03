@@ -472,6 +472,75 @@ def test_batch_finalize_supporting_creates_single_view_and_voice(client: TestCli
     assert card["readiness"]["final_ready"] is True
 
 
+def test_batch_finalize_supporting_filters_by_min_occurrences_and_round_robins_explicit_voice_pool(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _run(_seed_supporting_finalize_fixture())
+    second_id = _run(_add_recurring_supporting_candidate(fixture, "青岚", 2))
+    third_id = _run(_add_recurring_supporting_candidate(fixture, "石伯", 2))
+
+    async def fake_generate_asset_image_url(self, prompt: str, *, size: str, aspect_ratio: str, prefix: str) -> str:
+        return f"https://cdn.example.test/{prefix}.png"
+
+    monkeypatch.setattr(
+        "app.services.asset_generation_service.AssetGenerationService._generate_asset_image_url",
+        fake_generate_asset_image_url,
+    )
+
+    response = client.post(
+        f"/api/v1/production-cards/novel/{fixture['novel_id']}/batch-finalize-supporting",
+        json={"min_occurrences": 2, "voice_pool": ["voice_a", "voice_b"]},
+        headers=_auth_headers(fixture["user_id"]),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert [item["entity_id"] for item in payload["finalized"]] == [fixture["supporting_id"], second_id, third_id]
+    assert [item["voice"] for item in payload["finalized"]] == ["voice_a", "voice_b", "voice_a"]
+    skipped_by_id = {item["entity_id"]: item for item in payload["skipped"]}
+    assert skipped_by_id[fixture["rare_id"]]["reason"] == "occurrence_below_threshold"
+    assert skipped_by_id[fixture["rare_id"]]["occurrences"] == 1
+
+
+def test_batch_finalize_supporting_records_image_model_config_on_generated_asset(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _run(_seed_supporting_finalize_fixture())
+    configured_ids: list[str | None] = []
+
+    async def fake_configure_image_model(self, model_config_id: str | None = None):
+        configured_ids.append(model_config_id)
+        self.provider_name = "test-provider"
+        self.model_id = "test-image-model"
+        self.image_service = object()
+
+    async def fake_generate_asset_image_url(self, prompt: str, *, size: str, aspect_ratio: str, prefix: str) -> str:
+        return f"https://cdn.example.test/{prefix}.png"
+
+    monkeypatch.setattr(
+        "app.services.asset_generation_service.AssetGenerationService.configure_image_model",
+        fake_configure_image_model,
+    )
+    monkeypatch.setattr(
+        "app.services.asset_generation_service.AssetGenerationService._generate_asset_image_url",
+        fake_generate_asset_image_url,
+    )
+
+    response = client.post(
+        f"/api/v1/production-cards/novel/{fixture['novel_id']}/batch-finalize-supporting",
+        json={"min_occurrences": 2, "image_model_config_id": "image-config-s4b"},
+        headers=_auth_headers(fixture["user_id"]),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert configured_ids == ["image-config-s4b"]
+    params = _run(_asset_generation_params(payload["finalized"][0]["asset_id"]))
+    assert params["image_model_config_id"] == "image-config-s4b"
+
+
 def test_batch_finalize_supporting_defaults_to_builtin_tts_voice(client: TestClient) -> None:
     fixture = _run(_seed_supporting_finalize_fixture())
 
@@ -532,3 +601,46 @@ async def _add_supporting_front_asset_and_voice(fixture: dict[str, str]) -> None
         assert entity is not None
         entity.attributes = {**(entity.attributes or {}), "role_tier": "supporting"}
         await db.commit()
+
+
+async def _add_recurring_supporting_candidate(fixture: dict[str, str], name: str, occurrences: int) -> str:
+    entity_id = f"cards-supporting-extra-{uuid4()}"
+    async with AsyncSessionLocal() as db:
+        db.add(
+            StoryEntity(
+                id=entity_id,
+                user_id=fixture["user_id"],
+                novel_id=fixture["novel_id"],
+                entity_type="character",
+                name=name,
+                description=f"{name} 配角",
+                attributes={},
+                is_approved=True,
+            )
+        )
+        for index in range(occurrences):
+            db.add(
+                Shot(
+                    id=f"cards-supporting-extra-shot-{uuid4()}",
+                    storyboard_id=f"cards-supporting-extra-storyboard-{uuid4()}",
+                    user_id=fixture["user_id"],
+                    shot_number=100 + index,
+                    extra_data={
+                        "novel_id": fixture["novel_id"],
+                        "entity_refs": {
+                            "characters": [{"entity_id": entity_id, "name": name}],
+                            "scenes": [],
+                            "props": [],
+                        },
+                    },
+                )
+            )
+        await db.commit()
+    return entity_id
+
+
+async def _asset_generation_params(asset_id: str) -> dict:
+    async with AsyncSessionLocal() as db:
+        asset = await db.get(Asset, asset_id)
+        assert asset is not None
+        return asset.generation_params or {}

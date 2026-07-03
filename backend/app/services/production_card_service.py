@@ -501,11 +501,14 @@ async def batch_finalize_supporting_characters(
             view_keys=["front"],
         )
         asset = await generator.lock_asset_version(generated["front"].id)
-        asset.generation_params = {
+        generation_params = {
             **_json_dict(asset.generation_params),
             "source": "supporting_batch_finalize",
             "role_tier": "supporting",
         }
+        if image_model_config_id:
+            generation_params["image_model_config_id"] = image_model_config_id
+        asset.generation_params = generation_params
         attrs = _json_dict(entity.attributes)
         entity.attributes = {**attrs, "role_tier": "supporting"}
         voice = voices[len(finalized) % len(voices)]

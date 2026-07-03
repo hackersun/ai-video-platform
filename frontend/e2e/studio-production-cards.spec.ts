@@ -111,11 +111,19 @@ test('studio production cards show readiness gaps and repair links', async ({ pa
   await expect(page.getByText('云端车站')).toBeVisible();
   await expect(page.getByText('终稿就绪')).toBeVisible();
 
+  await expect(page.getByLabel('最低出镜次数')).toHaveValue('2');
+  await page.getByLabel('最低出镜次数').fill('3');
+  await page.getByLabel('图像模型配置 ID').fill('img-config-9');
+  await page.getByLabel('声线池').fill('voice_alpha, voice_beta');
   await page.getByRole('button', { name: '一键补齐配角' }).click();
   await expect(page.getByText('已补齐 1 个配角')).toBeVisible();
   await expect(page.getByText('阿月')).toBeVisible();
   await expect(page.getByText('voice_a · asset-ayue-front')).toBeVisible();
   await expect(page.getByText('跳过 1 个角色')).toBeVisible();
   await expect(page.getByText('孙剑 · protagonist')).toBeVisible();
-  expect(finalizePayload).toEqual({ min_occurrences: 2 });
+  expect(finalizePayload).toEqual({
+    min_occurrences: 3,
+    image_model_config_id: 'img-config-9',
+    voice_pool: ['voice_alpha', 'voice_beta'],
+  });
 });

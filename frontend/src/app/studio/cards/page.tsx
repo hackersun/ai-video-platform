@@ -8,7 +8,7 @@ import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import apiClient, { BatchFinalizeSupportingResponse, ProductionCard, ProductionCardsResponse } from '@/lib/api-client';
+import apiClient, { BatchFinalizeSupportingRequest, BatchFinalizeSupportingResponse, ProductionCard, ProductionCardsResponse } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
 const ENTITY_LABELS: Record<ProductionCard['entity_type'], string> = {
@@ -141,6 +141,9 @@ function CardsContent() {
   const [loading, setLoading] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [finalizeResult, setFinalizeResult] = useState<BatchFinalizeSupportingResponse | null>(null);
+  const [minOccurrences, setMinOccurrences] = useState('2');
+  const [imageModelConfigId, setImageModelConfigId] = useState('');
+  const [voicePoolInput, setVoicePoolInput] = useState('');
 
   useEffect(() => {
     if (!novelId) return;
@@ -176,7 +179,23 @@ function CardsContent() {
     setError(null);
     setFinalizeResult(null);
     try {
-      const result = await apiClient.batchFinalizeSupportingCharacters(novelId, { min_occurrences: 2 });
+      const parsedMinOccurrences = Number.parseInt(minOccurrences, 10);
+      const voicePool = voicePoolInput
+        .split(',')
+        .map((voice) => voice.trim())
+        .filter(Boolean);
+      const payload: BatchFinalizeSupportingRequest = {
+        min_occurrences: Number.isFinite(parsedMinOccurrences) && parsedMinOccurrences > 0 ? parsedMinOccurrences : 2,
+      };
+
+      if (imageModelConfigId.trim()) {
+        payload.image_model_config_id = imageModelConfigId.trim();
+      }
+      if (voicePool.length) {
+        payload.voice_pool = voicePool;
+      }
+
+      const result = await apiClient.batchFinalizeSupportingCharacters(novelId, payload);
       setFinalizeResult(result);
       await refreshCards();
     } catch (err: any) {
@@ -207,15 +226,51 @@ function CardsContent() {
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
             {novelId ? (
-              <Button
-                type="button"
-                onClick={handleFinalizeSupporting}
-                disabled={finalizing || loading}
-                className="bg-cyan-600 text-white hover:bg-cyan-700"
-              >
-                <Wand2 className="mr-2 h-4 w-4" aria-hidden="true" />
-                {finalizing ? '补齐中' : '一键补齐配角'}
-              </Button>
+              <div className="flex flex-wrap items-end gap-2 rounded-md border border-white/10 bg-white/[0.04] p-2">
+                <label className="flex flex-col gap-1 text-xs text-white/55">
+                  最低出镜次数
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={minOccurrences}
+                    onChange={(event) => setMinOccurrences(event.target.value)}
+                    disabled={finalizing || loading}
+                    className="h-9 w-20 rounded-md border border-white/10 bg-slate-950/70 px-2 text-sm text-white outline-none focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-white/55">
+                  图像模型配置 ID
+                  <input
+                    type="text"
+                    value={imageModelConfigId}
+                    onChange={(event) => setImageModelConfigId(event.target.value)}
+                    disabled={finalizing || loading}
+                    placeholder="可选"
+                    className="h-9 w-40 rounded-md border border-white/10 bg-slate-950/70 px-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-xs text-white/55">
+                  声线池
+                  <input
+                    type="text"
+                    value={voicePoolInput}
+                    onChange={(event) => setVoicePoolInput(event.target.value)}
+                    disabled={finalizing || loading}
+                    placeholder="voice_a, voice_b"
+                    className="h-9 w-44 rounded-md border border-white/10 bg-slate-950/70 px-2 text-sm text-white outline-none placeholder:text-white/30 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:opacity-60"
+                  />
+                </label>
+                <Button
+                  type="button"
+                  onClick={handleFinalizeSupporting}
+                  disabled={finalizing || loading}
+                  className="h-9 bg-cyan-600 text-white hover:bg-cyan-700"
+                >
+                  <Wand2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                  {finalizing ? '补齐中' : '一键补齐配角'}
+                </Button>
+              </div>
             ) : null}
             <span className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-emerald-100">
               就绪 {data?.summary?.ready ?? 0}
