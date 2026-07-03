@@ -39,6 +39,13 @@ def _builder_module():
         pytest.fail(f"reference_package_builder module is missing: {exc}")
 
 
+def _adapter_module():
+    try:
+        return importlib.import_module("app.services.video_reference_adapter")
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"video_reference_adapter module is missing: {exc}")
+
+
 async def _public_resolver(_db: AsyncSession, _user_id: str, url: str | None) -> dict[str, Any]:
     if url and url.startswith("https://"):
         return {"provider_url": url, "omitted_reason": None}
@@ -343,3 +350,81 @@ async def test_non_public_urls_skipped_unless_resolver_maps_public_url(db_sessio
         "https://cdn.example.com/static/generated/images/local-front.png"
     ]
     assert mapped["dropped"] == []
+
+
+def test_provider_content_adapter_submits_multimodal_references() -> None:
+    adapter = _adapter_module()
+    build_provider_content = getattr(adapter, "build_video_provider_content", None)
+    assert callable(build_provider_content)
+
+    result = build_provider_content(
+        final_prompt="孙剑踏入旧山门，镜头缓慢推进",
+        duration=8,
+        resolution="720p",
+        provider_image_url="https://cdn.example.com/fallback.png",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/sunjian-front.png", "role_tag": "protagonist", "at_index": 1},
+                {"url": "https://cdn.example.com/sunjian-side.png", "role_tag": "protagonist", "at_index": 2},
+            ],
+            "videos": [
+                {"url": "https://cdn.example.com/previous-shot.mp4", "role_tag": "previous_shot", "at_index": 1}
+            ],
+            "at_reference_text": "@图1为主角孙剑正面形象基准；@图2为主角孙剑侧面形象基准",
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 0, "at_reference": True, "native_audio": False},
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["image_url", "image_url", "video_url", "text"]
+    assert result["content"][0] == {
+        "type": "image_url",
+        "image_url": {"url": "https://cdn.example.com/sunjian-front.png"},
+        "role": "reference_image",
+    }
+    assert result["content"][2] == {
+        "type": "video_url",
+        "video_url": {"url": "https://cdn.example.com/previous-shot.mp4"},
+        "role": "reference_video",
+    }
+    assert result["content"][-1]["text"].startswith("@图1为主角孙剑正面形象基准")
+    assert "--duration 8 --resolution 720p --camerafixed false --watermark true" in result["content"][-1]["text"]
+    assert result["metadata"] == {
+        "mode": "multimodal",
+        "image_count": 2,
+        "video_count": 1,
+        "audio_count": 0,
+    }
+
+
+def test_provider_content_adapter_keeps_single_image_shape_when_limits_do_not_allow_multimodal() -> None:
+    adapter = _adapter_module()
+    build_provider_content = getattr(adapter, "build_video_provider_content", None)
+    assert callable(build_provider_content)
+
+    result = build_provider_content(
+        final_prompt="旧山门外的定场镜头",
+        duration=4,
+        resolution="480p",
+        provider_image_url="https://cdn.example.com/current-shot.png",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/sunjian-front.png", "role_tag": "protagonist", "at_index": 1},
+                {"url": "https://cdn.example.com/sunjian-side.png", "role_tag": "protagonist", "at_index": 2},
+            ],
+            "videos": [],
+            "at_reference_text": "@图1为主角孙剑正面形象基准",
+        },
+        model_limits={"images": 1, "videos": 0, "audios": 0, "at_reference": False, "native_audio": False},
+    )
+
+    assert result["mode"] == "single_image"
+    assert result["content"] == [
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/current-shot.png"}},
+        {
+            "type": "text",
+            "text": "旧山门外的定场镜头 --duration 4 --resolution 480p --camerafixed false --watermark true",
+        },
+    ]
+    assert result["metadata"]["image_count"] == 1
+    assert result["metadata"]["video_count"] == 0

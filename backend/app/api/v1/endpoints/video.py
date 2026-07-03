@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from app.core.api_key_utils import get_user_api_key
 from app.core.database import get_db
 from app.core.dev_generation import dev_video_url, is_dev_mode
-from app.core.model_registry import get_task_default
+from app.core.model_registry import get_model_reference_limits, get_task_default
 from app.core.security import get_current_user_id
 from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_PROVIDER_ID
 from app.models.video_job import VideoJob
@@ -39,6 +39,8 @@ from app.services.consistency_preflight import build_generation_context_package
 from app.services.novel_continuity import build_novel_continuity_package
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_entries
+from app.services.reference_package_builder import build_reference_package
+from app.services.video_reference_adapter import build_reference_package_metadata, build_video_provider_content
 from app.services.asset_lock_service import AssetLockService
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 from app.api.v1.endpoints.dashboard import log_activity
@@ -1487,6 +1489,11 @@ async def generate_video(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="静音视频生成当前只支持火山普通视频模型或火山方舟 Agent Plan 视频模型。Sora/Veo/ComfyUI 等生产适配请在本页切换到「直生音视频」，或在 workflow 中使用批量直生/云渲染。",
             )
+        video_reference_limits = get_model_reference_limits(
+            video_model_config.get("api_model_id")
+            or video_model_config.get("config_model_id")
+            or request.model
+        )
         if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -1498,6 +1505,7 @@ async def generate_video(
         shot_context = _extract_shot_generation_context(lineage.get("shot"))
         effective_image_url = request.image_url or getattr(lineage.get("shot"), "image_url", None)
         reference_image_source = "request" if request.image_url else None
+        reference_package = None
         if effective_image_url and reference_image_source is None:
             reference_image_source = "shot_image"
         preflight_package = None
@@ -1513,6 +1521,17 @@ async def generate_video(
             shot_context = package["context"]
             effective_image_url = package["reference_image"]
             reference_image_source = package["reference_image_source"]
+            if video_reference_limits.get("images", 1) > 1 and lineage.get("shot") is not None:
+                reference_package = await build_reference_package(
+                    db,
+                    user_id,
+                    shot=lineage["shot"],
+                    lineage=lineage,
+                    model_limits=video_reference_limits,
+                    resolve_public_url=_resolve_provider_image_delivery,
+                )
+                effective_image_url = reference_package.get("reference_image") or effective_image_url
+                reference_image_source = reference_package.get("reference_image_source") or reference_image_source
         if not is_dev_mode():
             preflight_package = await build_generation_context_package(
                 db,
@@ -1561,13 +1580,29 @@ async def generate_video(
         )
         prompt_parameters["reference_image_source"] = reference_image_source
         supplemental_refs = shot_context.get("character_multiview_refs") or []
-        prompt_parameters["provider_reference_image_limit"] = 1
+        prompt_parameters["provider_reference_image_limit"] = video_reference_limits["images"]
         prompt_parameters["reference_image_strategy"] = (
             "single_provider_image_with_textual_asset_constraints"
             if supplemental_refs or (shot_context.get("asset_version_locks") or [])
             else "single_provider_image"
         )
         prompt_parameters["supplemental_reference_image_count"] = len(supplemental_refs)
+        provider_content = build_video_provider_content(
+            final_prompt=final_prompt,
+            duration=request.duration,
+            resolution=request.resolution,
+            provider_image_url=provider_image_url,
+            reference_package=reference_package,
+            model_limits=video_reference_limits,
+            camera_fixed=False,
+            watermark=True,
+        )
+        if provider_content["mode"] == "multimodal":
+            prompt_parameters["reference_image_strategy"] = "multimodal_reference_package"
+        reference_package_metadata = build_reference_package_metadata(
+            reference_package,
+            provider_content["metadata"],
+        )
 
         # 使用请求提供的 API key、所选视频模型配置或同 provider 的可用 Key。
         if request.api_key:
@@ -1593,6 +1628,7 @@ async def generate_video(
             extra_data.update(context_metadata)
             extra_data.update(_video_model_metadata(video_model_config))
             extra_data["prompt_parameters"] = prompt_parameters
+            extra_data["reference_package"] = reference_package_metadata
             extra_data["source_prompt"] = request.prompt
             job = VideoJob(
                 id=job_id,
@@ -1649,36 +1685,13 @@ async def generate_video(
             )
         client = _create_ark_client(resolved_api_key, resolved_base_url)
 
-        # 构建content
-        content = []
-
-        # 云端视频模型只能读取公网可访问图片；本地静态图继续保留在历史和提示词上下文中。
-        if provider_image_url:
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": provider_image_url}
-            })
-
-        # 构建提示词，包含参数
-        duration_arg = f"--duration {request.duration}"
-        camerafixed = "false"  # 相机运动
-        watermark = "true"
-        resolution_arg = f"--resolution {request.resolution}"
-
-        prompt_text = f"{final_prompt} {duration_arg} {resolution_arg} --camerafixed {camerafixed} --watermark {watermark}"
-
-        content.append({
-            "type": "text",
-            "text": prompt_text
-        })
-
         # 视频模型需要 endpoint_id，不是模型名。
         video_model = video_model_config.get("model_endpoint_id") or request.model
 
         # 调用SDK创建任务
         create_kwargs = {
             "model": video_model,
-            "content": content,
+            "content": provider_content["content"],
             "duration": request.duration,
             "resolution": request.resolution,
             "camera_fixed": False,
@@ -1699,6 +1712,7 @@ async def generate_video(
         extra_data.update(context_metadata)
         extra_data.update(_video_model_metadata(video_model_config))
         extra_data["prompt_parameters"] = prompt_parameters
+        extra_data["reference_package"] = reference_package_metadata
         extra_data["source_prompt"] = request.prompt
 
         # 创建数据库记录

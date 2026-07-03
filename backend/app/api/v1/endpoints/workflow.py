@@ -30,6 +30,8 @@ from app.services.audio_route_service import resolve_shot_audio_route
 from app.services.production_bible import build_production_bible_summary
 from app.services.production_strategy_routing import resolve_strategy_video_config_id
 from app.services.publication_readiness import evaluate_publication_readiness
+from app.services.reference_package_builder import build_reference_package
+from app.services.video_reference_adapter import build_reference_package_metadata, build_video_provider_content
 
 router = APIRouter(tags=["工作流"])
 
@@ -2043,6 +2045,17 @@ async def generate_workflow_media_batch(
             lineage = await _resolve_video_lineage(db, user_id, video_request)
             package = await _build_video_consistency_package(db, user_id, video_request, lineage)
             effective_image_url = package["reference_image"]
+            reference_package = None
+            if video_reference_limits.get("images", 1) > 1:
+                reference_package = await build_reference_package(
+                    db,
+                    user_id,
+                    shot=shot,
+                    lineage=lineage,
+                    model_limits=video_reference_limits,
+                    resolve_public_url=_resolve_provider_image_delivery,
+                )
+                effective_image_url = reference_package.get("reference_image") or effective_image_url
             video_seed = _resolve_video_seed(video_request, lineage, package["metadata"])
             subtitle_text = _shot_subtitle_text(shot)
             audio_route = (
@@ -2095,6 +2108,7 @@ async def generate_workflow_media_batch(
                 "video_request": video_request,
                 "lineage": lineage,
                 "package": package,
+                "reference_package": reference_package,
                 "final_video_prompt": package["final_prompt"],
                 "effective_image_url": effective_image_url,
                 "video_seed": video_seed,
@@ -2129,6 +2143,7 @@ async def generate_workflow_media_batch(
             video_request = prepared["video_request"]
             lineage = prepared["lineage"]
             package = prepared["package"]
+            reference_package = prepared.get("reference_package")
             final_video_prompt = prepared["final_video_prompt"]
             effective_image_url = prepared["effective_image_url"]
             video_seed = prepared["video_seed"]
@@ -2148,6 +2163,7 @@ async def generate_workflow_media_batch(
                 image_delivery["image_delivery"],
             )
             prompt_parameters["reference_image_source"] = package.get("reference_image_source")
+            prompt_parameters["provider_reference_image_limit"] = video_reference_limits["images"]
             extra_data["prompt_parameters"] = prompt_parameters
             extra_data["source_prompt"] = video_request.prompt
             extra_data.update(_production_strategy_job_extra(request.production_strategy, effective_video_config_id))
@@ -2172,20 +2188,29 @@ async def generate_workflow_media_batch(
             video_job_id = str(uuid4())
             provider_task_id = f"dev-video-{video_job_id}" if use_dev_video else None
             video_url = dev_video_url(video_job_id) if use_dev_video else None
+            provider_content = build_video_provider_content(
+                final_prompt=final_video_prompt,
+                duration=video_request.duration,
+                resolution=request.resolution,
+                provider_image_url=provider_image_url,
+                reference_package=reference_package,
+                model_limits=video_reference_limits,
+                camera_fixed=False,
+                watermark=True,
+            )
+            extra_data["reference_package"] = build_reference_package_metadata(
+                reference_package,
+                provider_content["metadata"],
+            )
+            prompt_parameters["reference_image_strategy"] = (
+                "multimodal_reference_package"
+                if provider_content["mode"] == "multimodal"
+                else "single_provider_image"
+            )
             if not use_dev_video:
-                content = []
-                if provider_image_url:
-                    content.append({"type": "image_url", "image_url": {"url": provider_image_url}})
-                content.append({
-                    "type": "text",
-                    "text": (
-                        f"{final_video_prompt} --duration {video_request.duration} --resolution {request.resolution} "
-                        "--camerafixed false --watermark true"
-                    ),
-                })
                 create_kwargs = {
                     "model": selected_video_model.get("model_endpoint_id") or selected_video_model.get("api_model_id") or video_request.model,
-                    "content": content,
+                    "content": provider_content["content"],
                     "duration": video_request.duration,
                     "resolution": request.resolution,
                     "camera_fixed": False,

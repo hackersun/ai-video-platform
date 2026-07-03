@@ -265,6 +265,49 @@ def _set_shot_extra_data(shot_id: str, extra_data: dict) -> None:
     asyncio.run(_update())
 
 
+def _seed_shot_reference_assets(user_id: str, shot_id: str) -> None:
+    async def _seed() -> None:
+        entity_id = f"char-main-{shot_id[:8]}"
+        async with AsyncSessionLocal() as session:
+            shot = await session.get(Shot, shot_id)
+            assert shot is not None
+            shot.character_refs = [{"entity_id": entity_id, "name": "孙剑"}]
+            shot.extra_data = {
+                **(shot.extra_data or {}),
+                "entity_refs": {"characters": [{"entity_id": entity_id, "name": "孙剑"}]},
+            }
+            session.add(
+                StoryEntity(
+                    id=entity_id,
+                    user_id=user_id,
+                    entity_type="character",
+                    name="孙剑",
+                    is_approved=True,
+                )
+            )
+            for view_key, label in [("front", "正面"), ("side", "侧面")]:
+                session.add(
+                    Asset(
+                        id=f"asset-{entity_id}-{view_key}-{uuid4()}",
+                        user_id=user_id,
+                        category="character",
+                        asset_type="image",
+                        entity_id=entity_id,
+                        entity_type="character",
+                        name=f"孙剑{label}",
+                        url=f"https://cdn.example.com/sunjian-{view_key}.png",
+                        is_active=True,
+                        is_locked=True,
+                        is_final=True,
+                        version=1,
+                        generation_params={"view_key": view_key},
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(_seed())
+
+
 def _insert_model_config(
     *,
     user_id: str,
@@ -770,6 +813,59 @@ def test_video_generation_accepts_seedance_20_fast_model(client: TestClient, mon
     job = job_resp.json()
     assert job["api_model_id"] == "doubao-seedance-2-0-fast-260128"
     assert job["model_endpoint_id"] == "doubao-seedance-2-0-fast-260128"
+
+
+def test_video_generation_submits_seedance20_reference_package_content(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict = {}
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured.update(kwargs)
+
+            class _CreateResult:
+                id = "video-task-seedance-20-reference-package"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    shot_id, _storyboard_id, _script_id = _create_shot(client, user_id)
+    _seed_shot_reference_assets(user_id, shot_id)
+    create_resp = client.post(
+        "/api/v1/video/generate",
+        json={
+            "prompt": "Seedance 2.0 should submit multiple locked views",
+            "api_key": "test-key",
+            "model": "doubao-seedance-2-0-260128",
+            "duration": 4,
+            "resolution": "720p",
+            "shot_id": shot_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert create_resp.status_code == 200, create_resp.text
+    provider_images = [item for item in captured["content"] if item["type"] == "image_url"]
+    assert len(provider_images) == 2
+    assert provider_images[0]["role"] == "reference_image"
+    assert provider_images[0]["image_url"]["url"] == "https://cdn.example.com/sunjian-front.png"
+    assert captured["content"][-1]["text"].startswith("@图1为主角孙剑正面形象基准")
+    extra = _get_video_job_extra(create_resp.json()["job_id"])
+    assert extra["reference_package"]["mode"] == "multimodal"
+    assert extra["reference_package"]["image_count"] == 2
+    assert extra["reference_package"]["items"][0]["url"] == "https://cdn.example.com/sunjian-front.png"
+    assert extra["prompt_parameters"]["provider_reference_image_limit"] == 9
 
 
 def test_video_generation_accepts_volcano_agent_plan_video_model(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2290,6 +2386,156 @@ def test_workflow_media_batch_maps_local_reference_image_through_public_storage(
     assert job["prompt_parameters"]["provider_image_url"] == "https://cdn.example.com/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_delivery_method"] == "public_static_base_url"
     assert job["prompt_parameters"]["image_delivery_config_id"] == storage_config_id
+
+
+def test_workflow_media_batch_submits_seedance20_reference_package_content(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = f"video-reference-package-task-{len(captured_video)}"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-video-ref-package-model-{uuid4()}",
+        api_model_id="doubao-seedance-2-0-260128",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="sk-video",
+    )
+    shot_id, storyboard_id, script_id = _create_shot(client, user_id)
+    _seed_shot_reference_assets(user_id, shot_id)
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "多参考包批量工作流",
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert batch_resp.status_code == 200, batch_resp.text
+    payload = batch_resp.json()
+    assert len(captured_video) == 1
+    provider_images = [item for item in captured_video[0]["content"] if item["type"] == "image_url"]
+    assert len(provider_images) == 2
+    assert provider_images[0]["role"] == "reference_image"
+    assert provider_images[0]["image_url"]["url"] == "https://cdn.example.com/sunjian-front.png"
+    assert provider_images[1]["image_url"]["url"] == "https://cdn.example.com/sunjian-side.png"
+    assert captured_video[0]["content"][-1]["text"].startswith("@图1为主角孙剑正面形象基准")
+
+    extra = _get_video_job_extra(payload["video_job_ids"][0])
+    assert extra["reference_package"]["mode"] == "multimodal"
+    assert extra["reference_package"]["image_count"] == 2
+    assert extra["reference_package"]["items"][0]["type"] == "image"
+    assert extra["reference_package"]["items"][0]["url"] == "https://cdn.example.com/sunjian-front.png"
+    assert extra["prompt_parameters"]["provider_reference_image_limit"] == 9
+
+
+def test_workflow_media_batch_keeps_legacy_single_image_reference_content(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = f"video-legacy-reference-task-{len(captured_video)}"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-video-legacy-ref-model-{uuid4()}",
+        api_model_id="Doubao-Seedance-1.0-pro-fast",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="sk-video",
+    )
+    shot_id, storyboard_id, script_id = _create_shot(client, user_id)
+    _seed_shot_reference_assets(user_id, shot_id)
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "单图兼容批量工作流",
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert batch_resp.status_code == 200, batch_resp.text
+    payload = batch_resp.json()
+    assert len(captured_video) == 1
+    content = captured_video[0]["content"]
+    provider_images = [item for item in content if item["type"] == "image_url"]
+    assert len(provider_images) == 1
+    assert "role" not in provider_images[0]
+    assert provider_images[0]["image_url"]["url"] == "https://cdn.example.com/sunjian-side.png"
+    assert content[-1]["type"] == "text"
+    assert not content[-1]["text"].startswith("@图")
+
+    extra = _get_video_job_extra(payload["video_job_ids"][0])
+    assert extra["reference_package"]["mode"] == "single_image"
+    assert extra["reference_package"]["image_count"] == 1
+    assert extra["reference_package"]["items"] == []
+    assert extra["prompt_parameters"]["provider_reference_image_limit"] == 1
 
 
 def test_entity_extraction_does_not_treat_state_words_as_characters() -> None:
