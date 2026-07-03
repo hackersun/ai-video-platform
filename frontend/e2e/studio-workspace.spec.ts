@@ -184,6 +184,9 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
   const shotReviewLink = productionBoard.getByRole('link', { name: '镜头审阅' });
   await expect(shotReviewLink).toBeVisible();
   await expect(shotReviewLink).toHaveAttribute('href', '/studio/shot-review?workflow_id=wf-001');
+  const renderLink = productionBoard.getByRole('link', { name: '真实成片' });
+  await expect(renderLink).toBeVisible();
+  await expect(renderLink).toHaveAttribute('href', '/workflow?workflow_id=wf-001');
   await expect(page.getByText('角色/场景/道具锁覆盖')).toBeVisible();
   await expect(page.getByText('0%', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('定稿卡就绪 1 · 待补齐 1')).toBeVisible();

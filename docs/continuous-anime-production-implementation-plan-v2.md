@@ -522,6 +522,9 @@ async def render_workflow_package(manifest: dict, *, output_dir: Path, burn_subt
 - workflow/studio 渲染执行器选项加"本地 FFmpeg（真实成片）"；渲染完成显示可下载 mp4 + SRT
 - 发行台：发布表单（标题/简介/封面/比例）→ 已有 `/synthesis/publish`
 
+当前实现状态（2026-07-03）：
+- `/workflow` 已支持"本地 FFmpeg（真实成片）"渲染执行器、真实 MP4/SRT 下载入口；`/studio` 生产看板已新增"真实成片"入口，跳转当前 workflow 的渲染页。
+
 ### TDD 测试
 
 后端（`backend/tests/test_ffmpeg_local_render.py`；CI 无 ffmpeg 时 `pytest.mark.skipif(not shutil.which("ffmpeg"))`）：

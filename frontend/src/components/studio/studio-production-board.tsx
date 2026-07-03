@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Boxes, CheckCircle2, Film, ListChecks, Lock, Timer, Video } from 'lucide-react';
+import { Boxes, CheckCircle2, Download, Film, ListChecks, Lock, Timer, Video } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,6 +29,7 @@ export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: Stud
   const shots = snapshot?.shots || [];
   const activeWorkflowId = workflowId || snapshot?.workflow?.id || '';
   const shotReviewHref = activeWorkflowId ? `/studio/shot-review?workflow_id=${activeWorkflowId}` : '/studio/shot-review';
+  const renderHref = activeWorkflowId ? `/workflow?workflow_id=${activeWorkflowId}` : '/workflow';
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
       <Card className="border-white/10 bg-white/5">
@@ -38,12 +39,20 @@ export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: Stud
               <ListChecks className="h-4 w-4 text-cyan-300" />
               生产看板
             </CardTitle>
-            <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
-              <Link href={shotReviewHref}>
-                <Film className="mr-1.5 h-3.5 w-3.5" />
-                镜头审阅
-              </Link>
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
+                <Link href={shotReviewHref}>
+                  <Film className="mr-1.5 h-3.5 w-3.5" />
+                  镜头审阅
+                </Link>
+              </Button>
+              <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
+                <Link href={renderHref}>
+                  <Download className="mr-1.5 h-3.5 w-3.5" />
+                  真实成片
+                </Link>
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
