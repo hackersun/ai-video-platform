@@ -531,6 +531,7 @@ async def render_workflow_package(manifest: dict, *, output_dir: Path, burn_subt
 当前实现状态（2026-07-03）：
 - `/workflow` 已支持"本地 FFmpeg（真实成片）"渲染执行器、真实 MP4/SRT 下载入口；`/studio` 生产看板已新增"真实成片"入口，跳转当前 workflow 的渲染页。
 - 本地 FFmpeg renderer 已支持 manifest 段级 `music.url` 低音量混入主音轨；workflow concatenate 会在 `Shot.music_cue` 精确命中音乐音频资产时写入 `segment.music`，远端/不可用 BGM 在本地渲染时跳过不阻断成片。
+- 本地缺少 FFmpeg 时，后端结构化 `ffmpeg_not_installed` 错误会在 `/workflow` 渲染区显示持久安装指引（macOS: `brew install ffmpeg`），避免只依赖 toast。
 
 ### TDD 测试
 

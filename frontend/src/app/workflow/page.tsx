@@ -2965,6 +2965,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
   const [lastResult, setLastResult] = useState<any>(null);
   const [preflight, setPreflight] = useState<any>(null);
   const [renderResult, setRenderResult] = useState<any>(null);
+  const [renderErrorDetail, setRenderErrorDetail] = useState<any>(null);
   const [renderBackend, setRenderBackend] = useState<WorkflowRenderBackend>('local_artifact_package');
   const [externalConfigId, setExternalConfigId] = useState('');
   const [burnSubtitles, setBurnSubtitles] = useState(false);
@@ -3071,6 +3072,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
       return;
     }
     setIsRendering(true);
+    setRenderErrorDetail(null);
     try {
       const result = await apiClient.renderWorkflowPackage(workflowId, {
         synthesis_job_id: workflowData.synthesisJobId || lastResult?.job_id,
@@ -3089,6 +3091,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
         setPreflight({ ready: true, issues: [], blocking_issue_count: 0 });
       }
       onSynthesisComplete?.(result);
+      setRenderErrorDetail(null);
       toast({
         title: result.status === 'preflight_failed'
           ? '渲染预检未通过'
@@ -3096,6 +3099,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
         type: result.status === 'preflight_failed' ? 'info' : 'success',
       });
     } catch (err: any) {
+      setRenderErrorDetail(err?.detail || { message: err?.message || '请稍后重试。' });
       toast({ title: '渲染执行失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsRendering(false);
@@ -3206,6 +3210,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
     || renderPublicationBlockers[0]?.message
     || (renderOutputKind === 'preview_package' ? '当前只有本地预览包' : '');
   const isReviewOnlyPackage = renderOutputKind === 'preview_package' || renderBackend === 'local_artifact_package';
+  const isFfmpegMissing = renderErrorDetail?.code === 'ffmpeg_not_installed';
   const clipsByTrack = timelineTracks.map((track) => ({
     track,
     clips: timelineClips.filter((clip) => clip.track_id === track.id),
@@ -3382,7 +3387,10 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
               <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={renderBackend}
-                  onChange={(event) => setRenderBackend(event.target.value as WorkflowRenderBackend)}
+                  onChange={(event) => {
+                    setRenderBackend(event.target.value as WorkflowRenderBackend);
+                    setRenderErrorDetail(null);
+                  }}
                   className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white"
                   title="渲染执行器"
                 >
@@ -3454,6 +3462,18 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                     {issue.message || issue.code}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {renderErrorDetail && (
+              <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
+                <div className="font-medium">{isFfmpegMissing ? '未检测到本地 FFmpeg' : '渲染执行失败'}</div>
+                <div className="mt-1">{renderErrorDetail.message || renderErrorDetail.code || '请稍后重试。'}</div>
+                {isFfmpegMissing && (
+                  <div className="mt-2 text-red-100/80">
+                    macOS 可运行 <code className="rounded bg-black/30 px-1 py-0.5 text-red-50">brew install ffmpeg</code> 安装后重试。
+                  </div>
+                )}
               </div>
             )}
 

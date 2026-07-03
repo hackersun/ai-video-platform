@@ -377,6 +377,49 @@ test('workflow can run local FFmpeg render and exposes real mp4 artifacts', asyn
   await expect(page.getByRole('link', { name: '下载 SRT' })).toHaveAttribute('href', /synthesis-001\.srt$/);
 });
 
+test('workflow shows install guidance when local FFmpeg is missing', async ({ page }) => {
+  await mockCommonWorkflowRoutes(page, {
+    currentStep: 9,
+    scriptId: 'script-001',
+    storyboardId: 'storyboard-001',
+    videoJobs: [{ id: 'video-job-001', script_id: 'script-001', novel_id: 'novel-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    ttsJobs: [{ id: 'tts-job-001', script_id: 'script-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    synthesisJobs: [{
+      id: 'synthesis-001',
+      job_id: 'synthesis-001',
+      title: '第一章连续成片清单',
+      status: 'succeeded',
+      manifest_url: '/static/exports/synthesis-001.json',
+      output_url: '/static/exports/synthesis-001-preview.html',
+      segment_count: 2,
+      duration_seconds: 8,
+    }],
+    extraRoute: async (route, path) => {
+      if (path === '/api/v1/workflow/wf-269/render') {
+        await route.fulfill({
+          status: 422,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            detail: {
+              code: 'ffmpeg_not_installed',
+              message: 'FFmpeg 未安装',
+            },
+          }),
+        });
+        return true;
+      }
+      return false;
+    },
+  });
+
+  await page.goto('/workflow?workflow_id=wf-269');
+  await page.locator('select[title="渲染执行器"]').selectOption('ffmpeg_local');
+  await page.getByRole('button', { name: '生成真实成片' }).click();
+
+  await expect(page.getByText('未检测到本地 FFmpeg')).toBeVisible();
+  await expect(page.getByText('brew install ffmpeg')).toBeVisible();
+});
+
 test('workflow hydrates persisted local FFmpeg output instead of stale review preview', async ({ page }) => {
   await mockCommonWorkflowRoutes(page, {
     currentStep: 9,
