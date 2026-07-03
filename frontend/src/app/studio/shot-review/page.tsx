@@ -24,7 +24,13 @@ function statusLabel(status?: string) {
   if (status === 'succeeded' || status === 'completed') return '成功';
   if (status === 'failed') return '失败';
   if (status === 'running') return '生成中';
+  if (status === 'queued' || status === 'pending') return '等待中';
+  if (status === 'processing') return '生成中';
   return status || '待生成';
+}
+
+function isShotWaiting(status?: string) {
+  return status === 'queued' || status === 'pending' || status === 'running' || status === 'processing';
 }
 
 function evidenceText(value: any) {
@@ -133,10 +139,11 @@ function ShotCard({
   onSelectedChange: (checked: boolean) => void;
 }) {
   const isFailed = shot.status === 'failed';
+  const waiting = isShotWaiting(shot.status);
   const video = mediaUrl(shot.video_url);
 
   return (
-    <Card className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none">
+    <Card className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none" data-testid={`shot-review-card-${shot.shot_id}`}>
       <div className="relative aspect-video bg-slate-950">
         {video ? (
           <video src={video} className="h-full w-full object-cover" controls muted playsInline />
@@ -164,6 +171,12 @@ function ShotCard({
       </CardHeader>
 
       <CardContent className="space-y-3 p-4 pt-0">
+        {waiting ? (
+          <div className="rounded-md border border-cyan-300/25 bg-cyan-400/10 px-3 py-2 text-xs leading-5 text-cyan-50">
+            重生进行中，等待视频/声音完成后再合成
+          </div>
+        ) : null}
+
         <p className="min-h-[2.5rem] text-sm leading-5 text-white/72">{shot.subtitle_text || '暂无字幕/对白'}</p>
 
         <div className="flex flex-wrap gap-2">

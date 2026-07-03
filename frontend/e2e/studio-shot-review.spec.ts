@@ -214,3 +214,91 @@ test('studio shot review renders evidence and regenerates failed shots before co
   await expect(page.getByRole('link', { name: '查看渲染清单' })).toHaveAttribute('href', /render-after-regenerate\.json$/);
   await expect(page.getByRole('link', { name: '打开成片' })).toHaveAttribute('href', /output-after-regenerate\.mp4$/);
 });
+
+test('studio shot review shows waiting state when regenerated shots are still running', async ({ page }) => {
+  const regenerateRequests: Array<Record<string, unknown>> = [];
+  const calls: string[] = [];
+  let shotReviewCalls = 0;
+
+  const failedShot = {
+    shot_id: 'shot-waiting',
+    shot_number: 3,
+    video_url: null,
+    status: 'failed',
+    duration: 4,
+    subtitle_text: '雨停后，阿月重新点亮车灯。',
+    character_names: ['阿月'],
+    evidence: {
+      strategy_routing: 'draft_fast',
+      reference_package_mode: '角色参考包',
+      generation_preflight: '视频生成失败',
+    },
+    regeneration_count: 1,
+  };
+
+  const runningShot = {
+    ...failedShot,
+    latest_video_job_id: 'video-shot-waiting-new',
+    status: 'running',
+    evidence: {
+      ...failedShot.evidence,
+      generation_preflight: '重生任务已提交',
+    },
+    regeneration_count: 2,
+  };
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+
+    if (path === '/api/v1/workflow/wf-waiting/shot-review') {
+      shotReviewCalls += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          workflow_id: 'wf-waiting',
+          shots: [shotReviewCalls === 1 ? failedShot : runningShot],
+        }),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/workflow/wf-waiting/regenerate-shots' && request.method() === 'POST') {
+      calls.push('regenerate');
+      regenerateRequests.push(request.postDataJSON());
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          regenerated_shot_ids: ['shot-waiting'],
+          video_job_ids: ['video-shot-waiting-new'],
+          tts_job_ids: [],
+          skipped: [],
+          ready_for_concatenate: false,
+        }),
+      });
+      return;
+    }
+
+    if (path === '/api/v1/workflow/concatenate/wf-waiting' || path === '/api/v1/workflow/wf-waiting/render') {
+      calls.push(path);
+    }
+
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+
+  await page.goto('/studio/shot-review?workflow_id=wf-waiting');
+
+  await expect(page.getByText('雨停后，阿月重新点亮车灯。')).toBeVisible();
+  await page.getByRole('button', { name: '仅重生失败' }).click();
+
+  await expect.poll(() => regenerateRequests.length).toBe(1);
+  expect(regenerateRequests[0]).toMatchObject({ filter: 'failed' });
+  await expect.poll(() => shotReviewCalls).toBeGreaterThanOrEqual(2);
+  await expect(page.getByTestId('shot-review-card-shot-waiting')).toContainText('生成中');
+  await expect(page.getByTestId('shot-review-card-shot-waiting')).toContainText('等待视频/声音完成后再合成');
+  await expect(page.getByText('重生任务已提交，等待视频/声音完成后再合成')).toBeVisible();
+  expect(calls).toEqual(['regenerate']);
+});
