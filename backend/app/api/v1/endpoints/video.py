@@ -495,6 +495,33 @@ async def _sync_video_job_and_shot(
             shot.video_status = status_value
             if video_url:
                 shot.video_url = video_url
+            if (
+                status_value == "succeeded"
+                and video_url
+                and extra_data.get("visual_consistency_auto_check") is True
+                and not extra_data.get("visual_consistency")
+            ):
+                try:
+                    from app.services.visual_consistency_service import record_completed_shot_visual_consistency
+
+                    record = await record_completed_shot_visual_consistency(
+                        db,
+                        user_id=job.user_id,
+                        shot=shot,
+                        video_job=job,
+                        extract_frames=extra_data.get("visual_consistency_extract_frames") is True,
+                    )
+                    current_extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+                    if record:
+                        current_extra["visual_consistency_auto_checked"] = True
+                    else:
+                        current_extra["visual_consistency_auto_skipped"] = "missing_front_reference"
+                    job.extra_data = current_extra
+                except Exception as exc:
+                    current_extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+                    current_extra["visual_consistency_auto_checked"] = False
+                    current_extra["visual_consistency_auto_error"] = str(exc)
+                    job.extra_data = current_extra
 
 
 def _json_dict(value) -> dict:

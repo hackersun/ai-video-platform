@@ -3730,6 +3730,9 @@ def test_final_quality_legacy_video_model_allows_single_reference_view(
     assert response.status_code == 200, response.text
     assert len(captured_video) == 1
     assert response.json()["video_job_ids"]
+    video_extra = _get_video_job_extra(response.json()["video_job_ids"][0])
+    assert video_extra["visual_consistency_auto_check"] is True
+    assert "visual_consistency_extract_frames" not in video_extra
 
 
 def test_draft_fast_media_batch_does_not_require_final_quality_locks(client: TestClient) -> None:
@@ -3921,6 +3924,7 @@ def test_separate_video_tts_records_tts_audio_route_for_voice_lock(client: TestC
     video_extra = _get_video_job_extra(payload["video_job_ids"][0])
     tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])
     assert video_extra["audio_route"] == {"route": "tts", "reason": "voice_lock"}
+    assert "visual_consistency_auto_check" not in video_extra
     assert tts_extra["audio_route"] == {"route": "tts", "reason": "voice_lock"}
 
 

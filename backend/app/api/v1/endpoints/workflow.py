@@ -2296,6 +2296,8 @@ async def generate_workflow_media_batch(
             extra_data["prompt_parameters"] = prompt_parameters
             extra_data["source_prompt"] = video_request.prompt
             extra_data.update(_production_strategy_job_extra(request.production_strategy, effective_video_config_id))
+            if request.production_strategy == "final_quality":
+                extra_data["visual_consistency_auto_check"] = True
             extra_data["generation_strategy"] = request.strategy
             extra_data["strategy_routing"] = strategy_video_routing["routing"]
             extra_data["strategy_matched_api_model_id"] = strategy_video_routing["matched_api_model_id"]

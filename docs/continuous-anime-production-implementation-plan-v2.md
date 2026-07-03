@@ -553,6 +553,7 @@ cd frontend && npm run typecheck && npm run build
 - 已新增后端非阻断记录骨架：主角 locked front 资产作为参考，结果写入 `Asset.generation_params.visual_consistency_history`、`VideoJob.extra_data.visual_consistency` 与 `Shot.extra_data.quality_report.visual_consistency`。
 - 已新增本地抽帧 service：`backend/app/services/video_frame_extractor.py` 支持本地 `/static/` 视频抽帧到 `/static/generated/frames/`，远端 URL 和缺 ffmpeg 走结构化错误。
 - 已新增手动触发端点：`POST /api/v1/workflow/{workflow_id}/visual-consistency`，可按镜头检查最新成功视频，默认不抽帧，返回 checked/skipped 明细。
+- `final_quality` 的分步视频任务会写入 `VideoJob.extra_data.visual_consistency_auto_check=true`，任务成功同步镜头时自动生成非阻断证据；`draft_fast` 不自动开启。
 - 已扩展 shot-review：返回 `quality_report`、`visual_consistency_score` 与 `evidence.visual_consistency`，默认低分镜头优先展示，低分不阻断生成/发布。
 - 当前评分实现是 `local-placeholder` 占位记录，真实 ffmpeg 抽帧与 embedding/多模态相似度服务仍是后续研究项；抽帧/评分接口需要保持可替换。
 
