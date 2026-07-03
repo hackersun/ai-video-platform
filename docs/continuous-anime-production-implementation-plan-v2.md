@@ -310,6 +310,12 @@ extra_data["provider_reference_image_limit"] = model_limits["images"]
 - [ ] 计费公式（token × 时长 × 宽 × 高 × 帧率/1024）→ 更新 `budget_estimate` 逻辑
 - [ ] Agent Plan `/api/plan/v3` 是否同步支持多参考（若不支持，Agent Plan provider 的 limits 保持 images:1）
 
+当前实现状态（2026-07-03）：
+- 多参考提交已集中在 `backend/app/services/video_reference_adapter.py`，`role`、多模态 `content[]` 与 @引用文本均在该适配层收口，正式字段变化时只改一处。
+- Seedance 2.0 / 2.0 fast 按能力矩阵允许多图多视频；Seedance 1.x、未知模型和 Agent Plan 通道保持 `images:1` 的单图兼容路径。
+- 参考包 metadata 已落到 `VideoJob.extra_data.reference_package`，审阅/历史页面可展示 `image_count`、`video_count` 与 `dropped`。
+- 未完成官方核对项仍是 `role` 取值、@引用语法、计费公式和 Agent Plan 多参考支持；在正式文档确认前不把当前适配视为外部契约已稳定。
+
 ### TDD 测试（新增 `backend/tests/test_reference_package.py`）
 
 | # | 用例 | 断言 |
@@ -542,6 +548,11 @@ cd frontend && npm run typecheck && npm run build
 - 方案：终稿镜头完成后，抽帧（ffmpeg 每秒1帧）→ 与主角锁定 front 视图做相似度（可用图像 embedding 服务或多模态模型打分）→ 分数写回资产版本历史与 shot quality_report
 - 不设阻断，只进审阅列表排序（低分优先人审）
 - 前置条件：S2 多参考生成质量达标、S3 审阅列表可消费分数
+
+当前启动切片（2026-07-03）：
+- 已新增后端非阻断记录骨架：主角 locked front 资产作为参考，结果写入 `Asset.generation_params.visual_consistency_history`、`VideoJob.extra_data.visual_consistency` 与 `Shot.extra_data.quality_report.visual_consistency`。
+- 已扩展 shot-review：返回 `quality_report`、`visual_consistency_score` 与 `evidence.visual_consistency`，默认低分镜头优先展示，低分不阻断生成/发布。
+- 当前评分实现是 `local-placeholder` 占位记录，真实 ffmpeg 抽帧与 embedding/多模态相似度服务仍是后续研究项；抽帧/评分接口需要保持可替换。
 
 ---
 

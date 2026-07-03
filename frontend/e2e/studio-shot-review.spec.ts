@@ -56,7 +56,15 @@ test('studio shot review renders evidence and regenerates failed shots before co
             dropped: [],
           },
           generation_preflight: '预检通过',
+          visual_consistency: {
+            score: 74,
+            status: 'needs_review',
+            reference_asset_id: 'asset-front-1',
+            frame_count: 2,
+            blocking: false,
+          },
         },
+        visual_consistency_score: 74,
         regeneration_count: 0,
       },
       {
@@ -166,6 +174,9 @@ test('studio shot review renders evidence and regenerates failed shots before co
   await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('3图');
   await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('1视频');
   await expect(page.getByText('预检通过')).toBeVisible();
+  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('74分');
+  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('待人审');
+  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('抽帧 2');
   await expect(page.getByText('阿月在雨幕里回头。')).toBeVisible();
   await expect(page.getByText('视频生成超时')).toBeVisible();
   await expect(page.getByText('重生 1 次')).toBeVisible();

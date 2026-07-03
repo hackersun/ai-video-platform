@@ -498,8 +498,87 @@ def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
             "blocking_issue_count": 0,
             "issues": [],
         },
+        "visual_consistency": None,
     }
     assert payload["shots"][0]["regeneration_count"] == 1
     assert payload["shots"][0]["latest_video_job_id"] == latest_video_id
     assert payload["shots"][0]["latest_tts_job_id"] == latest_tts_id
     assert old_video_id != latest_video_id
+
+
+def test_shot_review_prioritizes_low_visual_consistency_scores(client: TestClient) -> None:
+    user_id = uuid4().hex
+    workflow_id, shot_ids = _create_workflow_with_shots(
+        client,
+        user_id,
+        shot_specs=[
+            {
+                "prompt": "孙剑稳定镜头",
+                "dialogue": "孙剑：我没变。",
+                "character_refs": [{"name": "孙剑"}],
+                "extra_data": {
+                    "quality_report": {
+                        "status": "ready",
+                        "visual_consistency_score": 94,
+                        "visual_consistency": {
+                            "score": 94,
+                            "status": "passed",
+                            "reference_asset_id": "asset-front-high",
+                            "frame_count": 1,
+                            "blocking": False,
+                        },
+                    }
+                },
+            },
+            {
+                "prompt": "孙剑疑似漂移镜头",
+                "dialogue": "孙剑：这个镜头要先看。",
+                "character_refs": [{"name": "孙剑"}],
+                "extra_data": {
+                    "quality_report": {
+                        "status": "warning",
+                        "visual_consistency_score": 62,
+                        "visual_consistency": {
+                            "score": 62,
+                            "status": "needs_review",
+                            "reference_asset_id": "asset-front-low",
+                            "frame_count": 2,
+                            "blocking": False,
+                        },
+                    }
+                },
+            },
+        ],
+    )
+    _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        video_url="https://example.com/high.mp4",
+    )
+    _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[1],
+        shot_number=2,
+        video_url="https://example.com/low.mp4",
+    )
+
+    response = client.get(
+        f"/api/v1/workflow/{workflow_id}/shot-review",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    shots = response.json()["shots"]
+    assert [item["shot_id"] for item in shots] == [shot_ids[1], shot_ids[0]]
+    assert shots[0]["visual_consistency_score"] == 62
+    assert shots[0]["evidence"]["visual_consistency"] == {
+        "score": 62,
+        "status": "needs_review",
+        "reference_asset_id": "asset-front-low",
+        "frame_count": 2,
+        "blocking": False,
+    }
+    assert shots[0]["quality_report"]["visual_consistency_score"] == 62

@@ -41,6 +41,21 @@ function evidenceText(value: any) {
   return JSON.stringify(value);
 }
 
+function visualConsistencyStatusLabel(status?: string | null) {
+  if (status === 'passed') return '通过';
+  if (status === 'needs_review') return '待人审';
+  if (status === 'skipped') return '跳过';
+  return status || '未检测';
+}
+
+function visualConsistencyScoreText(shot: WorkflowShotReviewItem) {
+  const evidence = shot.evidence?.visual_consistency;
+  const score = shot.visual_consistency_score ?? evidence?.score;
+  if (score == null) return '未检测';
+  const rounded = Math.round(Number(score));
+  return `${Number.isFinite(rounded) ? rounded : score}分 · ${visualConsistencyStatusLabel(evidence?.status)}`;
+}
+
 type ArtifactLinks = {
   outputUrl?: string | null;
   manifestUrl?: string | null;
@@ -179,6 +194,18 @@ function ShotCard({
           <div className="rounded-md bg-white/[0.05] px-3 py-2">
             <div className="text-white/40">预检</div>
             <div className="mt-1 font-medium text-white">{evidenceText(shot.evidence?.generation_preflight)}</div>
+          </div>
+          <div
+            className="rounded-md bg-white/[0.05] px-3 py-2"
+            data-testid={`shot-review-visual-consistency-${shot.shot_id}`}
+          >
+            <div className="text-white/40">视觉一致性</div>
+            <div className="mt-1 font-medium text-white">{visualConsistencyScoreText(shot)}</div>
+            {shot.evidence?.visual_consistency?.frame_count != null ? (
+              <div className="mt-1 text-white/45">
+                抽帧 {shot.evidence.visual_consistency.frame_count}
+              </div>
+            ) : null}
           </div>
         </div>
       </CardContent>

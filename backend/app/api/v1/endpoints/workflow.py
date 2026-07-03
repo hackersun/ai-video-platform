@@ -275,6 +275,42 @@ def _reference_package_mode(extra: Dict[str, Any]) -> Optional[Any]:
     return None
 
 
+def _shot_quality_report(shot_extra: Dict[str, Any]) -> Dict[str, Any]:
+    report = shot_extra.get("quality_report")
+    return dict(report) if isinstance(report, dict) else {}
+
+
+def _visual_consistency_evidence(
+    shot_quality: Dict[str, Any],
+    video_extra: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    for source in (shot_quality.get("visual_consistency"), video_extra.get("visual_consistency")):
+        if isinstance(source, dict):
+            return dict(source)
+    return None
+
+
+def _visual_consistency_score(item: Dict[str, Any]) -> Optional[float]:
+    score = item.get("visual_consistency_score")
+    if score is None:
+        evidence = item.get("evidence")
+        if isinstance(evidence, dict):
+            visual = evidence.get("visual_consistency")
+            if isinstance(visual, dict):
+                score = visual.get("score")
+    try:
+        return float(score) if score is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _shot_review_sort_key(item: Dict[str, Any]) -> tuple[int, float, int]:
+    score = _visual_consistency_score(item)
+    if score is None:
+        return (1, 0.0, int(item.get("shot_number") or 0))
+    return (0, score, int(item.get("shot_number") or 0))
+
+
 def _shot_review_item(
     shot: Shot,
     *,
@@ -284,6 +320,13 @@ def _shot_review_item(
 ) -> Dict[str, Any]:
     video_extra = _extra(latest_video) if latest_video else {}
     shot_extra = _extra(shot)
+    quality_report = _shot_quality_report(shot_extra)
+    visual_consistency = _visual_consistency_evidence(quality_report, video_extra)
+    visual_consistency_score = (
+        quality_report.get("visual_consistency_score")
+        if quality_report.get("visual_consistency_score") is not None
+        else (visual_consistency or {}).get("score")
+    )
     subtitle_text = (
         (latest_tts.text if latest_tts else None)
         or shot_extra.get("subtitle_text")
@@ -305,7 +348,10 @@ def _shot_review_item(
             "reference_package_mode": _reference_package_mode(video_extra),
             "reference_package": video_extra.get("reference_package"),
             "generation_preflight": video_extra.get("generation_preflight"),
+            "visual_consistency": visual_consistency,
         },
+        "quality_report": quality_report,
+        "visual_consistency_score": visual_consistency_score,
         "regeneration_count": regeneration_count,
     }
 
@@ -2701,19 +2747,21 @@ async def get_workflow_shot_review(
 
     metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
     latest_render_artifacts = metadata.get("latest_render_artifacts")
+    review_items = [
+        _shot_review_item(
+            shot,
+            latest_video=latest_video_by_shot.get(shot.id),
+            latest_tts=latest_tts_by_shot.get(shot.id),
+            regeneration_count=regeneration_counts.get(shot.id, 0),
+        )
+        for shot in shots
+    ]
+    review_items.sort(key=_shot_review_sort_key)
 
     return WorkflowShotReviewResponse(
         workflow_id=workflow.id,
         latest_render_artifacts=latest_render_artifacts if isinstance(latest_render_artifacts, dict) else None,
-        shots=[
-            _shot_review_item(
-                shot,
-                latest_video=latest_video_by_shot.get(shot.id),
-                latest_tts=latest_tts_by_shot.get(shot.id),
-                regeneration_count=regeneration_counts.get(shot.id, 0),
-            )
-            for shot in shots
-        ],
+        shots=review_items,
     )
 
 

@@ -285,7 +285,22 @@ export type WorkflowShotReviewItem = {
     reference_package_mode?: any;
     reference_package?: any;
     generation_preflight?: any;
+    visual_consistency?: {
+      score?: number;
+      status?: string;
+      model?: string;
+      method?: string;
+      reference_asset_id?: string;
+      frame_count?: number;
+      blocking?: boolean;
+      issues?: string[];
+      notes?: string;
+      checked_at?: string;
+      [key: string]: any;
+    } | null;
   };
+  quality_report?: Record<string, any>;
+  visual_consistency_score?: number | null;
   regeneration_count?: number;
 };
 
