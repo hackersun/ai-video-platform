@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 REFERENCE_IMAGE_ROLE = "reference_image"
 REFERENCE_VIDEO_ROLE = "reference_video"
+REFERENCE_AUDIO_ROLE = "reference_audio"
 
 
 def _positive_int(value: Any, default: int) -> int:
@@ -65,12 +66,15 @@ def build_video_provider_content(
     package = reference_package if isinstance(reference_package, dict) else {}
     image_limit = _model_limit(model_limits, "images", 1)
     video_limit = _model_limit(model_limits, "videos", 0)
+    audio_limit = _model_limit(model_limits, "audios", 0)
     package_images = [item for item in package.get("images") or [] if _content_url(item)]
     package_videos = [item for item in package.get("videos") or [] if _content_url(item)]
+    package_audios = [item for item in package.get("audios") or [] if _content_url(item)]
 
     if image_limit > 1 and package_images:
         images = package_images[:image_limit]
         videos = package_videos[:video_limit] if video_limit > 0 else []
+        audios = package_audios[:audio_limit] if audio_limit > 0 else []
         content: List[Dict[str, Any]] = [
             {
                 "type": "image_url",
@@ -86,6 +90,14 @@ def build_video_provider_content(
                 "role": REFERENCE_VIDEO_ROLE,
             }
             for item in videos
+        )
+        content.extend(
+            {
+                "type": "audio_url",
+                "audio_url": {"url": _content_url(item)},
+                "role": REFERENCE_AUDIO_ROLE,
+            }
+            for item in audios
         )
         at_reference_text = package.get("at_reference_text")
         prompt = f"{at_reference_text}\n{final_prompt}" if at_reference_text else final_prompt
@@ -105,7 +117,7 @@ def build_video_provider_content(
                 "mode": "multimodal",
                 "image_count": len(images),
                 "video_count": len(videos),
-                "audio_count": 0,
+                "audio_count": len(audios),
             },
         }
 

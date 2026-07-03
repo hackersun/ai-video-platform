@@ -371,13 +371,16 @@ def test_provider_content_adapter_submits_multimodal_references() -> None:
             "videos": [
                 {"url": "https://cdn.example.com/previous-shot.mp4", "role_tag": "previous_shot", "at_index": 1}
             ],
+            "audios": [
+                {"url": "https://cdn.example.com/voice-lock.mp3", "role_tag": "voice_lock", "at_index": 1}
+            ],
             "at_reference_text": "@图1为主角孙剑正面形象基准；@图2为主角孙剑侧面形象基准",
         },
-        model_limits={"images": 9, "videos": 3, "audios": 0, "at_reference": True, "native_audio": False},
+        model_limits={"images": 9, "videos": 3, "audios": 3, "at_reference": True, "native_audio": False},
     )
 
     assert result["mode"] == "multimodal"
-    assert [item["type"] for item in result["content"]] == ["image_url", "image_url", "video_url", "text"]
+    assert [item["type"] for item in result["content"]] == ["image_url", "image_url", "video_url", "audio_url", "text"]
     assert result["content"][0] == {
         "type": "image_url",
         "image_url": {"url": "https://cdn.example.com/sunjian-front.png"},
@@ -388,13 +391,18 @@ def test_provider_content_adapter_submits_multimodal_references() -> None:
         "video_url": {"url": "https://cdn.example.com/previous-shot.mp4"},
         "role": "reference_video",
     }
+    assert result["content"][3] == {
+        "type": "audio_url",
+        "audio_url": {"url": "https://cdn.example.com/voice-lock.mp3"},
+        "role": "reference_audio",
+    }
     assert result["content"][-1]["text"].startswith("@图1为主角孙剑正面形象基准")
     assert "--duration 8 --resolution 720p --camerafixed false --watermark true" in result["content"][-1]["text"]
     assert result["metadata"] == {
         "mode": "multimodal",
         "image_count": 2,
         "video_count": 1,
-        "audio_count": 0,
+        "audio_count": 1,
     }
 
 
