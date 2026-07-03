@@ -472,6 +472,20 @@ def test_batch_finalize_supporting_creates_single_view_and_voice(client: TestCli
     assert card["readiness"]["final_ready"] is True
 
 
+def test_batch_finalize_supporting_defaults_to_builtin_tts_voice(client: TestClient) -> None:
+    fixture = _run(_seed_supporting_finalize_fixture())
+
+    response = client.post(
+        f"/api/v1/production-cards/novel/{fixture['novel_id']}/batch-finalize-supporting",
+        json={"min_occurrences": 2},
+        headers=_auth_headers(fixture["user_id"]),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["finalized"][0]["voice"] == "female-shaonv"
+
+
 def test_supporting_tier_readiness_only_requires_front(client: TestClient) -> None:
     fixture = _run(_seed_supporting_finalize_fixture())
     _run(_add_supporting_front_asset_and_voice(fixture))

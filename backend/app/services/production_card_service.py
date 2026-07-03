@@ -35,6 +35,20 @@ def _json_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
 
+def _default_supporting_voice_pool() -> List[str]:
+    try:
+        from app.core.minimax_config import TTS_VOICES
+    except ImportError:
+        return SUPPORTING_VOICE_POOL
+
+    voices = [
+        str(item.get("voice_id")).strip()
+        for item in TTS_VOICES
+        if isinstance(item, dict) and item.get("voice_id")
+    ]
+    return voices or SUPPORTING_VOICE_POOL
+
+
 def _entity_refs_key(entity_type: str) -> str:
     return {
         "character": "characters",
@@ -445,9 +459,10 @@ async def batch_finalize_supporting_characters(
     ]
     assets = await _load_assets(db, user_id, novel_id)
     occurrence_counts = await _character_occurrence_counts(db, user_id, novel_id)
-    voices = [voice for voice in (voice_pool or SUPPORTING_VOICE_POOL) if isinstance(voice, str) and voice.strip()]
+    default_voice_pool = _default_supporting_voice_pool()
+    voices = [voice for voice in (voice_pool or default_voice_pool) if isinstance(voice, str) and voice.strip()]
     if not voices:
-        voices = SUPPORTING_VOICE_POOL
+        voices = default_voice_pool
 
     finalized: List[Dict[str, Any]] = []
     skipped: List[Dict[str, Any]] = []
