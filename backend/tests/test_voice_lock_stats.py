@@ -332,6 +332,80 @@ async def _seed_voice_lock_workflow_with_unlisted_stale_tts(user_id: str) -> dic
     return {"workflow_id": workflow_id, "shot_id": shot_id}
 
 
+async def _seed_voice_lock_workflow_with_dialogue_speaker(user_id: str) -> dict[str, str]:
+    novel_id = f"novel-{uuid4()}"
+    chapter_id = f"chapter-{uuid4()}"
+    script_id = f"script-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    workflow_id = f"workflow-{uuid4()}"
+    shot_id = f"shot-{uuid4()}"
+
+    async with AsyncSessionLocal() as db:
+        db.add(Novel(id=novel_id, user_id=user_id, title="Dialogue speaker stats novel"))
+        db.add(
+            Chapter(
+                id=chapter_id,
+                novel_id=novel_id,
+                user_id=user_id,
+                title="Chapter",
+                content="Dialogue chapter",
+                chapter_number=1,
+            )
+        )
+        db.add(
+            Script(
+                id=script_id,
+                user_id=user_id,
+                novel_id=novel_id,
+                chapter_id=chapter_id,
+                title="Script",
+                content="Dialogue script",
+                status="draft",
+            )
+        )
+        db.add(
+            Storyboard(
+                id=storyboard_id,
+                user_id=user_id,
+                script_id=script_id,
+                novel_id=novel_id,
+                title="Storyboard",
+                shot_count=1,
+            )
+        )
+        db.add(
+            Workflow(
+                id=workflow_id,
+                user_id=user_id,
+                title="Dialogue speaker voice lock stats workflow",
+                status="active",
+                novel_id=novel_id,
+                chapter_id=chapter_id,
+                script_id=script_id,
+                storyboard_id=storyboard_id,
+                tts_job_ids=[],
+            )
+        )
+        db.add(
+            Shot(
+                id=shot_id,
+                user_id=user_id,
+                storyboard_id=storyboard_id,
+                shot_number=1,
+                duration=4,
+                prompt="Shot 1",
+                dialogue="这一次不要回头。",
+                extra_data={
+                    "subtitle_text": "这一次不要回头。",
+                    "dialogue_speaker": "阿月",
+                },
+            )
+        )
+        await db.commit()
+
+    return {"workflow_id": workflow_id, "shot_id": shot_id}
+
+
 def test_voice_lock_stats_counts_story_bible_hits_and_misses(client: TestClient) -> None:
     user_id = str(uuid4())
     seeded = asyncio.run(_seed_voice_lock_workflow(user_id))
@@ -375,6 +449,28 @@ def test_voice_lock_stats_uses_latest_tts_job_instead_of_stale_locked_hit(client
             "shot_id": seeded["shot_id"],
             "shot_number": 1,
             "character_name": "Mo Ran",
+        }
+    ]
+
+
+def test_voice_lock_stats_uses_dialogue_speaker_for_miss_character_name(client: TestClient) -> None:
+    user_id = str(uuid4())
+    seeded = asyncio.run(_seed_voice_lock_workflow_with_dialogue_speaker(user_id))
+
+    response = client.get(
+        f"/api/v1/production-control/workflow/{seeded['workflow_id']}/voice-lock-stats",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["total_dialogue_shots"] == 1
+    assert payload["voice_locked"] == 0
+    assert payload["misses"] == [
+        {
+            "shot_id": seeded["shot_id"],
+            "shot_number": 1,
+            "character_name": "阿月",
         }
     ]
 

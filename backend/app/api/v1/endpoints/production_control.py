@@ -91,6 +91,10 @@ def _best_effort_character_name(shot: Shot, tts_jobs: list[TTSJob]) -> Optional[
             return name
 
     extra = _json_dict(shot.extra_data)
+    for key in ("dialogue_speaker", "speaker"):
+        name = _clean_text(extra.get(key))
+        if name:
+            return name
     for refs in (
         shot.character_refs,
         extra.get("character_refs"),

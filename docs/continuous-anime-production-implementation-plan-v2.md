@@ -463,6 +463,11 @@ Response = {"finalized": [{"entity_id","name","asset_id","voice"}], "skipped": [
 
 前端：定稿间顶部"一键补齐配角"按钮 + 结果清单。
 
+当前实现状态（2026-07-03）：
+- `audio_route_service.py` 已落地并接入 workflow 批量生成，VideoJob/TTSJob 会记录 `extra_data.audio_route`。
+- `GET /api/v1/production-control/workflow/{workflow_id}/voice-lock-stats` 已落地，按最新 TTS job 统计故事圣经声线命中率，miss 角色名支持 TTS extra、镜头角色引用、`dialogue_speaker` 与对白前缀兜底。
+- `POST /api/v1/production-cards/novel/{novel_id}/batch-finalize-supporting` 已落地；配角单 front 视图锁定、声线分配、supporting readiness 与 `/studio/cards` 一键补齐入口均已有测试覆盖。
+
 ### TDD 测试
 
 后端（`backend/tests/test_audio_route_and_supporting.py`）：
