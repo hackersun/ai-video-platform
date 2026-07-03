@@ -32,6 +32,7 @@ from app.services.production_strategy_routing import resolve_strategy_video_conf
 from app.services.publication_readiness import evaluate_publication_readiness
 from app.services.reference_package_builder import build_reference_package
 from app.services.video_reference_adapter import build_reference_package_metadata, build_video_provider_content
+from app.services.visual_consistency_service import record_completed_shot_visual_consistency
 
 router = APIRouter(tags=["工作流"])
 
@@ -1977,6 +1978,18 @@ class WorkflowShotReviewResponse(BaseModel):
     shots: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class WorkflowVisualConsistencyRequest(BaseModel):
+    shot_ids: Optional[List[str]] = Field(None, description="可选：只检查指定镜头")
+    extract_frames: bool = Field(False, description="是否尝试使用本地 ffmpeg 抽帧")
+
+
+class WorkflowVisualConsistencyResponse(BaseModel):
+    workflow_id: str
+    checked_count: int = 0
+    checked_shot_ids: List[str] = Field(default_factory=list)
+    skipped: List[Dict[str, Any]] = Field(default_factory=list)
+
+
 # ========== API 端点 ==========
 
 @router.get("/steps", response_model=WorkflowStepsResponse)
@@ -2762,6 +2775,57 @@ async def get_workflow_shot_review(
         workflow_id=workflow.id,
         latest_render_artifacts=latest_render_artifacts if isinstance(latest_render_artifacts, dict) else None,
         shots=review_items,
+    )
+
+
+@router.post("/{workflow_id}/visual-consistency", response_model=WorkflowVisualConsistencyResponse)
+async def run_workflow_visual_consistency(
+    workflow_id: str,
+    request: WorkflowVisualConsistencyRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Run non-blocking visual consistency checks for workflow shots."""
+    workflow = await _get_workflow_for_user(db, workflow_id, user_id)
+    shots = await _workflow_shots_for_request(db, workflow, user_id)
+    all_shot_ids = {shot.id for shot in shots}
+    requested_ids = set(request.shot_ids or [])
+    if requested_ids:
+        shots = [shot for shot in shots if shot.id in requested_ids]
+
+    skipped: List[Dict[str, Any]] = [
+        {"shot_id": shot_id, "reason": "shot_not_found"}
+        for shot_id in sorted(requested_ids - all_shot_ids)
+    ]
+    shot_ids = [shot.id for shot in shots]
+    video_jobs = await _video_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    latest_video_by_shot = _latest_non_superseded_by_shot(video_jobs)
+
+    checked_shot_ids: List[str] = []
+    for shot in shots:
+        latest_video = latest_video_by_shot.get(shot.id)
+        if not latest_video or getattr(latest_video, "status", None) not in {"succeeded", "completed"} or not latest_video.video_url:
+            skipped.append({"shot_id": shot.id, "reason": "no_completed_video"})
+            continue
+
+        record = await record_completed_shot_visual_consistency(
+            db,
+            user_id=user_id,
+            shot=shot,
+            video_job=latest_video,
+            extract_frames=request.extract_frames,
+        )
+        if not record:
+            skipped.append({"shot_id": shot.id, "reason": "missing_front_reference"})
+            continue
+        checked_shot_ids.append(shot.id)
+
+    await db.commit()
+    return WorkflowVisualConsistencyResponse(
+        workflow_id=workflow.id,
+        checked_count=len(checked_shot_ids),
+        checked_shot_ids=checked_shot_ids,
+        skipped=skipped,
     )
 
 

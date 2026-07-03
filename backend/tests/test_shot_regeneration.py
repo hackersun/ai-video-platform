@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.database import AsyncSessionLocal
-from app.models import Shot, Workflow
+from app.models import Asset, Shot, Workflow
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
 from init_db import init_db
@@ -256,6 +256,43 @@ def _get_tts_job(job_id: str) -> dict:
                 "audio_url": job.audio_url,
                 "extra_data": job.extra_data or {},
             }
+
+    return asyncio.run(_get())
+
+
+def _insert_front_reference_asset(user_id: str, entity_id: str) -> str:
+    asset_id = f"asset-{uuid4()}"
+
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Asset(
+                    id=asset_id,
+                    user_id=user_id,
+                    category="character",
+                    asset_type="image",
+                    entity_id=entity_id,
+                    entity_type="character",
+                    name="孙剑正面定稿",
+                    url="https://cdn.example.com/sunjian-front.png",
+                    is_active=True,
+                    is_locked=True,
+                    is_final=True,
+                    generation_params={"view_key": "front"},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert())
+    return asset_id
+
+
+def _get_asset_generation_params(asset_id: str) -> dict:
+    async def _get() -> dict:
+        async with AsyncSessionLocal() as session:
+            asset = await session.get(Asset, asset_id)
+            assert asset is not None
+            return asset.generation_params or {}
 
     return asyncio.run(_get())
 
@@ -582,3 +619,53 @@ def test_shot_review_prioritizes_low_visual_consistency_scores(client: TestClien
         "blocking": False,
     }
     assert shots[0]["quality_report"]["visual_consistency_score"] == 62
+
+
+def test_workflow_visual_consistency_endpoint_records_latest_video_evidence(client: TestClient) -> None:
+    user_id = uuid4().hex
+    workflow_id, shot_ids = _create_workflow_with_shots(
+        client,
+        user_id,
+        shot_specs=[
+            {
+                "prompt": "孙剑终稿镜头",
+                "dialogue": "孙剑：检查我的脸。",
+                "character_refs": [{"entity_id": "char-main", "name": "孙剑"}],
+            }
+        ],
+    )
+    asset_id = _insert_front_reference_asset(user_id, "char-main")
+    video_id = _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        video_url="https://example.com/final-shot.mp4",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/visual-consistency",
+        json={"shot_ids": [shot_ids[0]], "extract_frames": False},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["workflow_id"] == workflow_id
+    assert payload["checked_count"] == 1
+    assert payload["skipped"] == []
+
+    review_resp = client.get(
+        f"/api/v1/workflow/{workflow_id}/shot-review",
+        headers=_auth_headers(user_id),
+    )
+    assert review_resp.status_code == 200, review_resp.text
+    item = review_resp.json()["shots"][0]
+    assert item["visual_consistency_score"] == 72
+    assert item["evidence"]["visual_consistency"]["reference_asset_id"] == asset_id
+    assert item["evidence"]["visual_consistency"]["blocking"] is False
+
+    job = _get_video_job(video_id)
+    assert job["extra_data"]["visual_consistency"]["score"] == 72
+    asset_params = _get_asset_generation_params(asset_id)
+    assert asset_params["visual_consistency_history"][0]["reference_asset_id"] == asset_id
