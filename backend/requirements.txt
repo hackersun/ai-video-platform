@@ -14,3 +14,4 @@ greenlet>=3.0.0
 neo4j>=5.0.0
 volcengine-python-sdk>=5.0.0
 moviepy>=1.0.3
+pillow>=10.0.0

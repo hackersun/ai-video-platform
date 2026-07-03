@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time_utils import utc_now
 from app.models import Asset, Shot, VideoJob
 from app.services.video_frame_extractor import VideoFrameExtractionError, extract_video_frames
+from app.services.visual_similarity_adapter import score_local_visual_similarity
 
 
 VISUAL_CONSISTENCY_REVIEW_THRESHOLD = 80.0
@@ -90,6 +91,8 @@ def _build_visual_consistency_record(
     reference_asset: Asset,
     frame_urls: List[str],
     model: str,
+    method: str,
+    frame_scores: Optional[List[float]],
     issues: Optional[List[str]],
     notes: Optional[str],
 ) -> Dict[str, Any]:
@@ -100,11 +103,12 @@ def _build_visual_consistency_record(
         "status": status,
         "blocking": False,
         "model": model,
-        "method": "placeholder_frame_reference",
+        "method": method,
         "reference_asset_id": reference_asset.id,
         "reference_url": reference_asset.url,
         "frame_count": len(frame_urls),
         "frames": frame_urls[:5],
+        "frame_scores": frame_scores or [],
         "issues": issues or [],
         "notes": notes
         or "非阻断占位评分：已记录主角 front 定稿与成片抽帧证据；真实图像相似度服务接入后可替换此分数。",
@@ -168,12 +172,24 @@ async def record_completed_shot_visual_consistency(
             error_code = exc.detail.get("code") or "frame_extraction_failed"
             record_issues.append(str(error_code))
             notes = notes or "Frame extraction was unavailable; score remains non-blocking placeholder evidence."
-    effective_score = score if score is not None else _placeholder_score(frame_urls=frames, video_job=video_job)
+    similarity = score_local_visual_similarity(reference_url=str(reference_asset.url), frame_urls=frames) if frames else None
+    effective_score = (
+        score
+        if score is not None
+        else (similarity.get("score") if similarity else _placeholder_score(frame_urls=frames, video_job=video_job))
+    )
+    effective_model = similarity.get("model") if similarity else model
+    effective_method = similarity.get("method") if similarity else "placeholder_frame_reference"
+    frame_scores = similarity.get("frame_scores") if similarity else None
+    if similarity and not notes:
+        notes = "本地轻量图像相似度评分：基于主角 front 定稿与抽帧的 RGB 平均差；后续可替换为 embedding/多模态模型。"
     record = _build_visual_consistency_record(
         score=effective_score,
         reference_asset=reference_asset,
         frame_urls=frames,
-        model=model,
+        model=str(effective_model),
+        method=str(effective_method),
+        frame_scores=frame_scores if isinstance(frame_scores, list) else None,
         issues=record_issues,
         notes=notes,
     )

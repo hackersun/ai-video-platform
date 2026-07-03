@@ -181,3 +181,47 @@ async def test_record_completed_shot_visual_consistency_can_extract_frames(
     assert record["score"] == 86
     assert record["frame_count"] == 2
     assert record["frames"] == ["/static/generated/frames/run/frame-001.jpg", "/static/generated/frames/run/frame-002.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_record_completed_shot_visual_consistency_uses_local_similarity_score(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.visual_consistency_service as service
+
+    user_id = f"user-{uuid4()}"
+    entity_id = "char-main"
+    shot = _shot(user_id, entity_id)
+    asset = _front_asset(user_id, entity_id)
+    asset.url = "/static/refs/sunjian-front.png"
+    job = _video_job(user_id, shot)
+    db_session.add_all([shot, asset, job])
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        service,
+        "score_local_visual_similarity",
+        lambda reference_url, frame_urls: {
+            "score": 91.5,
+            "model": "local-image-rgb",
+            "method": "local_rgb_mean_absolute_difference",
+            "frame_scores": [92, 91],
+            "frame_count": 2,
+        },
+    )
+
+    record = await service.record_completed_shot_visual_consistency(
+        db_session,
+        user_id=user_id,
+        shot=shot,
+        video_job=job,
+        frame_urls=["/static/generated/frames/run/frame-001.jpg", "/static/generated/frames/run/frame-002.jpg"],
+    )
+
+    assert record is not None
+    assert record["score"] == 91.5
+    assert record["status"] == "passed"
+    assert record["model"] == "local-image-rgb"
+    assert record["method"] == "local_rgb_mean_absolute_difference"
+    assert record["frame_scores"] == [92, 91]
