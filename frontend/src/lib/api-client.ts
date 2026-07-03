@@ -283,6 +283,7 @@ export type WorkflowShotReviewItem = {
   evidence?: {
     strategy_routing?: any;
     reference_package_mode?: any;
+    reference_package?: any;
     generation_preflight?: any;
   };
   regeneration_count?: number;

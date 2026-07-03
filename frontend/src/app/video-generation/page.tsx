@@ -43,7 +43,12 @@ import { CAMERA_ANGLE_LABELS, getShotAttributeLabel } from '@/lib/shot-labels';
 import { isInternalTestModelConfig, modelStatusClass, modelStatusLabel } from '@/lib/model-configs';
 import { useToast } from '@/components/ui/toast';
 import { PreflightIssueList } from '@/components/production/preflight-issue-list';
-import { HistoryPreflightEvidence, getPreflightSummaryText } from '@/components/production/history-preflight-evidence';
+import {
+  HistoryPreflightEvidence,
+  HistoryReferencePackageEvidence,
+  getPreflightSummaryText,
+  getReferencePackageSummaryText,
+} from '@/components/production/history-preflight-evidence';
 
 // 视频生成状态
 type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
@@ -1405,6 +1410,7 @@ function VideoGenerationPageInner() {
       refNames(job.prop_refs),
       job.subtitle_text,
       getPreflightSummaryText(job.extra_data?.generation_preflight || job.consistency?.generation_preflight),
+      getReferencePackageSummaryText(job.extra_data?.reference_package),
     ])
   ));
   const filteredMediaHistory = mediaHistory.filter((job) => (
@@ -1418,6 +1424,7 @@ function VideoGenerationPageInner() {
       mediaLineageText(job),
       job.extra_data?.subtitle_text,
       getPreflightSummaryText(job.extra_data?.generation_preflight),
+      getReferencePackageSummaryText(job.extra_data?.reference_package),
     ])
   ));
   const productionContextUsage = [
@@ -2432,6 +2439,10 @@ function VideoGenerationPageInner() {
                                 preflight={job.extra_data?.generation_preflight || job.consistency?.generation_preflight}
                                 testId={`history-preflight-${job.id}`}
                               />
+                              <HistoryReferencePackageEvidence
+                                referencePackage={job.extra_data?.reference_package}
+                                testId={`history-reference-package-${job.id}`}
+                              />
                               {isExpanded && (
                                 <div className="mt-2 space-y-1 text-xs text-white/40">
                                   {(job.provider_id || job.api_model_id || job.model_endpoint_id || job.model_test_status) && (
@@ -2593,6 +2604,10 @@ function VideoGenerationPageInner() {
                             <HistoryPreflightEvidence
                               preflight={job.extra_data?.generation_preflight}
                               testId={`history-preflight-${job.id}`}
+                            />
+                            <HistoryReferencePackageEvidence
+                              referencePackage={job.extra_data?.reference_package}
+                              testId={`history-reference-package-${job.id}`}
                             />
                             {isExpanded && (
                               <div className="mt-2 space-y-1 text-xs text-white/40">

@@ -49,6 +49,12 @@ test('studio shot review renders evidence and regenerates failed shots before co
         evidence: {
           strategy_routing: 'draft_fast',
           reference_package_mode: '角色参考包',
+          reference_package: {
+            mode: 'multimodal',
+            image_count: 3,
+            video_count: 1,
+            dropped: [],
+          },
           generation_preflight: '预检通过',
         },
         regeneration_count: 0,
@@ -157,6 +163,8 @@ test('studio shot review renders evidence and regenerates failed shots before co
   await expect(page.getByText('孙剑推开云上列车的舱门。')).toBeVisible();
   await expect(page.getByText('draft_fast').first()).toBeVisible();
   await expect(page.getByText('角色参考包')).toBeVisible();
+  await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('3图');
+  await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('1视频');
   await expect(page.getByText('预检通过')).toBeVisible();
   await expect(page.getByText('阿月在雨幕里回头。')).toBeVisible();
   await expect(page.getByText('视频生成超时')).toBeVisible();

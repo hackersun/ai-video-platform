@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { HistoryReferencePackageEvidence } from '@/components/production/history-preflight-evidence';
 import apiClient, { WorkflowRenderArtifacts, WorkflowShotReviewItem, WorkflowShotReviewResponse } from '@/lib/api-client';
 import { resumeEpisodePreviewFromConcatenate } from '@/lib/episode-preview-production';
 
@@ -170,6 +171,10 @@ function ShotCard({
           <div className="rounded-md bg-white/[0.05] px-3 py-2">
             <div className="text-white/40">参考包</div>
             <div className="mt-1 font-medium text-white">{evidenceText(shot.evidence?.reference_package_mode)}</div>
+            <HistoryReferencePackageEvidence
+              referencePackage={shot.evidence?.reference_package}
+              testId={`shot-review-reference-package-${shot.shot_id}`}
+            />
           </div>
           <div className="rounded-md bg-white/[0.05] px-3 py-2">
             <div className="text-white/40">预检</div>

@@ -450,6 +450,12 @@ def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
         extra_data={
             "strategy_routing": "strategy",
             "reference_package_mode": "multi_reference",
+            "reference_package": {
+                "mode": "multimodal",
+                "image_count": 3,
+                "video_count": 1,
+                "dropped": [],
+            },
             "generation_preflight": {
                 "ready": True,
                 "blocking_issue_count": 0,
@@ -481,6 +487,12 @@ def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
     assert payload["shots"][0]["evidence"] == {
         "strategy_routing": "strategy",
         "reference_package_mode": "multi_reference",
+        "reference_package": {
+            "mode": "multimodal",
+            "image_count": 3,
+            "video_count": 1,
+            "dropped": [],
+        },
         "generation_preflight": {
             "ready": True,
             "blocking_issue_count": 0,

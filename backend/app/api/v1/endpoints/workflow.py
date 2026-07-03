@@ -303,6 +303,7 @@ def _shot_review_item(
         "evidence": {
             "strategy_routing": video_extra.get("strategy_routing"),
             "reference_package_mode": _reference_package_mode(video_extra),
+            "reference_package": video_extra.get("reference_package"),
             "generation_preflight": video_extra.get("generation_preflight"),
         },
         "regeneration_count": regeneration_count,

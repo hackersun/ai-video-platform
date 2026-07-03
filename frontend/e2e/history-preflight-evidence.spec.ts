@@ -176,6 +176,13 @@ test('video history shows persisted generation preflight evidence', async ({ pag
               blocking_issue_count: 0,
               issues: [],
             },
+            reference_package: {
+              mode: 'multimodal',
+              image_count: 3,
+              video_count: 1,
+              audio_count: 0,
+              dropped: [{ reason: 'exceeds_model_reference_image_limit', entity_name: '铜令牌', view_key: 'main' }],
+            },
           },
         }]),
       });
@@ -211,6 +218,13 @@ test('video history shows persisted generation preflight evidence', async ({ pag
                 message: '角色参考图不是公网地址',
               }],
             },
+            reference_package: {
+              mode: 'single_image',
+              image_count: 1,
+              video_count: 0,
+              audio_count: 0,
+              dropped: [],
+            },
           },
         }]),
       });
@@ -224,10 +238,17 @@ test('video history shows persisted generation preflight evidence', async ({ pag
 
   const videoEvidence = page.getByTestId('history-preflight-video-job-001');
   await expect(videoEvidence).toContainText('预检通过');
+  const videoReferencePackage = page.getByTestId('history-reference-package-video-job-001');
+  await expect(videoReferencePackage).toContainText('参考包');
+  await expect(videoReferencePackage).toContainText('3图');
+  await expect(videoReferencePackage).toContainText('1视频');
+  await expect(videoReferencePackage).toContainText('裁剪1项');
+  await expect(videoReferencePackage).toContainText('铜令牌');
 
   const mediaEvidence = page.getByTestId('history-preflight-media-job-001');
   await expect(mediaEvidence).toContainText('预检未通过');
   await expect(mediaEvidence).toContainText('角色参考图不是公网地址');
+  await expect(page.getByTestId('history-reference-package-media-job-001')).toContainText('1图');
 });
 
 test('tts history shows persisted generation preflight evidence', async ({ page }) => {

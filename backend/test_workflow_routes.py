@@ -883,6 +883,10 @@ def test_video_generation_submits_seedance20_reference_package_content(
     assert extra["reference_package"]["image_count"] == 2
     assert extra["reference_package"]["items"][0]["url"] == "https://cdn.example.com/sunjian-front.png"
     assert extra["prompt_parameters"]["provider_reference_image_limit"] == 9
+    job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
+    assert job_resp.status_code == 200
+    job = job_resp.json()
+    assert job["extra_data"]["reference_package"]["mode"] == "multimodal"
 
 
 def test_video_generation_accepts_volcano_agent_plan_video_model(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

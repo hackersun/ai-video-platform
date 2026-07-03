@@ -141,6 +141,7 @@ class VideoJobResponse(BaseModel):
     model_endpoint_id: Optional[str] = None
     model_test_status: Optional[str] = None
     image_url: Optional[str] = None
+    extra_data: dict = Field(default_factory=dict)
     prompt_parameters: dict = Field(default_factory=dict)
     model_name: Optional[str] = None
     status: str
@@ -1393,6 +1394,7 @@ def _build_video_job_response(job: VideoJob) -> VideoJobResponse:
         model_endpoint_id=extra.get("model_endpoint_id"),
         model_test_status=extra.get("model_test_status"),
         image_url=job.image_url,
+        extra_data=extra,
         prompt_parameters=extra.get("prompt_parameters") or {},
         model_name=job.model_name,
         status=job.status,
