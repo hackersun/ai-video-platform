@@ -22,6 +22,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { getStudioSnapshot, getStudioWorkflows, runStudioAction } from '@/lib/studio-api';
+import apiClient, { type ProductionCardsResponse } from '@/lib/api-client';
 import type { StudioAction, StudioActionResult, StudioIssue, StudioRunMode, StudioSnapshot, StudioWorkflowOption } from '@/lib/studio-types';
 import { StudioAgentPanel } from './studio-agent-panel';
 import { StudioContextPanel } from './studio-context-panel';
@@ -243,6 +244,7 @@ export function StudioShell() {
   const [workflows, setWorkflows] = useState<StudioWorkflowOption[]>([]);
   const [workflowId, setWorkflowId] = useState(searchParams.get('workflow_id') || '');
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
+  const [productionCards, setProductionCards] = useState<ProductionCardsResponse | null>(null);
   const [bypassReason, setBypassReason] = useState('');
   const [lastAction, setLastAction] = useState<StudioActionResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -293,6 +295,27 @@ export function StudioShell() {
   useEffect(() => {
     if (workflowId) loadSnapshot(workflowId, mode);
   }, [workflowId, mode, loadSnapshot]);
+
+  useEffect(() => {
+    const novelId = snapshot?.workflow?.novel_id || snapshot?.story_context?.novel?.id || '';
+    if (!novelId) {
+      setProductionCards(null);
+      return;
+    }
+
+    let cancelled = false;
+    apiClient.getProductionCards(novelId)
+      .then((data) => {
+        if (!cancelled) setProductionCards(data);
+      })
+      .catch(() => {
+        if (!cancelled) setProductionCards(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot?.workflow?.novel_id, snapshot?.story_context?.novel?.id]);
 
   const handleWorkflowChange = (value: string) => {
     setWorkflowId(value);
@@ -401,7 +424,7 @@ export function StudioShell() {
             </div>
           ) : null}
           <PromptSkillPanel />
-          <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} />
+          <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} productionCards={productionCards} />
           <StudioContextPanel snapshot={snapshot} />
           <StudioProductionBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContinuityBoard snapshot={snapshot} />

@@ -169,6 +169,9 @@ ProductionCard = {
 - `frontend/src/lib/api-client.ts` 加 `getProductionCards(novelId)` / `getProductionCard(entityId)`
 - `/studio` 首页 P0 看板的"资产/声音锁"卡改为读卡片 summary（数据源统一）
 
+当前实现状态（2026-07-03）：
+- 定稿卡列表页、API client 和 e2e 已落地；`/studio` 首页 P0 看板已按 workflow novel_id 读取 production-cards summary，并在"资产/声音锁"卡显示就绪/待补齐计数。
+
 #### TDD 测试
 
 后端（新增 `backend/tests/test_production_cards.py`）：

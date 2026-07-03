@@ -61,6 +61,49 @@ const lockedSnapshot = {
   mode_policy: { mode: 'production', ready: true, blocking_issue_count: 0, warning_issue_count: 0 },
 };
 
+const productionCards = {
+  novel_id: 'novel-001',
+  summary: { ready: 1, incomplete: 1 },
+  cards: [
+    {
+      entity_id: 'char-001',
+      entity_type: 'character',
+      name: '沈砚',
+      novel_id: 'novel-001',
+      visual: {
+        views: [
+          { view_key: 'front', view_label: '正面', asset_id: 'asset-front', url: '/static/front.png', is_locked: true, is_final: true, version: 2 },
+        ],
+        required_views: ['front', 'side', 'back'],
+        missing_views: ['side', 'back'],
+        locked_count: 1,
+      },
+      voice: { voice: 'zh_male_01', locked: true },
+      readiness: {
+        score: 62,
+        final_ready: false,
+        gaps: [{ code: 'view_missing:side', message: '缺少侧面定稿图' }],
+      },
+    },
+    {
+      entity_id: 'scene-001',
+      entity_type: 'scene',
+      name: '旧码头',
+      novel_id: 'novel-001',
+      visual: {
+        views: [
+          { view_key: 'wide', view_label: '全景', asset_id: 'scene-wide', url: '/static/scene.png', is_locked: true, is_final: true, version: 1 },
+        ],
+        required_views: ['wide'],
+        missing_views: [],
+        locked_count: 1,
+      },
+      voice: null,
+      readiness: { score: 100, final_ready: true, gaps: [] },
+    },
+  ],
+};
+
 test.beforeEach(async ({ page }) => {
   const userId = `studio-user-${Date.now()}`;
   const token = devToken(userId);
@@ -92,6 +135,14 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(actionRequested ? lockedSnapshot : snapshot),
+      });
+      return;
+    }
+    if (path === '/api/v1/production-cards/novel/novel-001') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(productionCards),
       });
       return;
     }
@@ -135,6 +186,8 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
   await expect(shotReviewLink).toHaveAttribute('href', '/studio/shot-review?workflow_id=wf-001');
   await expect(page.getByText('角色/场景/道具锁覆盖')).toBeVisible();
   await expect(page.getByText('0%', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('定稿卡就绪 1 · 待补齐 1')).toBeVisible();
+  await expect(page.getByText('定稿卡仍有 1 项待补齐')).toBeVisible();
   await expect(page.getByText('2 个镜头缺少角色/场景/道具资产锁，生产出片前必须锁定。').first()).toBeVisible();
   await page.getByRole('button', { name: '应用资产锁' }).click();
 

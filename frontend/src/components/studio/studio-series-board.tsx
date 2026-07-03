@@ -5,6 +5,7 @@ import { BookMarked, CheckCircle2, Film, Lock, PlayCircle, ShieldAlert } from 'l
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import type { ProductionCardsResponse } from '@/lib/api-client';
 import type { StudioIssue, StudioSnapshot } from '@/lib/studio-types';
 
 type StageTone = 'ready' | 'working' | 'blocked';
@@ -93,9 +94,11 @@ function SeriesStage({
 export function StudioSeriesBoard({
   snapshot,
   workflowId,
+  productionCards,
 }: {
   snapshot: StudioSnapshot | null;
   workflowId?: string;
+  productionCards?: ProductionCardsResponse | null;
 }) {
   const issues = snapshot?.issues || [];
   const bible = snapshot?.story_bible;
@@ -122,10 +125,36 @@ export function StudioSeriesBoard({
   const assetCoverageLabel = assetCoverage >= 1 ? '全量覆盖' : assetCoverage > 0 ? '部分覆盖' : '未覆盖';
   const missingAssetCount = productionBible?.asset_readiness?.missing_asset_count;
   const voiceCount = productionBible?.voices?.length || 0;
-  const hasFinalReference = (assets.final_count || 0) > 0;
-  const hasAssetLocks = Boolean(productionBible?.asset_readiness?.ready || assetCoverage >= 1);
-  const hasVoiceProfiles = voiceCount > 0;
-  const missingFinalGateLocks = !hasFinalReference || !hasAssetLocks || !hasVoiceProfiles;
+  const productionCardList = productionCards?.cards || [];
+  const productionCardReadyCount = productionCards?.summary?.ready ?? productionCardList.filter((card) => card.readiness?.final_ready).length;
+  const productionCardIncompleteCount = productionCards?.summary?.incomplete ?? productionCardList.filter((card) => card.readiness?.final_ready === false).length;
+  const productionCardLockedViews = productionCardList.reduce(
+    (total, card) => total + (card.visual?.views || []).filter((view) => view.is_locked).length,
+    0
+  );
+  const productionCardFinalViews = productionCardList.reduce(
+    (total, card) => total + (card.visual?.views || []).filter((view) => view.is_final).length,
+    0
+  );
+  const productionCardVoiceCount = productionCardList.filter(
+    (card) => card.entity_type === 'character' && (card.voice?.locked || card.voice?.voice)
+  ).length;
+  const hasProductionCardSummary = Boolean(productionCards);
+  const productionCardSummaryText = hasProductionCardSummary
+    ? `定稿卡就绪 ${productionCardReadyCount} · 待补齐 ${productionCardIncompleteCount}`
+    : '';
+  const productionCardGapText = productionCardIncompleteCount > 0
+    ? `定稿卡仍有 ${productionCardIncompleteCount} 项待补齐`
+    : '定稿卡已全部就绪';
+  const finalReferenceCount = Math.max(assets.final_count || 0, productionCardFinalViews);
+  const lockedAssetCount = Math.max(assets.locked_count || 0, productionCardLockedViews);
+  const voiceProfileCount = Math.max(voiceCount, productionCardVoiceCount);
+  const hasFinalReference = finalReferenceCount > 0;
+  const hasAssetLocks = hasProductionCardSummary
+    ? productionCardIncompleteCount === 0 && productionCardLockedViews > 0
+    : Boolean(productionBible?.asset_readiness?.ready || assetCoverage >= 1);
+  const hasVoiceProfiles = voiceProfileCount > 0;
+  const missingFinalGateLocks = !hasFinalReference || !hasAssetLocks || !hasVoiceProfiles || productionCardIncompleteCount > 0;
   const assetIssue = hasIssue(issues, ['asset', '资产', 'lock', 'voice', '声音', 'tts']);
   const qualityBlocked = blockingCount > 0 || hasIssue(issues, ['model', 'preflight', 'gate', '门禁', '验证']);
   const isFinalQuality = strategy === 'final_quality';
@@ -141,11 +170,13 @@ export function StudioSeriesBoard({
       : `${strategyLabel}：终稿导出前仍会校验定稿参考图、资产锁覆盖和角色声线。`;
   const assetLockDetail = [
     strategyGateCopy,
-    `资产锁${assetCoverageLabel} · 已锁定 ${assets.locked_count || 0} · 定稿 ${assets.final_count || 0} · 声线 ${voiceCount} · 缺资产 ${missingAssetCount ?? '未知'}`,
+    `资产锁${assetCoverageLabel} · 已锁定 ${lockedAssetCount} · 定稿 ${finalReferenceCount} · 声线 ${voiceProfileCount} · 缺资产 ${missingAssetCount ?? '未知'}`,
+    hasProductionCardSummary ? productionCardGapText : '',
   ].join(' ');
   const producerHref = workflowId ? `/producer?workflow_id=${workflowId}` : '/producer';
   const shotReviewHref = workflowId ? `/studio/shot-review?workflow_id=${workflowId}` : '/studio/shot-review';
   const quickStartHref = '/quick-start';
+  const productionCardsHref = snapshot?.workflow?.novel_id ? `/studio/cards?novel_id=${snapshot.workflow.novel_id}` : '/studio/cards';
 
   return (
     <Card className="border-cyan-400/15 bg-cyan-500/[0.06]">
@@ -201,13 +232,14 @@ export function StudioSeriesBoard({
           description="终稿模式需要定稿参考图、资产锁覆盖和角色 voice profile；缺任一项都会阻断终稿出片。"
           detail={assetLockDetail}
           requirements={[
-            { label: '定稿参考图', ready: hasFinalReference, value: hasFinalReference ? `${assets.final_count || 0} 个定稿资产` : '缺定稿参考图，先在资产页补齐。' },
-            { label: '资产锁覆盖', ready: hasAssetLocks, value: hasAssetLocks ? assetCoverageLabel : `缺资产 ${missingAssetCount ?? '未知'}，进入 Producer 应用锁。` },
-            { label: '角色声线', ready: hasVoiceProfiles, value: hasVoiceProfiles ? `${voiceCount} 个 voice profile` : '缺角色声线，回 Story Bible/角色设定绑定。' },
+            { label: '定稿参考图', ready: hasFinalReference, value: hasFinalReference ? `${finalReferenceCount} 个定稿资产` : '缺定稿参考图，先在资产页补齐。' },
+            { label: '资产锁覆盖', ready: hasAssetLocks, value: hasAssetLocks ? (hasProductionCardSummary ? `定稿卡锁定视图 ${productionCardLockedViews}` : assetCoverageLabel) : `缺资产 ${missingAssetCount ?? '未知'}，进入 Producer 应用锁。` },
+            { label: '角色声线', ready: hasVoiceProfiles, value: hasVoiceProfiles ? `${voiceProfileCount} 个 voice profile` : '缺角色声线，回 Story Bible/角色设定绑定。' },
+            { label: '定稿卡', ready: !hasProductionCardSummary || productionCardIncompleteCount === 0, value: productionCardSummaryText || '暂未读取定稿卡 summary' },
           ]}
           tone={finalGateTone}
-          href="/assets"
-          actionLabel={missingFinalGateLocks ? '补齐资产/声线' : '查看资产'}
+          href={hasProductionCardSummary ? productionCardsHref : '/assets'}
+          actionLabel={hasProductionCardSummary ? '查看定稿卡' : missingFinalGateLocks ? '补齐资产/声线' : '查看资产'}
         />
         <SeriesStage
           icon={qualityBlocked ? ShieldAlert : CheckCircle2}
