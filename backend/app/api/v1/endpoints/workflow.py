@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dev_generation import dev_audio_url, dev_synthesis_url, dev_video_url, is_dev_mode
-from app.core.model_registry import get_task_default
+from app.core.model_registry import get_model_reference_limits, get_task_default
 from app.core.security import get_current_user_id
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models import Clip, Project, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot, StoryBible, Storyboard
@@ -26,7 +26,9 @@ from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
+from app.services.audio_route_service import resolve_shot_audio_route
 from app.services.production_bible import build_production_bible_summary
+from app.services.production_strategy_routing import resolve_strategy_video_config_id
 from app.services.publication_readiness import evaluate_publication_readiness
 
 router = APIRouter(tags=["工作流"])
@@ -123,6 +125,202 @@ def _lineage_value(job: Any, key: str) -> Optional[str]:
     if not value and isinstance(extra.get("lineage"), dict):
         value = extra["lineage"].get(key)
     return str(value) if value else None
+
+
+def _job_created_key(job: Any) -> str:
+    created_at = getattr(job, "created_at", None)
+    return created_at.isoformat() if created_at else ""
+
+
+def _job_shot_id(job: Any) -> Optional[str]:
+    return _lineage_value(job, "shot_id")
+
+
+def _is_superseded(job: Any) -> bool:
+    return _extra(job).get("superseded_by_regeneration") is True
+
+
+def _latest_non_superseded_by_shot(jobs: List[Any]) -> Dict[str, Any]:
+    latest: Dict[str, Any] = {}
+    fallback: Dict[str, Any] = {}
+    for job in jobs:
+        shot_id = _job_shot_id(job)
+        if not shot_id:
+            continue
+        if shot_id not in fallback or _job_created_key(job) > _job_created_key(fallback[shot_id]):
+            fallback[shot_id] = job
+        if _is_superseded(job):
+            continue
+        if shot_id not in latest or _job_created_key(job) > _job_created_key(latest[shot_id]):
+            latest[shot_id] = job
+    return {**fallback, **latest}
+
+
+def _dedupe_latest_per_shot(jobs: List[Any]) -> List[Any]:
+    selected: Dict[str, Any] = {}
+    passthrough: List[Any] = []
+    for job in jobs:
+        shot_id = _job_shot_id(job)
+        if not shot_id:
+            passthrough.append(job)
+            continue
+        current = selected.get(shot_id)
+        if current is None:
+            selected[shot_id] = job
+            continue
+        current_score = (0 if _is_superseded(current) else 1, _job_created_key(current))
+        next_score = (0 if _is_superseded(job) else 1, _job_created_key(job))
+        if next_score >= current_score:
+            selected[shot_id] = job
+
+    ordered: List[Any] = []
+    seen_shots: set[str] = set()
+    for job in jobs:
+        shot_id = _job_shot_id(job)
+        if not shot_id:
+            ordered.append(job)
+            continue
+        if shot_id in seen_shots:
+            continue
+        seen_shots.add(shot_id)
+        ordered.append(selected[shot_id])
+    return ordered
+
+
+def _shot_character_names(shot: Shot) -> List[str]:
+    names: List[str] = []
+    refs = shot.character_refs if isinstance(shot.character_refs, list) else []
+    if not refs:
+        extra = _extra(shot)
+        entity_refs = extra.get("entity_refs") if isinstance(extra.get("entity_refs"), dict) else {}
+        refs = entity_refs.get("characters") if isinstance(entity_refs.get("characters"), list) else []
+    for ref in refs:
+        if isinstance(ref, str):
+            candidate = ref.strip()
+        elif isinstance(ref, dict):
+            candidate = str(
+                ref.get("name")
+                or ref.get("character_name")
+                or ref.get("entity_name")
+                or ref.get("label")
+                or ""
+            ).strip()
+        else:
+            candidate = ""
+        if candidate and candidate not in names:
+            names.append(candidate)
+    return names
+
+
+async def _workflow_shots_for_request(
+    db: AsyncSession,
+    workflow: Workflow,
+    user_id: str,
+    shot_ids: Optional[List[str]] = None,
+) -> List[Shot]:
+    query = select(Shot).where(Shot.user_id == user_id)
+    if shot_ids:
+        query = query.where(Shot.id.in_(shot_ids))
+    elif workflow.storyboard_id:
+        query = query.where(Shot.storyboard_id == workflow.storyboard_id)
+    else:
+        return []
+    result = await db.execute(query.order_by(Shot.shot_number))
+    return list(result.scalars().all())
+
+
+async def _video_jobs_for_workflow_shots(
+    db: AsyncSession,
+    workflow_id: str,
+    user_id: str,
+    shot_ids: List[str],
+) -> List[VideoJob]:
+    if not shot_ids:
+        return []
+    result = await db.execute(
+        select(VideoJob).where(
+            VideoJob.workflow_id == workflow_id,
+            VideoJob.user_id == user_id,
+        ).order_by(desc(VideoJob.created_at))
+    )
+    return [job for job in result.scalars().all() if _job_shot_id(job) in shot_ids]
+
+
+async def _tts_jobs_for_workflow_shots(
+    db: AsyncSession,
+    workflow_id: str,
+    user_id: str,
+    shot_ids: List[str],
+) -> List[TTSJob]:
+    if not shot_ids:
+        return []
+    result = await db.execute(
+        select(TTSJob).where(
+            TTSJob.workflow_id == workflow_id,
+            TTSJob.user_id == user_id,
+            TTSJob.shot_id.in_(shot_ids),
+        ).order_by(desc(TTSJob.created_at))
+    )
+    return list(result.scalars().all())
+
+
+def _reference_package_mode(extra: Dict[str, Any]) -> Optional[Any]:
+    if "reference_package_mode" in extra:
+        return extra.get("reference_package_mode")
+    package = extra.get("reference_package")
+    if isinstance(package, dict):
+        return package.get("mode")
+    return None
+
+
+def _shot_review_item(
+    shot: Shot,
+    *,
+    latest_video: Optional[Any],
+    latest_tts: Optional[TTSJob],
+    regeneration_count: int,
+) -> Dict[str, Any]:
+    video_extra = _extra(latest_video) if latest_video else {}
+    shot_extra = _extra(shot)
+    subtitle_text = (
+        (latest_tts.text if latest_tts else None)
+        or shot_extra.get("subtitle_text")
+        or shot.dialogue
+        or ""
+    )
+    return {
+        "shot_id": shot.id,
+        "shot_number": shot.shot_number,
+        "latest_video_job_id": latest_video.id if latest_video else None,
+        "latest_tts_job_id": latest_tts.id if latest_tts else None,
+        "video_url": getattr(latest_video, "video_url", None) if latest_video else shot.video_url,
+        "status": getattr(latest_video, "status", None) if latest_video else (shot.video_status or "pending"),
+        "duration": getattr(latest_video, "duration", None) if latest_video else shot.duration,
+        "subtitle_text": subtitle_text,
+        "character_names": _shot_character_names(shot),
+        "evidence": {
+            "strategy_routing": video_extra.get("strategy_routing"),
+            "reference_package_mode": _reference_package_mode(video_extra),
+            "generation_preflight": video_extra.get("generation_preflight"),
+        },
+        "regeneration_count": regeneration_count,
+    }
+
+
+async def _mark_superseded_for_shots(
+    db: AsyncSession,
+    *,
+    workflow_id: str,
+    user_id: str,
+    shot_ids: List[str],
+) -> None:
+    video_jobs = await _video_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    tts_jobs = await _tts_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    for job in [*video_jobs, *tts_jobs]:
+        extra = dict(_extra(job))
+        extra["superseded_by_regeneration"] = True
+        extra["superseded_at"] = utc_now().isoformat()
+        job.extra_data = extra
 
 
 def _assert_lineage_matches_workflow(workflow: Workflow, job: Any) -> None:
@@ -265,7 +463,7 @@ async def _resolve_saved_tts_model(
 
 def _shot_subtitle_text(shot: Shot) -> str:
     shot_extra = _extra(shot)
-    return (shot_extra.get("subtitle_text") or shot.dialogue or "").strip()
+    return (shot_extra.get("subtitle_text") or shot_extra.get("subtitle") or shot.dialogue or "").strip()
 
 
 def _shot_audio_text(shot: Shot) -> str:
@@ -506,11 +704,12 @@ async def _final_quality_lock_snapshots(
         }
         if not asset_locks:
             missing_assets.append({"shot_id": shot.id, "shot_number": shot.shot_number})
-        if _shot_audio_text(shot).strip() and not voice_lock:
+        dialogue_text = _shot_subtitle_text(shot)
+        if dialogue_text and not voice_lock:
             missing_voices.append({
                 "shot_id": shot.id,
                 "shot_number": shot.shot_number,
-                "character_name": _primary_tts_character_name(shot, _shot_audio_text(shot)),
+                "character_name": _primary_tts_character_name(shot, dialogue_text),
             })
 
     if missing_assets or missing_voices:
@@ -602,6 +801,7 @@ def _production_strategy_metadata(strategy: Optional[str]) -> Dict[str, Any]:
     metadata = strategy_map.get(strategy, {})
     return {
         "production_strategy": strategy,
+        "routing_enabled": True,
         **metadata,
     }
 
@@ -1564,7 +1764,7 @@ class RenderRequest(BaseModel):
     synthesis_job_id: Optional[str] = Field(None, description="指定合成任务ID，不传则使用当前工作流最新合成任务")
     force: bool = Field(False, description="是否强制重新生成本地渲染包")
     quality_profile: str = Field("review", description="渲染质量配置")
-    render_backend: str = Field("local_artifact_package", description="local_artifact_package/ffmpeg_cloud")
+    render_backend: str = Field("local_artifact_package", description="local_artifact_package/ffmpeg_cloud/ffmpeg_local")
     external_config_id: Optional[str] = Field(None, description="FFmpeg 云渲染外部配置ID")
     burn_subtitles: bool = Field(False, description="是否要求真实渲染时烧录字幕")
     use_editable_timeline: bool = Field(True, description="存在可编辑 Timeline 时是否优先按最新 Timeline 渲染")
@@ -1641,6 +1841,34 @@ class WorkflowMediaBatchResponse(BaseModel):
     pending_tts_job_ids: List[str] = Field(default_factory=list)
     ready_for_concatenate: bool = True
     message: str
+
+
+class WorkflowShotRegenerateRequest(BaseModel):
+    shot_ids: Optional[List[str]] = Field(None, description="指定重生镜头；为空时可结合 filter=failed")
+    filter: Optional[str] = Field(None, description="failed/all_selected")
+    character_name: Optional[str] = Field(None, description="只重生包含该角色名的镜头")
+    production_strategy: Optional[str] = Field(None, description="不传则继承工作流最近一次生产策略")
+    model_config_id: Optional[str] = None
+    audio_model_config_id: Optional[str] = None
+    audio_mode: str = "model_audio"
+
+
+class WorkflowShotRegenerateResponse(BaseModel):
+    workflow_id: str
+    regenerated_shot_ids: List[str] = Field(default_factory=list)
+    created_count: int = 0
+    video_job_ids: List[str] = Field(default_factory=list)
+    tts_job_ids: List[str] = Field(default_factory=list)
+    media_job_ids: List[str] = Field(default_factory=list)
+    subtitle_track_ids: List[str] = Field(default_factory=list)
+    skipped: List[Dict[str, Any]] = Field(default_factory=list)
+    ready_for_concatenate: bool = True
+
+
+class WorkflowShotReviewResponse(BaseModel):
+    workflow_id: str
+    latest_render_artifacts: Optional[Dict[str, Any]] = None
+    shots: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 # ========== API 端点 ==========
@@ -1741,6 +1969,14 @@ async def generate_workflow_media_batch(
             requested_story_bible_id=request.story_bible_id,
         )
 
+    strategy_video_routing = await resolve_strategy_video_config_id(
+        db,
+        user_id,
+        request.production_strategy,
+        request.model_config_id,
+    )
+    effective_video_config_id = strategy_video_routing["model_config_id"] or request.model_config_id
+
     if request.strategy == "separate_video_tts":
         from app.api.v1.endpoints.video import (
             VIDEO_MODEL_ID,
@@ -1760,7 +1996,10 @@ async def generate_workflow_media_batch(
             _video_prompt_parameters,
         )
 
-        selected_video_model = await _resolve_video_model_config(db, user_id, None, request.model_config_id)
+        selected_video_model = await _resolve_video_model_config(db, user_id, None, effective_video_config_id)
+        video_reference_limits = get_model_reference_limits(
+            selected_video_model.get("api_model_id") or selected_video_model.get("config_model_id") or ""
+        )
         selected_audio_model = await _resolve_saved_tts_model(db, user_id, request.audio_model_config_id)
         if not selected_audio_model and request.audio_mode != "none":
             default_audio = (get_task_default("tts") or {}).get("default_model") or {}
@@ -1782,11 +2021,6 @@ async def generate_workflow_media_batch(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"所选视频模型 {selected_video_model.get('model_name') or selected_video_model.get('model_id')} 未配置可用 API Key，请在模型配置中验证后再生成",
             )
-        if request.audio_mode != "none" and not audio_api_key and not use_dev_audio:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"所选声音模型 {selected_audio_model.get('model_name') if selected_audio_model else '默认 TTS'} 未配置可用 API Key，请在模型配置中验证后再生成",
-            )
 
         prepared_shots: Dict[str, Dict[str, Any]] = {}
         for shot in shots:
@@ -1794,7 +2028,7 @@ async def generate_workflow_media_batch(
             video_request = VideoGenerateRequest(
                 prompt=_shot_generation_prompt(shot),
                 model=selected_video_model.get("config_model_id") or selected_video_model.get("api_model_id") or VIDEO_MODEL_ID,
-                model_config_id=request.model_config_id,
+                model_config_id=effective_video_config_id,
                 duration=max(4, min(10, int(round(duration)))),
                 resolution=request.resolution,
                 workflow_id=workflow.id,
@@ -1810,7 +2044,12 @@ async def generate_workflow_media_batch(
             package = await _build_video_consistency_package(db, user_id, video_request, lineage)
             effective_image_url = package["reference_image"]
             video_seed = _resolve_video_seed(video_request, lineage, package["metadata"])
-            subtitle_text = _shot_audio_text(shot)
+            subtitle_text = _shot_subtitle_text(shot)
+            audio_route = (
+                {"route": "silent", "reason": "audio_mode_none"}
+                if request.audio_mode == "none"
+                else resolve_shot_audio_route(shot, model_limits=video_reference_limits, voice_lock=None)
+            )
             video_preflight_package = None
             tts_preflight_package = None
             if not is_dev_mode():
@@ -1818,7 +2057,7 @@ async def generate_workflow_media_batch(
                     db,
                     user_id,
                     task_type="shot_video",
-                    model_config_id=request.model_config_id,
+                    model_config_id=effective_video_config_id,
                     image_url=effective_image_url,
                     production_mode=True,
                     require_public_reference_image=bool(effective_image_url),
@@ -1833,7 +2072,7 @@ async def generate_workflow_media_batch(
                         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                         detail=preflight_failure_detail(video_preflight_package),
                     )
-                if request.audio_mode != "none" and subtitle_text:
+                if request.audio_mode != "none" and audio_route.get("route") == "tts" and subtitle_text:
                     tts_preflight_package = await build_generation_context_package(
                         db,
                         user_id,
@@ -1860,9 +2099,22 @@ async def generate_workflow_media_batch(
                 "effective_image_url": effective_image_url,
                 "video_seed": video_seed,
                 "subtitle_text": subtitle_text,
+                "audio_route": audio_route,
                 "video_preflight_package": video_preflight_package,
                 "tts_preflight_package": tts_preflight_package,
             }
+
+        requires_tts_route = any(
+            request.audio_mode != "none"
+            and prepared["audio_route"].get("route") == "tts"
+            and prepared["subtitle_text"]
+            for prepared in prepared_shots.values()
+        )
+        if requires_tts_route and not audio_api_key and not use_dev_audio:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=f"所选声音模型 {selected_audio_model.get('model_name') if selected_audio_model else '默认 TTS'} 未配置可用 API Key，请在模型配置中验证后再生成",
+            )
 
         video_job_ids: List[str] = []
         tts_job_ids: List[str] = []
@@ -1898,9 +2150,12 @@ async def generate_workflow_media_batch(
             prompt_parameters["reference_image_source"] = package.get("reference_image_source")
             extra_data["prompt_parameters"] = prompt_parameters
             extra_data["source_prompt"] = video_request.prompt
-            extra_data.update(_production_strategy_job_extra(request.production_strategy, request.model_config_id))
+            extra_data.update(_production_strategy_job_extra(request.production_strategy, effective_video_config_id))
             extra_data["generation_strategy"] = request.strategy
+            extra_data["strategy_routing"] = strategy_video_routing["routing"]
+            extra_data["strategy_matched_api_model_id"] = strategy_video_routing["matched_api_model_id"]
             extra_data["audio_model_config_id"] = request.audio_model_config_id
+            extra_data["audio_route"] = prepared["audio_route"]
             lock_snapshot = final_quality_snapshots.get(shot.id) or {}
             extra_data["asset_version_locks"] = lock_snapshot.get("asset_version_locks") or _asset_locks_for_workflow_shot(shot)
             extra_data["asset_lock_snapshot"] = extra_data["asset_version_locks"]
@@ -1982,8 +2237,9 @@ async def generate_workflow_media_batch(
                 )
 
             subtitle_text = prepared["subtitle_text"]
+            audio_route = dict(prepared["audio_route"])
             tts_job_id: Optional[str] = None
-            if request.audio_mode != "none" and subtitle_text:
+            if request.audio_mode != "none" and audio_route.get("route") == "tts" and subtitle_text:
                 resolved_voice = await _resolve_tts_voice_for_workflow_shot(
                     db=db,
                     user_id=user_id,
@@ -2003,6 +2259,13 @@ async def generate_workflow_media_batch(
                     "voice": resolved_voice.get("voice"),
                     "voice_source": resolved_voice.get("voice_source"),
                 } if resolved_voice.get("voice_source") == "story_bible" else None
+                audio_route = resolve_shot_audio_route(
+                    shot,
+                    model_limits=video_reference_limits,
+                    voice_lock=voice_lock_snapshot,
+                )
+                extra_data["audio_route"] = audio_route
+                video_job.extra_data = extra_data
                 tts_voice = str(resolved_voice.get("voice") or request.voice_model)
                 tts_speed = float(resolved_voice.get("speed") or request.speed)
                 tts_job_id = str(uuid4())
@@ -2070,6 +2333,7 @@ async def generate_workflow_media_batch(
                         "model_test_status": selected_audio_model.get("test_status") if selected_audio_model else None,
                         **_production_strategy_job_extra(request.production_strategy, request.audio_model_config_id),
                         "generation_strategy": request.strategy,
+                        "audio_route": audio_route,
                         "generation_preflight": {
                             "ready": prepared["tts_preflight_package"].get("ready"),
                             "issues": prepared["tts_preflight_package"].get("issues") or [],
@@ -2124,7 +2388,7 @@ async def generate_workflow_media_batch(
             "subtitle_track_ids": list(dict.fromkeys((metadata.get("subtitle_track_ids") or []) + subtitle_track_ids)),
             "latest_media_batch_strategy": request.strategy,
             "latest_media_batch_count": len(video_job_ids),
-            "latest_media_batch_model_config_id": request.model_config_id,
+            "latest_media_batch_model_config_id": effective_video_config_id,
             "latest_media_batch_audio_model_config_id": request.audio_model_config_id,
             "latest_video_job_ids": video_job_ids,
             "latest_tts_job_ids": tts_job_ids,
@@ -2153,7 +2417,7 @@ async def generate_workflow_media_batch(
     if not is_dev_mode():
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="批量直生音视频真实供应商适配尚未配置；请改用视频+声音分步生成策略")
 
-    selected_model = await _resolve_saved_video_model(db, user_id, request.model_config_id)
+    selected_model = await _resolve_saved_video_model(db, user_id, effective_video_config_id)
     default_model = (get_task_default("shot_audio_video") or {}).get("default_model") or {}
     runtime_model = selected_model or {
         "provider_id": default_model.get("provider_id", "local"),
@@ -2214,9 +2478,11 @@ async def generate_workflow_media_batch(
                 "subtitle_text": subtitle_text,
                 "subtitle_mode": request.subtitle_mode,
                 "audio_mode": request.audio_mode,
-                **_production_strategy_job_extra(request.production_strategy, request.model_config_id),
-                "model_config_id": request.model_config_id,
+                **_production_strategy_job_extra(request.production_strategy, effective_video_config_id),
+                "model_config_id": effective_video_config_id,
                 "model_test_status": runtime_model.get("test_status"),
+                "strategy_routing": strategy_video_routing["routing"],
+                "strategy_matched_api_model_id": strategy_video_routing["matched_api_model_id"],
                 "asset_version_locks": asset_lock_snapshot,
                 "asset_lock_snapshot": asset_lock_snapshot,
                 "voice_lock_snapshot": voice_lock_snapshot,
@@ -2294,7 +2560,7 @@ async def generate_workflow_media_batch(
         "subtitle_track_ids": list(dict.fromkeys((metadata.get("subtitle_track_ids") or []) + subtitle_track_ids)),
         "latest_media_batch_strategy": request.strategy,
         "latest_media_batch_count": len(media_job_ids),
-        "latest_media_batch_model_config_id": request.model_config_id,
+        "latest_media_batch_model_config_id": effective_video_config_id,
     }
     workflow.current_step = max(workflow.current_step, 7)
     workflow.completed_steps = _complete_steps(workflow.completed_steps, 7, 8)
@@ -2314,6 +2580,123 @@ async def generate_workflow_media_batch(
         pending_tts_job_ids=[],
         ready_for_concatenate=True,
         message="音视频草稿已生成",
+    )
+
+
+@router.get("/{workflow_id}/shot-review", response_model=WorkflowShotReviewResponse)
+async def get_workflow_shot_review(
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """聚合工作流镜头审阅所需的最新媒体、证据和重生次数。"""
+    workflow = await _get_workflow_for_user(db, workflow_id, user_id)
+    shots = await _workflow_shots_for_request(db, workflow, user_id)
+    shot_ids = [shot.id for shot in shots]
+    video_jobs = await _video_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    tts_jobs = await _tts_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    latest_video_by_shot = _latest_non_superseded_by_shot(video_jobs)
+    latest_tts_by_shot = _latest_non_superseded_by_shot(tts_jobs)
+
+    regeneration_counts: Dict[str, int] = {}
+    for job in video_jobs:
+        shot_id = _job_shot_id(job)
+        if shot_id and _is_superseded(job):
+            regeneration_counts[shot_id] = regeneration_counts.get(shot_id, 0) + 1
+
+    metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+    latest_render_artifacts = metadata.get("latest_render_artifacts")
+
+    return WorkflowShotReviewResponse(
+        workflow_id=workflow.id,
+        latest_render_artifacts=latest_render_artifacts if isinstance(latest_render_artifacts, dict) else None,
+        shots=[
+            _shot_review_item(
+                shot,
+                latest_video=latest_video_by_shot.get(shot.id),
+                latest_tts=latest_tts_by_shot.get(shot.id),
+                regeneration_count=regeneration_counts.get(shot.id, 0),
+            )
+            for shot in shots
+        ],
+    )
+
+
+@router.post("/{workflow_id}/regenerate-shots", response_model=WorkflowShotRegenerateResponse)
+async def regenerate_workflow_shots(
+    workflow_id: str,
+    request: WorkflowShotRegenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """按失败、选择或角色过滤，局部重生工作流镜头。"""
+    if request.filter and request.filter not in {"failed", "all_selected"}:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="未知镜头重生过滤器")
+    workflow = await _get_workflow_for_user(db, workflow_id, user_id)
+    shots = await _workflow_shots_for_request(db, workflow, user_id, request.shot_ids)
+    if not shots:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="没有可重生的镜头")
+
+    shot_ids = [shot.id for shot in shots]
+    video_jobs = await _video_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    latest_video_by_shot = _latest_non_superseded_by_shot(video_jobs)
+
+    target_shots: List[Shot] = []
+    skipped: List[Dict[str, Any]] = []
+    for shot in shots:
+        latest_video = latest_video_by_shot.get(shot.id)
+        if request.character_name and request.character_name not in _shot_character_names(shot):
+            skipped.append({"shot_id": shot.id, "reason": "character_mismatch"})
+            continue
+        if request.filter == "failed":
+            status_value = getattr(latest_video, "status", None) if latest_video else shot.video_status
+            if status_value != "failed":
+                skipped.append({"shot_id": shot.id, "reason": "not_failed"})
+                continue
+        target_shots.append(shot)
+
+    target_ids = [shot.id for shot in target_shots]
+    if not target_ids:
+        return WorkflowShotRegenerateResponse(
+            workflow_id=workflow.id,
+            regenerated_shot_ids=[],
+            created_count=0,
+            skipped=skipped,
+            ready_for_concatenate=True,
+        )
+
+    await _mark_superseded_for_shots(
+        db,
+        workflow_id=workflow.id,
+        user_id=user_id,
+        shot_ids=target_ids,
+    )
+    metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+    inherited_strategy = request.production_strategy or metadata.get("latest_production_strategy")
+    batch_response = await generate_workflow_media_batch(
+        workflow_id,
+        WorkflowMediaBatchRequest(
+            production_strategy=inherited_strategy,
+            strategy="separate_video_tts",
+            shot_ids=target_ids,
+            audio_mode=request.audio_mode,
+            model_config_id=request.model_config_id,
+            audio_model_config_id=request.audio_model_config_id,
+        ),
+        db,
+        user_id,
+    )
+
+    return WorkflowShotRegenerateResponse(
+        workflow_id=workflow.id,
+        regenerated_shot_ids=target_ids,
+        created_count=batch_response.created_count,
+        video_job_ids=batch_response.video_job_ids,
+        tts_job_ids=batch_response.tts_job_ids,
+        media_job_ids=batch_response.media_job_ids,
+        subtitle_track_ids=batch_response.subtitle_track_ids,
+        skipped=skipped,
+        ready_for_concatenate=batch_response.ready_for_concatenate,
     )
 
 
@@ -2811,10 +3194,10 @@ async def render_workflow_package(
     该接口不声明已经完成真实转码；它把连续成片 manifest 转换成用户可下载、
     可审阅、可交给后续 FFmpeg/云剪辑执行器消费的 artifact 包。
     """
-    if request.render_backend not in {"local_artifact_package", "ffmpeg_cloud"}:
+    if request.render_backend not in {"local_artifact_package", "ffmpeg_cloud", "ffmpeg_local"}:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="render_backend 仅支持 local_artifact_package/ffmpeg_cloud",
+            detail="render_backend 仅支持 local_artifact_package/ffmpeg_cloud/ffmpeg_local",
         )
 
     workflow = await _get_workflow_for_user(db, workflow_id, user_id)
@@ -3039,6 +3422,130 @@ async def render_workflow_package(
             publication_blockers=cloud_readiness["publication_blockers"],
         )
 
+    if request.render_backend == "ffmpeg_local":
+        from app.services.ffmpeg_local_renderer import (
+            FFmpegLocalRenderError,
+            render_workflow_package as render_ffmpeg_local_package,
+        )
+
+        render_manifest = {
+            "id": render_id,
+            "type": "ffmpeg_local_render_package",
+            "version": "1.0",
+            "workflow_id": workflow.id,
+            "synthesis_job_id": synthesis_job.id,
+            "title": title,
+            "quality_profile": request.quality_profile,
+            "source_manifest_url": extra_data.get("manifest_url"),
+            "segment_count": len(segments),
+            "duration_seconds": render_source.get("duration_seconds") or synthesis_job.duration_seconds,
+            "timeline_url": timeline_url,
+            "srt_url": srt_url,
+            "burn_subtitles": request.burn_subtitles,
+            "render_backend": "ffmpeg_local",
+            "render_source": render_source.get("source"),
+            "timeline_id": render_source.get("timeline_id"),
+            "tracks": _build_render_tracks(segments),
+            "segments": segments,
+            "created_at": utc_now().isoformat(),
+        }
+        output_dir = Path(__file__).resolve().parents[4] / "static" / "exports"
+        try:
+            local_result = await render_ffmpeg_local_package(
+                render_manifest,
+                output_dir=output_dir,
+                burn_subtitles=request.burn_subtitles,
+            )
+        except FFmpegLocalRenderError as exc:
+            extra_data["render_status"] = "failed"
+            extra_data["render_backend"] = "ffmpeg_local"
+            extra_data["rendered_at"] = utc_now().isoformat()
+            extra_data["render_issues"] = [exc.detail]
+            synthesis_job.extra_data = extra_data
+            synthesis_job.status = "failed"
+            synthesis_job.error_message = exc.detail.get("message")
+            workflow.error_message = exc.detail.get("message")
+            await db.commit()
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=exc.detail) from exc
+
+        output_url = local_result.get("output_url")
+        render_artifacts = {
+            "output_url": output_url,
+            "srt_url": local_result.get("subtitle_url") or srt_url,
+            "timeline_url": timeline_url,
+            "source_manifest_url": extra_data.get("manifest_url"),
+            "ffmpeg_log_tail": local_result.get("log_tail"),
+        }
+        render_manifest["output_url"] = output_url
+        render_manifest["playable_url"] = output_url
+        render_manifest["artifacts"] = render_artifacts
+        render_manifest["ffmpeg"] = {
+            "duration": local_result.get("duration"),
+            "width": local_result.get("width"),
+            "height": local_result.get("height"),
+            "log_tail": local_result.get("log_tail"),
+        }
+        render_manifest_url = _write_sequence_manifest(render_id, render_manifest)
+        render_artifacts["render_manifest_url"] = render_manifest_url
+
+        extra_data["render_status"] = "rendered"
+        extra_data["render_backend"] = "ffmpeg_local"
+        extra_data["rendered_at"] = utc_now().isoformat()
+        extra_data["render_quality_profile"] = request.quality_profile
+        extra_data["render_source"] = render_source.get("source")
+        extra_data["render_source_key"] = render_source_key
+        extra_data["render_timeline_id"] = render_source.get("timeline_id")
+        extra_data["render_artifacts"] = render_artifacts
+        extra_data["render_issues"] = []
+        extra_data["burn_subtitles"] = request.burn_subtitles
+        local_readiness = evaluate_publication_readiness(output_url, {
+            **extra_data,
+            "output_kind": "final_video",
+        })
+        extra_data["is_publishable"] = local_readiness["is_publishable"]
+        extra_data["output_kind"] = local_readiness["output_kind"]
+        extra_data["publication_blockers"] = local_readiness["publication_blockers"]
+        synthesis_job.extra_data = extra_data
+        synthesis_job.status = "succeeded"
+        synthesis_job.progress = 100
+        synthesis_job.output_url = output_url
+        synthesis_job.duration_seconds = local_result.get("duration") or synthesis_job.duration_seconds
+        synthesis_job.error_message = None
+
+        workflow.current_step = max(workflow.current_step, 10)
+        workflow.completed_steps = _complete_steps(workflow.completed_steps, 7, 8, 9, 10)
+        workflow.metadata_ = {
+            **(workflow.metadata_ or {}),
+            "latest_render_job_id": synthesis_job.id,
+            "latest_render_status": "rendered",
+            "latest_render_backend": "ffmpeg_local",
+            "latest_render_artifacts": render_artifacts,
+        }
+        workflow.error_message = None
+        await db.commit()
+
+        return RenderResponse(
+            workflow_id=workflow.id,
+            synthesis_job_id=synthesis_job.id,
+            status="rendered",
+            message="本地 FFmpeg 真实成片已生成",
+            render_status="rendered",
+            render_backend="ffmpeg_local",
+            output_url=output_url,
+            manifest_url=extra_data.get("manifest_url"),
+            srt_url=render_artifacts.get("srt_url"),
+            timeline_url=timeline_url,
+            render_manifest_url=render_manifest_url,
+            segment_count=len(segments),
+            duration_seconds=local_result.get("duration") or render_source.get("duration_seconds") or synthesis_job.duration_seconds,
+            issues=[],
+            render_source=render_source.get("source") or "manifest",
+            timeline_id=render_source.get("timeline_id"),
+            is_publishable=local_readiness["is_publishable"],
+            output_kind=local_readiness["output_kind"],
+            publication_blockers=local_readiness["publication_blockers"],
+        )
+
     render_manifest = {
         "id": render_id,
         "type": "local_render_package",
@@ -3215,7 +3722,9 @@ async def concatenate_videos(
             detail=f"未找到指定的视频或媒体任务: {', '.join(missing_video_ids)}",
         )
 
-    ordered_video_jobs = [video_by_id[job_id] for job_id in ordered_video_ids]
+    ordered_video_jobs = _dedupe_latest_per_shot([video_by_id[job_id] for job_id in ordered_video_ids])
+    video_job_ids = [job.id for job in ordered_video_jobs if not isinstance(job, MediaGenerationJob)]
+    media_job_ids = [job.id for job in ordered_video_jobs if isinstance(job, MediaGenerationJob)]
     for job in ordered_video_jobs:
         _assert_lineage_matches_workflow(workflow, job)
         if job.status not in {"succeeded", "completed"}:

@@ -403,7 +403,7 @@ export function StudioShell() {
           <PromptSkillPanel />
           <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContextPanel snapshot={snapshot} />
-          <StudioProductionBoard snapshot={snapshot} />
+          <StudioProductionBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContinuityBoard snapshot={snapshot} />
           <div id="studio-agent-panel">
             <StudioAgentPanel

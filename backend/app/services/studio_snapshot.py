@@ -84,6 +84,7 @@ def _production_strategy_metadata(strategy: Optional[str]) -> Dict[str, Any]:
     metadata = strategy_map.get(strategy, {})
     return {
         "production_strategy": strategy,
+        "strategy_routing_enabled": True,
         **metadata,
     }
 

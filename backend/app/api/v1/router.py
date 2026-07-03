@@ -11,6 +11,7 @@ from app.api.v1.endpoints import (
     workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
     media, subtitles, short_video, production_control, graph, batch, templates, versions,
     consistency, studio, prompt_skills,
+    production_cards,
 )
 
 api_router = APIRouter()
@@ -116,3 +117,6 @@ api_router.include_router(studio.router, prefix="/studio", tags=["创作工作�
 
 # Prompt 技能配置API
 api_router.include_router(prompt_skills.router, prefix="/prompt-skills", tags=["Prompt 技能"])
+
+# 定稿卡聚合API
+api_router.include_router(production_cards.router, prefix="/production-cards", tags=["定稿卡"])

@@ -1090,6 +1090,14 @@
 - 集成修正：前端 helper 已兼容后端真实结构化字段（message/count、角色/场景/道具/事件连续性、资产/声线缺口），避免只在 mock 字段下显示。
 - 验证通过：`cd backend && python3 -m pytest test_series_production.py test_workflow_routes.py test_studio_snapshot.py tests/test_production_preflight_gates.py -q`，60 passed；`cd frontend && npm run typecheck` 通过；`cd frontend && npx playwright test e2e/quick-start-series-plan.spec.ts --project=chromium --workers=1 --timeout=90000`，3 passed。
 
+## 2026-07-02 V2 细化实施方案输出
+
+- 已提交稳定切片：3b5e0c5 feat: harden quick start resilience and placeholder model filtering（backend 37 passed / typecheck / onboarding e2e 5 passed）。
+- 已完成整体方案分析并输出细化实施文档：`docs/continuous-anime-production-implementation-plan-v2.md`（17e29c2）。
+- 文档包含 S1-S6 六个阶段：S1 策略真实路由+定稿卡、S2 Seedance 2.0 多模态参考包（9图+3视频+3音频+@引用）、S3 镜头审阅+局部重生、S4 声音路由+配角批量定稿、S5 本地FFmpeg真实成片、S6 视觉一致性检测。
+- 每阶段含：文件级改动清单（已对照代码核实路径/函数名/行号）、API契约、TDD红灯测试用例、验收命令、提交切片。
+- 关键代码事实基线已核实：`provider_reference_image_limit=1`（workflow.py Phase 273）、策略仅hint无路由（workflow.py:572）、`_final_quality_lock_snapshots`（workflow.py:483）、`ASSET_VIEW_PRESETS`（asset_generation_service.py:533）、model_registry limits 可扩展。
+
 ## 2026-07-02 P2 资产和声音锁强制化集成
 
 - 后端终稿门禁：`/workflow/{id}/generate-media-batch` 在 `production_strategy=final_quality` 时会在生成前检查镜头资产锁和相关角色 Story Bible 声线锁；缺失时返回结构化 `422 final_quality_locks_missing`，`draft_fast` 不触发该终稿门禁。

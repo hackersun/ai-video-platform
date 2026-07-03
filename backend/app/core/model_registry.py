@@ -157,7 +157,15 @@ MODELS: List[Dict[str, Any]] = [
         "modality": "video",
         "capabilities": ["text_to_video", "image_to_video", "shot_video"],
         "endpoint_key": "video_generation",
-        "limits": {"durations": [4, 5, 8, 10], "resolutions": ["480p", "720p", "1080p"]},
+        "limits": {
+            "durations": [4, 5, 8, 10],
+            "resolutions": ["480p", "720p", "1080p"],
+            "reference_images": 1,
+            "reference_videos": 0,
+            "reference_audios": 0,
+            "supports_at_reference": False,
+            "native_audio": False,
+        },
         "status": {"active": True, "recommended": True, "verified": False},
     },
     {
@@ -168,7 +176,15 @@ MODELS: List[Dict[str, Any]] = [
         "modality": "video",
         "capabilities": ["text_to_video", "image_to_video", "shot_video"],
         "endpoint_key": "video_generation",
-        "limits": {"durations": [4, 5, 8, 10], "resolutions": ["480p", "720p", "1080p"]},
+        "limits": {
+            "durations": [4, 5, 8, 10, 15],
+            "resolutions": ["480p", "720p"],
+            "reference_images": 9,
+            "reference_videos": 3,
+            "reference_audios": 3,
+            "supports_at_reference": True,
+            "native_audio": True,
+        },
         "status": {"active": True, "recommended": True, "verified": False},
     },
     {
@@ -179,7 +195,15 @@ MODELS: List[Dict[str, Any]] = [
         "modality": "video",
         "capabilities": ["text_to_video", "image_to_video", "shot_video"],
         "endpoint_key": "video_generation",
-        "limits": {"durations": [4, 5, 8, 10], "resolutions": ["480p", "720p", "1080p"]},
+        "limits": {
+            "durations": [4, 5, 8, 10, 15],
+            "resolutions": ["480p", "720p"],
+            "reference_images": 9,
+            "reference_videos": 3,
+            "reference_audios": 3,
+            "supports_at_reference": True,
+            "native_audio": True,
+        },
         "status": {"active": True, "recommended": True, "verified": False},
     },
     {
@@ -400,6 +424,40 @@ def get_provider(provider_id: str) -> Optional[Dict[str, Any]]:
 
 def get_model(model_id: str) -> Optional[Dict[str, Any]]:
     return next((model for model in MODELS if model["id"] == model_id), None)
+
+
+def get_model_reference_limits(model_id_or_api_id: str) -> Dict[str, Any]:
+    """Return multimodal reference limits for a registered model.
+
+    Unknown models intentionally fall back to the legacy single-image behavior.
+    """
+    default_limits = {
+        "images": 1,
+        "videos": 0,
+        "audios": 0,
+        "at_reference": False,
+        "native_audio": False,
+    }
+    model_key = (model_id_or_api_id or "").strip()
+    model = next(
+        (
+            candidate
+            for candidate in MODELS
+            if candidate.get("id") == model_key or candidate.get("api_model_id") == model_key
+        ),
+        None,
+    )
+    if not model:
+        return dict(default_limits)
+
+    limits = model.get("limits") if isinstance(model.get("limits"), dict) else {}
+    return {
+        "images": int(limits.get("reference_images", default_limits["images"]) or 0),
+        "videos": int(limits.get("reference_videos", default_limits["videos"]) or 0),
+        "audios": int(limits.get("reference_audios", default_limits["audios"]) or 0),
+        "at_reference": bool(limits.get("supports_at_reference", default_limits["at_reference"])),
+        "native_audio": bool(limits.get("native_audio", default_limits["native_audio"])),
+    }
 
 
 def get_task_default(task: str) -> Optional[Dict[str, Any]]:

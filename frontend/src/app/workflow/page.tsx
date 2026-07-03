@@ -14,7 +14,7 @@ import { ModelCapabilitySelector } from '@/components/model-capability-selector'
 import { ProductionStatusRail } from '@/components/production/production-status-rail';
 import { PreflightIssueList } from '@/components/production/preflight-issue-list';
 import { useToast } from '@/components/ui/toast';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, type WorkflowRenderBackend } from '@/lib/api-client';
 import {
   getDefaultConfigForCapability,
   modelStatusLabel,
@@ -123,9 +123,11 @@ const buildReadinessItems = (workflowData: WorkflowData): ReadinessItem[] => {
     },
     {
       label: '渲染包',
-      ok: Boolean(workflowData.renderPreviewUrl && workflowData.renderSrtUrl && workflowData.renderTimelineUrl),
-      detail: workflowData.renderPreviewUrl
-        ? '已生成 HTML 预览、SRT 和时间线 artifact'
+      ok: Boolean((workflowData.renderOutputUrl || workflowData.renderPreviewUrl) && workflowData.renderSrtUrl && workflowData.renderTimelineUrl),
+      detail: workflowData.renderOutputUrl
+        ? '已生成真实视频、SRT 和时间线 artifact'
+        : workflowData.renderPreviewUrl
+          ? '已生成 HTML 预览、SRT 和时间线 artifact'
         : '生产交付前需要通过预检并生成渲染包',
     },
   ];
@@ -138,7 +140,7 @@ const getMaxAccessibleStep = (workflowData: WorkflowData, currentStep: number) =
   if (workflowData.scriptId) maxStep = Math.max(maxStep, 4);
   if (workflowData.storyboardId) maxStep = Math.max(maxStep, 6);
   if (workflowData.videoJobIds.length > 0 || workflowData.mediaJobIds.length > 0) maxStep = Math.max(maxStep, 8);
-  if (workflowData.synthesisManifestUrl || workflowData.renderPreviewUrl) maxStep = Math.max(maxStep, 9);
+  if (workflowData.synthesisManifestUrl || workflowData.renderPreviewUrl || workflowData.renderOutputUrl) maxStep = Math.max(maxStep, 9);
   return Math.min(WORKFLOW_STEPS.length - 1, maxStep);
 };
 
@@ -161,6 +163,8 @@ interface WorkflowData {
   synthesisSegmentCount?: number;
   synthesisDurationSeconds?: number;
   renderStatus?: string;
+  renderBackend?: WorkflowRenderBackend | string;
+  renderOutputUrl?: string;
   renderPreviewUrl?: string;
   renderSrtUrl?: string;
   renderTimelineUrl?: string;
@@ -478,30 +482,39 @@ function WorkflowPageContent() {
       }
       if (status.synthesis_jobs) {
         const latest = status.synthesis_jobs[0];
+        const latestExtra = latest?.extra_data || {};
+        const latestRenderArtifacts = latestExtra.render_artifacts || {};
+        const latestRenderBackend = latest?.render_backend || latestExtra.render_backend;
+        const latestRenderOutputUrl = latestRenderArtifacts.output_url || latest?.output_url || latestExtra.output_url;
+        const latestPreviewUrl = latestRenderBackend === 'ffmpeg_local'
+          ? undefined
+          : latestRenderArtifacts.preview_url;
         setWorkflowData(prev => ({
           ...prev,
           synthesisJobIds: status.synthesis_jobs.map((job: any) => job.id),
           synthesisJobId: latest?.id || prev.synthesisJobId,
-          synthesisManifestUrl: latest?.manifest_url || latest?.extra_data?.manifest_url || prev.synthesisManifestUrl,
-          synthesisOutputUrl: latest?.output_url || latest?.extra_data?.output_url || prev.synthesisOutputUrl,
-          synthesisSegmentCount: latest?.segment_count || latest?.extra_data?.segment_count || prev.synthesisSegmentCount,
-          synthesisDurationSeconds: latest?.duration_seconds || latest?.extra_data?.duration_seconds || prev.synthesisDurationSeconds,
-          renderStatus: latest?.extra_data?.render_status || prev.renderStatus,
-          renderPreviewUrl: latest?.extra_data?.render_artifacts?.preview_url || prev.renderPreviewUrl,
-          renderSrtUrl: latest?.extra_data?.render_artifacts?.srt_url || prev.renderSrtUrl,
-          renderTimelineUrl: latest?.extra_data?.render_artifacts?.timeline_url || prev.renderTimelineUrl,
-          renderManifestUrl: latest?.extra_data?.render_artifacts?.render_manifest_url || prev.renderManifestUrl,
-          editableTimelineId: latest?.extra_data?.timeline_id || status.metadata?.latest_timeline_id || prev.editableTimelineId,
-          editableTimelineClipCount: latest?.extra_data?.timeline_clip_count || prev.editableTimelineClipCount,
-          renderIssues: latest?.extra_data?.render_issues || prev.renderIssues,
+          synthesisManifestUrl: latest?.manifest_url || latestExtra.manifest_url || prev.synthesisManifestUrl,
+          synthesisOutputUrl: latest?.output_url || latestExtra.output_url || prev.synthesisOutputUrl,
+          synthesisSegmentCount: latest?.segment_count || latestExtra.segment_count || prev.synthesisSegmentCount,
+          synthesisDurationSeconds: latest?.duration_seconds || latestExtra.duration_seconds || prev.synthesisDurationSeconds,
+          renderStatus: latestExtra.render_status || prev.renderStatus,
+          renderBackend: latestRenderBackend || prev.renderBackend,
+          renderOutputUrl: latestRenderOutputUrl || prev.renderOutputUrl,
+          renderPreviewUrl: latestRenderBackend === 'ffmpeg_local' ? undefined : latestPreviewUrl || prev.renderPreviewUrl,
+          renderSrtUrl: latestRenderArtifacts.srt_url || prev.renderSrtUrl,
+          renderTimelineUrl: latestRenderArtifacts.timeline_url || prev.renderTimelineUrl,
+          renderManifestUrl: latestRenderArtifacts.render_manifest_url || prev.renderManifestUrl,
+          editableTimelineId: latestExtra.timeline_id || status.metadata?.latest_timeline_id || prev.editableTimelineId,
+          editableTimelineClipCount: latestExtra.timeline_clip_count || prev.editableTimelineClipCount,
+          renderIssues: latestExtra.render_issues || prev.renderIssues,
           renderIsPublishable: typeof latest?.is_publishable === 'boolean'
             ? latest.is_publishable
-            : typeof latest?.extra_data?.is_publishable === 'boolean'
-              ? latest.extra_data.is_publishable
+            : typeof latestExtra.is_publishable === 'boolean'
+              ? latestExtra.is_publishable
               : prev.renderIsPublishable,
-          renderOutputKind: latest?.output_kind || latest?.extra_data?.output_kind || prev.renderOutputKind,
-          renderPublicationBlockers: latest?.publication_blockers || latest?.extra_data?.publication_blockers || prev.renderPublicationBlockers,
-          renderPublishBlockReason: latest?.publish_block_reason || latest?.extra_data?.publish_block_reason || prev.renderPublishBlockReason,
+          renderOutputKind: latest?.output_kind || latestExtra.output_kind || prev.renderOutputKind,
+          renderPublicationBlockers: latest?.publication_blockers || latestExtra.publication_blockers || prev.renderPublicationBlockers,
+          renderPublishBlockReason: latest?.publish_block_reason || latestExtra.publish_block_reason || prev.renderPublishBlockReason,
         }));
       }
     } catch (err) {
@@ -1697,6 +1710,8 @@ function NovelStep({
       synthesisJobId: undefined,
       synthesisManifestUrl: undefined,
       synthesisOutputUrl: undefined,
+      renderBackend: undefined,
+      renderOutputUrl: undefined,
       renderPreviewUrl: undefined,
       renderSrtUrl: undefined,
       renderTimelineUrl: undefined,
@@ -1796,6 +1811,8 @@ function ChapterStep({
       synthesisJobId: undefined,
       synthesisManifestUrl: undefined,
       synthesisOutputUrl: undefined,
+      renderBackend: undefined,
+      renderOutputUrl: undefined,
       renderPreviewUrl: undefined,
       renderSrtUrl: undefined,
       renderTimelineUrl: undefined,
@@ -2940,7 +2957,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
   const [lastResult, setLastResult] = useState<any>(null);
   const [preflight, setPreflight] = useState<any>(null);
   const [renderResult, setRenderResult] = useState<any>(null);
-  const [renderBackend, setRenderBackend] = useState('local_artifact_package');
+  const [renderBackend, setRenderBackend] = useState<WorkflowRenderBackend>('local_artifact_package');
   const [externalConfigId, setExternalConfigId] = useState('');
   const [burnSubtitles, setBurnSubtitles] = useState(false);
   const [useEditableTimeline, setUseEditableTimeline] = useState(true);
@@ -3064,9 +3081,14 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
         setPreflight({ ready: true, issues: [], blocking_issue_count: 0 });
       }
       onSynthesisComplete?.(result);
-      toast({ title: result.status === 'preflight_failed' ? '渲染预检未通过' : '渲染包已生成', type: result.status === 'preflight_failed' ? 'info' : 'success' });
+      toast({
+        title: result.status === 'preflight_failed'
+          ? '渲染预检未通过'
+          : renderBackend === 'ffmpeg_local' ? '真实成片已生成' : '渲染包已生成',
+        type: result.status === 'preflight_failed' ? 'info' : 'success',
+      });
     } catch (err: any) {
-      toast({ title: '本地渲染包生成失败', description: err.message || '请稍后重试。', type: 'error' });
+      toast({ title: '渲染执行失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setIsRendering(false);
     }
@@ -3139,7 +3161,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
   };
 
   const manifestUrl = workflowData.synthesisManifestUrl || lastResult?.manifest_url;
-  const outputUrl = renderResult?.output_url || workflowData.renderPreviewUrl || workflowData.synthesisOutputUrl || lastResult?.output_url;
+  const outputUrl = renderResult?.output_url || workflowData.renderOutputUrl || workflowData.renderPreviewUrl || workflowData.synthesisOutputUrl || lastResult?.output_url;
   const segmentCount = workflowData.synthesisSegmentCount || lastResult?.segment_count || workflowData.videoJobIds.length + workflowData.mediaJobIds.length;
   const durationSeconds = workflowData.synthesisDurationSeconds || lastResult?.duration_seconds;
   const renderArtifacts = {
@@ -3148,6 +3170,17 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
     timeline_url: renderResult?.timeline_url || workflowData.renderTimelineUrl,
     render_manifest_url: renderResult?.render_manifest_url || workflowData.renderManifestUrl,
   };
+  const renderedOutputUrl = typeof renderResult?.output_url === 'string'
+    ? renderResult.output_url
+    : workflowData.renderOutputUrl || '';
+  const renderedBackend = renderResult?.render_backend || workflowData.renderBackend;
+  const renderedMp4Url = renderedBackend === 'ffmpeg_local'
+    && renderedOutputUrl.toLowerCase().split(/[?#]/)[0].endsWith('.mp4')
+    ? renderedOutputUrl
+    : '';
+  const renderedSrtUrl = renderedMp4Url
+    ? (typeof renderResult?.srt_url === 'string' ? renderResult.srt_url : workflowData.renderSrtUrl || '')
+    : '';
   const renderStatus = renderResult?.render_status || renderResult?.status || workflowData.renderStatus;
   const renderIssues = preflight?.issues || workflowData.renderIssues || [];
   const editableTimelineId = timelineResult?.timeline_id || workflowData.editableTimelineId;
@@ -3341,12 +3374,13 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
               <div className="flex flex-wrap items-center gap-2">
                 <select
                   value={renderBackend}
-                  onChange={(event) => setRenderBackend(event.target.value)}
+                  onChange={(event) => setRenderBackend(event.target.value as WorkflowRenderBackend)}
                   className="h-9 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white"
                   title="渲染执行器"
                 >
                   <option className="bg-gray-900" value="local_artifact_package">本地审阅包</option>
                   <option className="bg-gray-900" value="ffmpeg_cloud">FFmpeg 云渲染</option>
+                  <option className="bg-gray-900" value="ffmpeg_local">本地 FFmpeg（真实成片）</option>
                 </select>
                 {renderBackend === 'ffmpeg_cloud' && (
                   <select
@@ -3388,14 +3422,20 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                 </Button>
                 <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => handleRender(Boolean(renderArtifacts.preview_url))} disabled={isRendering}>
                   {isRendering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-                  {renderBackend === 'ffmpeg_cloud' ? '提交云渲染' : (renderArtifacts.preview_url ? '重新生成审阅包' : '生成审阅包')}
+                  {renderBackend === 'ffmpeg_cloud'
+                    ? '提交云渲染'
+                    : renderBackend === 'ffmpeg_local'
+                      ? (renderedMp4Url ? '重新生成真实成片' : '生成真实成片')
+                      : (renderArtifacts.preview_url ? '重新生成审阅包' : '生成审阅包')}
                 </Button>
               </div>
             </div>
 
             {preflight && (
               <div className={`mt-3 rounded border p-3 text-sm ${preflight.ready ? 'border-green-500/30 bg-green-500/10 text-green-100' : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100'}`}>
-                {preflight.ready ? '预检通过，可以生成本地渲染包。' : `预检发现 ${preflight.issue_count || renderIssues.length} 个问题。`}
+                {preflight.ready
+                  ? renderBackend === 'ffmpeg_local' ? '预检通过，可以生成本地 FFmpeg 真实成片。' : '预检通过，可以执行渲染。'
+                  : `预检发现 ${preflight.issue_count || renderIssues.length} 个问题。`}
               </div>
             )}
 
@@ -3413,6 +3453,18 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
               <div className="mt-3 rounded border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm text-yellow-100">
                 <div className="font-medium">审阅包 · 不可直接发布</div>
                 <div className="mt-1">{renderPublishBlockReason || '当前只有本地预览包'}</div>
+              </div>
+            )}
+
+            {renderedMp4Url && (
+              <div className="mt-3 rounded border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-100">
+                <div className="font-medium">本地 FFmpeg 真实成片已生成</div>
+                <div className="mt-1 text-green-100/75">可直接打开或下载真实 MP4{renderedSrtUrl ? '，字幕文件也已生成。' : '。'}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <a className="text-green-200 underline" href={toMediaUrl(renderedMp4Url)} target="_blank" rel="noreferrer">打开真实 MP4</a>
+                  <a className="text-green-200 underline" href={toMediaUrl(renderedMp4Url)} download>下载 MP4</a>
+                  {renderedSrtUrl && <a className="text-green-200 underline" href={toMediaUrl(renderedSrtUrl)} download>下载 SRT</a>}
+                </div>
               </div>
             )}
 
@@ -3444,7 +3496,11 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
 function ExportStep({ workflowData }: any) {
   const router = useRouter();
   const manifestUrl = workflowData.synthesisManifestUrl;
-  const outputUrl = workflowData.renderPreviewUrl || workflowData.synthesisOutputUrl;
+  const persistedOutputUrl = workflowData.renderOutputUrl || workflowData.synthesisOutputUrl;
+  const isRenderedMp4 = workflowData.renderBackend === 'ffmpeg_local'
+    && typeof persistedOutputUrl === 'string'
+    && persistedOutputUrl.toLowerCase().split(/[?#]/)[0].endsWith('.mp4');
+  const outputUrl = isRenderedMp4 ? persistedOutputUrl : workflowData.renderPreviewUrl || persistedOutputUrl;
   const renderManifestUrl = workflowData.renderManifestUrl;
   const srtUrl = workflowData.renderSrtUrl;
   const timelineUrl = workflowData.renderTimelineUrl;
@@ -3503,7 +3559,7 @@ function ExportStep({ workflowData }: any) {
               className="border-white/20"
             >
               <Play className="w-4 h-4 mr-2" />
-              HTML 预览
+              {isRenderedMp4 ? '真实 MP4' : 'HTML 预览'}
             </Button>
           )}
           {srtUrl && (

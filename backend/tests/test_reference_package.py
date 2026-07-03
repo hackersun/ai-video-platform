@@ -1,0 +1,345 @@
+from __future__ import annotations
+
+import importlib
+from typing import Any
+from uuid import uuid4
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+import app.models  # noqa: F401 - ensure all SQLAlchemy models are registered
+from app.core.database import Base
+from app.core import model_registry
+from app.models import Asset, Shot, StoryEntity
+
+
+@pytest_asyncio.fixture()
+async def db_session() -> AsyncSession:
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with Session() as session:
+        yield session
+
+    await engine.dispose()
+
+
+def _builder_module():
+    try:
+        return importlib.import_module("app.services.reference_package_builder")
+    except ModuleNotFoundError as exc:
+        pytest.fail(f"reference_package_builder module is missing: {exc}")
+
+
+async def _public_resolver(_db: AsyncSession, _user_id: str, url: str | None) -> dict[str, Any]:
+    if url and url.startswith("https://"):
+        return {"provider_url": url, "omitted_reason": None}
+    return {"provider_url": None, "omitted_reason": "参考资源不是公网 URL"}
+
+
+async def _cdn_resolver(_db: AsyncSession, _user_id: str, url: str | None) -> str | None:
+    if url and url.startswith("/static/"):
+        return f"https://cdn.example.com{url}"
+    return url if url and url.startswith("https://") else None
+
+
+def _shot(user_id: str, *, image_url: str | None = None) -> Shot:
+    return Shot(
+        id=f"shot-{uuid4()}",
+        user_id=user_id,
+        storyboard_id=f"storyboard-{uuid4()}",
+        shot_number=2,
+        duration=4,
+        prompt="孙剑持剑踏入旧山门",
+        image_url=image_url,
+        character_refs=[
+            {"entity_id": "char-main", "name": "孙剑"},
+            {"entity_id": "char-side", "name": "林遥"},
+        ],
+        extra_data={
+            "entity_refs": {
+                "characters": [
+                    {"entity_id": "char-main", "name": "孙剑"},
+                    {"entity_id": "char-side", "name": "林遥"},
+                ],
+                "scenes": [{"entity_id": "scene-gate", "name": "旧山门"}],
+                "props": [
+                    {"entity_id": "prop-sword", "name": "青锋剑"},
+                    {"entity_id": "prop-token", "name": "铜令牌"},
+                ],
+            }
+        },
+    )
+
+
+def _entity(user_id: str, entity_id: str, entity_type: str, name: str) -> StoryEntity:
+    return StoryEntity(
+        id=entity_id,
+        user_id=user_id,
+        entity_type=entity_type,
+        name=name,
+        is_approved=True,
+    )
+
+
+def _asset(
+    user_id: str,
+    entity_id: str,
+    entity_type: str,
+    view_key: str,
+    name: str,
+    *,
+    url: str | None = None,
+    version: int = 1,
+) -> Asset:
+    return Asset(
+        id=f"asset-{entity_id}-{view_key}-{uuid4()}",
+        user_id=user_id,
+        category=entity_type,
+        asset_type="image",
+        entity_id=entity_id,
+        entity_type=entity_type,
+        name=name,
+        url=url or f"https://cdn.example.com/{entity_id}-{view_key}.png",
+        is_active=True,
+        is_locked=True,
+        is_final=True,
+        version=version,
+        generation_params={"view_key": view_key},
+    )
+
+
+async def _seed_reference_assets(db: AsyncSession, user_id: str) -> None:
+    db.add_all(
+        [
+            _entity(user_id, "char-main", "character", "孙剑"),
+            _entity(user_id, "char-side", "character", "林遥"),
+            _entity(user_id, "scene-gate", "scene", "旧山门"),
+            _entity(user_id, "prop-sword", "prop", "青锋剑"),
+            _entity(user_id, "prop-token", "prop", "铜令牌"),
+            _asset(user_id, "char-main", "character", "front", "孙剑正面"),
+            _asset(user_id, "char-main", "character", "side", "孙剑侧面"),
+            _asset(user_id, "char-main", "character", "back", "孙剑背面"),
+            _asset(user_id, "scene-gate", "scene", "establishing", "旧山门全景"),
+            _asset(user_id, "prop-sword", "prop", "main", "青锋剑主视图"),
+            _asset(user_id, "prop-token", "prop", "main", "铜令牌主视图"),
+            _asset(user_id, "char-side", "character", "front", "林遥正面"),
+        ]
+    )
+    await db.flush()
+
+
+def test_reference_limits_from_registry() -> None:
+    get_limits = getattr(model_registry, "get_model_reference_limits", None)
+    assert callable(get_limits)
+
+    seedance_20 = get_limits("doubao-seedance-2-0-260128")
+    assert seedance_20["images"] == 9
+    assert seedance_20["videos"] == 3
+    assert seedance_20["audios"] == 3
+    assert seedance_20["at_reference"] is True
+    assert seedance_20["native_audio"] is True
+
+    fast = get_limits("volcano.seedance.2_0_fast")
+    assert fast["images"] == 9
+    assert fast["at_reference"] is True
+
+    legacy = get_limits("Doubao-Seedance-1.0-pro-fast")
+    assert legacy == {
+        "images": 1,
+        "videos": 0,
+        "audios": 0,
+        "at_reference": False,
+        "native_audio": False,
+    }
+    assert get_limits("unknown-video-model") == legacy
+
+
+@pytest.mark.asyncio
+async def test_build_package_prioritizes_protagonist_views(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = _shot(user_id)
+    previous_shot = Shot(
+        id=f"shot-prev-{uuid4()}",
+        user_id=user_id,
+        storyboard_id=shot.storyboard_id,
+        shot_number=1,
+        video_status="succeeded",
+        video_url="https://cdn.example.com/previous-shot.mp4",
+    )
+    db_session.add(previous_shot)
+    await _seed_reference_assets(db_session, user_id)
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 9, "videos": 3, "audios": 3, "at_reference": True, "native_audio": True},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert [(item["entity_id"], item["view_key"]) for item in package["images"][:3]] == [
+        ("char-main", "front"),
+        ("char-main", "side"),
+        ("char-main", "back"),
+    ]
+    assert [(item["entity_type"], item["entity_id"], item["view_key"]) for item in package["images"][3:7]] == [
+        ("scene", "scene-gate", "establishing"),
+        ("prop", "prop-sword", "main"),
+        ("prop", "prop-token", "main"),
+        ("character", "char-side", "front"),
+    ]
+    assert [item["at_index"] for item in package["images"]] == list(range(1, len(package["images"]) + 1))
+    assert all(item["url"].startswith("https://cdn.example.com/") for item in package["images"])
+    assert package["videos"] == [
+        {
+            "url": "https://cdn.example.com/previous-shot.mp4",
+            "role_tag": "previous_shot",
+            "source_shot_id": previous_shot.id,
+            "at_index": 1,
+        }
+    ]
+    assert package["at_reference_text"] is not None
+    assert package["at_reference_text"].startswith("@图1")
+    assert "@图3" in package["at_reference_text"]
+    assert "孙剑" in package["at_reference_text"]
+
+
+@pytest.mark.asyncio
+async def test_build_package_truncates_and_records_dropped(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = _shot(user_id)
+    await _seed_reference_assets(db_session, user_id)
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 4, "videos": 0, "audios": 0, "at_reference": True, "native_audio": False},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert [(item["entity_id"], item["view_key"]) for item in package["images"]] == [
+        ("char-main", "front"),
+        ("char-main", "side"),
+        ("char-main", "back"),
+        ("scene-gate", "establishing"),
+    ]
+    assert len(package["dropped"]) == 3
+    assert all(item["reason"] == "exceeds_model_reference_image_limit" for item in package["dropped"])
+    assert [(item["entity_name"], item["view_key"]) for item in package["dropped"]] == [
+        ("青锋剑", "main"),
+        ("铜令牌", "main"),
+        ("林遥", "front"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_single_image_model_unchanged(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = _shot(user_id, image_url="https://cdn.example.com/current-shot-reference.png")
+    await _seed_reference_assets(db_session, user_id)
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 1, "videos": 0, "audios": 0, "at_reference": False, "native_audio": False},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert package["images"] == [
+        {
+            "url": "https://cdn.example.com/current-shot-reference.png",
+            "role_tag": "reference_image",
+            "entity_type": None,
+            "entity_id": None,
+            "view_key": None,
+            "at_index": 1,
+        }
+    ]
+    assert package["reference_image"] == "https://cdn.example.com/current-shot-reference.png"
+    assert package["reference_image_source"] == "shot_image"
+    assert package["at_reference_text"] is None
+    assert package["dropped"] == []
+
+
+@pytest.mark.asyncio
+async def test_non_public_urls_skipped_unless_resolver_maps_public_url(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = Shot(
+        id=f"shot-{uuid4()}",
+        user_id=user_id,
+        storyboard_id=f"storyboard-{uuid4()}",
+        shot_number=1,
+        character_refs=[{"entity_id": "char-local", "name": "本地角色"}],
+        extra_data={"entity_refs": {"characters": [{"entity_id": "char-local", "name": "本地角色"}]}},
+    )
+    db_session.add_all(
+        [
+            _entity(user_id, "char-local", "character", "本地角色"),
+            _asset(
+                user_id,
+                "char-local",
+                "character",
+                "front",
+                "本地角色正面",
+                url="/static/generated/images/local-front.png",
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 9, "videos": 0, "audios": 0, "at_reference": True, "native_audio": False},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert package["images"] == []
+    assert len(package["dropped"]) == 1
+    assert "公网" in package["dropped"][0]["reason"]
+
+    mapped = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 9, "videos": 0, "audios": 0, "at_reference": True, "native_audio": False},
+        resolve_public_url=_cdn_resolver,
+    )
+
+    assert [item["url"] for item in mapped["images"]] == [
+        "https://cdn.example.com/static/generated/images/local-front.png"
+    ]
+    assert mapped["dropped"] == []

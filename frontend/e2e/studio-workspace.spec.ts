@@ -124,11 +124,17 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
 
   await page.goto('/studio?workflow_id=wf-001');
 
-  await expect(page.getByText('统一创作工作台')).toBeVisible();
+  await expect(page.getByText('连续动漫工作台')).toBeVisible();
   await expect(page.getByText('生产出片模式会强制执行资产锁、模型验证、公开素材地址和一致性要求。')).toBeVisible();
   await expect(page.getByText('短剧 Story Bible')).toBeVisible();
+  const productionBoard = page
+    .getByRole('heading', { name: '生产看板' })
+    .locator('xpath=ancestor::*[.//*[normalize-space()="当前分镜镜头数"]][1]');
+  const shotReviewLink = productionBoard.getByRole('link', { name: '镜头审阅' });
+  await expect(shotReviewLink).toBeVisible();
+  await expect(shotReviewLink).toHaveAttribute('href', '/studio/shot-review?workflow_id=wf-001');
   await expect(page.getByText('角色/场景/道具锁覆盖')).toBeVisible();
-  await expect(page.getByText('0%')).toBeVisible();
+  await expect(page.getByText('0%', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('2 个镜头缺少角色/场景/道具资产锁，生产出片前必须锁定。').first()).toBeVisible();
   await page.getByRole('button', { name: '应用资产锁' }).click();
 

@@ -162,10 +162,12 @@ type StoryboardMergeVideosResponse = {
   render_message?: string;
 };
 
+export type WorkflowRenderBackend = 'local_artifact_package' | 'ffmpeg_cloud' | 'ffmpeg_local';
+
 type WorkflowRenderResponse = {
   status: string;
   render_status?: string;
-  render_backend?: string;
+  render_backend?: WorkflowRenderBackend | string;
   output_url?: string;
   manifest_url?: string;
   preview_url?: string;
@@ -181,6 +183,147 @@ type WorkflowRenderResponse = {
   publication_blockers?: Array<{ code?: string; message?: string }>;
   publish_block_reason?: string;
   [key: string]: any;
+};
+
+export type ProductionCardEntityType = 'character' | 'scene' | 'prop';
+
+export type ProductionCardGap = {
+  code?: string;
+  message: string;
+  fix_url?: string;
+};
+
+export type ProductionCardView = {
+  view_key: string;
+  view_label?: string;
+  asset_id?: string;
+  url?: string;
+  is_locked?: boolean;
+  is_final?: boolean;
+  version?: number;
+};
+
+export type ProductionCard = {
+  entity_id: string;
+  entity_type: ProductionCardEntityType;
+  name: string;
+  novel_id: string;
+  visual?: {
+    views?: ProductionCardView[];
+    required_views?: string[];
+    missing_views?: string[];
+    locked_count?: number;
+  };
+  voice?: {
+    voice?: string | null;
+    voice_speed?: number | null;
+    story_bible_id?: string | null;
+    locked?: boolean;
+  } | null;
+  profile?: {
+    description?: string;
+    visual_dna?: any;
+    personality?: string;
+    relationships?: any;
+    forbidden_changes?: any;
+  };
+  state?: any;
+  usage?: {
+    shot_count?: number;
+    last_used_at?: string | null;
+  };
+  readiness?: {
+    score?: number;
+    final_ready?: boolean;
+    gaps?: ProductionCardGap[];
+  };
+};
+
+export type ProductionCardsResponse = {
+  novel_id: string;
+  cards: ProductionCard[];
+  summary?: {
+    ready?: number;
+    incomplete?: number;
+  };
+};
+
+export type BatchFinalizeSupportingRequest = {
+  min_occurrences?: number;
+  image_model_config_id?: string | null;
+  voice_pool?: string[] | null;
+};
+
+export type BatchFinalizeSupportingResponse = {
+  novel_id: string;
+  finalized: Array<{
+    entity_id: string;
+    name: string;
+    asset_id: string;
+    voice: string;
+  }>;
+  skipped: Array<{
+    entity_id: string;
+    name?: string;
+    reason: string;
+    occurrences?: number;
+  }>;
+};
+
+export type WorkflowShotReviewItem = {
+  shot_id: string;
+  shot_number: number;
+  latest_video_job_id?: string | null;
+  latest_tts_job_id?: string | null;
+  video_url?: string | null;
+  status?: string;
+  duration?: number;
+  subtitle_text?: string;
+  character_names?: string[];
+  evidence?: {
+    strategy_routing?: any;
+    reference_package_mode?: any;
+    generation_preflight?: any;
+  };
+  regeneration_count?: number;
+};
+
+export type WorkflowRenderArtifacts = {
+  output_url?: string | null;
+  manifest_url?: string | null;
+  source_manifest_url?: string | null;
+  preview_url?: string | null;
+  srt_url?: string | null;
+  timeline_url?: string | null;
+  render_manifest_url?: string | null;
+};
+
+export type WorkflowShotReviewResponse = {
+  workflow_id: string;
+  shots: WorkflowShotReviewItem[];
+  latest_render_artifacts?: WorkflowRenderArtifacts | null;
+};
+
+export type WorkflowShotRegenerateRequest = {
+  shot_ids?: string[] | null;
+  filter?: 'failed' | 'all_selected' | null;
+  character_name?: string | null;
+  production_strategy?: string | null;
+  model_config_id?: string | null;
+  audio_model_config_id?: string | null;
+  audio_mode?: 'model_audio' | 'none';
+};
+
+export type WorkflowShotRegenerateResponse = {
+  workflow_id?: string;
+  regenerated_shot_ids: string[];
+  created_count?: number;
+  video_job_ids: string[];
+  tts_job_ids?: string[];
+  media_job_ids?: string[];
+  subtitle_track_ids?: string[];
+  skipped?: Array<{ shot_id?: string; reason?: string }>;
+  ready_for_concatenate?: boolean;
 };
 
 type NovelImportChapter = {
@@ -1096,7 +1239,7 @@ class ApiClient {
     synthesis_job_id?: string;
     force?: boolean;
     quality_profile?: string;
-    render_backend?: string;
+    render_backend?: WorkflowRenderBackend;
     external_config_id?: string;
     burn_subtitles?: boolean;
     use_editable_timeline?: boolean;
@@ -1214,6 +1357,17 @@ class ApiClient {
     });
   }
 
+  async getWorkflowShotReview(workflowId: string) {
+    return this.request<WorkflowShotReviewResponse>(`/workflow/${workflowId}/shot-review`);
+  }
+
+  async regenerateWorkflowShots(workflowId: string, payload: WorkflowShotRegenerateRequest) {
+    return this.request<WorkflowShotRegenerateResponse>(`/workflow/${workflowId}/regenerate-shots`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
   // ========== Short Video Production 相关 ==========
 
   async generateShortEpisodePlan(params: {
@@ -1264,6 +1418,21 @@ class ApiClient {
     return this.request<any>(`/short-video/workflow/${workflowId}/refresh-contracts`, {
       method: 'POST',
       body: JSON.stringify(params),
+    });
+  }
+
+  async getProductionCards(novelId: string) {
+    return this.request<ProductionCardsResponse>(`/production-cards/novel/${novelId}`);
+  }
+
+  async getProductionCard(entityId: string) {
+    return this.request<ProductionCard>(`/production-cards/entity/${entityId}`);
+  }
+
+  async batchFinalizeSupportingCharacters(novelId: string, payload: BatchFinalizeSupportingRequest = {}) {
+    return this.request<BatchFinalizeSupportingResponse>(`/production-cards/novel/${novelId}/batch-finalize-supporting`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   }
 

@@ -13,12 +13,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
+from app.models import Asset, StoryEntity
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.shot import Shot
 from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
+from app.models.workflow import Workflow
 from init_db import init_db
 from main import app
 
@@ -218,6 +220,36 @@ def _get_media_job_extra(job_id: str) -> dict:
             job = await session.get(MediaGenerationJob, job_id)
             assert job is not None
             return job.extra_data or {}
+
+    return asyncio.run(_get())
+
+
+def _get_video_job_extra(job_id: str) -> dict:
+    async def _get() -> dict:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(VideoJob, job_id)
+            assert job is not None
+            return job.extra_data or {}
+
+    return asyncio.run(_get())
+
+
+def _get_tts_job_extra(job_id: str) -> dict:
+    async def _get() -> dict:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(TTSJob, job_id)
+            assert job is not None
+            return job.extra_data or {}
+
+    return asyncio.run(_get())
+
+
+def _get_tts_job_text(job_id: str) -> str:
+    async def _get() -> str:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(TTSJob, job_id)
+            assert job is not None
+            return job.text
 
     return asyncio.run(_get())
 
@@ -1339,6 +1371,22 @@ def test_workflow_media_batch_separate_video_tts_uses_selected_models(
     )
     assert storyboard_resp.status_code == 201
     storyboard_payload = storyboard_resp.json()
+
+    async def _make_all_generated_shots_dialogue() -> None:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(Shot).where(Shot.storyboard_id == storyboard_payload["id"]).order_by(Shot.shot_number)
+            )
+            for index, shot in enumerate(result.scalars().all(), start=1):
+                shot.dialogue = f"孙剑：第{index}句对白。"
+                shot.extra_data = {
+                    **(shot.extra_data or {}),
+                    "subtitle_text": shot.dialogue,
+                }
+            await session.commit()
+
+    asyncio.run(_make_all_generated_shots_dialogue())
+
     workflow_resp = client.post(
         "/api/v1/workflow/start",
         json={
@@ -2286,6 +2334,203 @@ def test_workflow_render_preflight_reports_missing_manifest(client: TestClient) 
     assert render_resp.status_code == 404
 
 
+def test_workflow_render_ffmpeg_local_marks_output_publishable(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = uuid4().hex
+    workflow_id = f"workflow-ffmpeg-local-{uuid4()}"
+    synthesis_job_id = f"synthesis-ffmpeg-local-{uuid4()}"
+    segments = [
+        {
+            "index": 1,
+            "start_seconds": 0,
+            "duration_seconds": 1.2,
+            "end_seconds": 1.2,
+            "video": {"url": "/static/dev/source-a.mp4", "duration_seconds": 1.2},
+            "audio": {"url": None, "duration_seconds": None, "text": "第一句"},
+            "subtitle": {"enabled": True, "text": "第一句", "start_seconds": 0, "end_seconds": 1.2},
+        }
+    ]
+
+    async def _fake_render_workflow_package(manifest, *, output_dir, burn_subtitles):
+        assert manifest["render_backend"] == "ffmpeg_local"
+        assert manifest["segments"] == segments
+        assert burn_subtitles is False
+        assert output_dir.name == "exports"
+        return {
+            "output_url": "/static/exports/final-ffmpeg-local.mp4",
+            "duration": 1.2,
+            "width": 160,
+            "height": 90,
+            "subtitle_url": "/static/exports/final-ffmpeg-local.srt",
+            "log_tail": "ffmpeg ok",
+        }
+
+    monkeypatch.setattr(
+        "app.services.ffmpeg_local_renderer.render_workflow_package",
+        _fake_render_workflow_package,
+    )
+
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=workflow_id,
+                    user_id=user_id,
+                    title="本地 FFmpeg 渲染工作流",
+                    status="running",
+                    current_step=8,
+                    completed_steps=[1, 2, 3, 4, 5, 6, 7, 8],
+                    synthesis_job_ids=[synthesis_job_id],
+                )
+            )
+            session.add(
+                SynthesisJob(
+                    id=synthesis_job_id,
+                    user_id=user_id,
+                    workflow_id=workflow_id,
+                    title="待真实渲染合成",
+                    model_id="local-render",
+                    model_name="本地渲染包",
+                    video_url="/static/dev/source-a.mp4",
+                    status="succeeded",
+                    progress=100,
+                    output_url="/static/dev/final-preview.mp4",
+                    duration_seconds=1.2,
+                    extra_data={
+                        "manifest_url": "/static/exports/source-sequence.json",
+                        "render_status": "ready",
+                        "render_backend": "local_manifest",
+                        "segment_count": 1,
+                        "duration_seconds": 1.2,
+                        "segments": segments,
+                    },
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert())
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/render",
+        json={"render_backend": "ffmpeg_local", "quality_profile": "publish"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["status"] == "rendered"
+    assert payload["render_backend"] == "ffmpeg_local"
+    assert payload["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert payload["srt_url"] == "/static/exports/final-ffmpeg-local.srt"
+    assert payload["duration_seconds"] == 1.2
+    assert payload["is_publishable"] is True
+    assert payload["output_kind"] == "final_video"
+    assert payload["publication_blockers"] == []
+
+    rendered_job = client.get(
+        f"/api/v1/synthesis/jobs/{synthesis_job_id}",
+        headers=_auth_headers(user_id),
+    ).json()
+    assert rendered_job["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert rendered_job["extra_data"]["render_backend"] == "ffmpeg_local"
+    assert rendered_job["extra_data"]["render_artifacts"]["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert rendered_job["extra_data"]["is_publishable"] is True
+
+    status_resp = client.get(f"/api/v1/workflow/status/{workflow_id}", headers=_auth_headers(user_id))
+    assert status_resp.status_code == 200
+    workflow_payload = status_resp.json()
+    assert workflow_payload["current_step"] == 10
+    assert 10 in workflow_payload["completed_steps"]
+
+
+def test_workflow_render_ffmpeg_local_returns_structured_error(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.ffmpeg_local_renderer import FFmpegLocalRenderError
+
+    user_id = uuid4().hex
+    workflow_id = f"workflow-ffmpeg-local-error-{uuid4()}"
+    synthesis_job_id = f"synthesis-ffmpeg-local-error-{uuid4()}"
+    segments = [
+        {
+            "index": 1,
+            "start_seconds": 0,
+            "duration_seconds": 1.0,
+            "end_seconds": 1.0,
+            "video": {"url": "/static/dev/source-error.mp4", "duration_seconds": 1.0},
+            "audio": {"url": None},
+            "subtitle": {"enabled": False, "text": "", "start_seconds": 0, "end_seconds": 1.0},
+        }
+    ]
+
+    async def _fake_render_error(*_args, **_kwargs):
+        raise FFmpegLocalRenderError("ffmpeg_not_installed", "FFmpeg 未安装")
+
+    monkeypatch.setattr(
+        "app.services.ffmpeg_local_renderer.render_workflow_package",
+        _fake_render_error,
+    )
+
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=workflow_id,
+                    user_id=user_id,
+                    title="本地 FFmpeg 错误工作流",
+                    status="running",
+                    current_step=8,
+                    completed_steps=[1, 2, 3, 4, 5, 6, 7, 8],
+                    synthesis_job_ids=[synthesis_job_id],
+                )
+            )
+            session.add(
+                SynthesisJob(
+                    id=synthesis_job_id,
+                    user_id=user_id,
+                    workflow_id=workflow_id,
+                    title="待真实渲染合成",
+                    model_id="local-render",
+                    model_name="本地渲染包",
+                    video_url="/static/dev/source-error.mp4",
+                    status="succeeded",
+                    progress=100,
+                    output_url="/static/dev/final-preview-error.mp4",
+                    duration_seconds=1.0,
+                    extra_data={
+                        "manifest_url": "/static/exports/source-error-sequence.json",
+                        "render_status": "ready",
+                        "render_backend": "local_manifest",
+                        "segment_count": 1,
+                        "duration_seconds": 1.0,
+                        "segments": segments,
+                    },
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert())
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/render",
+        json={"render_backend": "ffmpeg_local"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "ffmpeg_not_installed"
+    rendered_job = client.get(
+        f"/api/v1/synthesis/jobs/{synthesis_job_id}",
+        headers=_auth_headers(user_id),
+    ).json()
+    assert rendered_job["status"] == "failed"
+    assert rendered_job["extra_data"]["render_backend"] == "ffmpeg_local"
+    assert rendered_job["extra_data"]["render_issues"][0]["code"] == "ffmpeg_not_installed"
+
+
 def test_tts_job_includes_script_id_from_shot_context(client: TestClient, fake_tts_service: None) -> None:
     shot_id, _storyboard_id, script_id = _create_shot(client, "tts-lineage-user")
 
@@ -2918,6 +3163,7 @@ def test_workflow_media_batch_tracks_final_quality_production_strategy(client: T
     assert metadata["latest_production_strategy_intent"] == "final"
     assert metadata["latest_recommended_model_hint"] == "Seedance-2.0"
     assert metadata["production_strategy_metadata"]["production_strategy_label"] == "Final Quality"
+    assert metadata["production_strategy_metadata"]["routing_enabled"] is True
     status_media_extra = status_resp.json()["media_jobs"][0]["extra_data"]
     assert status_media_extra["production_strategy"] == "final_quality"
     assert status_media_extra["production_strategy_intent"] == "final"
@@ -2933,6 +3179,7 @@ def test_workflow_media_batch_tracks_final_quality_production_strategy(client: T
     assert snapshot["workflow"]["latest_production_strategy"] == "final_quality"
     assert snapshot["workflow"]["latest_production_strategy_intent"] == "final"
     assert snapshot["workflow"]["metadata"]["latest_recommended_model_hint"] == "Seedance-2.0"
+    assert snapshot["workflow"]["metadata"]["production_strategy_metadata"]["strategy_routing_enabled"] is True
     assert snapshot["jobs"]["media_jobs"][0]["production_strategy_label"] == "Final Quality"
 
     extra = _get_media_job_extra(batch_payload["media_job_ids"][0])
@@ -2994,6 +3241,7 @@ def _create_final_quality_workflow(
     *,
     asset_locks: list[dict] | None = None,
     character_rules: list[dict] | None = None,
+    dialogue: str = "孙剑：这次我要赢。",
 ) -> tuple[str, str]:
     novel_id = _create_novel(client, user_id)
     chapter_id = _create_chapter(client, user_id, novel_id, "第一章 终稿锁")
@@ -3041,9 +3289,9 @@ def _create_final_quality_workflow(
             "storyboard_id": storyboard_resp.json()["id"],
             "shot_number": 1,
             "duration": 4,
-            "prompt": "孙剑雨夜拔剑",
-            "dialogue": "孙剑：这次我要赢。",
-            "character_refs": [{"name": "孙剑"}],
+            "prompt": "孙剑雨夜拔剑" if dialogue else "雨夜空镜，雨水落在屋檐上。",
+            "dialogue": dialogue,
+            "character_refs": [{"name": "孙剑"}] if dialogue else [],
             "extra_data": extra_data,
         },
         headers=_auth_headers(user_id),
@@ -3131,3 +3379,442 @@ def test_final_quality_media_batch_saves_asset_and_voice_lock_snapshots(client: 
         "voice": "story-bible-sunjian",
         "voice_source": "story_bible",
     }
+
+
+def test_final_quality_no_dialogue_shot_does_not_require_voice_lock(client: TestClient) -> None:
+    user_id = f"final-locks-no-dialogue-{uuid4()}"
+    asset_locks = [
+        {
+            "asset_id": "asset-empty-shot-v1",
+            "asset_version_id": "asset-empty-shot-version-1",
+            "entity_name": "环境",
+            "category": "environment",
+        }
+    ]
+    workflow_id, _ = _create_final_quality_workflow(
+        client,
+        user_id,
+        asset_locks=asset_locks,
+        character_rules=[],
+        dialogue="",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first", "production_strategy": "final_quality"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    extra = _get_media_job_extra(response.json()["media_job_ids"][0])
+    assert extra["asset_version_locks"] == asset_locks
+    assert extra.get("voice_lock_snapshot") is None
+
+
+def _create_audio_route_workflow(
+    client: TestClient,
+    user_id: str,
+    *,
+    dialogue: str = "",
+    legacy_subtitle: str = "",
+    character_rules: list[dict] | None = None,
+    asset_locks: list[dict] | None = None,
+) -> tuple[str, str]:
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 音频路由")
+    bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "novel_id": novel_id,
+            "title": "音频路由 Story Bible",
+            "style": "国风动画",
+            "character_rules": character_rules or [],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert bible_resp.status_code == 201
+    story_bible_id = bible_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "音频路由剧本",
+            "content": "孙剑在雨夜确认计划。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "title": "音频路由分镜",
+            "content": {"chapter_id": chapter_id, "story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+
+    extra_data: dict = {"story_bible_id": story_bible_id}
+    if legacy_subtitle:
+        extra_data["subtitle"] = legacy_subtitle
+    if asset_locks is not None:
+        extra_data["production_context"] = {"asset_version_locks": asset_locks}
+
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_resp.json()["id"],
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "孙剑雨夜拔剑" if dialogue or legacy_subtitle else "雨夜空镜，风吹过屋檐",
+            "dialogue": dialogue,
+            "character_refs": [{"name": "孙剑"}] if dialogue or legacy_subtitle else [],
+            "extra_data": extra_data,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+    _set_shot_extra_data(shot_resp.json()["id"], extra_data)
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "音频路由工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_resp.json()["id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    return workflow_resp.json()["workflow_id"], story_bible_id
+
+
+def test_separate_video_tts_records_tts_audio_route_for_voice_lock(client: TestClient) -> None:
+    user_id = f"audio-route-lock-{uuid4().hex[:16]}"
+    workflow_id, story_bible_id = _create_audio_route_workflow(
+        client,
+        user_id,
+        dialogue="孙剑：出发。",
+        character_rules=[{"name": "孙剑", "voice": "story-bible-sunjian"}],
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "draft_fast",
+            "story_bible_id": story_bible_id,
+            "audio_mode": "model_audio",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["video_job_ids"]) == 1
+    assert len(payload["tts_job_ids"]) == 1
+    video_extra = _get_video_job_extra(payload["video_job_ids"][0])
+    tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])
+    assert video_extra["audio_route"] == {"route": "tts", "reason": "voice_lock"}
+    assert tts_extra["audio_route"] == {"route": "tts", "reason": "voice_lock"}
+
+
+def test_separate_video_tts_uses_legacy_subtitle_field_for_tts_text(client: TestClient) -> None:
+    user_id = f"audio-route-subtitle-{uuid4().hex[:16]}"
+    workflow_id, _story_bible_id = _create_audio_route_workflow(
+        client,
+        user_id,
+        dialogue="",
+        legacy_subtitle="孙剑：旧字段对白。",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "draft_fast",
+            "audio_mode": "model_audio",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["video_job_ids"]) == 1
+    assert len(payload["tts_job_ids"]) == 1
+    video_extra = _get_video_job_extra(payload["video_job_ids"][0])
+    tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])
+    assert video_extra["audio_route"] == {"route": "tts", "reason": "voice_lock_missing"}
+    assert tts_extra["audio_route"] == {"route": "tts", "reason": "voice_lock_missing"}
+    assert _get_tts_job_text(payload["tts_job_ids"][0]) == "孙剑：旧字段对白。"
+
+
+def test_action_shot_records_native_audio_route_on_seedance20(client: TestClient) -> None:
+    user_id = f"audio-route-native-{uuid4().hex[:16]}"
+    workflow_id, _story_bible_id = _create_audio_route_workflow(client, user_id, dialogue="")
+    model_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"seedance20-audio-route-{uuid4()}",
+        api_model_id="doubao-seedance-2-0-260128",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video", "video"],
+        api_key="",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "draft_fast",
+            "model_config_id": model_config_id,
+            "audio_mode": "model_audio",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["video_job_ids"]) == 1
+    assert payload["tts_job_ids"] == []
+    video_extra = _get_video_job_extra(payload["video_job_ids"][0])
+    assert video_extra["audio_route"] == {
+        "route": "native_audio",
+        "reason": "native_audio_supported",
+    }
+
+
+def test_production_native_audio_route_does_not_require_tts_api_key(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = f"native-video-task-{len(captured_video)}"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    async def _fake_generation_context_package(*args, **kwargs):
+        return {
+            "ready": True,
+            "issues": [],
+            "blocking_issue_count": 0,
+        }
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.workflow.build_generation_context_package",
+        _fake_generation_context_package,
+    )
+
+    user_id = f"native-no-tts-key-{uuid4().hex[:16]}"
+    asset_locks = [
+        {
+            "asset_id": "asset-native-action-v1",
+            "asset_version_id": "asset-native-action-version-1",
+            "entity_name": "环境",
+            "category": "environment",
+        }
+    ]
+    workflow_id, _story_bible_id = _create_audio_route_workflow(
+        client,
+        user_id,
+        dialogue="",
+        asset_locks=asset_locks,
+    )
+    model_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"seedance20-no-tts-key-{uuid4()}",
+        api_model_id="doubao-seedance-2-0-260128",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video", "video"],
+        api_key="sk-video",
+    )
+
+    monkeypatch.setenv("DEV_MODE", "false")
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "draft_fast",
+            "model_config_id": model_config_id,
+            "audio_mode": "model_audio",
+        },
+        headers=_signed_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["video_job_ids"]) == 1
+    assert payload["tts_job_ids"] == []
+    assert len(captured_video) == 1
+    video_extra = _get_video_job_extra(payload["video_job_ids"][0])
+    assert video_extra["audio_route"] == {
+        "route": "native_audio",
+        "reason": "native_audio_supported",
+    }
+
+
+def test_character_card_ready_matches_final_quality_gate_happy_path(client: TestClient) -> None:
+    user_id = uuid4().hex
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 定稿一致性")
+    bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "novel_id": novel_id,
+            "title": "定稿一致性 Story Bible",
+            "style": "国风动画",
+            "character_rules": [{"name": "孙剑", "voice": "story-bible-sunjian", "voice_speed": 1.0}],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert bible_resp.status_code == 201
+    story_bible_id = bible_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "定稿一致性剧本",
+            "content": "孙剑在雨夜确认计划。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "title": "定稿一致性分镜",
+            "content": {"chapter_id": chapter_id, "story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_id = storyboard_resp.json()["id"]
+
+    entity_id = f"ready-character-{uuid4()}"
+    asset_rows = []
+    asset_locks = []
+    for view_key in ("front", "side", "back"):
+        asset_id = f"ready-asset-{view_key}-{uuid4()}"
+        asset_rows.append(
+            Asset(
+                id=asset_id,
+                user_id=user_id,
+                novel_id=novel_id,
+                entity_id=entity_id,
+                entity_type="character",
+                category="character",
+                name=f"孙剑{view_key}定稿",
+                asset_type="image",
+                url=f"https://cdn.example.test/sunjian-{view_key}.png",
+                version=1,
+                is_active=True,
+                is_final=True,
+                is_locked=True,
+                generation_params={"view_key": view_key},
+            )
+        )
+        asset_locks.append(
+            {
+                "asset_id": asset_id,
+                "asset_version_id": f"{asset_id}-v1",
+                "entity_name": "孙剑",
+                "category": "character",
+                "view_key": view_key,
+            }
+        )
+
+    async def _seed_entity_assets() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                StoryEntity(
+                    id=entity_id,
+                    user_id=user_id,
+                    novel_id=novel_id,
+                    entity_type="character",
+                    name="孙剑",
+                    description="雨夜持剑少年",
+                    attributes={"visual_dna": {"hair": "black"}},
+                    confidence=100,
+                    is_approved=True,
+                )
+            )
+            session.add_all(asset_rows)
+            await session.commit()
+
+    asyncio.run(_seed_entity_assets())
+
+    card_resp = client.get(
+        f"/api/v1/production-cards/entity/{entity_id}",
+        headers=_auth_headers(user_id),
+    )
+    assert card_resp.status_code == 200, card_resp.text
+    card = card_resp.json()
+    assert card["readiness"]["final_ready"] is True
+    assert card["readiness"]["gaps"] == []
+
+    shot_extra = {
+        "story_bible_id": story_bible_id,
+        "production_context": {"asset_version_locks": asset_locks},
+    }
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_id,
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "孙剑雨夜拔剑",
+            "dialogue": "孙剑：这次我要赢。",
+            "character_refs": [{"name": "孙剑", "entity_id": entity_id}],
+            "extra_data": shot_extra,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+    _set_shot_extra_data(shot_resp.json()["id"], shot_extra)
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "定稿一致性工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={"strategy": "direct_av_first", "production_strategy": "final_quality"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert batch_resp.status_code == 200, batch_resp.text
+    extra = _get_media_job_extra(batch_resp.json()["media_job_ids"][0])
+    assert extra["asset_version_locks"] == asset_locks
+    assert extra["voice_lock_snapshot"]["voice"] == "story-bible-sunjian"

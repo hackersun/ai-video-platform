@@ -118,6 +118,72 @@ async function mark(
   onStage?.({ key, status, message });
 }
 
+export async function resumeEpisodePreviewFromConcatenate(params: {
+  workflowId: string;
+  videoJobIds?: string[];
+  mediaJobIds?: string[];
+  ttsJobIds?: string[];
+  title?: string;
+  onStage?: (stage: EpisodePreviewStageUpdate) => void;
+}) {
+  const videoJobIds = params.videoJobIds || [];
+  const mediaJobIds = params.mediaJobIds || [];
+  const ttsJobIds = params.ttsJobIds || [];
+
+  await mark(params.onStage, 'concatenate', 'running', '正在按分镜顺序编排连续成片清单');
+  const sequence = await apiClient.concatenateVideos(params.workflowId, {
+    video_job_ids: videoJobIds,
+    media_job_ids: mediaJobIds,
+    tts_job_ids: ttsJobIds,
+    title: params.title || '本集预览草片',
+    transition_style: 'cut',
+    include_subtitles: true,
+    subtitle_mode: 'dialogue',
+    audio_mix_strategy: 'match_by_shot',
+    quality_profile: 'review',
+  });
+  await mark(params.onStage, 'concatenate', 'done', `已编排 ${sequence.segment_count || 0} 个连续段落`);
+
+  await mark(params.onStage, 'preflight', 'running', '正在执行渲染预检');
+  const preflight = await apiClient.preflightWorkflowRender(params.workflowId, sequence.job_id, {
+    use_editable_timeline: true,
+  });
+  if (!preflight.ready) {
+    const message = issueMessage(preflight) || '渲染预检未通过，请先处理阻断项';
+    await mark(params.onStage, 'preflight', 'failed', message);
+    throw new Error(message);
+  }
+  await mark(params.onStage, 'preflight', 'done', '渲染预检已通过');
+
+  await mark(params.onStage, 'render', 'running', '正在生成本地预览、字幕和时间线包');
+  const render = await apiClient.renderWorkflowPackage(params.workflowId, {
+    synthesis_job_id: sequence.job_id,
+    force: true,
+    quality_profile: 'review',
+    render_backend: 'local_artifact_package',
+    burn_subtitles: false,
+    use_editable_timeline: true,
+  });
+  if (render.status === 'preflight_failed') {
+    const message = issueMessage(render) || render.message || '渲染包生成前预检失败';
+    await mark(params.onStage, 'render', 'failed', message);
+    throw new Error(message);
+  }
+  await mark(params.onStage, 'render', 'done', render.message || '本集草片渲染包已生成');
+
+  return {
+    synthesisJobId: sequence.job_id,
+    outputUrl: sequence.output_url,
+    manifestUrl: sequence.manifest_url,
+    previewUrl: render.preview_url,
+    srtUrl: render.srt_url,
+    timelineUrl: render.timeline_url,
+    renderManifestUrl: render.render_manifest_url,
+    preflight,
+    render,
+  };
+}
+
 export async function runEpisodePreviewProduction(params: {
   workflowId: string;
   novelId?: string;
@@ -297,46 +363,14 @@ export async function runEpisodePreviewProduction(params: {
       : `已创建 ${mediaJobIds.length} 个直生音视频任务和 ${subtitleTrackIds.length} 条字幕轨`
   );
 
-  await mark(onStage, 'concatenate', 'running', '正在按分镜顺序编排连续成片清单');
-  const sequence = await apiClient.concatenateVideos(workflowId, {
-    video_job_ids: videoJobIds,
-    media_job_ids: mediaJobIds,
-    tts_job_ids: ttsJobIds,
+  const resumed = await resumeEpisodePreviewFromConcatenate({
+    workflowId,
+    videoJobIds,
+    mediaJobIds,
+    ttsJobIds,
     title: params.title || '本集预览草片',
-    transition_style: 'cut',
-    include_subtitles: true,
-    subtitle_mode: 'dialogue',
-    audio_mix_strategy: 'match_by_shot',
-    quality_profile: 'review',
+    onStage,
   });
-  await mark(onStage, 'concatenate', 'done', `已编排 ${sequence.segment_count || 0} 个连续段落`);
-
-  await mark(onStage, 'preflight', 'running', '正在执行渲染预检');
-  const preflight = await apiClient.preflightWorkflowRender(workflowId, sequence.job_id, {
-    use_editable_timeline: true,
-  });
-  if (!preflight.ready) {
-    const message = issueMessage(preflight) || '渲染预检未通过，请先处理阻断项';
-    await mark(onStage, 'preflight', 'failed', message);
-    throw new Error(message);
-  }
-  await mark(onStage, 'preflight', 'done', '渲染预检已通过');
-
-  await mark(onStage, 'render', 'running', '正在生成本地预览、字幕和时间线包');
-  const render = await apiClient.renderWorkflowPackage(workflowId, {
-    synthesis_job_id: sequence.job_id,
-    force: true,
-    quality_profile: 'review',
-    render_backend: 'local_artifact_package',
-    burn_subtitles: false,
-    use_editable_timeline: true,
-  });
-  if (render.status === 'preflight_failed') {
-    const message = issueMessage(render) || render.message || '渲染包生成前预检失败';
-    await mark(onStage, 'render', 'failed', message);
-    throw new Error(message);
-  }
-  await mark(onStage, 'render', 'done', render.message || '本集草片渲染包已生成');
 
   return {
     workflowId,
@@ -355,14 +389,14 @@ export async function runEpisodePreviewProduction(params: {
     readyForConcatenate: true,
     pendingVideoJobIds,
     pendingTtsJobIds,
-    synthesisJobId: sequence.job_id,
-    outputUrl: sequence.output_url,
-    manifestUrl: sequence.manifest_url,
-    previewUrl: render.preview_url,
-    srtUrl: render.srt_url,
-    timelineUrl: render.timeline_url,
-    renderManifestUrl: render.render_manifest_url,
-    preflight,
-    render,
+    synthesisJobId: resumed.synthesisJobId,
+    outputUrl: resumed.outputUrl,
+    manifestUrl: resumed.manifestUrl,
+    previewUrl: resumed.previewUrl,
+    srtUrl: resumed.srtUrl,
+    timelineUrl: resumed.timelineUrl,
+    renderManifestUrl: resumed.renderManifestUrl,
+    preflight: resumed.preflight,
+    render: resumed.render,
   };
 }

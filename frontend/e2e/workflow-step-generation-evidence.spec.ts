@@ -317,3 +317,104 @@ test('workflow marks local artifact render package as review-only and keeps arti
   await expect(page.getByRole('link', { name: '时间线 EDL' })).toHaveAttribute('href', /synthesis-001-timeline\.json$/);
   await expect(page.getByRole('link', { name: '渲染清单' })).toHaveAttribute('href', /synthesis-001-render\.json$/);
 });
+
+test('workflow can run local FFmpeg render and exposes real mp4 artifacts', async ({ page }) => {
+  const renderRequests: Array<Record<string, unknown>> = [];
+  await mockCommonWorkflowRoutes(page, {
+    currentStep: 9,
+    scriptId: 'script-001',
+    storyboardId: 'storyboard-001',
+    videoJobs: [{ id: 'video-job-001', script_id: 'script-001', novel_id: 'novel-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    ttsJobs: [{ id: 'tts-job-001', script_id: 'script-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    synthesisJobs: [{
+      id: 'synthesis-001',
+      job_id: 'synthesis-001',
+      title: '第一章连续成片清单',
+      status: 'succeeded',
+      manifest_url: '/static/exports/synthesis-001.json',
+      output_url: '/static/exports/synthesis-001-preview.html',
+      segment_count: 2,
+      duration_seconds: 8,
+    }],
+    extraRoute: async (route, path, request) => {
+      if (path === '/api/v1/workflow/wf-269/render') {
+        const body = request.postData() ? JSON.parse(request.postData() || '{}') : {};
+        renderRequests.push(body);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            job_id: 'synthesis-001',
+            status: 'succeeded',
+            render_status: 'completed',
+            render_backend: 'ffmpeg_local',
+            output_kind: 'final_video',
+            is_publishable: true,
+            output_url: '/static/exports/synthesis-001-final.mp4',
+            srt_url: '/static/exports/synthesis-001.srt',
+            render_manifest_url: '/static/exports/synthesis-001-render.json',
+          }),
+        });
+        return true;
+      }
+      return false;
+    },
+  });
+
+  await page.goto('/workflow?workflow_id=wf-269');
+  await page.locator('select[title="渲染执行器"]').selectOption('ffmpeg_local');
+  await page.getByRole('button', { name: '生成真实成片' }).click();
+
+  await expect.poll(() => renderRequests.length).toBe(1);
+  expect(renderRequests[0]).toMatchObject({ render_backend: 'ffmpeg_local' });
+
+  await expect(page.getByText('本地 FFmpeg 真实成片已生成')).toBeVisible();
+  await expect(page.getByRole('link', { name: '打开真实 MP4' })).toHaveAttribute('href', /synthesis-001-final\.mp4$/);
+  await expect(page.getByRole('link', { name: '打开真实 MP4' })).toHaveAttribute('target', '_blank');
+  await expect(page.getByRole('link', { name: '下载 MP4' })).toHaveAttribute('download', '');
+  await expect(page.getByRole('link', { name: '下载 MP4' })).toHaveAttribute('href', /synthesis-001-final\.mp4$/);
+  await expect(page.getByRole('link', { name: '下载 SRT' })).toHaveAttribute('download', '');
+  await expect(page.getByRole('link', { name: '下载 SRT' })).toHaveAttribute('href', /synthesis-001\.srt$/);
+});
+
+test('workflow hydrates persisted local FFmpeg output instead of stale review preview', async ({ page }) => {
+  await mockCommonWorkflowRoutes(page, {
+    currentStep: 9,
+    scriptId: 'script-001',
+    storyboardId: 'storyboard-001',
+    videoJobs: [{ id: 'video-job-001', script_id: 'script-001', novel_id: 'novel-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    ttsJobs: [{ id: 'tts-job-001', script_id: 'script-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    synthesisJobs: [{
+      id: 'synthesis-001',
+      job_id: 'synthesis-001',
+      title: '第一章连续成片清单',
+      status: 'succeeded',
+      manifest_url: '/static/exports/synthesis-001.json',
+      output_url: '/static/exports/synthesis-001-final.mp4',
+      segment_count: 2,
+      duration_seconds: 8,
+      extra_data: {
+        render_status: 'rendered',
+        render_backend: 'ffmpeg_local',
+        output_kind: 'final_video',
+        is_publishable: true,
+        render_artifacts: {
+          output_url: '/static/exports/synthesis-001-final.mp4',
+          preview_url: '/static/exports/synthesis-001-preview.html',
+          srt_url: '/static/exports/synthesis-001.srt',
+          timeline_url: '/static/exports/synthesis-001-timeline.json',
+          render_manifest_url: '/static/exports/synthesis-001-render.json',
+        },
+      },
+    }],
+  });
+
+  await page.goto('/workflow?workflow_id=wf-269');
+
+  await expect(page.getByText('本地 FFmpeg 真实成片已生成')).toBeVisible();
+  await expect(page.getByRole('link', { name: '打开真实 MP4' })).toHaveAttribute('href', /synthesis-001-final\.mp4$/);
+
+  await page.getByRole('button', { name: '下一步' }).click();
+  await expect(page.getByRole('button', { name: '真实 MP4' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '真实 MP4' })).not.toHaveText(/HTML 预览/);
+});

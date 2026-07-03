@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { Boxes, CheckCircle2, Film, ListChecks, Lock, Timer, Video } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { StudioSnapshot } from '@/lib/studio-types';
 
@@ -20,19 +22,29 @@ function Metric({ label, value, detail, icon: Icon }: any) {
   );
 }
 
-export function StudioProductionBoard({ snapshot }: { snapshot: StudioSnapshot | null }) {
+export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: StudioSnapshot | null; workflowId?: string }) {
   const production = snapshot?.production || {};
   const jobs = snapshot?.jobs?.summary || {};
   const assets = snapshot?.assets || {};
   const shots = snapshot?.shots || [];
+  const activeWorkflowId = workflowId || snapshot?.workflow?.id || '';
+  const shotReviewHref = activeWorkflowId ? `/studio/shot-review?workflow_id=${activeWorkflowId}` : '/studio/shot-review';
   return (
     <div className="grid gap-4 xl:grid-cols-[1fr_380px]">
       <Card className="border-white/10 bg-white/5">
         <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-white">
-            <ListChecks className="h-4 w-4 text-cyan-300" />
-            生产看板
-          </CardTitle>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <CardTitle className="flex items-center gap-2 text-white">
+              <ListChecks className="h-4 w-4 text-cyan-300" />
+              生产看板
+            </CardTitle>
+            <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
+              <Link href={shotReviewHref}>
+                <Film className="mr-1.5 h-3.5 w-3.5" />
+                镜头审阅
+              </Link>
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

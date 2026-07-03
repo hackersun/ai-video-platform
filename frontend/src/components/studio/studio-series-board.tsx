@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookMarked, CheckCircle2, Lock, PlayCircle, ShieldAlert } from 'lucide-react';
+import { BookMarked, CheckCircle2, Film, Lock, PlayCircle, ShieldAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -144,6 +144,7 @@ export function StudioSeriesBoard({
     `资产锁${assetCoverageLabel} · 已锁定 ${assets.locked_count || 0} · 定稿 ${assets.final_count || 0} · 声线 ${voiceCount} · 缺资产 ${missingAssetCount ?? '未知'}`,
   ].join(' ');
   const producerHref = workflowId ? `/producer?workflow_id=${workflowId}` : '/producer';
+  const shotReviewHref = workflowId ? `/studio/shot-review?workflow_id=${workflowId}` : '/studio/shot-review';
   const quickStartHref = '/quick-start';
 
   return (
@@ -162,6 +163,12 @@ export function StudioSeriesBoard({
           <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
             <Button asChild size="sm" className="bg-cyan-600 hover:bg-cyan-700">
               <Link href={producerHref}>生成本集草片</Link>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
+              <Link href={shotReviewHref}>
+                <Film className="mr-1.5 h-3.5 w-3.5" />
+                镜头审阅
+              </Link>
             </Button>
             <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
               <Link href={quickStartHref}>从小说创建本集工程</Link>
