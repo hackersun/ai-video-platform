@@ -551,6 +551,7 @@ cd frontend && npm run typecheck && npm run build
 
 当前启动切片（2026-07-03）：
 - 已新增后端非阻断记录骨架：主角 locked front 资产作为参考，结果写入 `Asset.generation_params.visual_consistency_history`、`VideoJob.extra_data.visual_consistency` 与 `Shot.extra_data.quality_report.visual_consistency`。
+- 已新增本地抽帧 service：`backend/app/services/video_frame_extractor.py` 支持本地 `/static/` 视频抽帧到 `/static/generated/frames/`，远端 URL 和缺 ffmpeg 走结构化错误。
 - 已扩展 shot-review：返回 `quality_report`、`visual_consistency_score` 与 `evidence.visual_consistency`，默认低分镜头优先展示，低分不阻断生成/发布。
 - 当前评分实现是 `local-placeholder` 占位记录，真实 ffmpeg 抽帧与 embedding/多模态相似度服务仍是后续研究项；抽帧/评分接口需要保持可替换。
 

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
 from app.models import Asset, Shot, VideoJob
+from app.services.video_frame_extractor import VideoFrameExtractionError, extract_video_frames
 
 
 VISUAL_CONSISTENCY_REVIEW_THRESHOLD = 80.0
@@ -150,6 +151,7 @@ async def record_completed_shot_visual_consistency(
     model: str = "local-placeholder",
     issues: Optional[List[str]] = None,
     notes: Optional[str] = None,
+    extract_frames: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Record shot visual consistency evidence without blocking generation."""
     reference_asset = await find_primary_front_reference_asset(db, user_id=user_id, shot=shot)
@@ -157,13 +159,22 @@ async def record_completed_shot_visual_consistency(
         return None
 
     frames = [str(url) for url in (frame_urls or []) if url]
+    record_issues = list(issues or [])
+    if extract_frames and not frames and getattr(video_job, "video_url", None):
+        try:
+            extraction = extract_video_frames(str(video_job.video_url))
+            frames = [str(url) for url in extraction.get("frame_urls", []) if url]
+        except VideoFrameExtractionError as exc:
+            error_code = exc.detail.get("code") or "frame_extraction_failed"
+            record_issues.append(str(error_code))
+            notes = notes or "Frame extraction was unavailable; score remains non-blocking placeholder evidence."
     effective_score = score if score is not None else _placeholder_score(frame_urls=frames, video_job=video_job)
     record = _build_visual_consistency_record(
         score=effective_score,
         reference_asset=reference_asset,
         frame_urls=frames,
         model=model,
-        issues=issues,
+        issues=record_issues,
         notes=notes,
     )
 

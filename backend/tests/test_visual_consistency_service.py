@@ -142,3 +142,42 @@ async def test_record_completed_shot_visual_consistency_skips_without_front_refe
     assert record is None
     assert "visual_consistency" not in job.extra_data
     assert "visual_consistency_score" not in shot.extra_data["quality_report"]
+
+
+@pytest.mark.asyncio
+async def test_record_completed_shot_visual_consistency_can_extract_frames(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.visual_consistency_service as service
+
+    user_id = f"user-{uuid4()}"
+    entity_id = "char-main"
+    shot = _shot(user_id, entity_id)
+    asset = _front_asset(user_id, entity_id)
+    job = _video_job(user_id, shot)
+    db_session.add_all([shot, asset, job])
+    await db_session.flush()
+
+    monkeypatch.setattr(
+        service,
+        "extract_video_frames",
+        lambda video_url: {
+            "source_video_url": video_url,
+            "frame_count": 2,
+            "frame_urls": ["/static/generated/frames/run/frame-001.jpg", "/static/generated/frames/run/frame-002.jpg"],
+        },
+    )
+
+    record = await service.record_completed_shot_visual_consistency(
+        db_session,
+        user_id=user_id,
+        shot=shot,
+        video_job=job,
+        extract_frames=True,
+    )
+
+    assert record is not None
+    assert record["score"] == 86
+    assert record["frame_count"] == 2
+    assert record["frames"] == ["/static/generated/frames/run/frame-001.jpg", "/static/generated/frames/run/frame-002.jpg"]
