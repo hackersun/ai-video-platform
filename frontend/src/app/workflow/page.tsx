@@ -17,6 +17,7 @@ import { useToast } from '@/components/ui/toast';
 import { apiClient, type WorkflowRenderBackend } from '@/lib/api-client';
 import {
   getDefaultConfigForCapability,
+  getModelCapabilities,
   modelStatusLabel,
   SavedModelConfig,
 } from '@/lib/model-configs';
@@ -215,6 +216,13 @@ const snapshotModelConfig = (config?: SavedModelConfig | null): WorkflowModelSna
     isDefault: config.is_default,
   };
 };
+
+const resolveTextModelConfig = (configs: SavedModelConfig[], selectedId?: string) => (
+  configs.find((config) => config.id === selectedId)
+  || getDefaultConfigForCapability(configs, 'text')
+  || configs.find((config) => getModelCapabilities(config).includes('text'))
+  || null
+);
 
 function WorkflowGenerationEvidenceCard({
   testId,
@@ -2133,7 +2141,7 @@ function ScriptStep({
   const [isGenerating, setIsGenerating] = useState(false);
   const [scriptEvidence, setScriptEvidence] = useState<WorkflowStepEvidence | null>(null);
   const selectedTextModel = useMemo(
-    () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
+    () => resolveTextModelConfig(modelConfigs, textModelConfigId),
     [modelConfigs, textModelConfigId]
   );
 
@@ -2181,7 +2189,7 @@ function ScriptStep({
       const script = await apiClient.generateScript({
         chapter_id: workflowData.chapterId,
         style: 'anime',
-        model_config_id: textModelConfigId || undefined,
+        model_config_id: selectedTextModel?.id || textModelConfigId || undefined,
       });
       setScripts(prev => [script, ...prev.filter(item => item.id !== script.id)]);
       await onPatchWorkflow({ scriptId: script.id, storyboardId: undefined, shotIds: [] }, 4);
@@ -2327,7 +2335,7 @@ function StoryboardStep({
   const [isGenerating, setIsGenerating] = useState(false);
   const [storyboardEvidence, setStoryboardEvidence] = useState<WorkflowStepEvidence | null>(null);
   const selectedTextModel = useMemo(
-    () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
+    () => resolveTextModelConfig(modelConfigs, textModelConfigId),
     [modelConfigs, textModelConfigId]
   );
 
@@ -2380,7 +2388,7 @@ function StoryboardStep({
         shot_count: 8,
         style: 'anime',
         use_ai_refine: true,
-        model_config_id: textModelConfigId || undefined,
+        model_config_id: selectedTextModel?.id || textModelConfigId || undefined,
       });
       setStoryboards(prev => [storyboard, ...prev.filter(item => item.id !== storyboard.id)]);
       await onPatchWorkflow({
