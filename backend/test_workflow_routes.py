@@ -234,6 +234,21 @@ def _get_video_job_extra(job_id: str) -> dict:
     return asyncio.run(_get())
 
 
+def _get_first_workflow_shot_id(workflow_id: str) -> str:
+    async def _get() -> str:
+        async with AsyncSessionLocal() as session:
+            workflow = await session.get(Workflow, workflow_id)
+            assert workflow is not None
+            result = await session.execute(
+                select(Shot).where(Shot.storyboard_id == workflow.storyboard_id).order_by(Shot.shot_number)
+            )
+            shot = result.scalars().first()
+            assert shot is not None
+            return shot.id
+
+    return asyncio.run(_get())
+
+
 def _get_tts_job_extra(job_id: str) -> dict:
     async def _get() -> dict:
         async with AsyncSessionLocal() as session:
@@ -265,7 +280,7 @@ def _set_shot_extra_data(shot_id: str, extra_data: dict) -> None:
     asyncio.run(_update())
 
 
-def _seed_shot_reference_assets(user_id: str, shot_id: str) -> None:
+def _seed_shot_reference_assets(user_id: str, shot_id: str, views: tuple[str, ...] = ("front", "side")) -> None:
     async def _seed() -> None:
         entity_id = f"char-main-{shot_id[:8]}"
         async with AsyncSessionLocal() as session:
@@ -285,7 +300,9 @@ def _seed_shot_reference_assets(user_id: str, shot_id: str) -> None:
                     is_approved=True,
                 )
             )
-            for view_key, label in [("front", "正面"), ("side", "侧面")]:
+            view_labels = {"front": "正面", "side": "侧面", "back": "背面"}
+            for view_key in views:
+                label = view_labels.get(view_key, view_key)
                 session.add(
                     Asset(
                         id=f"asset-{entity_id}-{view_key}-{uuid4()}",
@@ -3576,6 +3593,139 @@ def test_final_quality_media_batch_requires_asset_and_voice_locks(client: TestCl
     assert detail["code"] == "final_quality_locks_missing"
     assert detail["missing_assets"]
     assert detail["missing_voices"]
+
+
+def test_final_quality_seedance20_blocks_insufficient_reference_package(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            class _CreateResult:
+                id = "video-task-should-not-run"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    asset_locks = [
+        {
+            "asset_id": "asset-sunjian-front",
+            "asset_version_id": "asset-sunjian-front-v1",
+            "entity_name": "孙剑",
+            "category": "character",
+        }
+    ]
+    workflow_id, _story_bible_id = _create_final_quality_workflow(
+        client,
+        user_id,
+        asset_locks=asset_locks,
+        character_rules=[{"name": "孙剑", "voice": "story-bible-sunjian"}],
+    )
+    shot_id = _get_first_workflow_shot_id(workflow_id)
+    _seed_shot_reference_assets(user_id, shot_id, views=("front",))
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-video-final-ref-gate-{uuid4()}",
+        api_model_id="doubao-seedance-2-0-260128",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="sk-video",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "final_quality",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "reference_package_insufficient"
+    assert detail["issues"][0]["code"] == "reference_package_insufficient"
+    assert detail["issues"][0]["entity_name"] == "孙剑"
+    assert detail["issues"][0]["available_reference_images"] == 1
+
+
+def test_final_quality_legacy_video_model_allows_single_reference_view(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = "video-task-legacy-final-reference"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    asset_locks = [
+        {
+            "asset_id": "asset-sunjian-front",
+            "asset_version_id": "asset-sunjian-front-v1",
+            "entity_name": "孙剑",
+            "category": "character",
+        }
+    ]
+    workflow_id, _story_bible_id = _create_final_quality_workflow(
+        client,
+        user_id,
+        asset_locks=asset_locks,
+        character_rules=[{"name": "孙剑", "voice": "story-bible-sunjian"}],
+    )
+    shot_id = _get_first_workflow_shot_id(workflow_id)
+    _seed_shot_reference_assets(user_id, shot_id, views=("front",))
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-video-final-legacy-{uuid4()}",
+        api_model_id="Doubao-Seedance-1.0-pro-fast",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="sk-video",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "final_quality",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(captured_video) == 1
+    assert response.json()["video_job_ids"]
 
 
 def test_draft_fast_media_batch_does_not_require_final_quality_locks(client: TestClient) -> None:

@@ -737,6 +737,63 @@ async def _final_quality_lock_snapshots(
     return snapshots
 
 
+async def _final_quality_reference_packages(
+    db: AsyncSession,
+    user_id: str,
+    workflow: Workflow,
+    shots: List[Shot],
+    *,
+    model_limits: Dict[str, Any],
+    resolve_public_url: Any,
+) -> Dict[str, Dict[str, Any]]:
+    if int(model_limits.get("images") or 1) <= 1:
+        return {}
+
+    packages: Dict[str, Dict[str, Any]] = {}
+    issues: List[Dict[str, Any]] = []
+    for shot in shots:
+        package = await build_reference_package(
+            db,
+            user_id,
+            shot=shot,
+            lineage=_lineage_for_workflow_shot(workflow, shot),
+            model_limits=model_limits,
+            resolve_public_url=resolve_public_url,
+        )
+        packages[shot.id] = package
+        protagonist_images = [
+            item for item in package.get("images") or []
+            if isinstance(item, dict) and item.get("role_tag") == "protagonist"
+        ]
+        if len(protagonist_images) >= 2:
+            continue
+        character_names = _shot_character_names(shot)
+        issues.append(
+            {
+                "code": "reference_package_insufficient",
+                "shot_id": shot.id,
+                "shot_number": shot.shot_number,
+                "entity_name": character_names[0] if character_names else None,
+                "available_reference_images": len(protagonist_images),
+                "required_reference_images": 2,
+                "dropped": package.get("dropped") or [],
+            }
+        )
+
+    if issues:
+        first_issue = issues[0]
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "code": "reference_package_insufficient",
+                "message": "Seedance 2.0 final_quality 生成前，主角至少需要 2 个可公网提交的锁定参考视图",
+                "entity_name": first_issue.get("entity_name"),
+                "issues": issues,
+            },
+        )
+    return packages
+
+
 def _shot_generation_prompt(shot: Shot) -> str:
     subtitle_text = _shot_subtitle_text(shot)
     parts = [
@@ -2002,6 +2059,16 @@ async def generate_workflow_media_batch(
         video_reference_limits = get_model_reference_limits(
             selected_video_model.get("api_model_id") or selected_video_model.get("config_model_id") or ""
         )
+        final_quality_reference_packages: Dict[str, Dict[str, Any]] = {}
+        if request.production_strategy == "final_quality":
+            final_quality_reference_packages = await _final_quality_reference_packages(
+                db,
+                user_id,
+                workflow,
+                shots,
+                model_limits=video_reference_limits,
+                resolve_public_url=_resolve_provider_image_delivery,
+            )
         selected_audio_model = await _resolve_saved_tts_model(db, user_id, request.audio_model_config_id)
         if not selected_audio_model and request.audio_mode != "none":
             default_audio = (get_task_default("tts") or {}).get("default_model") or {}
@@ -2047,14 +2114,16 @@ async def generate_workflow_media_batch(
             effective_image_url = package["reference_image"]
             reference_package = None
             if video_reference_limits.get("images", 1) > 1:
-                reference_package = await build_reference_package(
-                    db,
-                    user_id,
-                    shot=shot,
-                    lineage=lineage,
-                    model_limits=video_reference_limits,
-                    resolve_public_url=_resolve_provider_image_delivery,
-                )
+                reference_package = final_quality_reference_packages.get(shot.id)
+                if reference_package is None:
+                    reference_package = await build_reference_package(
+                        db,
+                        user_id,
+                        shot=shot,
+                        lineage=lineage,
+                        model_limits=video_reference_limits,
+                        resolve_public_url=_resolve_provider_image_delivery,
+                    )
                 effective_image_url = reference_package.get("reference_image") or effective_image_url
             video_seed = _resolve_video_seed(video_request, lineage, package["metadata"])
             subtitle_text = _shot_subtitle_text(shot)
