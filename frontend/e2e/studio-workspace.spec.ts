@@ -38,7 +38,22 @@ const snapshot = {
     { id: 'shot-002', shot_number: 2, prompt: '黑影穿过冷蓝月光', entity_ref_count: 2, asset_lock_count: 0 },
   ],
   assets: { total_count: 4, locked_count: 0, final_count: 0, by_category: { character: 1 } },
-  jobs: { summary: { video_count: 0, tts_count: 0, synthesis_count: 0, media_count: 0 } },
+  jobs: {
+    summary: { video_count: 1, tts_count: 0, synthesis_count: 0, media_count: 0 },
+    video_jobs: [
+      {
+        id: 'video-job-001',
+        status: 'succeeded',
+        reference_package_mode: '角色参考包',
+        reference_package: {
+          mode: 'multimodal',
+          image_count: 2,
+          video_count: 1,
+          dropped: [{ reason: 'exceeds_model_reference_image_limit', entity_name: '铜令牌' }],
+        },
+      },
+    ],
+  },
   timeline: {},
   issues: [
     {
@@ -189,6 +204,10 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
   await expect(renderLink).toHaveAttribute('href', '/workflow?workflow_id=wf-001');
   await expect(page.getByText('角色/场景/道具锁覆盖')).toBeVisible();
   await expect(page.getByText('0%', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('最近参考包')).toBeVisible();
+  await expect(page.getByText('图片 2')).toBeVisible();
+  await expect(page.getByText('视频 1')).toBeVisible();
+  await expect(page.getByText('裁剪 1')).toBeVisible();
   await expect(page.getByText('定稿卡就绪 1 · 待补齐 1')).toBeVisible();
   await expect(page.getByText('定稿卡仍有 1 项待补齐')).toBeVisible();
   await expect(page.getByText('2 个镜头缺少角色/场景/道具资产锁，生产出片前必须锁定。').first()).toBeVisible();

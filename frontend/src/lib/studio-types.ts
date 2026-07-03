@@ -124,6 +124,27 @@ export type StudioSnapshot = {
       media_count?: number;
       completed_media_count?: number;
     };
+    video_jobs?: Array<{
+      id?: string;
+      task_id?: string;
+      status?: string;
+      reference_package_mode?: string | null;
+      reference_package?: {
+        mode?: string;
+        image_count?: number;
+        video_count?: number;
+        audio_count?: number;
+        cropped_count?: number;
+        dropped_count?: number;
+        dropped?: Array<{
+          reason?: string;
+          entity_name?: string;
+          view_key?: string;
+        }>;
+      } | null;
+      created_at?: string | null;
+      updated_at?: string | null;
+    }>;
   };
   timeline?: {
     id?: string;

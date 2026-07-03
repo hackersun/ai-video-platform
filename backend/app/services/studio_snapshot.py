@@ -33,6 +33,7 @@ from app.services.production_bible import build_production_bible_summary
 SHOT_LIMIT = 80
 ASSET_LIMIT = 100
 JOB_LIMIT = 100
+REFERENCE_PACKAGE_EVIDENCE_LIMIT = 5
 
 
 def _json_dict(value: Any) -> Dict[str, Any]:
@@ -114,6 +115,68 @@ def _job_strategy_summary(job: Any) -> Dict[str, Any]:
         "production_strategy_intent": extra.get("production_strategy_intent"),
         "recommended_model_hint": extra.get("recommended_model_hint"),
     }
+
+
+def _safe_reference_item(item: Any) -> Dict[str, Any]:
+    if not isinstance(item, dict):
+        return {}
+    keys = ("id", "asset_id", "type", "role", "name", "source", "reason")
+    return {key: item[key] for key in keys if item.get(key) is not None}
+
+
+def _reference_count(package: Dict[str, Any], key: str, media_items: List[Any], package_items: List[Any], item_type: str) -> int:
+    value = package.get(key)
+    if isinstance(value, int):
+        return value
+    if media_items:
+        return len(media_items)
+    return len([item for item in package_items if _json_dict(item).get("type") == item_type])
+
+
+def _reference_package_summary(job: Any) -> Dict[str, Any]:
+    extra = _json_dict(getattr(job, "extra_data", None))
+    package = _json_dict(extra.get("reference_package"))
+    if not package:
+        return {}
+
+    items = _json_list(package.get("items"))
+    images = _json_list(package.get("images"))
+    videos = _json_list(package.get("videos"))
+    dropped = _json_list(package.get("dropped"))
+    evidence_source = items or [
+        {"type": "image", **item} for item in images if isinstance(item, dict)
+    ] + [
+        {"type": "video", **item} for item in videos if isinstance(item, dict)
+    ]
+    safe_items = [
+        safe_item
+        for safe_item in (_safe_reference_item(item) for item in evidence_source[:REFERENCE_PACKAGE_EVIDENCE_LIMIT])
+        if safe_item
+    ]
+    safe_dropped = [
+        safe_item
+        for safe_item in (_safe_reference_item(item) for item in dropped[:REFERENCE_PACKAGE_EVIDENCE_LIMIT])
+        if safe_item
+    ]
+    image_count = _reference_count(package, "image_count", images, items, "image")
+    video_count = _reference_count(package, "video_count", videos, items, "video")
+
+    summary: Dict[str, Any] = {
+        "image_count": image_count,
+        "video_count": video_count,
+        "dropped_count": len(dropped),
+    }
+    if safe_items:
+        summary["items"] = safe_items
+    if safe_dropped:
+        summary["dropped"] = safe_dropped
+
+    payload = {"reference_package": summary}
+    if extra.get("reference_package_mode"):
+        payload["reference_package_mode"] = extra.get("reference_package_mode")
+    elif package.get("reference_package_mode"):
+        payload["reference_package_mode"] = package.get("reference_package_mode")
+    return payload
 
 
 def _issue(
@@ -343,6 +406,7 @@ async def _load_jobs(db: AsyncSession, user_id: str, workflow: Workflow) -> Dict
                 "video_url": job.video_url,
                 "created_at": _dt(job.created_at),
                 **_job_strategy_summary(job),
+                **_reference_package_summary(job),
             }
             for job in video_jobs
         ],

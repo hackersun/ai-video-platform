@@ -9,6 +9,27 @@ import type { StudioSnapshot } from '@/lib/studio-types';
 
 const percent = (value?: number) => `${Math.round((value || 0) * 100)}%`;
 
+const statusLabel = (status?: string) => {
+  const labels: Record<string, string> = {
+    pending: '等待',
+    running: '生成中',
+    succeeded: '完成',
+    completed: '完成',
+    failed: '失败',
+    cancelled: '取消',
+  };
+  return status ? labels[status] || status : '未知';
+};
+
+const droppedReasonText = (reason?: string) => {
+  const labels: Record<string, string> = {
+    exceeds_model_reference_image_limit: '超出模型参考图上限',
+    unsupported_reference_media: '不支持的参考素材',
+    reference_image_not_public: '参考图不是公网地址',
+  };
+  return reason ? labels[reason] || reason : '参考素材被丢弃';
+};
+
 function Metric({ label, value, detail, icon: Icon }: any) {
   return (
     <div className="rounded-lg border border-white/10 bg-black/20 p-3">
@@ -25,6 +46,9 @@ function Metric({ label, value, detail, icon: Icon }: any) {
 export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: StudioSnapshot | null; workflowId?: string }) {
   const production = snapshot?.production || {};
   const jobs = snapshot?.jobs?.summary || {};
+  const referenceJobs = (snapshot?.jobs?.video_jobs || [])
+    .filter((job) => job.reference_package)
+    .slice(0, 3);
   const assets = snapshot?.assets || {};
   const shots = snapshot?.shots || [];
   const activeWorkflowId = workflowId || snapshot?.workflow?.id || '';
@@ -114,6 +138,35 @@ export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: Stud
               <div>合成：{jobs.synthesis_count || 0}</div>
             </div>
           </div>
+          {referenceJobs.length ? (
+            <div className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <div className="text-xs font-medium text-white/70">最近参考包</div>
+              <div className="mt-2 space-y-2">
+                {referenceJobs.map((job, index) => {
+                  const pkg = job.reference_package;
+                  const droppedCount = pkg?.dropped_count ?? pkg?.dropped?.length ?? 0;
+                  const croppedCount = pkg?.cropped_count || 0;
+                  const trimCount = droppedCount + croppedCount;
+                  const reason = pkg?.dropped?.[0]?.reason;
+
+                  return (
+                    <div key={job.id || job.task_id || index} className="border-t border-white/10 pt-2 first:border-t-0 first:pt-0">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate text-white/70">{statusLabel(job.status)}</span>
+                        <span className="truncate text-white/45">{job.reference_package_mode || pkg?.mode || '参考包'}</span>
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-white/60">
+                        <span>图片 {pkg?.image_count || 0}</span>
+                        <span>视频 {pkg?.video_count || 0}</span>
+                        <span>裁剪 {trimCount}</span>
+                      </div>
+                      {reason ? <div className="mt-1 truncate text-xs text-amber-200/75">丢弃：{droppedReasonText(reason)}</div> : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>
