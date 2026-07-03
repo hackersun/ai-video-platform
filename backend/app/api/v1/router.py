@@ -11,7 +11,7 @@ from app.api.v1.endpoints import (
     workflow, images, assets, projects, timelines, storyboard_ai, story_bible,
     media, subtitles, short_video, production_control, graph, batch, templates, versions,
     consistency, studio, prompt_skills,
-    production_cards,
+    production_cards, costs,
 )
 
 api_router = APIRouter()
@@ -33,6 +33,9 @@ api_router.include_router(coding_plan.router, prefix="/coding-plan", tags=["Codi
 
 # 使用统计API
 api_router.include_router(usage_stats.router, prefix="/usage-stats", tags=["使用统计"])
+
+# 成本预算API
+api_router.include_router(costs.router, prefix="", tags=["成本预算"])
 
 # 角色管理API
 api_router.include_router(characters.router, prefix="/characters", tags=["角色管理"])

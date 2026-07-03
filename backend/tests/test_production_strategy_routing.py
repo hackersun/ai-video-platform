@@ -15,7 +15,9 @@ from test_workflow_routes import (
     _create_chapter,
     _create_final_quality_workflow,
     _create_novel,
+    _get_first_workflow_shot_id,
     _insert_model_config,
+    _seed_shot_reference_assets,
 )
 
 
@@ -204,6 +206,8 @@ def test_final_quality_routes_to_seedance_20_before_fast(
         asset_locks=asset_locks,
         character_rules=[{"name": "孙剑", "voice": "story-bible-sunjian"}],
     )
+    shot_id = _get_first_workflow_shot_id(workflow_id)
+    _seed_shot_reference_assets(user_id, shot_id)
 
     response = client.post(
         f"/api/v1/workflow/{workflow_id}/generate-media-batch",

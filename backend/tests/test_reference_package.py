@@ -167,6 +167,7 @@ def test_reference_limits_from_registry() -> None:
         "at_reference": False,
         "native_audio": False,
     }
+    assert get_limits("doubao-seedance-2.0-fast") == legacy
     assert get_limits("unknown-video-model") == legacy
 
 

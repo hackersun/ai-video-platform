@@ -36,6 +36,13 @@ PRICING = {
 }
 
 
+VIDEO_RESOLUTION_DIMENSIONS = {
+    "480p": (854, 480),
+    "720p": (1280, 720),
+    "1080p": (1920, 1080),
+}
+
+
 # ============== 数据模型 ==============
 
 @dataclass
@@ -134,6 +141,10 @@ class CostCalculator:
         count: int = 1,
         duration: int = 4,
         resolution: str = "720p",
+        model_id: Optional[str] = None,
+        frame_rate: int = 24,
+        input_video_duration: float = 0,
+        price_per_million_tokens: Optional[float] = None,
         custom_price: Optional[float] = None,
     ) -> float:
         """
@@ -143,6 +154,10 @@ class CostCalculator:
             count: 生成数量
             duration: 时长（秒），支持 4/5/8/10
             resolution: 分辨率 (480p/720p/1080p)
+            model_id: 模型ID；Seedance 2.x 可生成计费 token 明细
+            frame_rate: 帧率，用于 Seedance 2.x token 公式
+            input_video_duration: 输入视频时长，用于视频到视频计费估算
+            price_per_million_tokens: 可选每百万 token 单价；不配置则保留旧估算
             custom_price: 自定义单价
 
         Returns:
@@ -150,6 +165,18 @@ class CostCalculator:
         """
         if custom_price is not None:
             return round(custom_price * count, 4)
+
+        billing_units = self.estimate_video_billing_units(
+            model_id=model_id,
+            count=count,
+            duration=duration,
+            resolution=resolution,
+            frame_rate=frame_rate,
+            input_video_duration=input_video_duration,
+        )
+        if billing_units and price_per_million_tokens is not None:
+            cost = (billing_units["estimated_tokens"] / 1_000_000) * price_per_million_tokens
+            return round(cost, 4)
 
         # 根据时长确定基础价格
         if duration == 4:
@@ -167,6 +194,42 @@ class CostCalculator:
 
         cost = base_price * resolution_multiplier * count
         return round(cost, 4)
+
+    def estimate_video_billing_units(
+        self,
+        *,
+        model_id: Optional[str] = None,
+        count: int = 1,
+        duration: int = 4,
+        resolution: str = "720p",
+        frame_rate: int = 24,
+        input_video_duration: float = 0,
+    ) -> Optional[Dict[str, Any]]:
+        """估算 Seedance 2.x 的视频计费 token 数，不内置供应商单价。"""
+        if not _is_seedance_2_model(model_id):
+            return None
+
+        width, height = VIDEO_RESOLUTION_DIMENSIONS.get(resolution, VIDEO_RESOLUTION_DIMENSIONS["720p"])
+        output_duration = duration or 0
+        input_duration = input_video_duration or 0
+        total_duration = input_duration + output_duration
+        tokens_per_video = int(round(total_duration * width * height * frame_rate / 1024))
+        estimated_tokens = tokens_per_video * count
+
+        return {
+            "formula": "seedance_2_token_formula",
+            "model_id": model_id,
+            "count": count,
+            "duration_seconds": duration,
+            "input_duration_seconds": _compact_number(input_duration),
+            "output_duration_seconds": duration,
+            "resolution": resolution,
+            "width": width,
+            "height": height,
+            "frame_rate": frame_rate,
+            "tokens_per_video": tokens_per_video,
+            "estimated_tokens": estimated_tokens,
+        }
 
     # ============== TTS成本 ==============
 
@@ -335,6 +398,10 @@ class CostCalculator:
                 count=p.get("count", 1),
                 duration=p.get("duration", 4),
                 resolution=p.get("resolution", "720p"),
+                model_id=p.get("model_id"),
+                frame_rate=p.get("frame_rate", 24),
+                input_video_duration=p.get("input_video_duration", 0),
+                price_per_million_tokens=p.get("price_per_million_tokens"),
                 custom_price=p.get("custom_price"),
             ),
             "tts": lambda p: self.estimate_tts_cost(
@@ -365,3 +432,12 @@ def get_cost_calculator() -> CostCalculator:
     if _cost_calculator is None:
         _cost_calculator = CostCalculator()
     return _cost_calculator
+
+
+def _is_seedance_2_model(model_id: Optional[str]) -> bool:
+    normalized = str(model_id or "").lower().replace("_", "-")
+    return "seedance-2-0" in normalized or "seedance-2.0" in normalized
+
+
+def _compact_number(value: float) -> float | int:
+    return int(value) if float(value).is_integer() else value

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models import Shot, Storyboard, ImageJob, VideoJob, TTSJob, SynthesisJob
+from app.services.cost_calculator import get_cost_calculator
 
 
 router = APIRouter(prefix="/costs", tags=["成本预算"])
@@ -125,6 +126,10 @@ async def estimate_resource_cost(
     count: int = Query(1, ge=1, le=100),
     duration: Optional[int] = Query(None, ge=1, le=60),
     resolution: str = Query("medium", pattern="^(low|medium|high|480p|720p|1080p)$"),
+    model_id: Optional[str] = Query(None),
+    frame_rate: int = Query(24, ge=1, le=120),
+    input_video_duration: float = Query(0, ge=0, le=3600),
+    price_per_million_tokens: Optional[float] = Query(None, ge=0),
     input_tokens: Optional[int] = Query(None, ge=0),
     output_tokens: Optional[int] = Query(None, ge=0),
     char_count: Optional[int] = Query(None, ge=0),
@@ -162,7 +167,32 @@ async def estimate_resource_cost(
             raise HTTPException(400, "video类型需要 duration 参数（秒）")
         parameters["duration"] = duration
         parameters["resolution"] = resolution
-        cost = calculator.estimate_video_cost(count=count, duration=duration, resolution=resolution)
+        if model_id:
+            parameters["model_id"] = model_id
+        parameters["frame_rate"] = frame_rate
+        if input_video_duration:
+            parameters["input_video_duration"] = input_video_duration
+        if price_per_million_tokens is not None:
+            parameters["price_per_million_tokens"] = price_per_million_tokens
+        billing_units = calculator.estimate_video_billing_units(
+            model_id=model_id,
+            count=count,
+            duration=duration,
+            resolution=resolution,
+            frame_rate=frame_rate,
+            input_video_duration=input_video_duration,
+        )
+        if billing_units:
+            parameters["billing_units"] = billing_units
+        cost = calculator.estimate_video_cost(
+            count=count,
+            duration=duration,
+            resolution=resolution,
+            model_id=model_id,
+            frame_rate=frame_rate,
+            input_video_duration=input_video_duration,
+            price_per_million_tokens=price_per_million_tokens,
+        )
         message = f"视频生成: {count} 个 ({duration}s, {resolution})"
 
     elif resource_type == "tts":
