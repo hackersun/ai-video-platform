@@ -75,6 +75,29 @@ def _auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
 
 
+def _attach_music_asset_to_shot(user_id: str, shot_id: str, novel_id: str, music_cue: str, url: str) -> None:
+    async def _update() -> None:
+        async with AsyncSessionLocal() as session:
+            shot = await session.get(Shot, shot_id)
+            assert shot is not None
+            shot.music_cue = music_cue
+            session.add(
+                Asset(
+                    id=f"music-asset-{uuid4()}",
+                    user_id=user_id,
+                    category="music",
+                    name=music_cue,
+                    asset_type="audio",
+                    url=url,
+                    novel_id=novel_id,
+                    is_active=True,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_update())
+
+
 def _signed_auth_headers(user_id: str) -> dict[str, str]:
     from app.api.v1.endpoints.auth import create_access_token
 
@@ -1158,6 +1181,9 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     storyboard_id = storyboard_payload["id"]
     script_id = storyboard_payload["script_id"]
     shots = storyboard_payload["shots"][:2]
+    music_cue = "测试悬疑BGM"
+    music_url = "https://cdn.example.com/music/suspense.mp3"
+    _attach_music_asset_to_shot(user_id, shots[0]["id"], novel_id, music_cue, music_url)
 
     workflow_resp = client.post(
         "/api/v1/workflow/start",
@@ -1255,6 +1281,11 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert manifest["tracks"]["subtitle"][0]["text"] == "第 1 个镜头台词"
     assert manifest["generation_preflight"]["sources"][0]["preflight"]["marker"] == "video-preflight-1"
     assert manifest["segments"][0]["audio"]["generation_preflight"]["marker"] == "tts-preflight-1"
+    assert manifest["segments"][0]["music"] == {
+        "url": music_url,
+        "cue": music_cue,
+        "volume": 0.18,
+    }
 
     workflow_status = client.get(
         f"/api/v1/workflow/status/{workflow_id}",

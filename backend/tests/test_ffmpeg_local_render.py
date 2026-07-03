@@ -203,6 +203,54 @@ def test_missing_subtitles_filter_returns_structured_error(
     assert exc_info.value.detail["code"] == "ffmpeg_subtitles_filter_unavailable"
 
 
+def test_render_segment_mixes_music_under_primary_audio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    renderer = _renderer_module()
+    video_path = tmp_path / "clip.mp4"
+    audio_path = tmp_path / "dialogue.wav"
+    music_path = tmp_path / "bgm.wav"
+    video_path.write_bytes(b"video")
+    audio_path.write_bytes(b"dialogue")
+    music_path.write_bytes(b"music")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(renderer, "_run", lambda command, _logs: commands.append(command))
+
+    renderer._render_segment(
+        1,
+        {
+            "video_path": video_path,
+            "audio_path": audio_path,
+            "music_path": music_path,
+            "music_volume": 0.16,
+            "duration": 1.2,
+        },
+        tmp_path,
+        "/usr/bin/ffmpeg",
+        [],
+    )
+
+    command = commands[0]
+    assert str(music_path) in command
+    filter_index = command.index("-filter_complex") + 1
+    assert "volume=0.16" in command[filter_index]
+    assert "amix=inputs=2" in command[filter_index]
+
+
+def test_prepare_segments_skips_unsupported_remote_music(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    renderer = _renderer_module()
+    static_root = tmp_path / "static"
+    fixture_dir = static_root / "fixtures"
+    fixture_dir.mkdir(parents=True)
+    video_path = fixture_dir / "clip.mp4"
+    video_path.write_bytes(b"video")
+    monkeypatch.setattr(renderer, "STATIC_ROOT", static_root)
+    segment = _segment(1, "/static/fixtures/clip.mp4", 0.0, 1.0)
+    segment["music"] = {"url": "https://cdn.example.com/music/suspense.mp3", "volume": 0.18}
+
+    prepared = renderer._prepare_segments([segment], "/usr/bin/ffprobe")
+
+    assert prepared[0]["music_path"] is None
+
+
 @requires_ffmpeg
 def test_render_two_segment_manifest_produces_playable_mp4(
     monkeypatch: pytest.MonkeyPatch,

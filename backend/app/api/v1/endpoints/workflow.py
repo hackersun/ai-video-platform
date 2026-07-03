@@ -21,7 +21,7 @@ from app.core.dev_generation import dev_audio_url, dev_synthesis_url, dev_video_
 from app.core.model_registry import get_model_reference_limits, get_task_default
 from app.core.security import get_current_user_id
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
-from app.models import Clip, Project, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot, StoryBible, Storyboard
+from app.models import Asset, Clip, Project, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot, StoryBible, Storyboard
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
@@ -128,6 +128,12 @@ def _lineage_value(job: Any, key: str) -> Optional[str]:
     if not value and isinstance(extra.get("lineage"), dict):
         value = extra["lineage"].get(key)
     return str(value) if value else None
+
+
+def _clean_text(value: Any) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _job_created_key(job: Any) -> str:
@@ -3987,6 +3993,36 @@ async def concatenate_videos(
         )
         shot_map = {shot.id: shot for shot in shot_result.scalars().all()}
 
+    music_assets_by_cue: Dict[str, Asset] = {}
+    music_cues = sorted(
+        {
+            cue
+            for shot in shot_map.values()
+            if (cue := _clean_text(getattr(shot, "music_cue", None)))
+        }
+    )
+    if music_cues:
+        music_result = await db.execute(
+            select(Asset)
+            .where(
+                Asset.user_id == user_id,
+                Asset.category == "music",
+                Asset.asset_type == "audio",
+                Asset.name.in_(music_cues),
+                Asset.is_active == True,
+            )
+            .order_by(desc(Asset.updated_at), desc(Asset.created_at))
+        )
+        for asset in music_result.scalars().all():
+            cue = _clean_text(asset.name)
+            if not cue:
+                continue
+            if asset.novel_id and asset.novel_id != workflow.novel_id:
+                continue
+            current = music_assets_by_cue.get(cue)
+            if current is None or (asset.novel_id == workflow.novel_id and current.novel_id != workflow.novel_id):
+                music_assets_by_cue[cue] = asset
+
     tts_by_shot: Dict[str, TTSJob] = {}
     for tts_job in ordered_tts_jobs:
         if tts_job.shot_id and tts_job.shot_id not in tts_by_shot:
@@ -4112,6 +4148,14 @@ async def concatenate_videos(
             },
             "consistency": video_extra.get("consistency") or {},
         }
+        music_cue = _clean_text(shot.music_cue if shot else None)
+        music_asset = music_assets_by_cue.get(music_cue or "") if music_cue else None
+        if music_asset and music_asset.url:
+            segment["music"] = {
+                "url": music_asset.url,
+                "cue": music_cue,
+                "volume": 0.18,
+            }
         if video_preflight:
             segment["video"]["generation_preflight"] = video_preflight
             source_entry = _source_preflight_entry(

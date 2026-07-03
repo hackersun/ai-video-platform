@@ -524,6 +524,7 @@ async def render_workflow_package(manifest: dict, *, output_dir: Path, burn_subt
 
 当前实现状态（2026-07-03）：
 - `/workflow` 已支持"本地 FFmpeg（真实成片）"渲染执行器、真实 MP4/SRT 下载入口；`/studio` 生产看板已新增"真实成片"入口，跳转当前 workflow 的渲染页。
+- 本地 FFmpeg renderer 已支持 manifest 段级 `music.url` 低音量混入主音轨；workflow concatenate 会在 `Shot.music_cue` 精确命中音乐音频资产时写入 `segment.music`，远端/不可用 BGM 在本地渲染时跳过不阻断成片。
 
 ### TDD 测试
 

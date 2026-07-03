@@ -142,15 +142,28 @@ def _prepare_segments(segments: List[dict], ffprobe_path: str) -> List[Dict[str,
         video_path = _resolve_local_media(video_url)
         audio_url = _segment_audio_url(segment)
         audio_path = _resolve_local_media(audio_url) if audio_url else None
+        music_url = _segment_music_url(segment)
+        music_path = _resolve_optional_music(music_url)
         prepared.append(
             {
                 "index": segment.get("index") or index,
                 "video_path": video_path,
                 "audio_path": audio_path,
+                "music_path": music_path,
+                "music_volume": _segment_music_volume(segment),
                 "duration": _segment_duration(segment, video_path, ffprobe_path),
             }
         )
     return prepared
+
+
+def _resolve_optional_music(url: Optional[str]) -> Optional[Path]:
+    if not url:
+        return None
+    try:
+        return _resolve_local_media(url)
+    except FFmpegLocalRenderError:
+        return None
 
 
 def _segment_video_url(segment: dict) -> Optional[str]:
@@ -161,6 +174,19 @@ def _segment_video_url(segment: dict) -> Optional[str]:
 def _segment_audio_url(segment: dict) -> Optional[str]:
     audio = segment.get("audio") if isinstance(segment.get("audio"), dict) else {}
     return audio.get("url") or segment.get("audio_url") or segment.get("audioUrl")
+
+
+def _segment_music_url(segment: dict) -> Optional[str]:
+    music = segment.get("music") if isinstance(segment.get("music"), dict) else {}
+    return music.get("url") or segment.get("music_url") or segment.get("musicUrl")
+
+
+def _segment_music_volume(segment: dict) -> float:
+    music = segment.get("music") if isinstance(segment.get("music"), dict) else {}
+    value = _non_negative_float(music.get("volume"))
+    if value is None:
+        value = _non_negative_float(segment.get("music_volume"))
+    return min(value, 1.0) if value is not None else 0.18
 
 
 def _segment_duration(segment: dict, video_path: Path, ffprobe_path: str) -> float:
@@ -249,9 +275,26 @@ def _render_segment(
     ]
     if segment["audio_path"]:
         cmd.extend(["-i", str(segment["audio_path"])])
-        cmd.extend(["-filter_complex", "[1:a:0]apad[a]", "-map", "0:v:0", "-map", "[a]"])
+        audio_input_index = 1
     else:
         cmd.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"])
+        audio_input_index = 1
+
+    music_path = segment.get("music_path")
+    if music_path:
+        cmd.extend(["-i", str(music_path)])
+        music_input_index = 2
+        music_volume = _non_negative_float(segment.get("music_volume"))
+        music_volume = min(music_volume, 1.0) if music_volume is not None else 0.18
+        filter_complex = (
+            f"[{audio_input_index}:a:0]volume=1.0,apad[a0];"
+            f"[{music_input_index}:a:0]volume={music_volume:g},apad[a1];"
+            "[a0][a1]amix=inputs=2:duration=longest:dropout_transition=0[a]"
+        )
+        cmd.extend(["-filter_complex", filter_complex, "-map", "0:v:0", "-map", "[a]"])
+    elif segment["audio_path"]:
+        cmd.extend(["-filter_complex", "[1:a:0]apad[a]", "-map", "0:v:0", "-map", "[a]"])
+    else:
         cmd.extend(["-map", "0:v:0", "-map", "1:a:0"])
 
     cmd.extend(
@@ -440,6 +483,14 @@ def _positive_float(value: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def _non_negative_float(value: Any) -> Optional[float]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
 
 
 def _safe_id(value: str) -> str:
