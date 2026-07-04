@@ -2284,6 +2284,17 @@ class ApiClient {
     });
   }
 
+  async getProductionBibleReview(novelId: string) {
+    return this.request<any>(`/story-bibles/novel/${novelId}/production-bible/review`);
+  }
+
+  async approveProductionEntity(entityId: string, approved: boolean, approvalNote?: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approved, approval_note: approvalNote }),
+    });
+  }
+
   // ========== Graph / Character Relations 相关 ==========
 
   async getNovelGraph(novelId: string) {

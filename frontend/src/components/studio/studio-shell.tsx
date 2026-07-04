@@ -31,6 +31,7 @@ import { StudioProductionBoard } from './studio-production-board';
 import { StudioSeriesBoard } from './studio-series-board';
 import { PromptSkillPanel } from './prompt-skill-panel';
 import { SeriesOverviewPanel } from './series-overview-panel';
+import { ProductionBiblePanel } from './production-bible-panel';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
@@ -426,6 +427,24 @@ export function StudioShell() {
     router.push(novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards');
   }, [loadSnapshot, mode, router, snapshot, toast, workflowId]);
 
+  const handleApproveProductionEntity = useCallback(async (entityId: string) => {
+    if (!entityId) return;
+    setLoading(true);
+    try {
+      await apiClient.approveProductionEntity(entityId, true, 'Series Studio 确认');
+      toast({
+        title: '实体已确认',
+        description: 'Production Bible 已刷新。',
+        type: 'success',
+      });
+      await loadSnapshot(workflowId, mode);
+    } catch (err: any) {
+      setError(err.message || '确认实体失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadSnapshot, mode, toast, workflowId]);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -504,6 +523,7 @@ export function StudioShell() {
           {snapshot ? <SeriesOverviewPanel snapshot={snapshot} onPrimaryAction={handlePrimaryAction} /> : null}
           <PromptSkillPanel />
           <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} productionCards={productionCards} />
+          <ProductionBiblePanel snapshot={snapshot} onApproveEntity={handleApproveProductionEntity} />
           <StudioContextPanel snapshot={snapshot} />
           <StudioProductionBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContinuityBoard snapshot={snapshot} />
