@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time_utils import utc_now
 from app.models import Novel, Script, Shot, StoryEntity, Storyboard
 from app.services.entity_ref_normalizer import entity_ref_ids
 from app.services.series_production import SERIES_PLAN_KEY
@@ -263,4 +264,83 @@ async def analyze_entity_change_impact(db: AsyncSession, user_id: str, entity_id
         "episodes": episode_payloads,
         "shots": affected_shots,
         "apply_options": apply_options,
+    }
+
+
+async def mark_entity_change_impact_for_review(
+    db: AsyncSession,
+    user_id: str,
+    entity_id: str,
+    *,
+    episode_index: int,
+    change_note: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Mark impacted shots from the selected episode onward for continuity review."""
+    if episode_index < 1:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="episode_index 必须大于等于 1")
+
+    impact = await analyze_entity_change_impact(db, user_id, entity_id)
+    entity = impact.get("entity") or {}
+    selected_episodes = [
+        episode for episode in _json_list(impact.get("episodes"))
+        if int(episode.get("episode_index") or 0) >= episode_index
+    ]
+    shot_ids: List[str] = []
+    for episode in selected_episodes:
+        for shot in _json_list(episode.get("affected_shots")):
+            shot_id = shot.get("id") if isinstance(shot, dict) else None
+            if shot_id and shot_id not in shot_ids:
+                shot_ids.append(str(shot_id))
+
+    if not selected_episodes:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到可应用的受影响集数")
+    if not shot_ids:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到需要复审的受影响镜头")
+
+    shots: List[Shot] = []
+    if shot_ids:
+        shots = list((await db.execute(
+            select(Shot).where(and_(Shot.user_id == user_id, Shot.id.in_(shot_ids)))
+        )).scalars().all())
+
+    now = utc_now()
+    review_reason = f"{entity.get('name') or '实体'} 从第 {episode_index} 集起应用新设定"
+    if change_note:
+        review_reason = f"{review_reason}：{change_note}"
+
+    for shot in shots:
+        extra_data = dict(_json_dict(shot.extra_data))
+        production_context = dict(_json_dict(extra_data.get("production_context")))
+        continuity_change = {
+            "entity_id": entity_id,
+            "entity_name": entity.get("name"),
+            "entity_type": entity.get("entity_type"),
+            "entity_version": entity.get("version"),
+            "episode_index": episode_index,
+            "change_note": change_note,
+            "marked_at": now.isoformat(),
+        }
+        extra_data["needs_review"] = True
+        extra_data["review_reason"] = review_reason
+        extra_data["review_at"] = now.isoformat()
+        production_context["review_state"] = "changes_requested"
+        production_context["review_notes"] = review_reason
+        production_context["continuity_change"] = continuity_change
+        production_context["updated_at"] = now.isoformat()
+        extra_data["production_context"] = production_context
+        shot.extra_data = extra_data
+        shot.updated_at = now
+
+    await db.commit()
+
+    return {
+        "status": "review_plan_created",
+        "entity": entity,
+        "novel_id": impact.get("novel_id"),
+        "episode_index": episode_index,
+        "change_note": change_note,
+        "affected_episode_count": len(selected_episodes),
+        "marked_shot_count": len(shots),
+        "shot_ids": shot_ids,
+        "review_reason": review_reason,
     }

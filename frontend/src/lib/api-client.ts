@@ -2229,6 +2229,16 @@ class ApiClient {
     return this.request<any>(`/story-bibles/entities/${entityId}/impact`);
   }
 
+  async createStoryEntityImpactReviewPlan(entityId: string, data: {
+    episode_index: number;
+    change_note?: string;
+  }) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/impact/review-plan`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async updateStoryEntityScope(entityId: string, data: {
     scope: 'global' | 'novel' | 'chapter' | 'script';
     novel_id?: string;

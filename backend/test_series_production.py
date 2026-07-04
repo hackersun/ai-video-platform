@@ -237,3 +237,38 @@ def test_story_entity_impact_route_reports_affected_episode_range(client: TestCl
     assert payload["episodes"][0]["episode_index"] == 1
     assert payload["episodes"][0]["affected_shots"][0]["id"]
     assert payload["apply_options"][0]["label"] == "从第 1 集起应用新设定"
+
+
+def test_story_entity_impact_review_plan_route_marks_affected_shots(client: TestClient) -> None:
+    user_id = f"entity-impact-plan-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+
+    response = client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "review_plan_created"
+    assert payload["episode_index"] == 1
+    assert payload["marked_shot_count"] == 1
+    assert payload["shot_ids"]
+    assert "服装主色改为深蓝" in payload["review_reason"]
+
+    shot_resp = client.get(
+        f"/api/v1/shots/{payload['shot_ids'][0]}",
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 200
+    shot_extra = shot_resp.json()["extra_data"]
+    assert shot_extra["needs_review"] is True
+    assert shot_extra["production_context"]["review_state"] == "changes_requested"
+    assert shot_extra["production_context"]["continuity_change"]["entity_id"] == fixture["entity_ids"]["沈砚"]

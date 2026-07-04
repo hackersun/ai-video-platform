@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401 - ensure all SQLAlchemy models are registered
 from app.core.database import Base
 from app.models import Chapter, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard
-from app.services.entity_impact_service import analyze_entity_change_impact
+from app.services.entity_impact_service import analyze_entity_change_impact, mark_entity_change_impact_for_review
 from app.services.series_production import SERIES_PLAN_KEY, build_series_plan, get_series_plan
 
 
@@ -376,3 +376,130 @@ async def test_entity_change_impact_accepts_legacy_singular_entity_refs(
     assert impact["affected_shot_count"] == 1
     assert impact["episodes"][0]["episode_index"] == 2
     assert impact["episodes"][0]["affected_shots"][0]["id"] == shot.id
+
+
+@pytest.mark.asyncio
+async def test_entity_change_review_plan_marks_shots_from_selected_episode(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    entity = StoryEntity(
+        id="entity-review-plan",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        entity_type="character",
+        name="沈砚",
+        version=3,
+    )
+    script_1 = Script(
+        id="script-review-1",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapter_id="chapter-1",
+        title="第一集剧本",
+    )
+    script_3 = Script(
+        id="script-review-3",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapter_id="chapter-3",
+        title="第三集剧本",
+    )
+    storyboard_1 = Storyboard(
+        id="storyboard-review-1",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        script_id=script_1.id,
+        title="第一集分镜",
+    )
+    storyboard_3 = Storyboard(
+        id="storyboard-review-3",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        script_id=script_3.id,
+        title="第三集分镜",
+    )
+    shot_1 = Shot(
+        id="shot-review-1",
+        user_id=seeded_novel_with_chapters.user_id,
+        storyboard_id=storyboard_1.id,
+        shot_number=1,
+        prompt="沈砚在旧城追查密信",
+        character_refs=[{"character_id": entity.id, "name": "沈砚"}],
+        extra_data={"production_context": {"review_state": "approved"}},
+    )
+    shot_3 = Shot(
+        id="shot-review-3",
+        user_id=seeded_novel_with_chapters.user_id,
+        storyboard_id=storyboard_3.id,
+        shot_number=2,
+        prompt="沈砚在钟楼前看见星光",
+        character_refs=[{"character_id": entity.id, "name": "沈砚"}],
+        extra_data={"production_context": {"review_state": "approved"}},
+    )
+    db_session.add_all([entity, script_1, script_3, storyboard_1, storyboard_3, shot_1, shot_3])
+    await db_session.flush()
+
+    await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapters_per_episode=1,
+    )
+
+    plan = await mark_entity_change_impact_for_review(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        "entity-review-plan",
+        episode_index=3,
+        change_note="服装主色改为深蓝",
+    )
+
+    await db_session.refresh(shot_1)
+    await db_session.refresh(shot_3)
+
+    assert plan["status"] == "review_plan_created"
+    assert plan["episode_index"] == 3
+    assert plan["marked_shot_count"] == 1
+    assert plan["shot_ids"] == ["shot-review-3"]
+    assert not (shot_1.extra_data or {}).get("needs_review")
+    shot_3_extra = shot_3.extra_data or {}
+    assert shot_3_extra["needs_review"] is True
+    assert "从第 3 集起应用新设定" in shot_3_extra["review_reason"]
+    assert shot_3_extra["production_context"]["review_state"] == "changes_requested"
+    assert shot_3_extra["production_context"]["continuity_change"]["entity_id"] == entity.id
+    assert shot_3_extra["production_context"]["continuity_change"]["change_note"] == "服装主色改为深蓝"
+
+
+@pytest.mark.asyncio
+async def test_entity_change_review_plan_rejects_empty_shot_plan(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    entity = StoryEntity(
+        id="entity-empty-review-plan",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        entity_type="character",
+        name="无镜头角色",
+    )
+    db_session.add(entity)
+    await db_session.flush()
+
+    await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapters_per_episode=1,
+    )
+
+    with pytest.raises(Exception) as exc_info:
+        await mark_entity_change_impact_for_review(
+            db_session,
+            seeded_novel_with_chapters.user_id,
+            "entity-empty-review-plan",
+            episode_index=1,
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 404
+    assert "镜头" in str(getattr(exc_info.value, "detail", ""))

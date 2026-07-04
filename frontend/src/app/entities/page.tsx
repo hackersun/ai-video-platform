@@ -113,6 +113,15 @@ interface EntityImpact {
   episodes?: EntityImpactEpisode[];
 }
 
+interface EntityImpactReviewPlan {
+  status: string;
+  episode_index: number;
+  marked_shot_count: number;
+  affected_episode_count?: number;
+  shot_ids?: string[];
+  review_reason?: string;
+}
+
 interface AssetViewPreset {
   entity_type: string;
   category: string;
@@ -204,6 +213,8 @@ export default function EntitiesPage() {
   const [detailImpact, setDetailImpact] = useState<EntityImpact | null>(null);
   const [detailImpactLoading, setDetailImpactLoading] = useState(false);
   const [detailImpactError, setDetailImpactError] = useState<string | null>(null);
+  const [detailReviewPlan, setDetailReviewPlan] = useState<EntityImpactReviewPlan | null>(null);
+  const [detailReviewPlanCreating, setDetailReviewPlanCreating] = useState(false);
 
   useEffect(() => {
     loadEntities();
@@ -521,6 +532,7 @@ export default function EntitiesPage() {
     setDetailDialogOpen(true);
     setDetailImpact(null);
     setDetailImpactError(null);
+    setDetailReviewPlan(null);
     setDetailImpactLoading(true);
     try {
       const impact = await apiClient.getStoryEntityImpact(entity.id);
@@ -530,6 +542,22 @@ export default function EntitiesPage() {
       setDetailImpactError('影响范围暂不可用');
     } finally {
       setDetailImpactLoading(false);
+    }
+  };
+
+  const handleCreateImpactReviewPlan = async (episodeIndex: number) => {
+    if (!detailEntity) return;
+    setDetailReviewPlanCreating(true);
+    try {
+      const result = await apiClient.createStoryEntityImpactReviewPlan(detailEntity.id, {
+        episode_index: episodeIndex,
+      });
+      setDetailReviewPlan(result || null);
+    } catch (error) {
+      console.error('生成复审任务失败:', error);
+      alert('生成复审任务失败，请稍后重试');
+    } finally {
+      setDetailReviewPlanCreating(false);
     }
   };
 
@@ -1184,6 +1212,37 @@ export default function EntitiesPage() {
                             </Badge>
                           )}
                         </div>
+                        {detailReviewPlan && (
+                          <div className="mt-3 rounded-md border border-green-400/20 bg-green-400/10 px-3 py-2 text-sm text-green-100">
+                            已生成复审任务 · {detailReviewPlan.marked_shot_count || 0} 个镜头
+                          </div>
+                        )}
+                        {detailImpact.apply_options?.length ? (
+                          <div className="mt-3 space-y-2">
+                            {detailImpact.apply_options.slice(0, 4).map((option) => (
+                              <div
+                                key={option.episode_index}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2"
+                              >
+                                <div>
+                                  <div className="text-sm text-white/90">{option.label}</div>
+                                  <div className="mt-1 text-xs text-white/50">
+                                    影响 {option.affected_episode_count || 0} 集 · {option.affected_shot_count || 0} 个镜头
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleCreateImpactReviewPlan(option.episode_index)}
+                                  disabled={detailReviewPlanCreating || (option.affected_shot_count || 0) <= 0}
+                                  className="h-8 bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+                                >
+                                  {detailReviewPlanCreating ? '生成中...' : `从第 ${option.episode_index} 集起生成复审任务`}
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
                         {detailImpact.episodes?.length ? (
                           <div className="mt-3 space-y-2">
                             {detailImpact.episodes.slice(0, 4).map((episode) => (

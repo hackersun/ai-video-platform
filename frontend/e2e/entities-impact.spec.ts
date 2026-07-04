@@ -42,6 +42,12 @@ const impact = {
       affected_episode_count: 3,
       affected_shot_count: 2,
     },
+    {
+      episode_index: 3,
+      label: '从第 3 集起应用新设定',
+      affected_episode_count: 1,
+      affected_shot_count: 1,
+    },
   ],
   episodes: [
     { episode_index: 1, title: '第一集', affected_shot_count: 1, affected_shots: [{ id: 'shot-1', title: '雨巷初见' }] },
@@ -72,6 +78,16 @@ test.beforeEach(async ({ page }) => {
 
     if (path.endsWith('/story-bibles/entities/stats')) {
       body = { total: 1, counts: { character: 1 } };
+    } else if (path.endsWith(`/story-bibles/entities/${entity.id}/impact/review-plan`)) {
+      const payload = route.request().postDataJSON();
+      body = {
+        status: 'review_plan_created',
+        episode_index: payload.episode_index,
+        marked_shot_count: payload.episode_index === 3 ? 1 : 2,
+        affected_episode_count: payload.episode_index === 3 ? 1 : 3,
+        shot_ids: payload.episode_index === 3 ? ['shot-3'] : ['shot-1', 'shot-3'],
+        review_reason: `沈砚 从第 ${payload.episode_index} 集起应用新设定`,
+      };
     } else if (path.endsWith(`/story-bibles/entities/${entity.id}/impact`)) {
       body = impact;
     } else if (path.endsWith('/story-bibles/entities')) {
@@ -99,4 +115,19 @@ test('实体详情展示跨集变更影响和从指定集数应用建议', async
   await expect(page.getByRole('dialog')).toContainText('影响 3 集 · 2 个镜头');
   await expect(page.getByRole('dialog')).toContainText('从第 1 集起应用新设定');
   await expect(page.getByRole('dialog')).toContainText('第 3 集 · 1 个镜头');
+});
+
+test('实体详情可从影响建议一键生成复审任务', async ({ page }) => {
+  await page.goto('/entities');
+
+  await page.getByRole('button', { name: '查看沈砚' }).click();
+  const reviewPlanRequest = page.waitForRequest((request) => (
+    request.method() === 'POST'
+    && request.url().endsWith(`/api/v1/story-bibles/entities/${entity.id}/impact/review-plan`)
+  ));
+  await page.getByRole('button', { name: '从第 3 集起生成复审任务' }).click();
+  const request = await reviewPlanRequest;
+
+  expect(request.postDataJSON()).toMatchObject({ episode_index: 3 });
+  await expect(page.getByRole('dialog')).toContainText('已生成复审任务 · 1 个镜头');
 });
