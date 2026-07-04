@@ -15,8 +15,37 @@ from app.models import Workflow
 from app.services.production_bible import build_production_bible_summary
 
 
+VOLATILE_HASH_KEYS = {
+    "generated_at",
+    "snapshot_at",
+    "locked_at",
+    "updated_at",
+    "created_at",
+    "approved_at",
+}
+
+
+def _canonicalize_hash_payload(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _canonicalize_hash_payload(item)
+            for key, item in value.items()
+            if key not in VOLATILE_HASH_KEYS
+        }
+    if isinstance(value, list):
+        return [_canonicalize_hash_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return [_canonicalize_hash_payload(item) for item in value]
+    return value
+
+
 def stable_hash(value: Dict[str, Any]) -> str:
-    payload = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    payload = json.dumps(
+        _canonicalize_hash_payload(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

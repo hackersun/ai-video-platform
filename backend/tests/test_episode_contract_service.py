@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 import app.models  # noqa: F401 - ensure all SQLAlchemy models are registered
 from app.core.database import Base
 from app.models import Asset, Novel, StoryBible, StoryEntity, Workflow
-from app.services.episode_contract_service import lock_episode_contract
+from app.services.episode_contract_service import lock_episode_contract, stable_hash
 
 
 @pytest_asyncio.fixture()
@@ -175,6 +175,38 @@ async def test_lock_episode_contract_stores_snapshot(
     ).scalar_one()
     assert refreshed.metadata_["existing"] == "kept"
     assert refreshed.metadata_["episode_contract"] == contract
+
+
+def test_stable_hash_ignores_volatile_fields() -> None:
+    assert stable_hash({"name": "A", "generated_at": "t1"}) == stable_hash(
+        {"name": "A", "generated_at": "t2"}
+    )
+
+
+def test_stable_hash_changes_when_content_changes() -> None:
+    assert stable_hash({"name": "A"}) != stable_hash({"name": "B"})
+
+
+@pytest.mark.asyncio
+async def test_lock_episode_contract_keeps_production_bible_hash_stable(
+    db_session: AsyncSession,
+    seeded_workflow: Workflow,
+) -> None:
+    first_contract = await lock_episode_contract(
+        db_session,
+        seeded_workflow.user_id,
+        seeded_workflow.id,
+    )
+    second_contract = await lock_episode_contract(
+        db_session,
+        seeded_workflow.user_id,
+        seeded_workflow.id,
+    )
+
+    assert (
+        second_contract["production_bible_hash"]
+        == first_contract["production_bible_hash"]
+    )
 
 
 @pytest.mark.asyncio
