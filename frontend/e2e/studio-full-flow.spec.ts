@@ -110,6 +110,7 @@ test.beforeEach(async ({ page }) => {
 test('studio supports repair, test bypass audit, production gate, and active prompt skill summary', async ({ page }) => {
   let locksApplied = false;
   let skipPayload: any = null;
+  let snapshotAttempts = 0;
 
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
@@ -123,6 +124,15 @@ test('studio supports repair, test bypass audit, production gate, and active pro
       return;
     }
     if (path === '/api/v1/studio/workflows/wf-full/snapshot') {
+      snapshotAttempts += 1;
+      if (snapshotAttempts <= 2) {
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Studio snapshot is warming up' }),
+        });
+        return;
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -179,19 +189,28 @@ test('studio supports repair, test bypass audit, production gate, and active pro
       });
       return;
     }
+    if (path === '/api/v1/production-cards/novel/novel-full') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ novel_id: 'novel-full', cards: [], summary: { ready: 0, incomplete: 0 } }),
+      });
+      return;
+    }
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 
   await page.goto('/studio?workflow_id=wf-full');
 
-  await expect(page.getByText('统一创作工作台')).toBeVisible();
+  await expect(page.getByText('系列动漫工作室')).toBeVisible();
   await expect(page.getByText('短剧 Story Bible')).toBeVisible();
+  expect(snapshotAttempts).toBeGreaterThanOrEqual(3);
   await expect(page.getByText('当前激活 Prompt 技能')).toBeVisible();
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
   await expect(page.getByText('v3')).toBeVisible();
 
   await page.getByRole('button', { name: '应用资产锁' }).click();
-  await expect(page.getByText('100%')).toBeVisible();
+  await expect(page.getByText('100%', { exact: true })).toBeVisible();
   await expect(page.getByText('当前视频模型尚未验证，生产出片前需要完成模型配置检查。').first()).toBeVisible();
 
   await page.getByRole('button', { name: '测试验证' }).click();

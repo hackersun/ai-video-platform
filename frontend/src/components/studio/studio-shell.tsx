@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
@@ -40,7 +40,12 @@ function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
 }
 
+function snapshotWorkflowId(snapshot: StudioSnapshot | null) {
+  return snapshot?.workflow?.id || snapshot?.consistency_ledger?.workflow_id || '';
+}
+
 const EXECUTABLE_SAFE_ACTION_CODES = new Set(['apply_asset_locks', 'refresh_contracts', 'quality_check', 'media_audit']);
+const SNAPSHOT_RETRY_DELAYS = [400, 1000, 1800];
 
 function isExecutableSafeAction(action?: StudioAction | null) {
   return Boolean(action && EXECUTABLE_SAFE_ACTION_CODES.has(action.code) && (!action.risk || action.risk === 'safe'));
@@ -48,6 +53,28 @@ function isExecutableSafeAction(action?: StudioAction | null) {
 
 function isNavigationAction(action?: StudioAction | null) {
   return Boolean(action?.href || action?.risk === 'navigation');
+}
+
+const wait = (delay: number) => new Promise((resolve) => window.setTimeout(resolve, delay));
+
+async function getStudioSnapshotWithRetry(
+  workflowId: string,
+  options: Parameters<typeof getStudioSnapshot>[1],
+  onRetry?: (attempt: number) => void
+) {
+  let lastError: any;
+  for (let attempt = 0; attempt < SNAPSHOT_RETRY_DELAYS.length; attempt += 1) {
+    try {
+      return await getStudioSnapshot(workflowId, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt < SNAPSHOT_RETRY_DELAYS.length - 1) {
+        onRetry?.(attempt + 2);
+        await wait(SNAPSHOT_RETRY_DELAYS[attempt]);
+      }
+    }
+  }
+  throw lastError;
 }
 
 type ContinuityTone = 'green' | 'yellow' | 'red';
@@ -264,12 +291,20 @@ export function StudioShell() {
   const [lastAction, setLastAction] = useState<StudioActionResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [snapshotRetryMessage, setSnapshotRetryMessage] = useState('');
+  const snapshotRequestIdRef = useRef(0);
 
   const workflowOptions = useMemo(
     () => workflows.map((item) => ({ value: workflowIdOf(item), label: item.title || workflowIdOf(item) })),
     [workflows]
   );
-  const expertLinks = snapshot?.series_studio?.enabled
+  const activeSnapshot = useMemo(() => {
+    if (!snapshot) return null;
+    const loadedWorkflowId = snapshotWorkflowId(snapshot);
+    if (workflowId && loadedWorkflowId && loadedWorkflowId !== workflowId) return null;
+    return snapshot;
+  }, [snapshot, workflowId]);
+  const expertLinks = activeSnapshot?.series_studio?.enabled
     ? [
         { href: '/story-bibles', label: 'Story Bible' },
         { href: '/studio/cards', label: '生产卡' },
@@ -301,15 +336,34 @@ export function StudioShell() {
     policy?: { allow_test_bypass?: boolean; bypass_reason?: string }
   ) => {
     if (!targetWorkflowId) return;
+    const requestId = snapshotRequestIdRef.current + 1;
+    snapshotRequestIdRef.current = requestId;
     setLoading(true);
     setError('');
+    setSnapshotRetryMessage('');
     try {
-      const data = await getStudioSnapshot(targetWorkflowId, { mode: nextMode, ...policy });
-      setSnapshot(data);
+      const data = await getStudioSnapshotWithRetry(
+        targetWorkflowId,
+        { mode: nextMode, ...policy },
+        (attempt) => {
+          if (snapshotRequestIdRef.current === requestId) {
+            setSnapshotRetryMessage(`工作台快照还在准备中，正在第 ${attempt} 次重试…`);
+          }
+        }
+      );
+      if (snapshotRequestIdRef.current === requestId) {
+        setSnapshot(data);
+        setSnapshotRetryMessage('');
+      }
     } catch (err: any) {
-      setError(err.message || '加载工作台快照失败');
+      if (snapshotRequestIdRef.current === requestId) {
+        setError(err.message || '加载工作台快照失败');
+        setSnapshotRetryMessage('');
+      }
     } finally {
-      setLoading(false);
+      if (snapshotRequestIdRef.current === requestId) {
+        setLoading(false);
+      }
     }
   }, [mode, workflowId]);
 
@@ -320,6 +374,12 @@ export function StudioShell() {
   useEffect(() => {
     const queryWorkflowId = searchParams.get('workflow_id') || '';
     if (queryWorkflowId && queryWorkflowId !== workflowId) {
+      setSnapshot(null);
+      setProductionCards(null);
+      setLastAction(null);
+      setError('');
+      setSnapshotRetryMessage('正在加载工作台快照…');
+      setLoading(true);
       setWorkflowId(queryWorkflowId);
     }
   }, [searchParams, workflowId]);
@@ -329,7 +389,7 @@ export function StudioShell() {
   }, [workflowId, mode, loadSnapshot]);
 
   useEffect(() => {
-    const novelId = snapshot?.workflow?.novel_id || snapshot?.story_context?.novel?.id || '';
+    const novelId = activeSnapshot?.workflow?.novel_id || activeSnapshot?.story_context?.novel?.id || '';
     if (!novelId) {
       setProductionCards(null);
       return;
@@ -347,9 +407,15 @@ export function StudioShell() {
     return () => {
       cancelled = true;
     };
-  }, [snapshot?.workflow?.novel_id, snapshot?.story_context?.novel?.id]);
+  }, [activeSnapshot?.workflow?.novel_id, activeSnapshot?.story_context?.novel?.id]);
 
   const handleWorkflowChange = (value: string) => {
+    setSnapshot(null);
+    setProductionCards(null);
+    setLastAction(null);
+    setError('');
+    setSnapshotRetryMessage('正在加载工作台快照…');
+    setLoading(true);
     setWorkflowId(value);
     router.replace(`/studio?workflow_id=${value}`);
   };
@@ -399,13 +465,13 @@ export function StudioShell() {
 
   const handlePrimaryAction = useCallback(async () => {
     const actionCandidates = [
-      ...(snapshot?.actions || []),
-      ...(snapshot?.production_bible_summary?.next_actions || []),
+      ...(activeSnapshot?.actions || []),
+      ...(activeSnapshot?.production_bible_summary?.next_actions || []),
     ];
     const executableAction = actionCandidates.find(isExecutableSafeAction);
     const navigationAction = actionCandidates.find(isNavigationAction);
     const action = executableAction || navigationAction;
-    const novelId = snapshot?.workflow?.novel_id || snapshot?.story_context?.novel?.id || '';
+    const novelId = activeSnapshot?.workflow?.novel_id || activeSnapshot?.story_context?.novel?.id || '';
 
     if (navigationAction && action === navigationAction) {
       router.push(action.href || (novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards'));
@@ -435,7 +501,7 @@ export function StudioShell() {
     }
 
     router.push(novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards');
-  }, [loadSnapshot, mode, router, snapshot, toast, workflowId]);
+  }, [activeSnapshot, loadSnapshot, mode, router, toast, workflowId]);
 
   const handleApproveProductionEntity = useCallback(async (entityId: string) => {
     if (!entityId) return;
@@ -511,9 +577,9 @@ export function StudioShell() {
             <BookOpen className="h-4 w-4" />
             连续动漫工作台
           </div>
-          <h1 className="mt-2 text-2xl font-semibold text-white">从小说章节到本集草片</h1>
+          <h1 className="mt-2 text-2xl font-semibold text-white">系列动漫工作室</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-            选择小说/章节生成本集工程后，这里会聚合动漫设定本、剧本分镜、资产/声音锁、草片任务和质量门禁；高级制作流程仍保留给精修使用。
+            统一创作工作台会聚合动漫设定本、剧本分镜、资产/声音锁、草片任务和质量门禁；高级制作流程仍保留给精修使用。
           </p>
         </div>
         <div className="w-full lg:w-80">
@@ -547,9 +613,22 @@ export function StudioShell() {
       ) : null}
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-50">
-          <AlertCircle className="mt-0.5 h-4 w-4" />
-          {error}
+        <div className="flex flex-col gap-3 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-50 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4" />
+            <span>{error}</span>
+          </div>
+          {workflowId ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="shrink-0 border-red-200/30 text-red-50"
+              onClick={() => loadSnapshot(workflowId, mode)}
+            >
+              重新加载工作台
+            </Button>
+          ) : null}
         </div>
       )}
 
@@ -572,31 +651,31 @@ export function StudioShell() {
         </Card>
       ) : (
         <>
-          {loading && !snapshot ? (
+          {loading && !activeSnapshot ? (
             <div className="rounded-lg border border-white/10 bg-white/5 p-8 text-center text-white/60">
               <Loader2 className="mx-auto mb-3 h-5 w-5 animate-spin" />
-              正在加载工作台快照…
+              {snapshotRetryMessage || '正在加载工作台快照…'}
             </div>
           ) : null}
-          {snapshot ? <SeriesOverviewPanel snapshot={snapshot} onPrimaryAction={handlePrimaryAction} /> : null}
+          {activeSnapshot ? <SeriesOverviewPanel snapshot={activeSnapshot} onPrimaryAction={handlePrimaryAction} /> : null}
           <PromptSkillPanel />
-          <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} productionCards={productionCards} />
-          <ProductionBiblePanel snapshot={snapshot} onApproveEntity={handleApproveProductionEntity} />
+          <StudioSeriesBoard snapshot={activeSnapshot} workflowId={workflowId} productionCards={productionCards} />
+          <ProductionBiblePanel snapshot={activeSnapshot} onApproveEntity={handleApproveProductionEntity} />
           <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-            <EpisodePlanPanel snapshot={snapshot} />
+            <EpisodePlanPanel snapshot={activeSnapshot} />
             <EpisodeContractPanel
-              contract={snapshot?.episode_contract || snapshot?.workflow?.metadata?.episode_contract}
+              contract={activeSnapshot?.episode_contract || activeSnapshot?.workflow?.metadata?.episode_contract}
               loading={loading}
               onLock={handleLockEpisodeContract}
             />
           </div>
-          <ConsistencyLedgerPanel snapshot={snapshot} onRepair={handleLedgerRepair} />
-          <StudioContextPanel snapshot={snapshot} />
-          <StudioProductionBoard snapshot={snapshot} workflowId={workflowId} />
-          <StudioContinuityBoard snapshot={snapshot} />
+          <ConsistencyLedgerPanel snapshot={activeSnapshot} onRepair={handleLedgerRepair} />
+          <StudioContextPanel snapshot={activeSnapshot} />
+          <StudioProductionBoard snapshot={activeSnapshot} workflowId={workflowId} />
+          <StudioContinuityBoard snapshot={activeSnapshot} />
           <div id="studio-agent-panel">
             <StudioAgentPanel
-              snapshot={snapshot}
+              snapshot={activeSnapshot}
               mode={mode}
               loading={loading}
               bypassReason={bypassReason}

@@ -83,13 +83,67 @@ test('quick start result links users into the whole-book production plan', async
     },
   }));
   await page.route('**/api/v1/workflow/start', (route) => route.fulfill({ json: { workflow_id: 'workflow-series-e2e' } }));
+  await page.route('**/api/v1/workflow', (route) => route.fulfill({
+    json: [{ workflow_id: 'workflow-series-e2e', title: '整书计划入口测试 第一集', status: 'active' }],
+  }));
+  await page.route('**/api/v1/studio/workflows/workflow-series-e2e/snapshot**', (route) => route.fulfill({
+    json: {
+      series_studio: { enabled: true, primary_console: 'series_studio', expert_drilldowns: [] },
+      workflow: {
+        id: 'workflow-series-e2e',
+        title: '整书计划入口测试 第一集',
+        status: 'active',
+        novel_id: 'novel-series-e2e',
+        chapter_id: 'chapter-series-e2e',
+        script_id: 'script-series-e2e',
+        storyboard_id: 'storyboard-series-e2e',
+      },
+      story_context: {
+        novel: { id: 'novel-series-e2e', title: '整书计划入口测试', genre: 'fantasy' },
+        chapter: { id: 'chapter-series-e2e', title: '第一章', chapter_number: 1 },
+      },
+      production_bible_summary: {
+        readiness_score: 82,
+        style: { visual_style: '动画电影' },
+        counts: { characters: 1, scenes: 1, props: 1, events: 1, voices: 0 },
+        characters: [{ entity_id: 'char-series-e2e', name: '林澈', approved: true }],
+        scenes: [],
+        props: [],
+        events: [],
+        voices: [],
+        missing_requirements: [],
+        asset_readiness: { asset_count: 1, missing_asset_count: 0, ready: true },
+      },
+      series_plan: { novel_id: 'novel-series-e2e', current_episode: { episode_index: 1, title: '第一集' }, episodes: [] },
+      episode_contract: null,
+      consistency_ledger: { overall_score: 100, dimensions: {}, findings: [] },
+      production: { shot_count: 3, asset_lock_coverage: 1, entity_ref_coverage: 1, ready: true },
+      shots: [],
+      assets: { total_count: 1, locked_count: 1, final_count: 1, by_category: { character: 1 } },
+      jobs: { summary: { video_count: 0, tts_count: 0, synthesis_count: 0, media_count: 0 } },
+      issues: [],
+      actions: [],
+      mode_policy: { mode: 'production', ready: true, blocking_issue_count: 0 },
+    },
+  }));
+  await page.route('**/api/v1/production-cards/novel/novel-series-e2e', (route) => route.fulfill({
+    json: { novel_id: 'novel-series-e2e', cards: [], summary: { ready: 0, incomplete: 0 } },
+  }));
+  await page.route('**/api/v1/prompt-skills', (route) => route.fulfill({ json: { items: [], count: 0 } }));
 
   await page.goto('/quick-start');
-  await expect(page.getByPlaceholder('作品名')).toHaveValue('整书计划入口测试', { timeout: 10_000 });
-  await expect(page.getByText('作品名就绪')).toBeVisible();
-  await page.getByRole('button', { name: '生成首集工程' }).click();
+  await expect(page.getByPlaceholder('例如：星灯邮差')).toHaveValue('整书计划入口测试', { timeout: 10_000 });
+  await expect(page.getByText('检查')).toBeVisible();
+  await page.getByRole('button', { name: /生成第一集|开始生成/ }).click();
+  await expect(page.getByText(/生成完成|已生成/).first()).toBeVisible({ timeout: 120_000 });
+  await page.getByRole('link', { name: /进入工作室|打开工作室/ }).first().click();
+  await expect(page).toHaveURL(/\/studio\?.*workflow_id=workflow-series-e2e/);
+  await expect(page).toHaveURL(/source=quick_start/);
+  await expect(page.getByRole('heading', { name: '系列动漫工作室' })).toBeVisible();
+  await expect(page.getByText('Failed to fetch')).toHaveCount(0);
 
   const seriesPlanLink = page.getByRole('link', { name: '进入整书计划' });
+  await page.goto('/quick-start');
   await expect(seriesPlanLink).toBeVisible({ timeout: 10_000 });
   await expect(seriesPlanLink).toHaveAttribute('href', '/novels/novel-series-e2e?tab=series-plan');
 });
@@ -257,10 +311,11 @@ test('quick start auto preview uses canonical episode production pipeline with a
   }));
 
   await page.goto('/quick-start');
-  await expect(page.getByPlaceholder('作品名')).toHaveValue('自动草片统一管线', { timeout: 10_000 });
-  await expect(page.getByText('首集生产策略')).toBeVisible();
-  await expect(page.getByText('可选声音配置')).toBeVisible();
-  await page.getByRole('button', { name: '生成首集工程' }).click();
+  await expect(page.getByPlaceholder('例如：星灯邮差')).toHaveValue('自动草片统一管线', { timeout: 10_000 });
+  await page.getByRole('button', { name: /高级设置/ }).click();
+  await expect(page.getByText('效果模式', { exact: true })).toBeVisible();
+  await expect(page.getByText('角色配音配置（高级）')).toBeVisible();
+  await page.getByRole('button', { name: /生成第一集|开始生成/ }).click();
 
   await expect(page.getByText('首集预览草片、字幕和渲染包已生成')).toBeVisible({ timeout: 10_000 });
   expect(mediaRequests).toHaveLength(1);

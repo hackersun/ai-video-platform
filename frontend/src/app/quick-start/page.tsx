@@ -228,6 +228,19 @@ const compactIds = (ids?: string[]) => {
   return ids.slice(0, 3).join('、') + (ids.length > 3 ? ` 等 ${ids.length} 个` : '');
 };
 
+const buildStudioHref = (result: QuickStartResult) => {
+  const params = new URLSearchParams({
+    workflow_id: result.workflowId,
+    novel_id: result.novelId,
+    chapter_id: result.chapterId,
+    source: 'quick_start',
+  });
+  if (result.storyBibleId) params.set('story_bible_id', result.storyBibleId);
+  if (result.scriptId) params.set('script_id', result.scriptId);
+  if (result.storyboardId) params.set('storyboard_id', result.storyboardId);
+  return `/studio?${params.toString()}`;
+};
+
 export default function QuickStartPage() {
   const [form, setForm] = useState({
     title: '',
@@ -710,6 +723,8 @@ export default function QuickStartPage() {
     }
   };
 
+  const resultStudioHref = result ? buildStudioHref(result) : '';
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -979,9 +994,9 @@ export default function QuickStartPage() {
                     </Button>
                     {result?.workflowId && (
                       <Button asChild variant="outline" className="justify-start border-white/20 text-white">
-                        <Link href={`/studio?workflow_id=${result.workflowId}`}>
+                        <Link href={buildStudioHref(result)}>
                           <Route className="mr-2 h-4 w-4" />
-                          进入工作台处理
+                          进入工作室处理
                         </Link>
                       </Button>
                     )}
@@ -1107,12 +1122,12 @@ export default function QuickStartPage() {
                     <div className="mt-1 text-xs text-cyan-100/70">建议按顺序完成审核、整书规划和一致性资产检查，降低后续多集制作返工。</div>
                     <div className="mt-3 grid grid-cols-1 gap-2">
                       <Link
-                        href={`/studio?workflow_id=${result.workflowId}`}
+                        href={resultStudioHref}
                         className="rounded-lg border border-white/10 bg-white/5 p-3 transition hover:border-cyan-300/50 hover:bg-white/10"
                       >
                         <div className="flex items-center gap-2 text-sm font-medium text-white">
                           <Route className="h-4 w-4 text-cyan-200" />
-                          1. 进入连续动漫工作台继续审核
+                          1. 进入工作室继续审核
                         </div>
                         <div className="mt-1 text-xs text-white/55">审阅首集工作流、分镜、镜头生产状态和预览结果。</div>
                       </Link>
@@ -1176,9 +1191,9 @@ export default function QuickStartPage() {
                   )}
                   <div className="grid grid-cols-1 gap-2">
                     <Button asChild className="justify-start bg-cyan-600 hover:bg-cyan-700">
-                      <Link href={`/studio?workflow_id=${result.workflowId}`}>
+                      <Link href={resultStudioHref}>
                         <Route className="mr-2 h-4 w-4" />
-                        进入创作工作台
+                        进入工作室
                       </Link>
                     </Button>
                     <Button asChild variant="outline" className="justify-start border-white/20 text-white">
