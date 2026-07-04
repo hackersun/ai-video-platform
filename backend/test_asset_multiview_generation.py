@@ -283,6 +283,57 @@ def test_composite_character_entity_is_rejected_for_single_character_views(clien
     assert "单一角色" in response.json()["detail"]
 
 
+def test_generate_entity_views_rejects_mismatched_novel_scope(client: TestClient) -> None:
+    user_id = f"asset-scope-mismatch-user-{uuid4()}"
+    entity_novel_id = _create_novel(client, user_id)
+    requested_novel_id = _create_novel(client, user_id)
+    entity_id = _create_entity(client, user_id, entity_novel_id, "character", "顾寒霜")
+
+    response = client.post(
+        "/api/v1/assets/generate-entity-views",
+        json={
+            "entity_id": entity_id,
+            "novel_id": requested_novel_id,
+            "view_keys": ["front"],
+            "style": "anime",
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 400, response.text
+    assert "实体不属于指定小说" in response.json()["detail"]
+
+
+def test_standard_entity_view_generation_requires_novel_scope(client: TestClient) -> None:
+    user_id = f"asset-standard-scope-user-{uuid4()}"
+    response = client.post(
+        "/api/v1/story-bibles/entities",
+        json={
+            "entity_type": "character",
+            "name": "无小说角色",
+            "description": "没有绑定小说的测试角色。",
+            "attributes": {"appearance": "灰色外套"},
+        },
+        headers=auth_headers(user_id),
+    )
+    assert response.status_code == 201, response.text
+    entity_id = response.json()["id"]
+
+    generate_response = client.post(
+        "/api/v1/assets/generate-entity-views",
+        json={
+            "entity_id": entity_id,
+            "view_keys": ["front"],
+            "style": "anime",
+            "consistency_mode": "standard",
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert generate_response.status_code == 422, generate_response.text
+    assert "标准/严格一致性模式需要绑定小说" in generate_response.json()["detail"]
+
+
 def test_generate_entity_views_persists_novel_linked_assets(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

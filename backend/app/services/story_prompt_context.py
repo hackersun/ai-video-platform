@@ -13,7 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Chapter, Character, Novel, StoryBible, StoryEntity
+from app.models import Chapter, Character, Novel, Script, StoryBible, StoryEntity
 from app.services.image_prompt_policy import GLOBAL_IMAGE_NEGATIVE_CONSTRAINT
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
 from app.services.story_state_machine import format_state_machine_summary
@@ -148,6 +148,7 @@ async def load_story_prompt_context(
     *,
     novel_id: Optional[str] = None,
     chapter_id: Optional[str] = None,
+    script_id: Optional[str] = None,
     title: Optional[str] = None,
     genre: Optional[str] = None,
     description: Optional[str] = None,
@@ -157,7 +158,18 @@ async def load_story_prompt_context(
     """Load compact story context for prompt construction."""
     novel: Optional[Novel] = None
     chapter: Optional[Chapter] = None
+    script: Optional[Script] = None
     chapters: List[Chapter] = []
+
+    if script_id:
+        script_result = await db.execute(
+            select(Script).where(and_(Script.id == script_id, Script.user_id == user_id))
+        )
+        script = script_result.scalar_one_or_none()
+        if script:
+            script_extra = _json_dict(script.extra_data)
+            novel_id = novel_id or script.novel_id
+            chapter_id = chapter_id or script.chapter_id or script_extra.get("chapter_id")
 
     if novel_id:
         novel_result = await db.execute(
@@ -201,6 +213,9 @@ async def load_story_prompt_context(
         genre or getattr(novel, "genre", None),
         description or getattr(novel, "description", None),
         getattr(chapter, "content", None),
+        getattr(script, "title", None),
+        getattr(script, "description", None),
+        getattr(script, "content", None),
     ]
     source_text_parts.extend(chapter.content for chapter in chapters if chapter.content)
     source_text = "\n".join(part for part in source_text_parts if part)
@@ -258,6 +273,7 @@ async def load_story_prompt_context(
     return {
         "novel_id": novel_id or getattr(novel, "id", None),
         "chapter_id": chapter_id or getattr(chapter, "id", None),
+        "script_id": script_id or getattr(script, "id", None),
         "title": title or getattr(novel, "title", None) or "未命名小说",
         "genre": genre or getattr(novel, "genre", None) or "通用",
         "description": description or getattr(novel, "description", None) or "",
@@ -272,6 +288,8 @@ async def load_story_prompt_context(
         "story_bible_id": getattr(story_bible, "id", None),
         "chapter_title": getattr(chapter, "title", None),
         "chapter_summary": compact_text(getattr(chapter, "content", None), 500),
+        "script_title": getattr(script, "title", None),
+        "script_summary": compact_text(getattr(script, "content", None) or getattr(script, "description", None), 500),
         "chapters": chapter_summaries,
         "characters": entities["characters"],
         "scenes": entities["scenes"],

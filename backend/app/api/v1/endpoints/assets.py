@@ -4,7 +4,7 @@
 """
 from app.core.time_utils import utc_now
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -173,9 +173,15 @@ class PropAssetGenerateRequest(BaseModel):
 
 class EntityViewGenerateRequest(BaseModel):
     entity_id: str
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
     view_keys: Optional[List[str]] = Field(None, description="可选视图 key，不传则生成该实体类型全部必备视图")
     style: str = Field("anime", description="anime/xianxia/wuxia/fantasy/urban/cartoon/realistic")
     model_config_id: Optional[str] = None
+    consistency_mode: Literal["off", "standard", "strict"] = Field("off", description="一致性模式: off/standard/strict")
+    force_contract_refresh: bool = False
+    anchor_view_key: Optional[str] = None
 
 
 class AssetRegenerateRequest(BaseModel):
@@ -729,6 +735,20 @@ async def generate_entity_view_assets(
     user_id: str = Depends(get_current_user_id),
 ):
     """按小说实体生成角色三视图、场景四视图或道具多视图。"""
+    scope = await validate_asset_scope(
+        db,
+        user_id,
+        novel_id=request.novel_id,
+        chapter_id=request.chapter_id,
+        script_id=request.script_id,
+        entity_id=request.entity_id,
+    )
+    if request.consistency_mode in {"standard", "strict"} and not scope["novel_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="标准/严格一致性模式需要绑定小说",
+        )
+
     entity_result = await db.execute(
         select(StoryEntity).where(and_(StoryEntity.id == request.entity_id, StoryEntity.user_id == user_id))
     )
@@ -737,6 +757,9 @@ async def generate_entity_view_assets(
         raise HTTPException(status_code=404, detail="实体不存在")
     if entity.entity_type not in {"character", "scene", "prop"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持角色、场景、道具生成多视图资产")
+    entity_view_keys(entity.entity_type, request.view_keys)
+    if request.anchor_view_key:
+        entity_view_keys(entity.entity_type, [request.anchor_view_key])
 
     description = story_entity_visual_description(entity)
     character = await resolve_character_for_story_entity(db, user_id, entity)
@@ -751,9 +774,9 @@ async def generate_entity_view_assets(
             entity_name=entity.name,
             entity_description=description,
             style=request.style,
-            novel_id=entity.novel_id,
-            chapter_id=entity.chapter_id,
-            script_id=getattr(entity, "script_id", None),
+            novel_id=scope["novel_id"],
+            chapter_id=scope["chapter_id"],
+            script_id=scope["script_id"],
             character_id=character.id if character else None,
             view_keys=request.view_keys,
         )
