@@ -194,6 +194,33 @@ def test_lock_episode_contract_route_stores_workflow_metadata(client: TestClient
     assert metadata["episode_contract"] == payload
 
 
+def test_studio_snapshot_exposes_series_studio_contract(client: TestClient) -> None:
+    user_id = f"series-studio-contract-{uuid4()}"
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={"title": "Series Studio contract workflow"},
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    snapshot_resp = client.get(f"/api/v1/studio/workflows/{workflow_id}/snapshot", headers=_auth_headers(user_id))
+
+    assert snapshot_resp.status_code == 200
+    assert snapshot_resp.json()["series_studio"] == {
+        "enabled": True,
+        "primary_console": "series_studio",
+        "expert_drilldowns": [
+            "/story-bibles",
+            "/studio/cards",
+            "/studio/shot-review",
+            "/workflow",
+            "/producer",
+            "/video-generation",
+        ],
+    }
+
+
 def _create_shot(client: TestClient, user_id: str) -> tuple[str, str, str]:
     script_id = _create_script(client, user_id)
     storyboard_resp = client.post(
@@ -3544,18 +3571,6 @@ def test_workflow_media_batch_tracks_final_quality_production_strategy(client: T
     snapshot_resp = client.get(f"/api/v1/studio/workflows/{workflow_id}/snapshot", headers=_auth_headers(user_id))
     assert snapshot_resp.status_code == 200
     snapshot = snapshot_resp.json()
-    assert snapshot["series_studio"] == {
-        "enabled": True,
-        "primary_console": "series_studio",
-        "expert_drilldowns": [
-            "/story-bibles",
-            "/studio/cards",
-            "/studio/shot-review",
-            "/workflow",
-            "/producer",
-            "/video-generation",
-        ],
-    }
     assert snapshot["workflow"]["latest_production_strategy"] == "final_quality"
     assert snapshot["workflow"]["latest_production_strategy_intent"] == "final"
     assert snapshot["workflow"]["metadata"]["latest_recommended_model_hint"] == "Seedance-2.0"
