@@ -19,7 +19,7 @@ from app.core.api_key_utils import create_text_generation_service, get_user_text
 from app.core.database import get_db
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
-from app.models import Asset, Character, Chapter, Novel, Project, Script, Shot, StoryBible, StoryEntity, Storyboard
+from app.models import Asset, Character, Chapter, Novel, Project, Script, Shot, StoryBible, StoryEntity
 from app.services.entity_extraction_service import (
     ENTITY_TYPES,
     build_story_bible_sections,
@@ -28,6 +28,11 @@ from app.services.entity_extraction_service import (
 )
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.entity_impact_service import analyze_entity_change_impact, mark_entity_change_impact_for_review
+from app.services.continuity_review_tasks import (
+    list_continuity_review_tasks as list_continuity_review_tasks_payload,
+    resolve_continuity_review_task as resolve_continuity_review_task_payload,
+    resolve_continuity_review_tasks_batch,
+)
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_blocks, apply_active_prompt_skill_template
 from app.services.production_bible import approve_story_entity, build_production_bible_summary
@@ -415,6 +420,8 @@ class ContinuityReviewTask(BaseModel):
     storyboard_title: Optional[str] = None
     novel_id: Optional[str] = None
     novel_title: Optional[str] = None
+    workflow_id: Optional[str] = None
+    workflow_title: Optional[str] = None
     shot_summary: Optional[str] = None
     entity_id: Optional[str] = None
     entity_name: Optional[str] = None
@@ -426,11 +433,18 @@ class ContinuityReviewTask(BaseModel):
     review_notes: Optional[str] = None
     change_note: Optional[str] = None
     marked_at: Optional[str] = None
+    status: Optional[str] = None
+    shot_review_url: Optional[str] = None
+    shot_url: Optional[str] = None
+    storyboard_url: Optional[str] = None
 
 
 class ContinuityReviewTasksResponse(BaseModel):
     tasks: List[ContinuityReviewTask]
     total: int
+    filters: Dict[str, Any] = Field(default_factory=dict)
+    sort: str = "updated_desc"
+    workflow_id: Optional[str] = None
 
 
 class ContinuityReviewResolveRequest(BaseModel):
@@ -445,15 +459,16 @@ class ContinuityReviewResolveResponse(BaseModel):
     resolution_note: Optional[str] = None
 
 
-def _json_dict(value: Any) -> Dict[str, Any]:
-    return value if isinstance(value, dict) else {}
+class ContinuityReviewBatchResolveRequest(BaseModel):
+    shot_ids: List[str] = Field(..., min_length=1)
+    resolution_note: Optional[str] = Field(None, max_length=500)
 
 
-def _shot_summary(shot: Shot) -> Optional[str]:
-    text = shot.visual_description or shot.prompt or shot.dialogue
-    if not text:
-        return None
-    return text if len(text) <= 96 else f"{text[:96]}..."
+class ContinuityReviewBatchResolveResponse(BaseModel):
+    status: str
+    resolved_count: int
+    shot_ids: List[str]
+    tasks: List[ContinuityReviewResolveResponse] = Field(default_factory=list)
 
 
 def infer_approval_state(summary: Dict[str, Any]) -> str:
@@ -2625,60 +2640,41 @@ async def list_story_bibles(
 async def list_continuity_review_tasks(
     novel_id: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
+    episode_index: Optional[int] = Query(None, ge=1),
+    review_state: Optional[str] = Query(None),
+    status_filter: str = Query("open", alias="status", pattern="^(open|resolved|all)$"),
+    sort: str = Query("updated_desc", pattern="^(updated_desc|updated_asc|episode_desc|episode_asc|entity_desc|entity_asc)$"),
     limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ) -> ContinuityReviewTasksResponse:
-    query = (
-        select(Shot, Storyboard, Novel)
-        .outerjoin(Storyboard, Shot.storyboard_id == Storyboard.id)
-        .outerjoin(Novel, Storyboard.novel_id == Novel.id)
-        .where(Shot.user_id == user_id, Shot.extra_data.is_not(None))
-        .order_by(desc(Shot.updated_at))
+    payload = await list_continuity_review_tasks_payload(
+        db,
+        user_id,
+        novel_id=novel_id,
+        entity_id=entity_id,
+        episode_index=episode_index,
+        review_state=review_state,
+        task_status=status_filter,
+        sort=sort,
+        limit=limit,
     )
-    if novel_id:
-        query = query.where(Storyboard.novel_id == novel_id)
+    return ContinuityReviewTasksResponse(**payload)
 
-    result = await db.execute(query)
-    tasks: List[ContinuityReviewTask] = []
-    for shot, storyboard, novel in result.all():
-        extra_data = _json_dict(shot.extra_data)
-        production_context = _json_dict(extra_data.get("production_context"))
-        continuity_change = _json_dict(production_context.get("continuity_change"))
-        review_state = production_context.get("review_state") or extra_data.get("review_state")
-        is_review_task = (
-            extra_data.get("needs_review") is True
-            or review_state == "changes_requested"
-            or (bool(continuity_change) and not continuity_change.get("resolved_at"))
-        )
-        if not is_review_task:
-            continue
-        if entity_id and str(continuity_change.get("entity_id") or "") != entity_id:
-            continue
 
-        tasks.append(ContinuityReviewTask(
-            shot_id=shot.id,
-            shot_number=shot.shot_number or 1,
-            storyboard_id=getattr(storyboard, "id", None),
-            storyboard_title=getattr(storyboard, "title", None),
-            novel_id=getattr(storyboard, "novel_id", None),
-            novel_title=getattr(novel, "title", None),
-            shot_summary=_shot_summary(shot),
-            entity_id=continuity_change.get("entity_id"),
-            entity_name=continuity_change.get("entity_name"),
-            entity_type=continuity_change.get("entity_type"),
-            episode_index=continuity_change.get("episode_index"),
-            review_reason=extra_data.get("review_reason") or production_context.get("review_notes"),
-            review_at=extra_data.get("review_at") or continuity_change.get("marked_at"),
-            review_state=review_state,
-            review_notes=production_context.get("review_notes"),
-            change_note=continuity_change.get("change_note"),
-            marked_at=continuity_change.get("marked_at"),
-        ))
-        if len(tasks) >= limit:
-            break
-
-    return ContinuityReviewTasksResponse(tasks=tasks, total=len(tasks))
+@router.post("/continuity-review-tasks/resolve-batch", response_model=ContinuityReviewBatchResolveResponse)
+async def resolve_continuity_review_tasks(
+    request: ContinuityReviewBatchResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ContinuityReviewBatchResolveResponse:
+    payload = await resolve_continuity_review_tasks_batch(
+        db,
+        user_id,
+        request.shot_ids,
+        resolution_note=request.resolution_note,
+    )
+    return ContinuityReviewBatchResolveResponse(**payload)
 
 
 @router.post("/continuity-review-tasks/{shot_id}/resolve", response_model=ContinuityReviewResolveResponse)
@@ -2688,42 +2684,13 @@ async def resolve_continuity_review_task(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ) -> ContinuityReviewResolveResponse:
-    result = await db.execute(select(Shot).where(Shot.id == shot_id, Shot.user_id == user_id))
-    shot = result.scalar_one_or_none()
-    if shot is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
-
-    now = utc_now().isoformat()
-    extra_data = dict(_json_dict(shot.extra_data))
-    production_context = dict(_json_dict(extra_data.get("production_context")))
-    continuity_change = dict(_json_dict(production_context.get("continuity_change")))
-    note = request.resolution_note or "连续性复审已完成"
-
-    if continuity_change:
-        continuity_change["resolved_at"] = now
-        continuity_change["resolution_note"] = note
-        production_context["continuity_change"] = continuity_change
-
-    extra_data["needs_review"] = False
-    extra_data["review_resolved_at"] = now
-    extra_data["review_resolution_note"] = note
-    production_context["review_state"] = "approved"
-    production_context["review_notes"] = note
-    production_context["updated_at"] = now
-    extra_data["production_context"] = production_context
-    shot.extra_data = extra_data
-    shot.updated_at = utc_now()
-
-    await db.commit()
-    await db.refresh(shot)
-
-    return ContinuityReviewResolveResponse(
-        status="resolved",
-        shot_id=shot.id,
-        review_state="approved",
-        resolved_at=now,
-        resolution_note=note,
+    payload = await resolve_continuity_review_task_payload(
+        db,
+        user_id,
+        shot_id,
+        resolution_note=request.resolution_note,
     )
+    return ContinuityReviewResolveResponse(**payload)
 
 
 @router.get("/{story_bible_id}", response_model=StoryBibleResponse)

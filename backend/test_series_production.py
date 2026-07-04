@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from init_db import init_db
 from main import app
+from app.services.continuity_review_tasks import _sort_tasks
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -22,6 +23,16 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
+
+
+def test_continuity_review_task_updated_sort_respects_direction() -> None:
+    tasks = [
+        {"shot_id": "late", "review_at": "2026-07-04T10:00:00"},
+        {"shot_id": "early", "review_at": "2026-07-04T09:00:00"},
+    ]
+
+    assert [task["shot_id"] for task in _sort_tasks(tasks, "updated_asc")] == ["early", "late"]
+    assert [task["shot_id"] for task in _sort_tasks(tasks, "updated_desc")] == ["late", "early"]
 
 
 def _create_series_fixture(client: TestClient, user_id: str) -> dict:
@@ -138,7 +149,14 @@ def _create_series_fixture(client: TestClient, user_id: str) -> dict:
         headers=_auth_headers(user_id),
     )
     assert workflow_resp.status_code == 201
-    return {"novel_id": novel_id, "chapter_ids": chapter_ids, "entity_ids": entity_ids}
+    return {
+        "novel_id": novel_id,
+        "chapter_ids": chapter_ids,
+        "entity_ids": entity_ids,
+        "storyboard_id": storyboard_id,
+        "shot_id": shot_resp.json()["id"],
+        "workflow_id": workflow_resp.json()["workflow_id"],
+    }
 
 
 def test_series_plan_generates_and_persists_episode_plan(client: TestClient) -> None:
@@ -310,6 +328,142 @@ def test_continuity_review_tasks_route_lists_marked_shots(client: TestClient) ->
     assert task["review_state"] == "changes_requested"
     assert task["change_note"] == "服装主色改为深蓝"
     assert "服装主色改为深蓝" in task["review_reason"]
+    assert task["workflow_id"] == fixture["workflow_id"]
+    assert task["shot_review_url"] == f"/studio/shot-review?workflow_id={fixture['workflow_id']}&shot_id={task['shot_id']}"
+    assert task["shot_url"] == f"/shots?shot_id={task['shot_id']}"
+
+
+def test_continuity_review_tasks_route_dedupes_storyboard_workflows_and_reports_total_before_limit(client: TestClient) -> None:
+    user_id = f"continuity-dedupe-total-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    duplicate_workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "第一集备用生产工程",
+            "novel_id": fixture["novel_id"],
+            "chapter_id": fixture["chapter_ids"][0],
+            "storyboard_id": fixture["storyboard_id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert duplicate_workflow_resp.status_code == 201
+    second_shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": fixture["storyboard_id"],
+            "shot_number": 2,
+            "duration": 6,
+            "prompt": "沈砚举起青铜吊坠，雨幕被蓝光照亮。",
+            "dialogue": "裂纹在回应我。",
+            "visual_description": "沈砚举起青铜吊坠，雨幕被蓝光照亮。",
+            "character_refs": [{"character_id": fixture["entity_ids"]["沈砚"], "name": "沈砚"}],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert second_shot_resp.status_code == 201
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+    review_plan_resp = client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+    assert review_plan_resp.status_code == 200
+
+    response = client.get(
+        "/api/v1/story-bibles/continuity-review-tasks",
+        params={"limit": 1},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert len(payload["tasks"]) == 1
+    assert len(set(review_plan_resp.json()["shot_ids"])) == 2
+
+
+def test_continuity_review_tasks_route_filters_and_sorts_tasks(client: TestClient) -> None:
+    user_id = f"continuity-filter-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+
+    client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+    response = client.get(
+        "/api/v1/story-bibles/continuity-review-tasks",
+        params={
+            "novel_id": fixture["novel_id"],
+            "entity_id": fixture["entity_ids"]["沈砚"],
+            "episode_index": 1,
+            "review_state": "changes_requested",
+            "status": "open",
+            "sort": "episode_desc",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["filters"]["novel_id"] == fixture["novel_id"]
+    assert payload["filters"]["entity_id"] == fixture["entity_ids"]["沈砚"]
+    assert payload["filters"]["episode_index"] == 1
+    assert payload["filters"]["review_state"] == "changes_requested"
+    assert payload["filters"]["status"] == "open"
+    assert payload["sort"] == "episode_desc"
+
+
+def test_workflow_continuity_review_tasks_route_scopes_to_workflow(client: TestClient) -> None:
+    user_id = f"continuity-workflow-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+    review_plan_resp = client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+    assert review_plan_resp.status_code == 200
+
+    response = client.get(
+        f"/api/v1/studio/workflows/{fixture['workflow_id']}/continuity-review-tasks",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["workflow_id"] == fixture["workflow_id"]
+    assert payload["total"] == 1
+    assert payload["tasks"][0]["workflow_id"] == fixture["workflow_id"]
+    assert payload["tasks"][0]["shot_id"] == review_plan_resp.json()["shot_ids"][0]
+
+
+def test_workflow_continuity_review_tasks_route_returns_404_for_missing_workflow(client: TestClient) -> None:
+    user_id = f"continuity-workflow-missing-user-{uuid4()}"
+
+    response = client.get(
+        f"/api/v1/studio/workflows/missing-{uuid4()}/continuity-review-tasks",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 404
 
 
 def test_continuity_review_task_resolve_route_removes_task_from_inbox(client: TestClient) -> None:
@@ -358,3 +512,40 @@ def test_continuity_review_task_resolve_route_removes_task_from_inbox(client: Te
     assert production_context["review_state"] == "approved"
     assert production_context["continuity_change"]["resolved_at"]
     assert production_context["continuity_change"]["resolution_note"] == "已按新设定复核画面"
+
+
+def test_continuity_review_tasks_batch_resolve_route_marks_all_selected(client: TestClient) -> None:
+    user_id = f"continuity-batch-resolve-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+    review_plan_resp = client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+    assert review_plan_resp.status_code == 200
+    shot_id = review_plan_resp.json()["shot_ids"][0]
+
+    response = client.post(
+        "/api/v1/story-bibles/continuity-review-tasks/resolve-batch",
+        json={"shot_ids": [shot_id, shot_id], "resolution_note": "批量复审通过"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "resolved"
+    assert payload["resolved_count"] == 1
+    assert payload["shot_ids"] == [shot_id]
+
+    tasks_resp = client.get(
+        "/api/v1/story-bibles/continuity-review-tasks",
+        headers=_auth_headers(user_id),
+    )
+    assert tasks_resp.status_code == 200
+    assert tasks_resp.json()["total"] == 0

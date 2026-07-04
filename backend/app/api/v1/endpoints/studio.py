@@ -4,15 +4,18 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.security import get_current_user_id
+from app.models import Workflow
 from app.services.studio_actions import create_studio_review_run, list_studio_actions, list_studio_review_runs, run_studio_action
 from app.services.studio_mode import policy_from_request
 from app.services.studio_snapshot import build_studio_snapshot
+from app.services.continuity_review_tasks import list_continuity_review_tasks
 
 router = APIRouter(tags=["创作工作台"])
 
@@ -38,6 +41,31 @@ class StudioReviewRequest(BaseModel):
     mode: str = Field("production", pattern="^(test|production)$")
     allow_test_bypass: bool = False
     bypass_reason: Optional[str] = None
+
+
+@router.get("/workflows/{workflow_id}/continuity-review-tasks", response_model=Dict[str, Any])
+async def get_workflow_continuity_review_tasks(
+    workflow_id: str,
+    status_filter: str = Query("open", alias="status", pattern="^(open|resolved|all)$"),
+    sort: str = Query("updated_desc", pattern="^(updated_desc|updated_asc|episode_desc|episode_asc|entity_desc|entity_asc)$"),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """读取单个工作流下的连续性复审任务。"""
+
+    workflow_result = await db.execute(select(Workflow.id).where(Workflow.id == workflow_id, Workflow.user_id == user_id))
+    if workflow_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="工作流不存在")
+
+    return await list_continuity_review_tasks(
+        db,
+        user_id,
+        workflow_id=workflow_id,
+        task_status=status_filter,
+        sort=sort,
+        limit=limit,
+    )
 
 
 @router.get("/workflows/{workflow_id}/snapshot", response_model=Dict[str, Any])

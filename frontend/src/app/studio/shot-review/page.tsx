@@ -132,10 +132,12 @@ function ReviewArtifactLinks({ artifacts }: { artifacts: ArtifactLinks }) {
 function ShotCard({
   shot,
   selected,
+  target,
   onSelectedChange,
 }: {
   shot: WorkflowShotReviewItem;
   selected: boolean;
+  target: boolean;
   onSelectedChange: (checked: boolean) => void;
 }) {
   const isFailed = shot.status === 'failed';
@@ -143,7 +145,12 @@ function ShotCard({
   const video = mediaUrl(shot.video_url);
 
   return (
-    <Card className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none" data-testid={`shot-review-card-${shot.shot_id}`}>
+    <Card
+      id={`shot-review-${shot.shot_id}`}
+      className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none"
+      data-testid={`shot-review-card-${shot.shot_id}`}
+      data-target-shot={target ? 'true' : undefined}
+    >
       <div className="relative aspect-video bg-slate-950">
         {video ? (
           <video src={video} className="h-full w-full object-cover" controls muted playsInline />
@@ -229,6 +236,7 @@ function ShotCard({
 function ShotReviewContent() {
   const searchParams = useSearchParams();
   const workflowId = searchParams.get('workflow_id') || '';
+  const targetShotId = searchParams.get('shot_id') || '';
   const [data, setData] = useState<WorkflowShotReviewResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [characterName, setCharacterName] = useState('');
@@ -245,7 +253,14 @@ function ShotReviewContent() {
     try {
       const response = await apiClient.getWorkflowShotReview(workflowId);
       setData(response);
-      setSelectedIds((current) => current.filter((id) => response.shots.some((shot) => shot.shot_id === id)));
+      setSelectedIds((current) => {
+        const availableShotIds = new Set(response.shots.map((shot) => shot.shot_id));
+        const next = current.filter((id) => availableShotIds.has(id));
+        if (targetShotId && availableShotIds.has(targetShotId) && !next.includes(targetShotId)) {
+          next.unshift(targetShotId);
+        }
+        return next;
+      });
     } catch (err: any) {
       setError(err?.message || '镜头审阅加载失败');
     } finally {
@@ -256,7 +271,12 @@ function ShotReviewContent() {
   useEffect(() => {
     loadReview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflowId]);
+  }, [workflowId, targetShotId]);
+
+  useEffect(() => {
+    if (!targetShotId || !data || loading) return;
+    document.getElementById(`shot-review-${targetShotId}`)?.scrollIntoView({ block: 'center' });
+  }, [data, loading, targetShotId]);
 
   const characterOptions = useMemo(() => {
     const values = new Set<string>();
@@ -405,6 +425,7 @@ function ShotReviewContent() {
                 key={shot.shot_id}
                 shot={shot}
                 selected={selectedIds.includes(shot.shot_id)}
+                target={targetShotId === shot.shot_id}
                 onSelectedChange={(checked) => toggleShot(shot.shot_id, checked)}
               />
             ))}

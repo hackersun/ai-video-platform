@@ -253,8 +253,14 @@ export type ContinuityReviewTask = {
   shot_number: number;
   storyboard_id?: string | null;
   storyboard_title?: string | null;
+  storyboard_url?: string | null;
   novel_id?: string | null;
   novel_title?: string | null;
+  workflow_id?: string | null;
+  workflow_title?: string | null;
+  shot_review_url?: string | null;
+  shot_url?: string | null;
+  status?: string | null;
   shot_summary?: string | null;
   entity_id?: string | null;
   entity_name?: string | null;
@@ -271,6 +277,15 @@ export type ContinuityReviewTask = {
 export type ContinuityReviewTasksResponse = {
   tasks: ContinuityReviewTask[];
   total: number;
+  workflow_id?: string | null;
+  filters?: {
+    novel_id?: string | null;
+    entity_id?: string | null;
+    episode_index?: number | null;
+    review_state?: string | null;
+    status?: string | null;
+  };
+  sort?: string;
 };
 
 export type ContinuityReviewResolveResponse = {
@@ -279,6 +294,13 @@ export type ContinuityReviewResolveResponse = {
   review_state: string;
   resolved_at: string;
   resolution_note?: string | null;
+};
+
+export type ContinuityReviewBatchResolveResponse = {
+  status: string;
+  resolved_count: number;
+  shot_ids: string[];
+  tasks?: ContinuityReviewResolveResponse[];
 };
 
 export type BatchFinalizeSupportingRequest = {
@@ -2265,11 +2287,19 @@ class ApiClient {
   async getContinuityReviewTasks(params: {
     novel_id?: string;
     entity_id?: string;
+    episode_index?: number;
+    review_state?: string;
+    status?: string;
+    sort?: string;
     limit?: number;
   } = {}) {
     const searchParams = new URLSearchParams();
     if (params.novel_id) searchParams.set('novel_id', params.novel_id);
     if (params.entity_id) searchParams.set('entity_id', params.entity_id);
+    if (params.episode_index) searchParams.set('episode_index', String(params.episode_index));
+    if (params.review_state) searchParams.set('review_state', params.review_state);
+    if (params.status) searchParams.set('status', params.status);
+    if (params.sort) searchParams.set('sort', params.sort);
     if (params.limit) searchParams.set('limit', String(params.limit));
     const qs = searchParams.toString();
     return this.request<ContinuityReviewTasksResponse>(`/story-bibles/continuity-review-tasks${qs ? `?${qs}` : ''}`);
@@ -2281,6 +2311,18 @@ class ApiClient {
     return this.request<ContinuityReviewResolveResponse>(`/story-bibles/continuity-review-tasks/${shotId}/resolve`, {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async resolveContinuityReviewTasks(shotIds: string[], data: {
+    resolution_note?: string;
+  } = {}) {
+    return this.request<ContinuityReviewBatchResolveResponse>('/story-bibles/continuity-review-tasks/resolve-batch', {
+      method: 'POST',
+      body: JSON.stringify({
+        shot_ids: shotIds,
+        ...data,
+      }),
     });
   }
 
