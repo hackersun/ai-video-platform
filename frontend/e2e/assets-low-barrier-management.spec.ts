@@ -296,9 +296,11 @@ test('asset library guides production-card missing view completion from contextu
   await wizard.getByRole('button', { name: '生成背面缺失视图' }).click();
 
   await expect(page.getByText('已生成 1 张背面参考图')).toBeVisible();
-  expect(generatePayload).toEqual({
+  expect(generatePayload).toMatchObject({
     entity_id: 'entity-character',
+    novel_id: novel.id,
     view_keys: ['back'],
     style: 'anime',
+    consistency_mode: 'standard',
   });
 });
