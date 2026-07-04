@@ -76,6 +76,15 @@ test('asset wizard shows story contract controls and strict-mode review results'
   await page.route('**/api/v1/assets/generate-entity-views', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entity_type: 'scene', entity_id: entity.id, assets: { layout: generatedAsset }, total: 1, failures: [] }) });
   });
+  let regenerateCalled = false;
+  await page.route('**/api/v1/assets/asset-layout/regenerate', async (route) => {
+    regenerateCalled = true;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...generatedAsset, id: 'asset-layout-regenerated', version: 2 }),
+    });
+  });
 
   await page.goto('/assets?novel_id=novel-1&entity_type=scene&entity_id=scene-1&view_key=layout&action=generate-missing&source=production-card');
   const contractPanel = page.getByTestId('asset-visual-contract-panel');
@@ -84,6 +93,9 @@ test('asset wizard shows story contract controls and strict-mode review results'
   await expect(contractPanel.getByText('门外冷蓝雨光，室内右上方暖黄灯')).toBeVisible();
   await expect(page.getByText('一致性 88')).toBeVisible();
   await expect(page.getByText('必须保持光源方向：门外冷蓝雨光，室内右上方暖黄灯')).toBeVisible();
+  await expect(page.getByRole('button', { name: '按问题重生成' })).toBeVisible();
+  await page.getByRole('button', { name: '按问题重生成' }).click();
+  expect(regenerateCalled).toBe(true);
 
   await page.getByLabel('一致性模式').selectOption('strict');
   const [generateRequest] = await Promise.all([

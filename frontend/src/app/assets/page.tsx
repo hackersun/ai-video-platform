@@ -2017,8 +2017,25 @@ export default function AssetsPage() {
                           </div>
                         )}
                         {retryAdvice && (
-                          <div className="rounded-md border border-amber-400/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100">
-                            {retryAdvice}
+                          <div className="space-y-2 rounded-md border border-amber-400/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100">
+                            <div>{retryAdvice}</div>
+                            {matchedAsset && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="border-amber-300/40 text-amber-100"
+                                disabled={regeneratingAssetId === matchedAsset.id}
+                                onClick={() => regenerateAsset(matchedAsset)}
+                              >
+                                {regeneratingAssetId === matchedAsset.id ? (
+                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                ) : (
+                                  <RefreshCw className="mr-1 h-3 w-3" />
+                                )}
+                                按问题重生成
+                              </Button>
+                            )}
                           </div>
                         )}
                       </div>

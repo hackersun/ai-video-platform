@@ -727,6 +727,64 @@ def test_regenerate_entity_view_asset_keeps_view_lineage_and_front_reference(
     assert calls and "/static/dev/孙剑正面定稿.png" in calls[0]["prompt"]
 
 
+def test_regenerate_view_carries_consistency_feedback_into_prompt(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"retry-feedback-user-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    scene_id = _create_entity(client, user_id, novel_id, "scene", "旧邮局")
+    asset = _create_asset(
+        client,
+        user_id,
+        name="old-post-office-layout",
+        category="scene",
+        novel_id=novel_id,
+        entity_id=scene_id,
+        entity_type="scene",
+        generation_params={
+            "source": "entity_multiview",
+            "view_key": "layout",
+            "view_label": "空间布局",
+            "style": "cinematic-2d",
+            "visual_contract": {
+                "id": "contract-old-post-office",
+                "entity_type": "scene",
+                "continuity_axes": {"lighting_direction": "门外冷蓝雨光，室内右上方暖黄灯"},
+                "spatial_layout": {"fixed_elements": ["右侧木柜台", "后墙绿色分拣信箱"]},
+            },
+            "visual_consistency": {"score": 72, "issues": ["lighting_direction", "spatial_layout"]},
+            "retry_prompt_advice": "必须保持光源方向：门外冷蓝雨光，室内右上方暖黄灯；必须保持空间结构：右侧木柜台、后墙绿色分拣信箱",
+        },
+    )
+    captured_prompts: list[str] = []
+
+    async def _fake_image_config(*args, **kwargs):
+        return "key", "volcano", "test-image-model", None
+
+    class _FakeImageService:
+        async def generate_image(self, **kwargs):
+            captured_prompts.append(kwargs["prompt"])
+            return {"data": [{"url": "data:image/png;base64," + _tiny_png_base64()}]}
+
+    monkeypatch.setattr("app.services.asset_generation_service.get_user_image_model_config", _fake_image_config, raising=False)
+    monkeypatch.setattr(
+        "app.services.asset_generation_service.create_image_generation_service",
+        lambda *args, **kwargs: _FakeImageService(),
+        raising=False,
+    )
+
+    response = client.post(
+        f"/api/v1/assets/{asset['id']}/regenerate",
+        json={"style": "cinematic-2d"},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert any("必须保持光源方向" in prompt for prompt in captured_prompts)
+    assert any("右侧木柜台" in prompt for prompt in captured_prompts)
+
+
 def test_character_view_generation_uses_single_character_contract_and_prompt_policy(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

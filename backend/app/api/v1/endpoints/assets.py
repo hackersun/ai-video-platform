@@ -1359,6 +1359,8 @@ async def regenerate_asset(
     if request.model_config_id:
         await service.configure_image_model(request.model_config_id)
     style = request.style or params.get("style") or "anime"
+    retry_advice = params.get("retry_prompt_advice")
+    retry_prompt_advice_value = retry_advice.strip() if isinstance(retry_advice, str) else None
     generated = await service.generate_entity_view_assets(
         entity_id=entity.id,
         entity_type=str(entity_type),
@@ -1371,6 +1373,7 @@ async def regenerate_asset(
         script_id=asset.script_id or getattr(entity, "script_id", None),
         character_id=asset.character_id or (character.id if character else None),
         view_keys=[str(view_key)],
+        retry_prompt_advice=retry_prompt_advice_value,
     )
     regenerated = generated.get(str(view_key))
     if not regenerated:

@@ -1120,6 +1120,7 @@ class AssetGenerationService:
         consistency_mode: str = "standard",
         force_contract_refresh: bool = False,
         anchor_view_key: Optional[str] = None,
+        retry_prompt_advice: Optional[str] = None,
     ) -> Dict[str, Asset]:
         """Generate creator-facing multi-view assets for one story entity."""
         self.last_generation_failures = []
@@ -1227,6 +1228,8 @@ class AssetGenerationService:
                     "prompt_hint": view["prompt_hint"],
                 },
             )
+            if retry_prompt_advice:
+                prompt = f"{prompt}\n一致性复修要求：{retry_prompt_advice}"
             try:
                 image_url = await self._generate_asset_image_url(
                     prompt,
