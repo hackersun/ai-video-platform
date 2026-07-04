@@ -22,6 +22,7 @@ from app.models import Chapter, Novel, Script, StoryEntity
 from app.models.character import Character
 from app.services.default_anime_library import ensure_default_anime_assets
 from app.services.asset_generation_service import AssetGenerationService, get_asset_view_presets, get_image_style_templates
+from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice
 from app.services.media_persistence import persist_uploaded_media_bytes
 
 router = APIRouter(tags=["资产库"])
@@ -1419,6 +1420,50 @@ async def record_asset_visual_consistency(
     asset.generation_params = params
     asset.updated_at = utc_now()
 
+    await db.commit()
+    await db.refresh(asset)
+    return build_asset_response(asset)
+
+
+@router.post("/{asset_id}/review-contract", response_model=AssetResponse)
+async def review_asset_contract(
+    asset_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Recompute deterministic prompt coverage against the persisted visual contract."""
+    result = await db.execute(
+        select(Asset).where(and_(Asset.id == asset_id, Asset.user_id == user_id))
+    )
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+
+    params = dict(asset.generation_params) if isinstance(asset.generation_params, dict) else {}
+    visual_contract = params.get("visual_contract")
+    if not isinstance(visual_contract, dict) or not visual_contract:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="当前资产缺少 visual_contract")
+
+    view_key = str(params.get("view_key") or params.get("view_angle") or params.get("asset_subtype") or "")
+    provider_metadata = {
+        "provider_name": params.get("provider_name"),
+        "model_id": params.get("model_id"),
+        "model_strategy": params.get("model_strategy"),
+    }
+    review = review_asset_against_contract(
+        visual_contract,
+        view_key,
+        asset.source_prompt or "",
+        provider_result_metadata=provider_metadata,
+    )
+    params["visual_consistency"] = review
+    if review.get("status") != "passed" or review.get("issues"):
+        params["retry_prompt_advice"] = retry_prompt_advice(review.get("issues") or [], visual_contract)
+    else:
+        params.pop("retry_prompt_advice", None)
+
+    asset.generation_params = params
+    asset.updated_at = utc_now()
     await db.commit()
     await db.refresh(asset)
     return build_asset_response(asset)

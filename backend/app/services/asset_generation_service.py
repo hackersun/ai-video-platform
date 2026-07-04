@@ -29,9 +29,9 @@ from app.services.image_prompt_policy import (
     build_visual_contract,
     entity_view_prompt,
     is_composite_character_name,
-    visual_consistency_metadata,
 )
 from app.services.asset_visual_contract import build_visual_contract_from_story
+from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice
 from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
 from app.services.prompt_skill_service import apply_active_prompt_skill_template
@@ -1234,6 +1234,49 @@ class AssetGenerationService:
                     aspect_ratio=view.get("aspect_ratio") or "1:1",
                     prefix=f"asset-{entity_type}-{key}-{entity_id[:8]}",
                 )
+                provider_metadata = {
+                    "provider_name": self.provider_name,
+                    "model_id": self.model_id,
+                    "model_strategy": strategy,
+                }
+                visual_review = review_asset_against_contract(
+                    visual_contract,
+                    key,
+                    prompt,
+                    provider_result_metadata=provider_metadata,
+                )
+                generation_params = {
+                    "source": "entity_multiview",
+                    "status": "succeeded",
+                    "view_key": key,
+                    "view_angle": key,
+                    "reference_role": "character_multiview" if entity_type == "character" else f"{entity_type}_multiview",
+                    "view_label": view["label"],
+                    "view_title": preset["title"],
+                    "entity_type": entity_type,
+                    "style": style,
+                    "consistency_mode": normalized_mode,
+                    "aspect_ratio": view.get("aspect_ratio"),
+                    "prompt_hint": view.get("prompt_hint"),
+                    "visual_contract": visual_contract,
+                    "model_strategy": strategy,
+                    "provider_name": self.provider_name,
+                    "model_id": self.model_id,
+                    "anchor_view_key": resolved_anchor_view_key,
+                    "reference_view_key": active_reference_view_key,
+                    "reference_asset_id": getattr(active_reference_asset, "id", None) if active_reference_asset else None,
+                    "reference_asset_url": getattr(active_reference_asset, "url", None) if active_reference_asset else None,
+                    "visual_consistency": visual_review,
+                    "novel_id": novel_id,
+                    "chapter_id": chapter_id,
+                    "script_id": script_id,
+                    "character_id": character_id if entity_type == "character" else None,
+                }
+                if visual_review.get("status") != "passed" or visual_review.get("issues"):
+                    generation_params["retry_prompt_advice"] = retry_prompt_advice(
+                        visual_review.get("issues") or [],
+                        visual_contract,
+                    )
                 asset = await self._create_asset(
                     name=f"{entity_name} · {view['label']}",
                     category=preset["category"],
@@ -1247,38 +1290,7 @@ class AssetGenerationService:
                     chapter_id=chapter_id,
                     script_id=script_id,
                     source_prompt=prompt,
-                    generation_params={
-                        "source": "entity_multiview",
-                        "status": "succeeded",
-                        "view_key": key,
-                        "view_angle": key,
-                        "reference_role": "character_multiview" if entity_type == "character" else f"{entity_type}_multiview",
-                        "view_label": view["label"],
-                        "view_title": preset["title"],
-                        "entity_type": entity_type,
-                        "style": style,
-                        "consistency_mode": normalized_mode,
-                        "aspect_ratio": view.get("aspect_ratio"),
-                        "prompt_hint": view.get("prompt_hint"),
-                        "visual_contract": visual_contract,
-                        "model_strategy": strategy,
-                        "provider_name": self.provider_name,
-                        "model_id": self.model_id,
-                        "anchor_view_key": resolved_anchor_view_key,
-                        "reference_view_key": active_reference_view_key,
-                        "reference_asset_id": getattr(active_reference_asset, "id", None) if active_reference_asset else None,
-                        "reference_asset_url": getattr(active_reference_asset, "url", None) if active_reference_asset else None,
-                        "visual_consistency": visual_consistency_metadata(
-                            contract=visual_contract,
-                            view_key=key,
-                            reference_view_key=active_reference_view_key,
-                            reference_asset_id=getattr(active_reference_asset, "id", None) if active_reference_asset else None,
-                        ),
-                        "novel_id": novel_id,
-                        "chapter_id": chapter_id,
-                        "script_id": script_id,
-                        "character_id": character_id if entity_type == "character" else None,
-                    },
+                    generation_params=generation_params,
                 )
                 results[key] = asset
                 if not reference_asset and key == resolved_anchor_view_key:

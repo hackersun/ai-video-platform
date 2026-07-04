@@ -870,3 +870,55 @@ def test_visual_consistency_score_is_written_to_asset_history(client: TestClient
     assert params["visual_consistency"]["model"] == "manual-review"
     assert params["visual_consistency"]["reference_asset_ids"] == ["ref-front", "ref-side"]
     assert params["visual_consistency_history"][0]["score"] == 87
+
+
+def test_review_contract_endpoint_recomputes_prompt_coverage_without_destroying_history(client: TestClient) -> None:
+    user_id = f"asset-contract-review-user-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    entity_id = _create_entity(client, user_id, novel_id, "scene", "旧邮局")
+    visual_contract = {
+        "id": "visual-contract-old-post-office",
+        "entity_type": "scene",
+        "entity_name": "旧邮局",
+        "continuity_axes": {
+            "lighting_direction": "门外冷蓝雨光，室内右上方暖黄灯",
+        },
+        "spatial_layout": {"fixed_elements": ["右侧木柜台"]},
+    }
+    create_response = client.post(
+        "/api/v1/assets",
+        json={
+            "category": "scene",
+            "asset_type": "image",
+            "name": "旧邮局 建立镜头",
+            "url": "/static/dev/old-post-office.png",
+            "thumbnail_url": "/static/dev/old-post-office.png",
+            "novel_id": novel_id,
+            "entity_id": entity_id,
+            "entity_type": "scene",
+            "source_prompt": "旧邮局建立镜头，保留右侧木柜台。",
+            "generation_params": {
+                "source": "entity_multiview",
+                "view_key": "establishing",
+                "visual_contract": visual_contract,
+                "provider_name": "minimax",
+                "model_id": "image-01",
+                "visual_consistency_history": [{"score": 87, "model": "manual-review"}],
+            },
+        },
+        headers=auth_headers(user_id),
+    )
+    assert create_response.status_code == 201, create_response.text
+
+    review_response = client.post(
+        f"/api/v1/assets/{create_response.json()['id']}/review-contract",
+        headers=auth_headers(user_id),
+    )
+
+    assert review_response.status_code == 200, review_response.text
+    params = review_response.json()["generation_params"]
+    assert params["visual_consistency"]["mode"] == "contract_prompt_coverage"
+    assert params["visual_consistency"]["status"] == "needs_retry"
+    assert params["visual_consistency"]["provider_result_metadata"]["model_id"] == "image-01"
+    assert params["retry_prompt_advice"]
+    assert params["visual_consistency_history"][0]["model"] == "manual-review"
