@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 const e2ePort = process.env.PLAYWRIGHT_PORT || '3100';
 const baseURL = `http://localhost:${e2ePort}`;
 const chromeExecutablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE_PATH;
+const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || '/tmp/ai-video-platform-series-studio-e2e/test-results';
 
 export default defineConfig({
   testDir: './e2e',
@@ -11,6 +12,7 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'list',
+  outputDir,
   use: {
     baseURL,
     trace: 'on-first-retry',
