@@ -20,6 +20,7 @@ from app.services.image_generation_pipeline import (
     missing_image_result_message,
     provider_task_id,
 )
+from app.services.asset_model_capabilities import decide_asset_generation_strategy
 from app.services.image_prompt_policy import (
     CHARACTER_SINGLE_VIEW_CONSTRAINT,
     PROP_VIEW_CONSTRAINT,
@@ -1180,6 +1181,22 @@ class AssetGenerationService:
             view = all_views[key]
             active_reference_asset = None if key == resolved_anchor_view_key else reference_asset
             active_reference_view_key = None if key == resolved_anchor_view_key else reference_view_key
+            has_anchor = bool(active_reference_asset or (key != resolved_anchor_view_key and resolved_anchor_view_key))
+            if not self.image_service:
+                try:
+                    await self.configure_image_model()
+                except Exception:
+                    if not is_dev_mode():
+                        raise
+            strategy = decide_asset_generation_strategy(
+                consistency_mode=normalized_mode,
+                provider_name=self.provider_name,
+                model_id=self.model_id,
+                entity_type=entity_type,
+                has_anchor=has_anchor,
+            )
+            if strategy.get("strict_blocking"):
+                raise ValueError(strategy["blocking_reason"])
             prompt = self._build_entity_view_prompt(
                 entity_type=entity_type,
                 name=entity_name,
@@ -1244,6 +1261,9 @@ class AssetGenerationService:
                         "aspect_ratio": view.get("aspect_ratio"),
                         "prompt_hint": view.get("prompt_hint"),
                         "visual_contract": visual_contract,
+                        "model_strategy": strategy,
+                        "provider_name": self.provider_name,
+                        "model_id": self.model_id,
                         "anchor_view_key": resolved_anchor_view_key,
                         "reference_view_key": active_reference_view_key,
                         "reference_asset_id": getattr(active_reference_asset, "id", None) if active_reference_asset else None,
@@ -1292,6 +1312,9 @@ class AssetGenerationService:
                         "aspect_ratio": view.get("aspect_ratio"),
                         "prompt_hint": view.get("prompt_hint"),
                         "visual_contract": visual_contract,
+                        "model_strategy": strategy,
+                        "provider_name": self.provider_name,
+                        "model_id": self.model_id,
                         "anchor_view_key": resolved_anchor_view_key,
                         "reference_view_key": active_reference_view_key,
                         "reference_asset_id": getattr(active_reference_asset, "id", None) if active_reference_asset else None,

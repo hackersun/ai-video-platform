@@ -548,6 +548,34 @@ def test_generate_scene_views_persists_story_linked_contract(
     assert any("小说关联视觉契约" in call["prompt"] for call in calls)
 
 
+def test_strict_scene_generation_blocks_without_reference_capable_model(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"strict-scene-user-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    scene_id = _create_entity(client, user_id, novel_id, "scene", "旧邮局")
+
+    async def _fake_image_config(*args, **kwargs):
+        return "key", "minimax", "image-01", None
+
+    monkeypatch.setattr("app.services.asset_generation_service.get_user_image_model_config", _fake_image_config, raising=False)
+    monkeypatch.setattr(
+        "app.services.asset_model_capabilities.get_model_reference_limits",
+        lambda model_id: {"images": 0, "at_reference": False},
+        raising=False,
+    )
+
+    response = client.post(
+        "/api/v1/assets/generate-entity-views",
+        json={"entity_id": scene_id, "view_keys": ["layout"], "style": "anime", "consistency_mode": "strict"},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    assert "严格一致模式需要支持参考图输入" in response.text
+
+
 def test_generate_character_entity_views_are_linked_to_character_records_for_video_consistency(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
