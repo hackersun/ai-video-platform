@@ -179,7 +179,7 @@ class EntityViewGenerateRequest(BaseModel):
     view_keys: Optional[List[str]] = Field(None, description="可选视图 key，不传则生成该实体类型全部必备视图")
     style: str = Field("anime", description="anime/xianxia/wuxia/fantasy/urban/cartoon/realistic")
     model_config_id: Optional[str] = None
-    consistency_mode: Literal["off", "standard", "strict"] = Field("off", description="一致性模式: off/standard/strict")
+    consistency_mode: Literal["off", "draft", "standard", "strict"] = Field("off", description="一致性模式: off/draft/standard/strict")
     force_contract_refresh: bool = False
     anchor_view_key: Optional[str] = None
 
@@ -782,6 +782,9 @@ async def generate_entity_view_assets(
             script_id=scope["script_id"],
             character_id=character.id if character else None,
             view_keys=request.view_keys,
+            consistency_mode=request.consistency_mode,
+            force_contract_refresh=request.force_contract_refresh,
+            anchor_view_key=request.anchor_view_key,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc

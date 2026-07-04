@@ -501,6 +501,53 @@ def test_generate_entity_views_persists_novel_linked_assets(
     assert {"front", "side"} <= locked_view_keys
 
 
+def test_generate_scene_views_persists_story_linked_contract(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"asset-scene-contract-user-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    scene_id = _create_entity(client, user_id, novel_id, "scene", "秘境石阶")
+    calls: list[dict] = []
+
+    async def _fake_image_config(*args, **kwargs):
+        return "fake-image-key", "minimax", "image-01", "https://api.minimax.test/v1"
+
+    class _FakeImageService:
+        async def generate_image(self, **kwargs) -> dict:
+            calls.append(kwargs)
+            return {"data": {"image_base64": [_tiny_png_base64()]}, "task_id": f"scene-contract-task-{len(calls)}"}
+
+    monkeypatch.setattr("app.services.asset_generation_service.get_user_image_model_config", _fake_image_config, raising=False)
+    monkeypatch.setattr("app.services.asset_generation_service.create_image_generation_service", lambda *args, **kwargs: _FakeImageService(), raising=False)
+
+    response = client.post(
+        "/api/v1/assets/generate-entity-views",
+        json={
+            "entity_id": scene_id,
+            "novel_id": novel_id,
+            "view_keys": ["establishing", "layout"],
+            "style": "cinematic-2d",
+            "consistency_mode": "standard",
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    establishing = payload["assets"]["establishing"]
+    layout = payload["assets"]["layout"]
+    establishing_contract = establishing["generation_params"]["visual_contract"]
+    layout_params = layout["generation_params"]
+
+    assert establishing_contract["story_scope"]["novel_id"] == novel_id
+    assert establishing_contract["entity_type"] == "scene"
+    assert establishing_contract["context_sources"]
+    assert layout_params["reference_view_key"] == "establishing"
+    assert layout_params["reference_asset_id"] == establishing["id"]
+    assert any("小说关联视觉契约" in call["prompt"] for call in calls)
+
+
 def test_generate_character_entity_views_are_linked_to_character_records_for_video_consistency(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

@@ -3,6 +3,7 @@
 支持角色、场景、道具等资产的AI生成和版本管理
 """
 from copy import deepcopy
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Any
 from uuid import uuid4
 from datetime import datetime
@@ -29,6 +30,7 @@ from app.services.image_prompt_policy import (
     is_composite_character_name,
     visual_consistency_metadata,
 )
+from app.services.asset_visual_contract import build_visual_contract_from_story
 from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
 from app.services.prompt_skill_service import apply_active_prompt_skill_template
@@ -1114,6 +1116,9 @@ class AssetGenerationService:
         script_id: Optional[str] = None,
         character_id: Optional[str] = None,
         view_keys: Optional[List[str]] = None,
+        consistency_mode: str = "standard",
+        force_contract_refresh: bool = False,
+        anchor_view_key: Optional[str] = None,
     ) -> Dict[str, Asset]:
         """Generate creator-facing multi-view assets for one story entity."""
         self.last_generation_failures = []
@@ -1124,29 +1129,57 @@ class AssetGenerationService:
             raise ValueError("角色三视图只能用于单一角色；当前对象像是群体/复合角色，请先拆分或选择具体角色")
 
         all_views = {view["key"]: view for view in preset["views"]}
-        requested_keys = view_keys or list(all_views.keys())
+        requested_keys = list(view_keys or list(all_views.keys()))
         unknown = [key for key in requested_keys if key not in all_views]
         if unknown:
             raise ValueError(f"不支持的视图: {', '.join(unknown)}")
 
         style_keywords = self._style_keywords(style)
-        visual_contract = build_visual_contract(
-            entity_id=entity_id,
-            entity_type=entity_type,
-            name=entity_name,
-            description=entity_description,
-            style=style,
-        )
+        normalized_mode = (consistency_mode or "off").strip().lower()
+        if normalized_mode in {"standard", "strict"}:
+            visual_contract = await build_visual_contract_from_story(
+                self.db,
+                self.user_id,
+                entity=SimpleNamespace(
+                    id=entity_id,
+                    entity_type=entity_type,
+                    name=entity_name,
+                    description=entity_description,
+                    novel_id=novel_id,
+                    chapter_id=chapter_id,
+                    script_id=script_id,
+                ),
+                style=style,
+                chapter_id=chapter_id,
+                script_id=script_id,
+                force_refresh=force_contract_refresh,
+            )
+        else:
+            visual_contract = build_visual_contract(
+                entity_id=entity_id,
+                entity_type=entity_type,
+                name=entity_name,
+                description=entity_description,
+                style=style,
+            )
         results: Dict[str, Asset] = {}
         reference_asset: Optional[Asset] = None
         reference_view_key: Optional[str] = None
-        if entity_type == "character" and "front" not in requested_keys:
-            reference_asset = await self._find_entity_view_asset(entity_type, entity_id, "front")
+        default_anchor_view_key = {"character": "front", "scene": "establishing", "prop": "main"}.get(entity_type)
+        resolved_anchor_view_key = anchor_view_key or default_anchor_view_key
+        if resolved_anchor_view_key and resolved_anchor_view_key not in all_views:
+            raise ValueError(f"不支持的锚点视图: {resolved_anchor_view_key}")
+        if resolved_anchor_view_key in requested_keys:
+            requested_keys = [resolved_anchor_view_key] + [key for key in requested_keys if key != resolved_anchor_view_key]
+        elif resolved_anchor_view_key:
+            reference_asset = await self._find_entity_view_asset(entity_type, entity_id, resolved_anchor_view_key)
             if reference_asset:
-                reference_view_key = "front"
+                reference_view_key = resolved_anchor_view_key
         prompt_skill_task = self._prompt_skill_task_for_entity(entity_type)
         for key in requested_keys:
             view = all_views[key]
+            active_reference_asset = None if key == resolved_anchor_view_key else reference_asset
+            active_reference_view_key = None if key == resolved_anchor_view_key else reference_view_key
             prompt = self._build_entity_view_prompt(
                 entity_type=entity_type,
                 name=entity_name,
@@ -1157,7 +1190,7 @@ class AssetGenerationService:
                 prompt_hint=view["prompt_hint"],
                 visual_contract=visual_contract,
                 style_keywords=style_keywords,
-                reference_asset=reference_asset,
+                reference_asset=active_reference_asset,
             )
             prompt = await self._apply_prompt_skill(
                 task=prompt_skill_task,
@@ -1207,17 +1240,19 @@ class AssetGenerationService:
                         "view_title": preset["title"],
                         "entity_type": entity_type,
                         "style": style,
+                        "consistency_mode": normalized_mode,
                         "aspect_ratio": view.get("aspect_ratio"),
                         "prompt_hint": view.get("prompt_hint"),
                         "visual_contract": visual_contract,
-                        "reference_view_key": reference_view_key,
-                        "reference_asset_id": getattr(reference_asset, "id", None) if reference_asset else None,
-                        "reference_asset_url": getattr(reference_asset, "url", None) if reference_asset else None,
+                        "anchor_view_key": resolved_anchor_view_key,
+                        "reference_view_key": active_reference_view_key,
+                        "reference_asset_id": getattr(active_reference_asset, "id", None) if active_reference_asset else None,
+                        "reference_asset_url": getattr(active_reference_asset, "url", None) if active_reference_asset else None,
                         "visual_consistency": visual_consistency_metadata(
                             contract=visual_contract,
                             view_key=key,
-                            reference_view_key=reference_view_key,
-                            reference_asset_id=getattr(reference_asset, "id", None) if reference_asset else None,
+                            reference_view_key=active_reference_view_key,
+                            reference_asset_id=getattr(active_reference_asset, "id", None) if active_reference_asset else None,
                         ),
                         "novel_id": novel_id,
                         "chapter_id": chapter_id,
@@ -1226,7 +1261,7 @@ class AssetGenerationService:
                     },
                 )
                 results[key] = asset
-                if entity_type == "character" and not reference_asset and key == "front":
+                if not reference_asset and key == resolved_anchor_view_key:
                     reference_asset = asset
                     reference_view_key = key
             except Exception as exc:
@@ -1253,12 +1288,14 @@ class AssetGenerationService:
                         "view_title": preset["title"],
                         "entity_type": entity_type,
                         "style": style,
+                        "consistency_mode": normalized_mode,
                         "aspect_ratio": view.get("aspect_ratio"),
                         "prompt_hint": view.get("prompt_hint"),
                         "visual_contract": visual_contract,
-                        "reference_view_key": reference_view_key,
-                        "reference_asset_id": getattr(reference_asset, "id", None) if reference_asset else None,
-                        "reference_asset_url": getattr(reference_asset, "url", None) if reference_asset else None,
+                        "anchor_view_key": resolved_anchor_view_key,
+                        "reference_view_key": active_reference_view_key,
+                        "reference_asset_id": getattr(active_reference_asset, "id", None) if active_reference_asset else None,
+                        "reference_asset_url": getattr(active_reference_asset, "url", None) if active_reference_asset else None,
                         "error_message": str(exc),
                         "retryable": True,
                         "attempted_at": utc_now().isoformat(),
