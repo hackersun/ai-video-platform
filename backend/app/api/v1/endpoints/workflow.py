@@ -31,7 +31,11 @@ from app.services.production_bible import build_production_bible_summary
 from app.services.production_strategy_routing import resolve_strategy_video_config_id
 from app.services.publication_readiness import evaluate_publication_readiness
 from app.services.reference_package_builder import build_reference_package
-from app.services.video_reference_adapter import build_reference_package_metadata, build_video_provider_content
+from app.services.video_reference_adapter import (
+    build_reference_package_metadata,
+    build_video_provider_content,
+    enrich_prompt_parameters_with_reference_contract,
+)
 from app.services.visual_consistency_service import record_completed_shot_visual_consistency
 
 router = APIRouter(tags=["工作流"])
@@ -2335,6 +2339,14 @@ async def generate_workflow_media_batch(
                 camera_fixed=False,
                 watermark=True,
             )
+            model_protocol = selected_video_model.get("protocol") if isinstance(selected_video_model.get("protocol"), dict) else {}
+            prompt_parameters = enrich_prompt_parameters_with_reference_contract(
+                prompt_parameters,
+                provider_content["metadata"],
+                video_reference_limits,
+                model_protocol,
+            )
+            extra_data["prompt_parameters"] = prompt_parameters
             extra_data["reference_package"] = build_reference_package_metadata(
                 reference_package,
                 provider_content["metadata"],

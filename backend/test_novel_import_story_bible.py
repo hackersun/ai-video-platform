@@ -295,3 +295,27 @@ def test_story_bible_generate_sync_and_consistency(client: TestClient) -> None:
     drift = drift_resp.json()
     assert drift["issue_count"] >= 1
     assert any(issue["name"] == "顾北" for issue in drift["issues"])
+
+    drift_issue = next(issue for issue in drift["issues"] if issue["name"] == "顾北")
+    assert drift_issue["code"]
+
+    resolve_resp = client.post(
+        "/api/v1/story-bibles/resolve-conflict",
+        json={
+            "story_bible_id": story_bible_id,
+            "issue_code": drift_issue["code"],
+            "resolution": "reject_incoming",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert resolve_resp.status_code == 200
+    assert resolve_resp.json()["resolved"] is True
+
+    ignored_resp = client.post(
+        "/api/v1/story-bibles/check-consistency",
+        json={"story_bible_id": story_bible_id, "text": "角色：顾北\n场景：废都\n顾北抵达废都。"},
+        headers=auth_headers(user_id),
+    )
+    assert ignored_resp.status_code == 200
+    ignored = ignored_resp.json()
+    assert all(issue["code"] != drift_issue["code"] for issue in ignored["issues"])

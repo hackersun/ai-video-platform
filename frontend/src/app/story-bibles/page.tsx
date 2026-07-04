@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/components/ui/toast';
 import {
   Dialog,
   DialogContent,
@@ -53,12 +55,23 @@ interface StoryBible {
   updated_at: string;
 }
 
+interface NovelOption {
+  id: string;
+  title: string;
+  genre?: string;
+  tags?: string[];
+}
+
 interface ConsistencyIssue {
+  code: string;
   entity_type: string;
   name: string;
   severity: string;
   message: string;
   evidence?: string;
+  resolved?: boolean;
+  resolution?: string;
+  suggested_action?: string;
 }
 
 interface Conflict {
@@ -73,9 +86,46 @@ interface Conflict {
   incoming_data?: Record<string, any>;
 }
 
+const storyBibleToEditForm = (bible: StoryBible) => ({
+  title: bible.title,
+  style: bible.style || '',
+  worldview: bible.worldview || '',
+  negative_prompt: bible.negative_prompt || '',
+  character_rules: bible.character_rules || [],
+  scene_rules: bible.scene_rules || [],
+  prop_rules: bible.prop_rules || [],
+  event_timeline: bible.event_timeline || [],
+});
+
+const entityTypeLabel = (type: string) => {
+  switch (type) {
+    case 'character': return '角色';
+    case 'scene': return '场景';
+    case 'prop': return '道具';
+    case 'event': return '事件';
+    default: return type;
+  }
+};
+
+const formatCheckedAt = (value?: string) => {
+  if (!value) return '刚刚';
+  try {
+    return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  } catch {
+    return value;
+  }
+};
+
+const resolveNovelStyle = (novel?: NovelOption | null) => {
+  return novel?.genre?.trim() || novel?.tags?.[0]?.trim() || 'anime';
+};
+
 export default function StoryBiblesPage() {
+  const { toast } = useToast();
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
+  const [novels, setNovels] = useState<NovelOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingNovels, setLoadingNovels] = useState(true);
   const [selectedBible, setSelectedBible] = useState<StoryBible | null>(null);
   const [activeTab, setActiveTab] = useState('characters');
 
@@ -97,17 +147,33 @@ export default function StoryBiblesPage() {
   const [generateForm, setGenerateForm] = useState({
     novel_id: '',
     title: '',
-    style: 'anime',
     negative_prompt: '',
   });
   const [generating, setGenerating] = useState(false);
 
+  const selectedGenerateNovel = novels.find((novel) => novel.id === generateForm.novel_id) || null;
+  const generatedStyle = resolveNovelStyle(selectedGenerateNovel);
+  const novelOptions = novels.map((novel) => ({
+    value: novel.id,
+    label: `${novel.title || '未命名小说'}${novel.genre ? ` · ${novel.genre}` : ''}`,
+  }));
+
   // Consistency check
   const [checking, setChecking] = useState(false);
-  const [checkResults, setCheckResults] = useState<{ issues: ConsistencyIssue[]; story_bible_id: string; checked_entity_count: number } | null>(null);
+  const [resolvingIssueCode, setResolvingIssueCode] = useState<string | null>(null);
+  const [checkResults, setCheckResults] = useState<{
+    issues: ConsistencyIssue[];
+    story_bible_id: string;
+    checked_entity_count: number;
+    issue_count?: number;
+    pending_count?: number;
+    resolved_count?: number;
+    last_checked_at?: string;
+  } | null>(null);
 
   useEffect(() => {
     loadStoryBibles();
+    loadNovels();
   }, []);
 
   const loadStoryBibles = async () => {
@@ -122,34 +188,49 @@ export default function StoryBiblesPage() {
     }
   };
 
+  const loadNovels = async () => {
+    setLoadingNovels(true);
+    try {
+      const data = await apiClient.getNovels();
+      setNovels(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('加载小说失败:', error);
+    } finally {
+      setLoadingNovels(false);
+    }
+  };
+
   const handleSelectBible = (bible: StoryBible) => {
     setSelectedBible(bible);
-    setEditForm({
-      title: bible.title,
-      style: bible.style || '',
-      worldview: bible.worldview || '',
-      negative_prompt: bible.negative_prompt || '',
-      character_rules: bible.character_rules || [],
-      scene_rules: bible.scene_rules || [],
-      prop_rules: bible.event_timeline || [],
-      event_timeline: bible.event_timeline || [],
-    });
+    setEditForm(storyBibleToEditForm(bible));
     setCheckResults(null);
     setActiveTab('characters');
   };
 
   const handleGenerateFromNovel = async () => {
-    if (!generateForm.novel_id || !generateForm.title) return;
+    const novelId = generateForm.novel_id.trim();
+    const title = generateForm.title.trim();
+    const negativePrompt = generateForm.negative_prompt.trim();
+
+    if (!novelId || !title) {
+      toast({
+        title: '请补齐必填项',
+        description: '请选择小说并填写标题。',
+        type: 'error',
+      });
+      return;
+    }
+
     setGenerating(true);
     try {
       const result = await apiClient.generateStoryBible({
-        novel_id: generateForm.novel_id,
-        title: generateForm.title,
-        style: generateForm.style,
-        negative_prompt: generateForm.negative_prompt,
+        novel_id: novelId,
+        title,
+        style: generatedStyle,
+        negative_prompt: negativePrompt || undefined,
       });
       setGenerateDialogOpen(false);
-      setGenerateForm({ novel_id: '', title: '', style: 'anime', negative_prompt: '' });
+      setGenerateForm({ novel_id: '', title: '', negative_prompt: '' });
       loadStoryBibles();
       if (result?.id) {
         handleSelectBible(result);
@@ -190,8 +271,16 @@ export default function StoryBiblesPage() {
         novel_id: selectedBible.novel_id,
       });
       setCheckResults(result);
+      const pendingCount = result?.pending_count ?? result?.issue_count ?? result?.issues?.length ?? 0;
+      toast({
+        title: pendingCount > 0 ? `发现 ${pendingCount} 个待处理项` : '一致性检查通过',
+        description: `已检查 ${result?.checked_entity_count ?? 0} 个实体。`,
+        type: pendingCount > 0 ? 'info' : 'success',
+      });
     } catch (error) {
       console.error('一致性检查失败:', error);
+      const message = error instanceof Error ? error.message : '请稍后重试。';
+      toast({ title: '一致性检查失败', description: message, type: 'error' });
     } finally {
       setChecking(false);
     }
@@ -199,16 +288,40 @@ export default function StoryBiblesPage() {
 
   const handleResolveConflict = async (issueCode: string, resolution: string) => {
     if (!selectedBible) return;
+    setResolvingIssueCode(issueCode);
     try {
-      await apiClient.resolveStoryBibleConflict({
+      const result = await apiClient.resolveStoryBibleConflict({
         story_bible_id: selectedBible.id,
         issue_code: issueCode,
         resolution,
       });
-      // Refresh check results
-      handleCheckConsistency();
+      const updatedBible = result?.updated_story_bible;
+      if (updatedBible?.id) {
+        setSelectedBible(updatedBible);
+        setEditForm(storyBibleToEditForm(updatedBible));
+        setStoryBibles((items) => items.map((item) => item.id === updatedBible.id ? updatedBible : item));
+      }
+      setCheckResults((prev) => {
+        if (!prev) return prev;
+        const nextIssues = prev.issues.filter((issue) => issue.code !== issueCode);
+        return {
+          ...prev,
+          issues: nextIssues,
+          issue_count: nextIssues.length,
+          pending_count: nextIssues.length,
+          resolved_count: (prev.resolved_count || 0) + 1,
+        };
+      });
+      toast({
+        title: resolution === 'accept_incoming' ? '已收录/更新' : '已忽略本次问题',
+        type: 'success',
+      });
     } catch (error) {
       console.error('解决冲突失败:', error);
+      const message = error instanceof Error ? error.message : '请稍后重试。';
+      toast({ title: '处理失败', description: message, type: 'error' });
+    } finally {
+      setResolvingIssueCode(null);
     }
   };
 
@@ -285,6 +398,12 @@ export default function StoryBiblesPage() {
     </TabsTrigger>
   );
 
+  const pendingIssues = checkResults?.issues || [];
+  const pendingCount = checkResults
+    ? (checkResults.pending_count ?? checkResults.issue_count ?? pendingIssues.length)
+    : 0;
+  const resolvedCount = checkResults?.resolved_count || 0;
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-950 p-6">
@@ -300,17 +419,17 @@ export default function StoryBiblesPage() {
 
   return (
     <div className="min-h-screen bg-gray-950">
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      <div className="max-w-7xl mx-auto p-4 space-y-6 sm:p-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-              <BookOpen className="w-7 h-7 text-violet-400" />
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-3 text-xl font-bold text-white sm:text-2xl">
+              <BookOpen className="w-7 h-7 shrink-0 text-violet-400" />
               Story Bible 管理
             </h1>
             <p className="text-white/60 mt-1">管理角色、场景、道具和事件的跨章节一致性</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button
               variant="outline"
               size="sm"
@@ -331,9 +450,9 @@ export default function StoryBiblesPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           {/* Sidebar: Story Bible List */}
-          <div className="col-span-1 space-y-4">
+          <div className="space-y-4 lg:col-span-1">
             <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">Story Bibles</h3>
             <div className="space-y-2">
               {storyBibles.length === 0 ? (
@@ -361,7 +480,7 @@ export default function StoryBiblesPage() {
                   >
                     <CardContent className="p-4">
                       <h4 className="text-white font-medium truncate">{bible.title}</h4>
-                      <div className="flex items-center gap-2 mt-2 text-xs text-white/40">
+                      <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-white/40">
                         <span>角色 {bible.character_rules?.length || 0}</span>
                         <span>|</span>
                         <span>场景 {bible.scene_rules?.length || 0}</span>
@@ -377,14 +496,14 @@ export default function StoryBiblesPage() {
           </div>
 
           {/* Main Content: Selected Bible */}
-          <div className="col-span-3">
+          <div className="min-w-0 lg:col-span-3">
             {selectedBible ? (
               <div className="space-y-6">
                 {/* Bible Header */}
                 <Card className="bg-white/5 border-white/10">
                   <CardContent className="p-6">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
                         {editing ? (
                           <div className="space-y-4">
                             <Input
@@ -409,8 +528,8 @@ export default function StoryBiblesPage() {
                           </div>
                         ) : (
                           <>
-                            <h2 className="text-xl font-bold text-white">{selectedBible.title}</h2>
-                            <div className="flex items-center gap-4 mt-2">
+                            <h2 className="break-words text-xl font-bold text-white">{selectedBible.title}</h2>
+                            <div className="flex flex-wrap items-center gap-2 mt-2 sm:gap-4">
                               {selectedBible.style && (
                                 <Badge variant="outline" className="border-white/20 text-white/60">
                                   {selectedBible.style}
@@ -428,7 +547,7 @@ export default function StoryBiblesPage() {
                           </>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                         {editing ? (
                           <>
                             <Button
@@ -482,55 +601,107 @@ export default function StoryBiblesPage() {
                 </Card>
 
                 {/* Consistency Check Results */}
-                {checkResults && checkResults.issues.length > 0 && (
-                  <Card className="bg-amber-500/10 border-amber-500/30">
-                    <CardHeader>
-                      <CardTitle className="text-amber-400 flex items-center gap-2">
-                        <AlertTriangle className="w-5 h-5" />
-                        一致性问题 ({checkResults.issues.length})
-                      </CardTitle>
+                {checkResults && (
+                  <Card className={pendingCount > 0 ? 'bg-amber-500/10 border-amber-500/30' : 'bg-emerald-500/10 border-emerald-500/30'}>
+                    <CardHeader className="space-y-4">
+                      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0">
+                          <CardTitle className={`flex items-center gap-2 ${pendingCount > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                            {pendingCount > 0 ? (
+                              <AlertTriangle className="w-5 h-5 shrink-0" />
+                            ) : (
+                              <CheckCircle className="w-5 h-5 shrink-0" />
+                            )}
+                            一致性检查
+                          </CardTitle>
+                          <p className="mt-1 text-sm text-white/60">
+                            待处理 {pendingCount} 项 · 已处理 {resolvedCount} 项 · 已检查 {checkResults.checked_entity_count} 个实体
+                          </p>
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full border-white/20 text-white hover:bg-white/10 sm:w-auto"
+                          onClick={handleCheckConsistency}
+                          disabled={checking}
+                        >
+                          <RefreshCw className={`w-4 h-4 mr-2 ${checking ? 'animate-spin' : ''}`} />
+                          重新检查
+                        </Button>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                          <p className="text-xs text-white/40">检查时间</p>
+                          <p className="text-sm text-white">{formatCheckedAt(checkResults.last_checked_at)}</p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                          <p className="text-xs text-white/40">待处理</p>
+                          <p className="text-sm text-white">{pendingCount} 项</p>
+                        </div>
+                        <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                          <p className="text-xs text-white/40">推荐动作</p>
+                          <p className="text-sm text-white">{pendingCount > 0 ? '逐项收录或忽略' : '无需处理'}</p>
+                        </div>
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
-                      {checkResults.issues.map((issue, idx) => (
-                        <div
-                          key={idx}
-                          className="flex items-start gap-3 p-3 bg-white/5 rounded-lg"
-                        >
-                          <AlertCircle className={`w-5 h-5 mt-0.5 ${
-                            issue.severity === 'error' ? 'text-red-400' : 'text-amber-400'
-                          }`} />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="text-xs border-white/20">
-                                {issue.entity_type}
-                              </Badge>
-                              <span className="text-white font-medium">{issue.name}</span>
-                            </div>
-                            <p className="text-white/60 text-sm mt-1">{issue.message}</p>
-                            {issue.evidence && (
-                              <p className="text-white/40 text-xs mt-1 italic">证据: {issue.evidence}</p>
-                            )}
+                      {pendingIssues.length === 0 ? (
+                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-4">
+                          <div className="flex items-center gap-2 text-emerald-300">
+                            <CheckCircle className="w-5 h-5" />
+                            <span className="font-medium">当前没有待处理的一致性问题</span>
                           </div>
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs border-green-500/50 text-green-400"
-                              onClick={() => handleResolveConflict(`${issue.entity_type}_${issue.name}`, 'accept_incoming')}
-                            >
-                              接受
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs border-red-500/50 text-red-400"
-                              onClick={() => handleResolveConflict(`${issue.entity_type}_${issue.name}`, 'reject_incoming')}
-                            >
-                              忽略
-                            </Button>
-                          </div>
+                          <p className="mt-1 text-sm text-white/60">已忽略或已收录的问题会保留在 Story Bible 的处理记录中。</p>
                         </div>
-                      ))}
+                      ) : (
+                        pendingIssues.map((issue) => (
+                          <div
+                            key={issue.code}
+                            className="flex flex-col gap-3 rounded-lg bg-white/5 p-3 sm:flex-row sm:items-start"
+                          >
+                            <AlertCircle className={`w-5 h-5 shrink-0 sm:mt-0.5 ${
+                              issue.severity === 'error' ? 'text-red-400' : 'text-amber-400'
+                            }`} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Badge variant="outline" className="text-xs border-white/20 text-white/70">
+                                  {entityTypeLabel(issue.entity_type)}
+                                </Badge>
+                                <span className="break-words text-white font-medium">{issue.name}</span>
+                                {issue.suggested_action && (
+                                  <Badge variant="outline" className="text-xs border-emerald-500/30 text-emerald-300">
+                                    {issue.suggested_action}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="mt-1 break-words text-sm text-white/65">{issue.message}</p>
+                              {issue.evidence && (
+                                <p className="mt-1 break-words text-xs italic text-white/40">证据：{issue.evidence}</p>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 border-green-500/50 px-3 text-xs text-green-400 hover:bg-green-500/10"
+                                onClick={() => handleResolveConflict(issue.code, 'accept_incoming')}
+                                disabled={resolvingIssueCode === issue.code}
+                              >
+                                收录/更新
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 border-red-500/50 px-3 text-xs text-red-400 hover:bg-red-500/10"
+                                onClick={() => handleResolveConflict(issue.code, 'reject_incoming')}
+                                disabled={resolvingIssueCode === issue.code}
+                              >
+                                忽略本次
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      )}
                     </CardContent>
                   </Card>
                 )}
@@ -627,12 +798,20 @@ export default function StoryBiblesPage() {
           </DialogHeader>
           <div className="space-y-4 py-4">
             <div>
-              <label className="text-sm text-white/60 mb-1 block">小说 ID *</label>
-              <Input
+              <label className="text-sm text-white/60 mb-1 block">小说 *</label>
+              <Select
                 value={generateForm.novel_id}
-                onChange={(e) => setGenerateForm({ ...generateForm, novel_id: e.target.value })}
-                className="bg-white/5 border-white/10 text-white"
-                placeholder="输入小说 ID"
+                onChange={(e) => {
+                  const novel = novels.find((item) => item.id === e.target.value);
+                  setGenerateForm({
+                    ...generateForm,
+                    novel_id: e.target.value,
+                    title: novel ? `${novel.title || '未命名小说'} Story Bible` : '',
+                  });
+                }}
+                options={novelOptions}
+                placeholder={loadingNovels ? '正在加载小说...' : '选择小说'}
+                disabled={loadingNovels || novelOptions.length === 0}
               />
             </div>
             <div>
@@ -646,12 +825,9 @@ export default function StoryBiblesPage() {
             </div>
             <div>
               <label className="text-sm text-white/60 mb-1 block">风格</label>
-              <Input
-                value={generateForm.style}
-                onChange={(e) => setGenerateForm({ ...generateForm, style: e.target.value })}
-                className="bg-white/5 border-white/10 text-white"
-                placeholder="anime, realistic, etc."
-              />
+              <div className="min-h-10 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white">
+                {selectedGenerateNovel ? generatedStyle : '选择小说后自动带出'}
+              </div>
             </div>
             <div>
               <label className="text-sm text-white/60 mb-1 block">负面提示词</label>
@@ -674,7 +850,11 @@ export default function StoryBiblesPage() {
             </Button>
             <Button
               onClick={handleGenerateFromNovel}
-              disabled={!generateForm.novel_id || !generateForm.title || generating}
+              disabled={
+                !generateForm.novel_id.trim() ||
+                !generateForm.title.trim() ||
+                generating
+              }
               className="bg-violet-600 hover:bg-violet-700"
             >
               {generating ? (

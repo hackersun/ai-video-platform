@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 from app.core.api_key_utils import get_user_api_key
 from app.core.database import get_db
 from app.core.dev_generation import dev_video_url, is_dev_mode
-from app.core.model_registry import get_model_reference_limits, get_task_default
+from app.core.model_registry import find_model, get_model_reference_limits, get_provider, get_task_default, get_video_model_catalog
 from app.core.security import get_current_user_id
 from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_PROVIDER_ID
 from app.models.video_job import VideoJob
@@ -40,7 +40,11 @@ from app.services.novel_continuity import build_novel_continuity_package
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_entries
 from app.services.reference_package_builder import build_reference_package
-from app.services.video_reference_adapter import build_reference_package_metadata, build_video_provider_content
+from app.services.video_reference_adapter import (
+    build_reference_package_metadata,
+    build_video_provider_content,
+    enrich_prompt_parameters_with_reference_contract,
+)
 from app.services.asset_lock_service import AssetLockService
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 from app.api.v1.endpoints.dashboard import log_activity
@@ -50,12 +54,18 @@ router = APIRouter(tags=["视频生成"])
 
 # ============== 常量配置 ==============
 
-VIDEO_MODEL_ID = "Doubao-Seedance-1.0-pro-fast"  # 已验证的快速视频模型
+VIDEO_MODEL_ID = "volcano.seedance.2_0"
+ARK_VIDEO_PROVIDER_IDS = {"volcano", VOLCANO_AGENT_PLAN_PROVIDER_ID}
 
-# 所有可选视频模型（按VOLCANO_MODELS配置）
+# 兼容旧引用；前端模型选择以 /video/models 返回的统一 registry 目录为准。
 VIDEO_MODEL_OPTIONS = [
-    {"id": "Doubao-Seedance-1.0-pro-fast", "label": "豆包Seedance-1.0-pro-fast", "desc": "快速版，速度快，支持文生视频/图生视频"},
-    {"id": "Doubao-Seedance-1.5-pro",        "label": "豆包Seedance-1.5-pro",        "desc": "Pro版，高质量（注：需账户有对应额度）"},
+    {"id": "volcano.seedance.2_0", "label": "豆包 Seedance 2.0", "desc": "默认推荐，多模态参考生成"},
+    {"id": "alibaba.happyhorse.1_1", "label": "HappyHorse-1.1", "desc": "高质量备选，动态与一致性优先"},
+    {"id": "kling.3_0_omni", "label": "可灵 3.0 Omni", "desc": "高质量备选，多镜头与音画能力"},
+    {"id": "pixverse.c1", "label": "PixVerse C1", "desc": "动漫/动作专项"},
+    {"id": "volcano.seedance.1_5_pro", "label": "豆包 Seedance 1.5 Pro", "desc": "低价/兼容"},
+    {"id": "kling.v2_6", "label": "可灵 V2.6", "desc": "低价/兼容"},
+    {"id": "kling.o1", "label": "可灵 O1", "desc": "低价/兼容"},
 ]
 
 STATIC_ROOT = Path(__file__).resolve().parents[4] / "static"
@@ -67,8 +77,8 @@ MAX_PROVIDER_SEED = 2_147_483_647
 class VideoGenerateRequest(BaseModel):
     """视频生成请求"""
     prompt: str = Field(..., description="视频描述")
-    model: str = Field(VIDEO_MODEL_ID, description="模型ID，可选 Doubao-Seedance-1.0-pro-fast / Doubao-Seedance-1.5-pro")
-    duration: int = Field(5, ge=4, le=10, description="视频时长（秒），支持4/5/8/10秒")
+    model: str = Field(VIDEO_MODEL_ID, description="视频模型ID，优先使用统一模型 registry ID")
+    duration: int = Field(5, ge=3, le=15, description="视频时长（秒），按所选模型目录能力约束")
     resolution: str = Field("720p", description="分辨率: 480p, 720p, 1080p")
     api_key: Optional[str] = Field(None, description="火山引擎API Key（可选，默认使用用户在LLM配置中的密钥）")
     model_config_id: Optional[str] = Field(None, description="已保存的视频模型配置ID")
@@ -227,6 +237,7 @@ async def _resolve_video_model_config(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"所选模型不是视频生成模型：{model.model_name}")
         provider_id = provider.name or provider.id
         config_extra = config.extra_params or {}
+        registry_model = find_model(model.id) or find_model(model.model_id)
         endpoint_id = get_endpoint_id(model.model_id) if provider_id == "volcano" else model.model_id
         return {
             "provider_id": provider_id,
@@ -241,6 +252,9 @@ async def _resolve_video_model_config(
             "test_status": config.test_status,
             "model_endpoint_id": endpoint_id,
             "capabilities": model.capabilities or [],
+            "limits": (registry_model.get("limits") if registry_model else {}) or {},
+            "protocol": config_extra.get("protocol") or ((registry_model.get("protocol") if registry_model else {}) or {}),
+            "routing": (registry_model.get("routing") if registry_model else {}) or {},
         }
 
     model_key = requested_model or VIDEO_MODEL_ID
@@ -283,6 +297,7 @@ async def _resolve_video_model_config(
         config = config_result.scalar_one_or_none()
         provider_id = provider.name or provider.id
         config_extra = config.extra_params or {} if config else {}
+        registry_model = find_model(model.id) or find_model(model.model_id)
         endpoint_id = get_endpoint_id(model.model_id) if provider_id == "volcano" else model.model_id
         return {
             "provider_id": provider_id,
@@ -297,6 +312,33 @@ async def _resolve_video_model_config(
             "test_status": config.test_status if config else None,
             "model_endpoint_id": endpoint_id,
             "capabilities": model.capabilities or [],
+            "limits": (registry_model.get("limits") if registry_model else {}) or {},
+            "protocol": (config_extra.get("protocol") if config_extra else None) or ((registry_model.get("protocol") if registry_model else {}) or {}),
+            "routing": (registry_model.get("routing") if registry_model else {}) or {},
+        }
+
+    registry_model = find_model(model_key)
+    if registry_model and registry_model.get("modality") == "video":
+        provider_id = registry_model.get("provider_id") or "volcano"
+        provider = get_provider(provider_id) or {}
+        api_model_id = registry_model.get("api_model_id") or model_key
+        endpoint_id = get_endpoint_id(api_model_id) if provider_id == "volcano" else api_model_id
+        return {
+            "provider_id": provider_id,
+            "provider_name": provider.get("display_name") or provider_id,
+            "api_model_id": api_model_id,
+            "config_model_id": registry_model.get("id"),
+            "model_config_id": None,
+            "model_name": registry_model.get("display_name") or api_model_id,
+            "model_type": "video-generation",
+            "base_url": provider.get("base_url"),
+            "api_key": None,
+            "test_status": None,
+            "model_endpoint_id": endpoint_id,
+            "capabilities": registry_model.get("capabilities") or [],
+            "limits": registry_model.get("limits") or {},
+            "protocol": registry_model.get("protocol") or {},
+            "routing": registry_model.get("routing") or {},
         }
 
     return {
@@ -1490,6 +1532,93 @@ async def _attach_video_job_to_workflow(db: AsyncSession, job: VideoJob, user_id
         workflow.video_job_ids = list(dict.fromkeys((workflow.video_job_ids or []) + [job.id]))
 
 
+@router.get("/models")
+async def list_video_models(
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Return the planned video model catalog merged with the user's configs."""
+    from app.api.v1.endpoints.llm_config import ensure_default_models, ensure_default_providers
+    from app.models import LLMConfig, LLMModel, LLMProvider
+
+    await ensure_default_providers(db)
+    await ensure_default_models(db)
+
+    catalog = get_video_model_catalog("shot_video")
+    model_ids = {model["id"] for model in catalog["models"]}
+    api_model_ids = {model["api_model_id"] for model in catalog["models"]}
+
+    config_result = await db.execute(
+        select(LLMConfig, LLMModel, LLMProvider)
+        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+        .where(
+            and_(
+                LLMConfig.user_id == user_id,
+                LLMConfig.is_active == True,
+                LLMModel.is_active == True,
+                LLMProvider.is_active == True,
+                or_(LLMModel.id.in_(model_ids), LLMModel.model_id.in_(api_model_ids)),
+            )
+        )
+        .order_by(desc(LLMConfig.is_default), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
+    )
+    configs_by_key: dict[str, tuple[Any, Any, Any]] = {}
+    for config, model, provider in config_result.all():
+        for key in (model.id, model.model_id):
+            configs_by_key.setdefault(key, (config, model, provider))
+
+    models = []
+    for model in catalog["models"]:
+        provider = get_provider(model["provider_id"]) or {}
+        config_row = configs_by_key.get(model["id"]) or configs_by_key.get(model["api_model_id"])
+        config = config_model = config_provider = None
+        if config_row:
+            config, config_model, config_provider = config_row
+        test_status = config.test_status if config else None
+        test_message = config.test_message if config else None
+        key_available = bool(config and config.get_api_key_decrypted())
+        if config and not key_available:
+            test_status = "failed"
+            test_message = "API Key 为空或无法解密，请重新保存并验证该配置"
+        provider_id = (config_provider.name if config_provider else None) or model["provider_id"]
+        adapter_status = "available" if provider_id in ARK_VIDEO_PROVIDER_IDS else "planned"
+        models.append({
+            "id": model["id"],
+            "name": model["display_name"],
+            "name_cn": model["display_name"],
+            "display_name": model["display_name"],
+            "provider_id": provider_id,
+            "provider_name": (config_provider.name_cn if config_provider else None) or provider.get("display_name") or provider_id,
+            "api_model_id": model["api_model_id"],
+            "model_id": model["api_model_id"],
+            "config_model_id": config_model.id if config_model else model["id"],
+            "config_id": config.id if config else None,
+            "model_config_id": config.id if config else None,
+            "model_type": "video-generation",
+            "model_capabilities": model.get("capabilities") or [],
+            "capabilities": model.get("capabilities") or [],
+            "desc": f"{provider.get('display_name') or provider_id} · {model.get('routing', {}).get('lane', 'catalog')}",
+            "limits": model.get("limits") or {},
+            "protocol": model.get("protocol") or {},
+            "lane": model.get("routing", {}).get("lane", "catalog"),
+            "adapter_status": adapter_status,
+            "is_configured": bool(config),
+            "is_default": bool(config and config.is_default),
+            "test_status": test_status,
+            "test_message": test_message,
+            "key_available": key_available,
+        })
+
+    return {
+        "task": catalog["task"],
+        "display_name": catalog.get("display_name"),
+        "required_capabilities": catalog.get("required_capabilities") or [],
+        "default_model_id": catalog["default_model_id"],
+        "models": models,
+    }
+
+
 @router.post("/generate", response_model=VideoGenerateResponse)
 async def generate_video(
     request: VideoGenerateRequest,
@@ -1513,10 +1642,14 @@ async def generate_video(
             "shot_id": lineage.get("shot_id"),
         })
         video_model_config = await _resolve_video_model_config(db, user_id, request.model, request.model_config_id)
-        if video_model_config.get("provider_id") not in {"volcano", VOLCANO_AGENT_PLAN_PROVIDER_ID}:
+        real_adapter_available = video_model_config.get("provider_id") in ARK_VIDEO_PROVIDER_IDS
+        if not real_adapter_available and not is_dev_mode():
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail="静音视频生成当前只支持火山普通视频模型或火山方舟 Agent Plan 视频模型。Sora/Veo/ComfyUI 等生产适配请在本页切换到「直生音视频」，或在 workflow 中使用批量直生/云渲染。",
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail=(
+                    f"{video_model_config.get('provider_name') or video_model_config.get('provider_id')} "
+                    "视频模型已进入目录和配置体系，但真实提交适配器尚未接入。"
+                ),
             )
         video_reference_limits = get_model_reference_limits(
             video_model_config.get("api_model_id")
@@ -1626,6 +1759,14 @@ async def generate_video(
             camera_fixed=False,
             watermark=True,
         )
+        provider_metadata = provider_content["metadata"]
+        model_protocol = video_model_config.get("protocol") if isinstance(video_model_config.get("protocol"), dict) else {}
+        prompt_parameters = enrich_prompt_parameters_with_reference_contract(
+            prompt_parameters,
+            provider_metadata,
+            video_reference_limits,
+            model_protocol,
+        )
         if provider_content["mode"] == "multimodal":
             prompt_parameters["reference_image_strategy"] = "multimodal_reference_package"
         reference_package_metadata = build_reference_package_metadata(
@@ -1649,7 +1790,7 @@ async def generate_video(
                 )
                 resolved_base_url = resolved_base_url or fallback_base_url
 
-        if not resolved_api_key and is_dev_mode():
+        if is_dev_mode() and (not resolved_api_key or not real_adapter_available):
             job_id = str(uuid4())
             task_id = f"dev-video-{job_id}"
             video_url = dev_video_url(job_id)

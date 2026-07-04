@@ -94,6 +94,38 @@ def test_generate_story_bible_from_novel(client: TestClient) -> None:
     assert "checked_entity_count" in result
 
 
+def test_generate_story_bible_derives_style_from_novel(client: TestClient) -> None:
+    """Story Bible style is derived from the selected novel when omitted."""
+    user_id = "story-bible-derive-style-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={
+            "title": "自动风格测试",
+            "genre": "国风赛璐璐",
+            "description": "角色：云澈。场景：青岚山。事件：入门试炼。",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    generate_resp = client.post(
+        "/api/v1/story-bibles/generate-from-novel",
+        json={"novel_id": novel_id, "title": "自动风格 Bible"},
+        headers=auth_headers(user_id),
+    )
+    assert generate_resp.status_code == 201
+    assert generate_resp.json()["style"] == "国风赛璐璐"
+
+    blank_resp = client.post(
+        "/api/v1/story-bibles/generate-from-novel",
+        json={"novel_id": novel_id, "title": "空风格 Bible", "style": "   "},
+        headers=auth_headers(user_id),
+    )
+    assert blank_resp.status_code == 201
+    assert blank_resp.json()["style"] == "国风赛璐璐"
+
+
 def test_sync_story_bible_from_chapter(client: TestClient) -> None:
     """Test incremental sync from chapter."""
     user_id = "story-bible-sync-user"
@@ -181,7 +213,7 @@ def test_resolve_conflict(client: TestClient) -> None:
     # Generate Story Bible
     generate_resp = client.post(
         "/api/v1/story-bibles/generate-from-novel",
-        json={"novel_id": novel_id, "title": "冲突测试 Bible"},
+        json={"novel_id": novel_id, "title": "冲突测试 Bible", "style": "anime"},
         headers=auth_headers(user_id),
     )
     assert generate_resp.status_code == 201

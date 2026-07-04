@@ -164,6 +164,15 @@ type OneClickGenerationEvidence = {
   updatedAt: string;
 };
 
+type ReadinessIssue = {
+  code?: string;
+  message?: unknown;
+  detail?: unknown;
+  severity?: string;
+  field?: string;
+  [key: string]: unknown;
+};
+
 const statusLabels: Record<string, string> = {
   draft: '草稿',
   active: '进行中',
@@ -202,6 +211,59 @@ const API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/ap
 const toMediaUrl = (url?: string) => {
   if (!url) return '';
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
+};
+
+const readableIssueText = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.map(readableIssueText).filter(Boolean).join('；');
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const nested =
+      readableIssueText(record.message) ||
+      readableIssueText(record.detail) ||
+      readableIssueText(record.reason) ||
+      readableIssueText(record.description) ||
+      readableIssueText(record.title);
+    if (nested) return nested;
+    return readableIssueText(record.code);
+  }
+  return String(value).trim();
+};
+
+const readinessIssueMessage = (issue: unknown) => {
+  if (issue && typeof issue === 'object') {
+    const record = issue as ReadinessIssue;
+    return readableIssueText(record.message) || readableIssueText(record.detail) || readableIssueText(record.code) || '待处理事项';
+  }
+  return readableIssueText(issue) || '待处理事项';
+};
+
+const readinessIssueKey = (prefix: string, issue: unknown, index: number) => {
+  if (issue && typeof issue === 'object') {
+    const record = issue as ReadinessIssue;
+    return `${prefix}-${readableIssueText(record.code) || readinessIssueMessage(issue)}-${index}`;
+  }
+  return `${prefix}-${readinessIssueMessage(issue)}-${index}`;
+};
+
+const normalizeReadinessIssue = (issue: unknown, severity: 'blocking' | 'warning'): ReadinessIssue => {
+  if (issue && typeof issue === 'object') {
+    const record = issue as Record<string, unknown>;
+    return {
+      ...record,
+      code: readableIssueText(record.code) || (severity === 'warning' ? 'readiness_warning' : 'readiness_blocker'),
+      message: readinessIssueMessage(record),
+      severity: readableIssueText(record.severity) || severity,
+    };
+  }
+
+  return {
+    code: severity === 'warning' ? 'readiness_warning' : 'readiness_blocker',
+    message: readinessIssueMessage(issue),
+    severity,
+  };
 };
 
 export default function ProducerCenterPage() {
@@ -1042,16 +1104,8 @@ function ProducerCenterContent() {
     },
   ];
   const producerIssues = [
-    ...readinessBlockers.map((message: any) => ({
-      code: 'readiness_blocker',
-      message: String(message),
-      severity: 'blocking',
-    })),
-    ...readinessWarnings.map((message: any) => ({
-      code: 'readiness_warning',
-      message: String(message),
-      severity: 'warning',
-    })),
+    ...readinessBlockers.map((issue: unknown) => normalizeReadinessIssue(issue, 'blocking')),
+    ...readinessWarnings.map((issue: unknown) => normalizeReadinessIssue(issue, 'warning')),
   ];
 
   return (
@@ -1498,14 +1552,14 @@ function ProducerCenterContent() {
                   </div>
                   {(readinessBlockers.length > 0 || readinessWarnings.length > 0) && (
                     <div className="mt-3 border-t border-white/10 pt-2 text-xs leading-5 text-white/55">
-                      {readinessBlockers.slice(0, 2).map((issue: any) => (
-                        <div key={`blocker-${issue.code || issue.message}`} className="text-red-200">
-                          阻断：{issue.message || issue.code}
+                      {readinessBlockers.slice(0, 2).map((issue: unknown, index: number) => (
+                        <div key={readinessIssueKey('blocker', issue, index)} className="text-red-200">
+                          阻断：{readinessIssueMessage(issue)}
                         </div>
                       ))}
-                      {readinessWarnings.slice(0, 2).map((issue: any) => (
-                        <div key={`warning-${issue.code || issue.message}`} className="text-amber-200">
-                          提醒：{issue.message || issue.code}
+                      {readinessWarnings.slice(0, 2).map((issue: unknown, index: number) => (
+                        <div key={readinessIssueKey('warning', issue, index)} className="text-amber-200">
+                          提醒：{readinessIssueMessage(issue)}
                         </div>
                       ))}
                     </div>

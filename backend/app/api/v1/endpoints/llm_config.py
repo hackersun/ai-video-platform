@@ -16,7 +16,7 @@ from sqlalchemy import select, update, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.model_registry import get_registry, get_task_default
+from app.core.model_registry import get_registry, get_task_default, get_video_model_catalog
 from app.core.security import get_current_user_id
 from app.core.volcano_agent_plan_config import (
     VOLCANO_AGENT_PLAN_BASE_URL,
@@ -360,6 +360,34 @@ async def clear_default_configs_for_model_group(
 
 # ============== 预设数据 ==============
 
+def _video_catalog_model_seeds() -> list[dict]:
+    seeds = []
+    for model in get_video_model_catalog("shot_video")["models"]:
+        status_info = model.get("status") if isinstance(model.get("status"), dict) else {}
+        seeds.append({
+            "id": model["id"],
+            "provider_id": model["provider_id"],
+            "model_id": model["api_model_id"],
+            "model_name": model["display_name"],
+            "model_name_cn": model["display_name"],
+            "model_type": "video-generation",
+            "capabilities": model.get("capabilities") or [],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "supports_vision": False,
+            "supports_json_mode": False,
+            "is_active": status_info.get("active", True),
+            "is_recommended": status_info.get("recommended", False),
+            "description": f"{model.get('display_name')} 视频生成模型，{model.get('routing', {}).get('lane', 'catalog')} 路线",
+            "version": model["id"].rsplit(".", 1)[-1],
+        })
+    return seeds
+
+
 DEFAULT_PROVIDERS = [
     {
         "id": "volcano",
@@ -415,6 +443,45 @@ DEFAULT_PROVIDERS = [
         "doc_url": "https://platform.openai.com/docs"
     },
     {
+        "id": "alibaba",
+        "name": "alibaba",
+        "name_cn": "阿里视频",
+        "name_en": "Alibaba Video",
+        "provider_type": "cloud",
+        "base_url": "https://dashscope.aliyuncs.com",
+        "auth_type": "bearer",
+        "description": "阿里系视频生成模型，预留 HappyHorse 等视频模型配置",
+        "icon_url": "/icons/qwen.svg",
+        "website_url": "https://dashscope.console.aliyun.com",
+        "doc_url": "https://help.aliyun.com/document_detail/611411.html"
+    },
+    {
+        "id": "kling",
+        "name": "kling",
+        "name_cn": "可灵",
+        "name_en": "Kling AI",
+        "provider_type": "cloud",
+        "base_url": "https://api.klingai.com",
+        "auth_type": "bearer",
+        "description": "可灵视频生成模型，支持 3.0 Omni、V2.6、O1 等路线",
+        "icon_url": "/icons/kling.svg",
+        "website_url": "https://klingai.com",
+        "doc_url": "https://klingai.com"
+    },
+    {
+        "id": "pixverse",
+        "name": "pixverse",
+        "name_cn": "PixVerse / 拍我",
+        "name_en": "PixVerse",
+        "provider_type": "cloud",
+        "base_url": "https://app-api.pixverse.ai/openapi/v2",
+        "auth_type": "bearer",
+        "description": "PixVerse / 拍我视频生成模型，适合动漫动作与特效镜头",
+        "icon_url": "/icons/pixverse.svg",
+        "website_url": "https://pixverse.ai",
+        "doc_url": "https://pixverse.ai"
+    },
+    {
         "id": "minimax",
         "name": "minimax",
         "name_cn": "MiniMax",
@@ -431,6 +498,7 @@ DEFAULT_PROVIDERS = [
 
 DEFAULT_MODELS = [
     *VOLCANO_AGENT_PLAN_MODELS,
+    *_video_catalog_model_seeds(),
     # 火山引擎模型
     {
         "id": "doubao-seed-1-8",

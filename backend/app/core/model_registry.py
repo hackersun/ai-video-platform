@@ -10,6 +10,109 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
+DASHSCOPE_VIDEO_SYNTHESIS_PATH = "/api/v1/services/aigc/video-generation/video-synthesis"
+HAPPYHORSE_DURATIONS = list(range(3, 16))
+HAPPYHORSE_RATIOS = ["16:9", "9:16", "3:4", "4:3", "4:5", "5:4", "1:1", "9:21", "21:9"]
+SEEDANCE20_REFERENCE_PROTOCOL = {
+    "provider": "volcano",
+    "input_mode": "reference_images_text",
+    "input_media_field": "content",
+    "input_media_type": "reference_image",
+    "prompt_reference_syntax": "@图{index}",
+    "reference_image_range": [0, 9],
+    "reference_video_range": [0, 3],
+    "reference_audio_range": [0, 3],
+}
+
+
+def _happyhorse_model(
+    variant: str,
+    display_suffix: str,
+    capabilities: List[str],
+    input_mode: str,
+    input_media_type: Optional[str],
+    reference_image_range: List[int],
+    priority: int,
+    aliases: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    reference_images = reference_image_range[1]
+    protocol: Dict[str, Any] = {
+        "provider": "dashscope",
+        "endpoint_path": DASHSCOPE_VIDEO_SYNTHESIS_PATH,
+        "method": "POST",
+        "auth_header": "Authorization: Bearer <api_key>",
+        "async_header": {"X-DashScope-Async": "enable"},
+        "request_model_field": "model",
+        "input_mode": input_mode,
+        "reference_image_range": reference_image_range,
+    }
+    if input_media_type:
+        protocol.update({
+            "input_media_field": "input.media",
+            "input_media_type": input_media_type,
+        })
+    if input_media_type == "reference_image":
+        protocol["prompt_reference_syntax"] = "[Image {index}]"
+
+    return {
+        "id": f"alibaba.happyhorse.1_1_{variant}",
+        "provider_id": "alibaba",
+        "api_model_id": f"happyhorse-1.1-{variant}",
+        "display_name": f"HappyHorse-1.1 {display_suffix}",
+        "modality": "video",
+        "capabilities": capabilities,
+        "endpoint_key": "video_generation",
+        "limits": {
+            "durations": HAPPYHORSE_DURATIONS,
+            "resolutions": ["720P", "1080P"],
+            "ratios": HAPPYHORSE_RATIOS,
+            "reference_images": reference_images,
+            "reference_videos": 0,
+            "reference_audios": 0,
+            "supports_at_reference": input_media_type == "reference_image",
+            "native_audio": False,
+        },
+        "protocol": protocol,
+        "routing": {"lane": "premium", "priority": priority},
+        "aliases": aliases or [],
+        "status": {"active": True, "recommended": True, "verified": False},
+    }
+
+
+HAPPYHORSE_VIDEO_MODELS = [
+    _happyhorse_model(
+        "r2v",
+        "R2V",
+        ["text_to_video", "reference_to_video", "image_to_video", "shot_video", "character_consistency"],
+        "reference_images_text",
+        "reference_image",
+        [1, 9],
+        20,
+        ["alibaba.happyhorse.1_1", "HappyHorse-1.1", "happyhorse_1_1", "happyhorse-1.1"],
+    ),
+    _happyhorse_model(
+        "i2v",
+        "I2V",
+        ["text_to_video", "first_frame_image_to_video", "image_to_video", "shot_video"],
+        "image_text",
+        "first_frame_image",
+        [1, 1],
+        21,
+        ["HappyHorse-1.1-I2V", "happyhorse_1_1_i2v"],
+    ),
+    _happyhorse_model(
+        "t2v",
+        "T2V",
+        ["text_to_video", "shot_video"],
+        "text",
+        None,
+        [0, 0],
+        22,
+        ["HappyHorse-1.1-T2V", "happyhorse_1_1_t2v"],
+    ),
+]
+
+
 PROVIDERS: List[Dict[str, Any]] = [
     {
         "id": "volcano",
@@ -36,6 +139,27 @@ PROVIDERS: List[Dict[str, Any]] = [
         "base_url": "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1",
         "auth_type": "bearer",
         "endpoints": {"chat": "/messages"},
+    },
+    {
+        "id": "alibaba",
+        "display_name": "阿里视频",
+        "base_url": "https://dashscope.aliyuncs.com",
+        "auth_type": "bearer",
+        "endpoints": {"video_generation": DASHSCOPE_VIDEO_SYNTHESIS_PATH},
+    },
+    {
+        "id": "kling",
+        "display_name": "可灵",
+        "base_url": "https://api.klingai.com",
+        "auth_type": "bearer",
+        "endpoints": {"video_generation": "/v1/videos/generations"},
+    },
+    {
+        "id": "pixverse",
+        "display_name": "PixVerse / 拍我",
+        "base_url": "https://app-api.pixverse.ai/openapi/v2",
+        "auth_type": "bearer",
+        "endpoints": {"video_generation": "/video"},
     },
     {
         "id": "minimax",
@@ -185,6 +309,9 @@ MODELS: List[Dict[str, Any]] = [
             "supports_at_reference": True,
             "native_audio": True,
         },
+        "protocol": SEEDANCE20_REFERENCE_PROTOCOL,
+        "routing": {"lane": "recommended", "priority": 10},
+        "aliases": ["doubao-seedance-2.0", "Doubao-Seedance-2.0"],
         "status": {"active": True, "recommended": True, "verified": False},
     },
     {
@@ -204,7 +331,136 @@ MODELS: List[Dict[str, Any]] = [
             "supports_at_reference": True,
             "native_audio": True,
         },
+        "protocol": SEEDANCE20_REFERENCE_PROTOCOL,
+        "routing": {"lane": "fast_preview", "priority": 90},
+        "aliases": ["doubao-seedance-2.0-fast", "Doubao-Seedance-2.0-fast"],
         "status": {"active": True, "recommended": True, "verified": False},
+    },
+    *HAPPYHORSE_VIDEO_MODELS,
+    {
+        "id": "kling.3_0_omni",
+        "provider_id": "kling",
+        "api_model_id": "kling-v3-omni",
+        "display_name": "可灵 3.0 Omni",
+        "modality": "video",
+        "capabilities": [
+            "text_to_video",
+            "image_to_video",
+            "shot_video",
+            "multi_shot_story",
+            "character_consistency",
+            "native_audio",
+        ],
+        "endpoint_key": "video_generation",
+        "limits": {
+            "durations": [3, 5, 8, 10, 15],
+            "resolutions": ["720p", "1080p"],
+            "reference_images": 8,
+            "reference_videos": 2,
+            "reference_audios": 2,
+            "supports_at_reference": True,
+            "native_audio": True,
+        },
+        "routing": {"lane": "premium", "priority": 30},
+        "aliases": ["Kling-3.0-Omni", "kling-3.0-omni"],
+        "status": {"active": True, "recommended": True, "verified": False},
+    },
+    {
+        "id": "pixverse.c1",
+        "provider_id": "pixverse",
+        "api_model_id": "pixverse-c1",
+        "display_name": "PixVerse C1",
+        "modality": "video",
+        "capabilities": [
+            "text_to_video",
+            "image_to_video",
+            "shot_video",
+            "anime_action",
+            "vfx",
+            "storyboard_to_video",
+        ],
+        "endpoint_key": "video_generation",
+        "limits": {
+            "durations": [5, 8, 10],
+            "resolutions": ["720p", "1080p"],
+            "reference_images": 9,
+            "reference_videos": 1,
+            "reference_audios": 1,
+            "supports_at_reference": True,
+            "native_audio": False,
+        },
+        "routing": {"lane": "specialist", "priority": 40},
+        "aliases": ["PixVerse-C1", "pixverse_c1"],
+        "status": {"active": True, "recommended": True, "verified": False},
+    },
+    {
+        "id": "volcano.seedance.1_5_pro",
+        "provider_id": "volcano",
+        "api_model_id": "doubao-seedance-1-5-pro-251215",
+        "display_name": "豆包 Seedance 1.5 Pro",
+        "modality": "video",
+        "capabilities": ["text_to_video", "image_to_video", "shot_video"],
+        "endpoint_key": "video_generation",
+        "limits": {
+            "durations": [4, 8, 10],
+            "resolutions": ["480p", "720p", "1080p"],
+            "reference_images": 1,
+            "reference_videos": 0,
+            "reference_audios": 0,
+            "supports_at_reference": False,
+            "native_audio": False,
+        },
+        "routing": {"lane": "compatible", "priority": 70},
+        "aliases": ["doubao-seedance-1.5-pro", "Doubao-Seedance-1.5-pro"],
+        "status": {"active": True, "recommended": False, "verified": False},
+    },
+    {
+        "id": "kling.v2_6",
+        "provider_id": "kling",
+        "api_model_id": "kling-v2-6",
+        "display_name": "可灵 V2.6",
+        "modality": "video",
+        "capabilities": ["text_to_video", "image_to_video", "shot_video", "native_audio"],
+        "endpoint_key": "video_generation",
+        "limits": {
+            "durations": [5, 10],
+            "resolutions": ["720p", "1080p"],
+            "reference_images": 2,
+            "reference_videos": 0,
+            "reference_audios": 1,
+            "supports_at_reference": False,
+            "native_audio": True,
+        },
+        "routing": {"lane": "compatible", "priority": 80},
+        "aliases": ["Kling-V2-6", "kling-v2.6"],
+        "status": {"active": True, "recommended": False, "verified": False},
+    },
+    {
+        "id": "kling.o1",
+        "provider_id": "kling",
+        "api_model_id": "kling-o1",
+        "display_name": "可灵 O1",
+        "modality": "video",
+        "capabilities": [
+            "text_to_video",
+            "image_to_video",
+            "shot_video",
+            "multimodal_reference",
+            "video_editing",
+        ],
+        "endpoint_key": "video_generation",
+        "limits": {
+            "durations": [5, 10],
+            "resolutions": ["720p", "1080p"],
+            "reference_images": 6,
+            "reference_videos": 1,
+            "reference_audios": 0,
+            "supports_at_reference": True,
+            "native_audio": False,
+        },
+        "routing": {"lane": "compatible", "priority": 85},
+        "aliases": ["Kling-O1", "kling_o1"],
+        "status": {"active": True, "recommended": False, "verified": False},
     },
     {
         "id": "openai.sora_2",
@@ -370,8 +626,17 @@ TASK_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "shot_video": {
         "display_name": "镜头视频",
         "required_capabilities": ["image_to_video", "text_to_video"],
-        "default_model_id": "volcano.seedance.2_0_fast",
-        "fallback_model_ids": ["volcano.seedance.2_0", "volcano.seedance.1_0_pro_fast"],
+        "default_model_id": "volcano.seedance.2_0",
+        "fallback_model_ids": [
+            "alibaba.happyhorse.1_1_r2v",
+            "alibaba.happyhorse.1_1_i2v",
+            "alibaba.happyhorse.1_1_t2v",
+            "kling.3_0_omni",
+            "pixverse.c1",
+            "volcano.seedance.1_5_pro",
+            "kling.v2_6",
+            "kling.o1",
+        ],
     },
     "shot_audio_video": {
         "display_name": "镜头音视频直生",
@@ -426,6 +691,28 @@ def get_model(model_id: str) -> Optional[Dict[str, Any]]:
     return next((model for model in MODELS if model["id"] == model_id), None)
 
 
+def find_model(model_id_or_api_id: str) -> Optional[Dict[str, Any]]:
+    model_key = (model_id_or_api_id or "").strip()
+    if not model_key:
+        return None
+    return next(
+        (
+            model
+            for model in MODELS
+            if model.get("id") == model_key
+            or model.get("api_model_id") == model_key
+            or model_key in (model.get("aliases") or [])
+        ),
+        None,
+    )
+
+
+def get_model_generation_limits(model_id_or_api_id: str) -> Dict[str, Any]:
+    model = find_model(model_id_or_api_id)
+    limits = model.get("limits") if model and isinstance(model.get("limits"), dict) else {}
+    return dict(limits)
+
+
 def get_model_reference_limits(model_id_or_api_id: str) -> Dict[str, Any]:
     """Return multimodal reference limits for a registered model.
 
@@ -438,15 +725,7 @@ def get_model_reference_limits(model_id_or_api_id: str) -> Dict[str, Any]:
         "at_reference": False,
         "native_audio": False,
     }
-    model_key = (model_id_or_api_id or "").strip()
-    model = next(
-        (
-            candidate
-            for candidate in MODELS
-            if candidate.get("id") == model_key or candidate.get("api_model_id") == model_key
-        ),
-        None,
-    )
+    model = find_model(model_id_or_api_id)
     if not model:
         return dict(default_limits)
 
@@ -465,6 +744,35 @@ def get_task_default(task: str) -> Optional[Dict[str, Any]]:
     if not default:
         return None
     return {"task": task, **default, "default_model": get_model(default["default_model_id"])}
+
+
+def get_video_model_catalog(task: str = "shot_video") -> Dict[str, Any]:
+    task_default = get_task_default(task)
+    if not task_default:
+        return {"task": task, "default_model_id": None, "models": []}
+
+    ordered_ids: List[str] = []
+    for model_id in [task_default["default_model_id"], *task_default.get("fallback_model_ids", [])]:
+        if model_id and model_id not in ordered_ids:
+            ordered_ids.append(model_id)
+
+    models = []
+    for model_id in ordered_ids:
+        model = get_model(model_id)
+        if not model:
+            continue
+        status_info = model.get("status") if isinstance(model.get("status"), dict) else {}
+        if status_info.get("active") is False or model.get("modality") != "video":
+            continue
+        models.append(model)
+
+    return {
+        "task": task,
+        "display_name": task_default.get("display_name"),
+        "required_capabilities": task_default.get("required_capabilities", []),
+        "default_model_id": task_default["default_model_id"],
+        "models": models,
+    }
 
 
 def get_registry() -> Dict[str, Any]:

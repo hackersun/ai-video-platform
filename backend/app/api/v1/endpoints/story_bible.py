@@ -4,14 +4,16 @@ Story Bible API for consistency management.
 
 from app.core.time_utils import utc_now
 from datetime import datetime
+import hashlib
 import json
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
 from app.core.database import get_db
@@ -302,9 +304,17 @@ class GenerateFromNovelRequest(BaseModel):
     novel_id: str = Field(..., min_length=1)
     title: Optional[str] = Field(None, max_length=200)
     project_id: Optional[str] = None
-    style: Optional[str] = None
+    style: Optional[str] = Field(None, max_length=100)
     negative_prompt: Optional[str] = None
     model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
+
+    @field_validator("style")
+    @classmethod
+    def normalize_style(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        style = value.strip()
+        return style or None
 
 
 class SyncFromChapterRequest(BaseModel):
@@ -320,17 +330,24 @@ class ConsistencyCheckRequest(BaseModel):
 
 
 class ConsistencyIssue(BaseModel):
+    code: str
     entity_type: str
     name: str
     severity: str
     message: str
     evidence: Optional[str] = None
+    resolved: bool = False
+    resolution: Optional[str] = None
+    suggested_action: Optional[str] = None
 
 
 class ConsistencyCheckResponse(BaseModel):
     story_bible_id: str
     checked_entity_count: int
     issue_count: int
+    pending_count: int = 0
+    resolved_count: int = 0
+    last_checked_at: Optional[str] = None
     issues: List[ConsistencyIssue]
 
 
@@ -857,6 +874,105 @@ def _known_bible_names(story_bible: StoryBible, entity_type: str) -> set[str]:
     else:
         items = []
     return {item.get("name") or item.get("title") for item in items if item.get("name") or item.get("title")}
+
+
+def _consistency_issue_code(entity_type: str, name: str, message: str) -> str:
+    payload = json.dumps(
+        {
+            "entity_type": entity_type or "",
+            "name": name or "",
+            "message": message or "",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+    return f"consistency_{entity_type}_{digest}"
+
+
+def _story_bible_rule_attr(entity_type: str) -> Optional[str]:
+    return {
+        "character": "character_rules",
+        "scene": "scene_rules",
+        "prop": "prop_rules",
+        "event": "event_timeline",
+    }.get(entity_type)
+
+
+def _story_bible_entity_label(entity_type: str) -> str:
+    return {
+        "character": "角色",
+        "scene": "场景",
+        "prop": "道具",
+        "event": "事件",
+    }.get(entity_type, entity_type)
+
+
+def _rule_from_story_entity(entity: StoryEntity, attributes: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    rule: Dict[str, Any] = {
+        "name": entity.name,
+        "description": entity.description or entity.evidence or "",
+        "evidence": entity.evidence,
+    }
+    merged_attributes = dict(entity.attributes or {})
+    if attributes:
+        merged_attributes.update(attributes)
+    if merged_attributes:
+        rule["attributes"] = merged_attributes
+    if entity.entity_type == "event":
+        rule["title"] = entity.name
+    if entity.entity_type == "character" and getattr(entity, "appearance", None):
+        rule["appearance"] = entity.appearance
+    return rule
+
+
+def _merge_incoming_story_bible_rule(
+    story_bible: StoryBible,
+    entity_type: str,
+    incoming_rule: Dict[str, Any],
+) -> None:
+    attr = _story_bible_rule_attr(entity_type)
+    if not attr or not incoming_rule:
+        return
+
+    rules = list(getattr(story_bible, attr) or [])
+    incoming_key = incoming_rule.get("name") or incoming_rule.get("title")
+    if not incoming_key:
+        return
+
+    for index, rule in enumerate(rules):
+        rule_key = rule.get("name") or rule.get("title")
+        if rule_key != incoming_key:
+            continue
+
+        merged = dict(rule)
+        for key, value in incoming_rule.items():
+            if key == "attributes" and isinstance(value, dict):
+                merged["attributes"] = {**(merged.get("attributes") or {}), **value}
+            elif value not in (None, "", [], {}):
+                merged[key] = value
+        rules[index] = merged
+        setattr(story_bible, attr, rules)
+        return
+
+    rules.append(incoming_rule)
+    setattr(story_bible, attr, rules)
+
+
+def _apply_story_bible_conflict_resolution(
+    story_bible: StoryBible,
+    conflict: Dict[str, Any],
+    request: ResolveConflictRequest,
+) -> None:
+    if request.resolution != "accept_incoming":
+        return
+    if conflict.get("source") != "consistency_check":
+        return
+
+    incoming = conflict.get("incoming_data") or {}
+    incoming_rule = incoming.get("rule") or request.resolved_data
+    if isinstance(incoming_rule, dict):
+        _merge_incoming_story_bible_rule(story_bible, conflict.get("entity_type") or "", incoming_rule)
 
 
 def _entity_attr(entity: StoryEntity) -> Dict[str, Any]:
@@ -1892,7 +2008,7 @@ async def generate_story_bible_from_novel(
         project_id=request.project_id,
         novel_id=novel.id,
         title=request.title or f"{novel.title} Story Bible",
-        style=request.style,
+        style=request.style or novel.genre or "anime",
         worldview=(novel.description or "")[:1000] or None,
         character_rules=sections["character_rules"],
         scene_rules=sections["scene_rules"],
@@ -1978,6 +2094,7 @@ async def sync_story_bible_from_chapter(
     existing_conflicts = extra_data.get("conflicts", [])
     extra_data["conflicts"] = existing_conflicts + conflicts
     story_bible.extra_data = extra_data
+    flag_modified(story_bible, "extra_data")
 
     await db.commit()
     await db.refresh(story_bible)
@@ -1998,7 +2115,41 @@ async def check_story_bible_consistency(
     entities = await _extract_and_optionally_persist(
         db, user_id, novel_id, chapter_id, script_id, text, sorted(ENTITY_TYPES), False
     )
-    issues = []
+    issue_entries: list[tuple[ConsistencyIssue, Dict[str, Any]]] = []
+
+    def add_issue(
+        *,
+        entity_type: str,
+        name: str,
+        severity: str,
+        message: str,
+        evidence: Optional[str] = None,
+        suggested_action: Optional[str] = None,
+        incoming_rule: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        code = _consistency_issue_code(entity_type, name, message)
+        if any(existing_issue.code == code for existing_issue, _ in issue_entries):
+            return
+        issue = ConsistencyIssue(
+            code=code,
+            entity_type=entity_type,
+            name=name,
+            severity=severity,
+            message=message,
+            evidence=evidence,
+            suggested_action=suggested_action,
+        )
+        issue_entries.append(
+            (
+                issue,
+                {
+                    "rule": incoming_rule,
+                    "novel_id": novel_id,
+                    "chapter_id": chapter_id,
+                    "script_id": script_id,
+                },
+            )
+        )
 
     # 获取现有 Story Bible 中的实体名称
     known_names = {
@@ -2013,14 +2164,15 @@ async def check_story_bible_consistency(
 
         # 1. 检测未收录实体
         if entity.name not in known_names.get(entity_type, set()):
-            issues.append(
-                ConsistencyIssue(
-                    entity_type=entity_type,
-                    name=entity.name,
-                    severity="warning",
-                    message=f"{entity_type} 未收录在 Story Bible 中",
-                    evidence=entity.evidence,
-                )
+            message = f"{_story_bible_entity_label(entity_type)} 未收录在 Story Bible 中"
+            add_issue(
+                entity_type=entity_type,
+                name=entity.name,
+                severity="warning",
+                message=message,
+                evidence=entity.evidence,
+                suggested_action="收录到 Story Bible",
+                incoming_rule=_rule_from_story_entity(entity),
             )
 
         # 2. 检测外观冲突（角色）
@@ -2028,14 +2180,14 @@ async def check_story_bible_consistency(
             for rule in (story_bible.character_rules or []):
                 if rule.get("name") == entity.name and rule.get("appearance"):
                     if entity.appearance != rule.get("appearance"):
-                        issues.append(
-                            ConsistencyIssue(
-                                entity_type="character",
-                                name=entity.name,
-                                severity="error",
-                                message="角色外观描述与 Story Bible 记录不一致",
-                                evidence=f"Story Bible: {rule.get('appearance')[:100]}... 新检测: {entity.appearance[:100]}...",
-                            )
+                        add_issue(
+                            entity_type="character",
+                            name=entity.name,
+                            severity="error",
+                            message="角色外观描述与 Story Bible 记录不一致",
+                            evidence=f"Story Bible: {rule.get('appearance')[:100]}... 新检测: {entity.appearance[:100]}...",
+                            suggested_action="更新角色外观",
+                            incoming_rule=_rule_from_story_entity(entity),
                         )
 
         # 3. 检测道具状态冲突
@@ -2047,14 +2199,15 @@ async def check_story_bible_consistency(
                     if rule.get("name") == entity.name and rule.get("attributes", {}).get("state"):
                         existing_state = rule["attributes"].get("state")
                         if state != existing_state:
-                            issues.append(
-                                ConsistencyIssue(
-                                    entity_type="prop",
-                                    name=entity.name,
-                                    severity="warning",
-                                    message=f"道具状态从 '{existing_state}' 变为 '{state}'",
-                                    evidence=entity.evidence,
-                                )
+                            message = f"道具状态从 '{existing_state}' 变为 '{state}'"
+                            add_issue(
+                                entity_type="prop",
+                                name=entity.name,
+                                severity="warning",
+                                message=message,
+                                evidence=entity.evidence,
+                                suggested_action="更新道具状态",
+                                incoming_rule=_rule_from_story_entity(entity, {"state": state}),
                             )
 
         # 4. 检测场景设定冲突
@@ -2067,24 +2220,26 @@ async def check_story_bible_consistency(
                     if rule.get("name") == entity.name:
                         rule_attrs = rule.get("attributes", {})
                         if time and rule_attrs.get("time") and time != rule_attrs.get("time"):
-                            issues.append(
-                                ConsistencyIssue(
-                                    entity_type="scene",
-                                    name=entity.name,
-                                    severity="warning",
-                                    message=f"场景时间从 '{rule_attrs.get('time')}' 变为 '{time}'",
-                                    evidence=entity.evidence,
-                                )
+                            message = f"场景时间从 '{rule_attrs.get('time')}' 变为 '{time}'"
+                            add_issue(
+                                entity_type="scene",
+                                name=entity.name,
+                                severity="warning",
+                                message=message,
+                                evidence=entity.evidence,
+                                suggested_action="更新场景时间",
+                                incoming_rule=_rule_from_story_entity(entity, {"time": time}),
                             )
                         if weather and rule_attrs.get("weather") and weather != rule_attrs.get("weather"):
-                            issues.append(
-                                ConsistencyIssue(
-                                    entity_type="scene",
-                                    name=entity.name,
-                                    severity="warning",
-                                    message=f"场景天气从 '{rule_attrs.get('weather')}' 变为 '{weather}'",
-                                    evidence=entity.evidence,
-                                )
+                            message = f"场景天气从 '{rule_attrs.get('weather')}' 变为 '{weather}'"
+                            add_issue(
+                                entity_type="scene",
+                                name=entity.name,
+                                severity="warning",
+                                message=message,
+                                evidence=entity.evidence,
+                                suggested_action="更新场景天气",
+                                incoming_rule=_rule_from_story_entity(entity, {"weather": weather}),
                             )
 
         # 5. 检测事件顺序冲突
@@ -2096,20 +2251,100 @@ async def check_story_bible_consistency(
                     if rule.get("title") == entity.name or rule.get("name") == entity.name:
                         rule_seq = rule.get("sequence") or rule.get("attributes", {}).get("sequence")
                         if rule_seq and abs(int(sequence) - int(rule_seq)) > 1:
-                            issues.append(
-                                ConsistencyIssue(
-                                    entity_type="event",
-                                    name=entity.name,
-                                    severity="warning",
-                                    message=f"事件序号从 {rule_seq} 变为 {sequence}，可能存在顺序矛盾",
-                                    evidence=entity.evidence,
-                                )
+                            message = f"事件序号从 {rule_seq} 变为 {sequence}，可能存在顺序矛盾"
+                            add_issue(
+                                entity_type="event",
+                                name=entity.name,
+                                severity="warning",
+                                message=message,
+                                evidence=entity.evidence,
+                                suggested_action="更新事件顺序",
+                                incoming_rule=_rule_from_story_entity(entity, {"sequence": sequence}),
                             )
+
+    checked_at = utc_now().isoformat()
+    issue_by_code = {issue.code: (issue, incoming_data) for issue, incoming_data in issue_entries}
+    active_resolved_codes: set[str] = set()
+
+    extra_data = dict(story_bible.extra_data or {})
+    existing_conflicts = extra_data.get("conflicts") or []
+    updated_conflicts: list[Dict[str, Any]] = []
+    seen_codes: set[str] = set()
+
+    for existing in existing_conflicts:
+        if not isinstance(existing, dict):
+            updated_conflicts.append(existing)
+            continue
+
+        code = existing.get("code")
+        if code not in issue_by_code:
+            updated_conflicts.append(existing)
+            continue
+
+        issue, incoming_data = issue_by_code[code]
+        updated = dict(existing)
+        updated.update(
+            {
+                "code": issue.code,
+                "entity_type": issue.entity_type,
+                "name": issue.name,
+                "severity": issue.severity,
+                "message": issue.message,
+                "evidence": issue.evidence,
+                "source": "consistency_check",
+                "suggested_action": issue.suggested_action,
+                "incoming_data": incoming_data,
+                "last_seen_at": checked_at,
+            }
+        )
+        updated.setdefault("detected_at", checked_at)
+        updated.setdefault("resolved", False)
+        if updated.get("resolved"):
+            active_resolved_codes.add(code)
+        updated_conflicts.append(updated)
+        seen_codes.add(code)
+
+    for code, (issue, incoming_data) in issue_by_code.items():
+        if code in seen_codes:
+            continue
+        updated_conflicts.append(
+            {
+                "code": issue.code,
+                "entity_type": issue.entity_type,
+                "name": issue.name,
+                "severity": issue.severity,
+                "message": issue.message,
+                "evidence": issue.evidence,
+                "source": "consistency_check",
+                "suggested_action": issue.suggested_action,
+                "incoming_data": incoming_data,
+                "resolved": False,
+                "detected_at": checked_at,
+                "last_seen_at": checked_at,
+            }
+        )
+
+    issues = [issue for issue, _ in issue_entries if issue.code not in active_resolved_codes]
+    extra_data["conflicts"] = updated_conflicts
+    extra_data["last_consistency_check"] = {
+        "checked_at": checked_at,
+        "checked_entity_count": len(entities),
+        "pending_count": len(issues),
+        "resolved_count": len(active_resolved_codes),
+    }
+    story_bible.extra_data = extra_data
+    flag_modified(story_bible, "extra_data")
+    story_bible.updated_at = utc_now()
+    await db.commit()
+    await db.refresh(story_bible)
 
     return ConsistencyCheckResponse(
         story_bible_id=story_bible.id,
         checked_entity_count=len(entities),
         issue_count=len(issues),
+        pending_count=len(issues),
+        resolved_count=len(active_resolved_codes),
+        last_checked_at=checked_at,
         issues=issues,
     )
 
@@ -2125,8 +2360,8 @@ async def resolve_story_bible_conflict(
 
     # 获取冲突记录
     extra_data = dict(story_bible.extra_data or {})
-    conflicts = extra_data.get("conflicts", [])
-    conflict = next((c for c in conflicts if c.get("code") == request.issue_code), None)
+    conflicts = [dict(c) if isinstance(c, dict) else c for c in (extra_data.get("conflicts") or [])]
+    conflict = next((c for c in conflicts if isinstance(c, dict) and c.get("code") == request.issue_code), None)
 
     if not conflict:
         raise HTTPException(
@@ -2164,8 +2399,12 @@ async def resolve_story_bible_conflict(
         await db.refresh(entity)
         updated_entity = build_story_entity_response(entity)
 
+    _apply_story_bible_conflict_resolution(story_bible, conflict, request)
+
     # 保存更新后的 extra_data
+    extra_data["conflicts"] = conflicts
     story_bible.extra_data = extra_data
+    flag_modified(story_bible, "extra_data")
     story_bible.updated_at = utc_now()
     await db.commit()
     await db.refresh(story_bible)

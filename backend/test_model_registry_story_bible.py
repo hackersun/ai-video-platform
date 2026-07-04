@@ -34,7 +34,7 @@ def test_model_registry_exposes_task_defaults(client: TestClient) -> None:
     tasks = {item["task"]: item for item in payload["task_defaults"]}
     assert tasks["novel_generation"]["default_model"]["modality"] == "text"
     assert tasks["shot_video"]["default_model"]["modality"] == "video"
-    assert tasks["shot_video"]["default_model"]["api_model_id"] == "doubao-seedance-2-0-fast-260128"
+    assert tasks["shot_video"]["default_model"]["api_model_id"] == "doubao-seedance-2-0-260128"
     assert tasks["tts_dialogue"]["default_model"]["modality"] == "audio"
 
     shot_default = client.get("/api/v1/llm/task-defaults/shot_video", headers=auth_headers("registry-user"))

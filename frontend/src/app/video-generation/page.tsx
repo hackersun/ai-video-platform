@@ -4,7 +4,6 @@ import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
 import {
@@ -102,6 +101,22 @@ interface VideoModelOption {
   config_id?: string;
   test_status?: string | null;
   test_message?: string | null;
+  lane?: string;
+  adapter_status?: 'available' | 'planned' | string;
+  limits?: {
+    durations?: number[];
+    resolutions?: string[];
+    reference_images?: number;
+    reference_videos?: number;
+    reference_audios?: number;
+    native_audio?: boolean;
+  };
+  protocol?: {
+    input_mode?: string;
+    input_media_type?: string | null;
+    reference_image_range?: number[];
+    prompt_reference_syntax?: string;
+  };
 }
 
 // 角色类型
@@ -361,6 +376,109 @@ const assetViewKey = (asset?: Asset) => (
   asset?.generation_params?.view_key || asset?.generation_params?.asset_subtype || ''
 );
 
+const referenceImageCapacity = (model?: VideoModelOption | null) => {
+  const maxFromProtocol = model?.protocol?.reference_image_range?.[1];
+  return Number(model?.limits?.reference_images ?? maxFromProtocol ?? 1);
+};
+
+const videoInputContractLabel = (model?: VideoModelOption | null) => {
+  const inputMode = model?.protocol?.input_mode;
+  const maxImages = referenceImageCapacity(model);
+  if (inputMode === 'text' || maxImages <= 0) return '纯文字';
+  if (inputMode === 'image_text' || maxImages === 1) return '首帧图+文字';
+  if (inputMode === 'reference_images_text' || maxImages > 1) return `多参考图+文字 · 最多${maxImages}张`;
+  return '按模型能力';
+};
+
+const videoReferenceCapacityText = (model?: VideoModelOption | null) => {
+  if (!model) return '按模型能力';
+  const images = referenceImageCapacity(model);
+  const videos = Number(model.limits?.reference_videos || 0);
+  const audios = Number(model.limits?.reference_audios || 0);
+  const parts = [`图片${images}张`];
+  if (videos > 0) parts.push(`视频${videos}段`);
+  if (audios > 0) parts.push(`音频${audios}条`);
+  return parts.join(' / ');
+};
+
+const VIDEO_LANE_META: Record<string, { label: string; description: string }> = {
+  recommended: { label: '默认推荐', description: '优先选择，适合大多数动漫镜头' },
+  premium: { label: '高质量备选', description: '关键镜头、复杂运动或质量优先' },
+  specialist: { label: '动漫/动作专项', description: '风格、动作或特殊镜头优先' },
+  compatible: { label: '低价/兼容', description: '成本敏感或兼容旧流程' },
+  other: { label: '其他模型', description: '按模型目录能力使用' },
+};
+
+const VIDEO_LANE_ORDER = ['recommended', 'premium', 'specialist', 'compatible', 'other'];
+
+const videoLaneKey = (model?: VideoModelOption | null) => (
+  model?.lane && VIDEO_LANE_META[model.lane] ? model.lane : 'other'
+);
+
+const videoLaneLabel = (lane?: string) => (
+  lane && VIDEO_LANE_META[lane]?.label ? VIDEO_LANE_META[lane].label : (lane || '其他模型')
+);
+
+const videoLaneDescription = (lane?: string) => (
+  lane && VIDEO_LANE_META[lane]?.description ? VIDEO_LANE_META[lane].description : '按模型目录能力使用'
+);
+
+const videoModelScenarioLabel = (model?: VideoModelOption | null) => {
+  if (!model) return '选择模型后显示推荐场景';
+  const modelKey = `${model.id} ${model.api_model_id || ''} ${model.name || ''}`.toLowerCase();
+  const images = referenceImageCapacity(model);
+  if (modelKey.includes('happyhorse') && modelKey.includes('r2v')) return '动漫一致性、多角色/多资产参考';
+  if (modelKey.includes('happyhorse') && modelKey.includes('i2v')) return '首帧驱动、单图转视频';
+  if (modelKey.includes('happyhorse') && modelKey.includes('t2v')) return '纯文本草稿、无参考图';
+  if (modelKey.includes('seedance') && modelKey.includes('2')) return '默认推荐、多素材参考';
+  if (modelKey.includes('pixverse')) return '动漫动作、镜头运动专项';
+  if (images <= 0) return '纯文本提示词';
+  if (images === 1) return '首帧/单参考图';
+  return '多参考一致性';
+};
+
+const videoModelContractHint = (model?: VideoModelOption | null) => {
+  if (!model) return '选择模型后，页面会按模型协议提示可用的输入方式和参考容量。';
+  const images = referenceImageCapacity(model);
+  const videos = Number(model.limits?.reference_videos || 0);
+  const audios = Number(model.limits?.reference_audios || 0);
+  if (images <= 0) {
+    return '只发送文字提示词；角色、场景和道具资产可保留为上下文，但不会作为图片参考进入模型。';
+  }
+  if (images === 1) {
+    return '只发送 1 张图片；优先放首帧、角色定稿或关键资产，多角色资产会保留为上下文和预检证据。';
+  }
+  const extra = [
+    videos > 0 ? `视频${videos}段` : null,
+    audios > 0 ? `音频${audios}条` : null,
+  ].filter(Boolean);
+  return `最多发送 ${images} 张图片${extra.length ? `，并可带 ${extra.join('、')}` : ''}；适合把人物、场景、道具一起锁定，超出容量时按模型协议打包。`;
+};
+
+const promptGuideItems = ['主体/角色', '动作/情绪', '场景/时间', '镜头/运动', '风格/一致性', '避免内容'];
+
+const videoPromptTemplate = [
+  '主体/角色：',
+  '动作/情绪：',
+  '场景/时间：',
+  '镜头/运动：',
+  '风格/一致性：',
+  '避免内容：',
+].join('\n');
+
+const compactDurationSummary = (durations: number[]) => {
+  if (!durations.length) return '按模型能力';
+  const sorted = [...durations].sort((a, b) => a - b);
+  if (sorted.length <= 5) return `${sorted.join('/')}s`;
+  return `${sorted[0]}-${sorted[sorted.length - 1]}s · ${sorted.length}档`;
+};
+
+const compactResolutionSummary = (resolutions: string[]) => {
+  if (!resolutions.length) return '按模型能力';
+  if (resolutions.length <= 3) return resolutions.join('/');
+  return `${resolutions[0]}-${resolutions[resolutions.length - 1]} · ${resolutions.length}档`;
+};
+
 function VideoGenerationPageInner() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
@@ -380,7 +498,6 @@ function VideoGenerationPageInner() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [apiConfigured, setApiConfigured] = useState(false);
   const [devModeEnabled, setDevModeEnabled] = useState(false);
   const [apiConfigLoading, setApiConfigLoading] = useState(true);
   const [videoModels, setVideoModels] = useState<VideoModelOption[]>([]);
@@ -449,7 +566,6 @@ function VideoGenerationPageInner() {
       ]);
       const volcanoData = volcanoRes.ok ? await volcanoRes.json() : {};
       const agentPlanData = agentPlanRes.ok ? await agentPlanRes.json() : {};
-      setApiConfigured(Boolean(volcanoData.configured || agentPlanData.configured || volcanoData.dev_mode || agentPlanData.dev_mode));
       setDevModeEnabled(Boolean(volcanoData.dev_mode || agentPlanData.dev_mode));
     } catch (err) {
       console.error('加载API Key失败:', err);
@@ -462,79 +578,47 @@ function VideoGenerationPageInner() {
   const loadVideoModels = async () => {
     setVideoModelsLoading(true);
     try {
-      // 并行加载：火山普通模型 + Agent Plan 模型 + 用户默认配置
-      const [modelsRes, agentPlanModelsRes, defaultRes] = await Promise.all([
-        fetchWithAuth(`${API_BASE}/llm/models?provider=volcano`),
-        fetchWithAuth(`${API_BASE}/llm/models?provider=volcano_agent_plan`),
-        fetchWithAuth(`${API_BASE}/llm/configs`),
-      ]);
-
-      let mapped: VideoModelOption[] = [];
-      let configs: any[] = [];
-
-      if (defaultRes.ok) {
-        const configPayload = await defaultRes.json();
-        configs = Array.isArray(configPayload)
-          ? configPayload.filter((config: any) => !isInternalTestModelConfig(config))
-          : [];
+      const catalogRes = await fetchWithAuth(`${API_BASE}/video/models`);
+      if (!catalogRes.ok) {
+        throw new Error(`HTTP ${catalogRes.status}`);
       }
-
-      const providerModelPayloads: Array<{ providerId: string; response: Response }> = [
-        { providerId: 'volcano', response: modelsRes },
-        { providerId: 'volcano_agent_plan', response: agentPlanModelsRes },
-      ];
-
-      // 解析视频模型列表
-      for (const payload of providerModelPayloads) {
-        if (!payload.response.ok) continue;
-        const allModels = await payload.response.json();
-        const videoOnly = (allModels as any[]).filter(
-          (m: any) => ['video-generation', 'video'].includes(m.model_type) && !isInternalTestModelConfig(m)
-        );
-        mapped = [
-          ...mapped,
-          ...videoOnly.map((m: any) => {
-            const savedConfig = configs.find(
-              (c: any) => c.provider_id === payload.providerId && ['video-generation', 'video'].includes(c.model_type) && (c.config_model_id === m.id || c.api_model_id === m.model_id || c.model_id === m.model_id)
-            );
-            return {
-              id: m.id,                 // 前端选择用配置模型ID，避免不同 provider 的 API model_id 冲突
-              name: m.model_name || m.model_id,
-              name_cn: m.model_name_cn || m.model_name || m.model_id,
-              desc: m.description || m.capabilities?.join('/') || '',
-              duration: '4/5/8/10秒',
-              model_id: m.model_id,
-              config_model_id: m.id,
-              api_model_id: m.model_id,
-              provider_id: payload.providerId,
-              model_type: m.model_type,
-              model_capabilities: m.capabilities || [],
-              is_configured: Boolean(savedConfig),
-              config_id: savedConfig?.id,
-              is_default: Boolean(savedConfig?.is_default),
-              test_status: savedConfig?.test_status,
-              test_message: savedConfig?.test_message,
-            };
-          }),
-        ];
-      }
+      const catalog = await catalogRes.json();
+      const mapped: VideoModelOption[] = (catalog.models || [])
+        .filter((model: any) => !isInternalTestModelConfig(model))
+        .map((model: any) => ({
+          id: model.id,
+          name: model.name || model.display_name || model.api_model_id,
+          name_cn: model.name_cn || model.display_name || model.name || model.api_model_id,
+          desc: model.desc || model.model_capabilities?.join('/') || '',
+          duration: (model.limits?.durations || []).map((item: number) => `${item}秒`).join('/') || '按模型能力',
+          model_id: model.model_id || model.api_model_id,
+          config_model_id: model.config_model_id || model.id,
+          api_model_id: model.api_model_id || model.model_id,
+          provider_id: model.provider_id,
+          model_type: model.model_type || 'video-generation',
+          model_capabilities: model.model_capabilities || model.capabilities || [],
+          is_configured: Boolean(model.is_configured),
+          config_id: model.config_id || model.model_config_id,
+          is_default: Boolean(model.is_default),
+          test_status: model.test_status,
+          test_message: model.test_message,
+          lane: model.lane,
+          adapter_status: model.adapter_status,
+          limits: model.limits || {},
+          protocol: model.protocol || {},
+        }));
       setVideoModels(mapped);
 
-      // 解析用户默认视频模型
-      if (configs.length > 0 || mapped.length > 0) {
-        const defaultConfig = configs.find(
-          (c: any) => c.is_default && ['volcano', 'volcano_agent_plan'].includes(c.provider_id) && ['video-generation', 'video'].includes(c.model_type)
-        );
-        if (defaultConfig) {
-          setSelectedModel(defaultConfig.config_model_id || defaultConfig.api_model_id || defaultConfig.model_id);
-        } else {
-          const firstVerified = mapped.find(item => item.is_configured && item.test_status === 'success');
-          if (firstVerified) {
-            setSelectedModel(firstVerified.id);
-          } else if (mapped.length > 0 && !selectedModel) {
-            setSelectedModel(mapped[0].id);
+      if (mapped.length > 0) {
+        setSelectedModel((current) => {
+          if (current && mapped.some(item => item.id === current || item.api_model_id === current || item.model_id === current)) {
+            return current;
           }
-        }
+          const defaultConfigured = mapped.find(item => item.is_default);
+          const registryDefault = mapped.find(item => item.id === catalog.default_model_id);
+          const firstVerified = mapped.find(item => item.is_configured && item.test_status === 'success');
+          return (defaultConfigured || registryDefault || firstVerified || mapped[0]).id;
+        });
       }
     } catch (err) {
       console.error('加载视频模型失败:', err);
@@ -983,14 +1067,14 @@ function VideoGenerationPageInner() {
       toast({ title: '请输入视频描述', description: '补充描述后再开始生成。', type: 'error' });
       return;
     }
-    if (!apiConfigured && !devModeEnabled) {
-      toast({ title: '请先配置 API Key', description: '前往「LLM 配置」页面配置火山引擎 API Key。', type: 'error' });
+    if (generationMode !== 'audio_video' && !videoModelReady) {
+      toast({ title: '当前视频模型不可提交', description: '请先选择已接入真实提交、已保存并测试通过的模型配置。', type: 'error' });
       return;
     }
 
-    // 私有/本地图片地址无法被火山引擎访问，直接跳过
-    if (isPrivateImageUrl(imageUrl)) {
-      toast({ title: '已改为纯文生视频', description: '参考图片是本地或私有地址，火山引擎无法访问。', type: 'info' });
+    // 私有/本地图片地址无法被云端视频模型访问，直接跳过
+    if (referenceImageCapacity(selectedVideoModel) > 0 && isPrivateImageUrl(imageUrl)) {
+      toast({ title: '已改为纯文生视频', description: '参考图片是本地或私有地址，云端视频模型无法访问。', type: 'info' });
     }
 
     setStatus('submitting');
@@ -1032,7 +1116,9 @@ function VideoGenerationPageInner() {
       const selectedCharacterIds = selectedCharacterId ? [selectedCharacterId] : [];
       params.character_ids = Array.from(new Set([...shotCharacterIds, ...selectedCharacterIds]));
 
-      const referenceImageUrl = imageUrl?.trim();
+      const manualReferenceImageUrl = imageUrl?.trim();
+      const acceptsReferenceImage = referenceImageCapacity(selectedVideoModel) > 0;
+      const referenceImageUrl = acceptsReferenceImage ? manualReferenceImageUrl : '';
       const preflight = await apiClient.preflightGeneration({
         task_type: 'shot_video',
         model_config_id: selectedVideoModel?.config_id || undefined,
@@ -1055,15 +1141,15 @@ function VideoGenerationPageInner() {
       }
 
       // 发送前验证图片 URL（跳过私有地址，公网地址预检可访问性）
-      if (imageUrl && !isPrivateImageUrl(imageUrl)) {
-        const accessible = await checkImageAccessible(imageUrl);
+      if (referenceImageUrl && !isPrivateImageUrl(referenceImageUrl)) {
+        const accessible = await checkImageAccessible(referenceImageUrl);
         if (accessible) {
-          params.image_url = imageUrl.trim();
+          params.image_url = referenceImageUrl;
         } else {
           // 公网地址预检失败（跨域/超时/非图片），仍尝试发送给火山引擎
           // 火山引擎返回的 error 会更准确
-          params.image_url = imageUrl.trim();
-          console.warn('参考图片预检未通过，仍将发送请求，预期可能报错:', imageUrl);
+          params.image_url = referenceImageUrl;
+          console.warn('参考图片预检未通过，仍将发送请求，预期可能报错:', referenceImageUrl);
         }
       }
 
@@ -1323,10 +1409,52 @@ function VideoGenerationPageInner() {
   });
   const shotEntityRefs = entityRefsFromShot(shot);
   const selectedVideoModel = videoModels.find(m => m.id === selectedModel || m.api_model_id === selectedModel || m.model_id === selectedModel);
+  const supportedDurationValues = selectedVideoModel?.limits?.durations?.length
+    ? selectedVideoModel.limits.durations
+    : [4, 5, 8, 10];
+  const supportedResolutionValues = selectedVideoModel?.limits?.resolutions?.length
+    ? selectedVideoModel.limits.resolutions
+    : ['480p', '720p', '1080p'];
   const videoModelReady = generationMode === 'audio_video'
     ? true
-    : Boolean(selectedVideoModel && (devModeEnabled || (selectedVideoModel.is_configured && selectedVideoModel.test_status === 'success')));
+    : Boolean(selectedVideoModel && (devModeEnabled || (
+      selectedVideoModel.adapter_status === 'available' &&
+      selectedVideoModel.is_configured &&
+      selectedVideoModel.test_status === 'success'
+    )));
+  const videoModelWarning = !devModeEnabled && generationMode !== 'audio_video' && selectedVideoModel && !videoModelReady;
   const selectedExternalConfig = externalConfigs.find(config => config.id === selectedExternalConfigId);
+  const selectedReferenceImageCapacity = referenceImageCapacity(selectedVideoModel);
+  const selectedReferenceCapacityText = videoReferenceCapacityText(selectedVideoModel);
+  const selectedVideoScenario = videoModelScenarioLabel(selectedVideoModel);
+  const selectedVideoContractHint = videoModelContractHint(selectedVideoModel);
+  const supportedDurationSummary = compactDurationSummary(supportedDurationValues);
+  const supportedResolutionSummary = compactResolutionSummary(supportedResolutionValues);
+  const videoModelGroups = VIDEO_LANE_ORDER
+    .map((lane) => ({
+      lane,
+      label: videoLaneLabel(lane),
+      description: videoLaneDescription(lane),
+      models: videoModels.filter((model) => videoLaneKey(model) === lane),
+    }))
+    .filter((group) => group.models.length > 0);
+  const shotReferenceCounts = {
+    characters: shotEntityRefs.characters?.length || 0,
+    scenes: shotEntityRefs.scenes?.length || 0,
+    props: shotEntityRefs.props?.length || 0,
+    events: shotEntityRefs.events?.length || 0,
+  };
+  const shotReferenceTotal = shotReferenceCounts.characters + shotReferenceCounts.scenes + shotReferenceCounts.props + shotReferenceCounts.events;
+
+  useEffect(() => {
+    if (!selectedVideoModel) return;
+    if (!supportedDurationValues.includes(duration)) {
+      setDuration(supportedDurationValues.includes(5) ? 5 : supportedDurationValues[0]);
+    }
+    if (!supportedResolutionValues.includes(resolution)) {
+      setResolution(supportedResolutionValues.includes('720p') ? '720p' : supportedResolutionValues[0]);
+    }
+  }, [selectedVideoModel, duration, resolution, supportedDurationValues, supportedResolutionValues]);
   const renderScriptPager = () => {
     if (filteredScripts.length <= SCRIPT_PAGE_SIZE) return null;
     return (
@@ -1550,14 +1678,16 @@ function VideoGenerationPageInner() {
             <Loader2 className="w-4 h-4 animate-spin" />
             加载 API 配置…
           </div>
-        ) : !apiConfigured ? (
+        ) : videoModelWarning ? (
           <Card className="bg-yellow-500/10 border-yellow-500/30">
             <CardContent className="p-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <AlertCircle className="w-5 h-5 text-yellow-400" />
                 <div>
-                  <p className="text-yellow-300 font-medium">未配置 API Key</p>
-                  <p className="text-yellow-400/60 text-sm">请先配置火山引擎 API Key 才能生成视频</p>
+                  <p className="text-yellow-300 font-medium">当前模型暂不可正式提交</p>
+                  <p className="text-yellow-400/60 text-sm">
+                    请选择已接入真实提交、已保存并测试通过的模型配置。
+                  </p>
                 </div>
               </div>
               <Button asChild variant="outline" size="sm" className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10">
@@ -1798,62 +1928,129 @@ function VideoGenerationPageInner() {
                   视频模型
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
+              <CardContent className="space-y-3">
+                {selectedVideoModel && (
+                  <div data-testid="video-model-contract" className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-cyan-100">当前模型合同</div>
+                        <div className="mt-0.5 text-xs text-cyan-100/60">
+                          {selectedVideoModel.provider_id || 'volcano'} / {selectedVideoModel.api_model_id || selectedVideoModel.id}
+                        </div>
+                      </div>
+                      <span className={`shrink-0 rounded border px-2 py-1 text-xs ${
+                        generationMode === 'audio_video'
+                          ? 'border-white/15 bg-white/10 text-white/55'
+                          : videoModelReady
+                            ? 'border-emerald-500/25 bg-emerald-500/15 text-emerald-100'
+                            : 'border-yellow-500/25 bg-yellow-500/15 text-yellow-100'
+                      }`}>
+                        {generationMode === 'audio_video' ? '音视频模式不调用' : devModeEnabled ? 'DEV 可提交' : videoModelReady ? '可提交' : '需配置/验证'}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded bg-black/20 p-2">
+                        <div className="text-cyan-100/45">输入类型</div>
+                        <div className="mt-1 text-white">{videoInputContractLabel(selectedVideoModel)}</div>
+                      </div>
+                      <div className="rounded bg-black/20 p-2">
+                        <div className="text-cyan-100/45">参考容量</div>
+                        <div className="mt-1 text-white">{selectedReferenceCapacityText}</div>
+                      </div>
+                      <div className="rounded bg-black/20 p-2">
+                        <div className="text-cyan-100/45">推荐场景</div>
+                        <div className="mt-1 text-white">{selectedVideoScenario}</div>
+                      </div>
+                      <div className="rounded bg-black/20 p-2">
+                        <div className="text-cyan-100/45">模型分层</div>
+                        <div className="mt-1 text-white">{videoLaneLabel(videoLaneKey(selectedVideoModel))}</div>
+                      </div>
+                    </div>
+                    <div className="mt-3 rounded border border-white/10 bg-black/20 p-2 text-xs text-cyan-50/75">
+                      {selectedVideoContractHint}
+                    </div>
+                    {selectedVideoModel.adapter_status !== 'available' && !devModeEnabled && (
+                      <div className="mt-2 text-xs text-yellow-100/75">
+                        该厂商真实提交适配器尚未接入；当前先支持目录、配置和流程预留。
+                      </div>
+                    )}
+                    {!selectedVideoModel.is_configured && (
+                      <div className="mt-2 text-xs text-yellow-100/75">
+                        该模型尚未保存 API Key 配置。生产环境请先到大模型配置页保存并测试通过。
+                      </div>
+                    )}
+                    {selectedVideoModel.is_configured && selectedVideoModel.test_status !== 'success' && !devModeEnabled && (
+                      <div className="mt-2 text-xs text-yellow-100/75">
+                        该配置尚未验证通过，正式生成前请先在大模型配置页测试连接。
+                      </div>
+                    )}
+                  </div>
+                )}
                 {videoModelsLoading ? (
                   <div className="text-white/50 text-sm py-2">加载中…</div>
                 ) : videoModels.length === 0 ? (
                   <div className="text-white/50 text-sm py-2">暂无可用视频模型</div>
                 ) : (
-                  videoModels.map(model => (
-                    <div
-                      key={model.id}
-                      onClick={() => setSelectedModel(model.id)}
-                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                        selectedModel === model.id
-                          ? 'border-violet-500 bg-violet-500/10'
-                          : 'border-white/10 hover:border-white/20'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-white font-medium text-sm">
-                            {model.name_cn || model.name}
-                            {selectedModel === model.id && (
-                              <span className="ml-2 text-xs text-violet-400">(已选)</span>
-                            )}
+                  <div className="space-y-3">
+                    {videoModelGroups.map((group) => (
+                      <div key={group.lane} className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-medium text-white/80">{group.label}</div>
+                            <div className="text-[11px] text-white/35">{group.description}</div>
                           </div>
-                          <div className="text-white/40 text-xs mt-0.5">{model.desc}</div>
-                          <div className="text-white/30 text-xs mt-0.5">ID: {model.id}</div>
-                          <div className="mt-1 flex flex-wrap gap-1.5 text-xs">
-                            <span className="rounded bg-white/10 px-2 py-0.5 text-white/55">
-                              {model.is_default ? '默认视频配置' : model.is_configured ? '已保存配置' : '模型目录'}
-                            </span>
-                            <span className={`rounded border px-2 py-0.5 ${modelStatusClass(model.test_status)}`}>
-                              {statusLabel(model.test_status)}
-                            </span>
-                          </div>
+                          <span className="rounded bg-white/10 px-2 py-0.5 text-[11px] text-white/45">
+                            {group.models.length}
+                          </span>
                         </div>
-                        {selectedModel === model.id && (
-                          <CheckCircle className="w-4 h-4 text-violet-400 flex-shrink-0" />
-                        )}
+                        {group.models.map(model => (
+                          <button
+                            key={model.id}
+                            type="button"
+                            aria-pressed={selectedModel === model.id}
+                            onClick={() => setSelectedModel(model.id)}
+                            className={`w-full rounded-lg border p-3 text-left transition-colors ${
+                              selectedModel === model.id
+                                ? 'border-violet-500 bg-violet-500/10'
+                                : 'border-white/10 bg-black/10 hover:border-white/20'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <span className="font-medium text-sm text-white">{model.name_cn || model.name}</span>
+                                  {selectedModel === model.id && (
+                                    <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[11px] text-violet-100">已选</span>
+                                  )}
+                                </div>
+                                <div className="mt-0.5 text-xs text-white/40">{videoModelScenarioLabel(model)}</div>
+                                <div className="mt-0.5 truncate text-[11px] text-white/25">ID: {model.id}</div>
+                                <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                                  <span className="rounded border border-cyan-500/20 bg-cyan-500/10 px-2 py-0.5 text-cyan-100/80">
+                                    {videoInputContractLabel(model)}
+                                  </span>
+                                  <span className="rounded bg-white/10 px-2 py-0.5 text-white/55">
+                                    {videoReferenceCapacityText(model)}
+                                  </span>
+                                  <span className="rounded bg-white/10 px-2 py-0.5 text-white/55">
+                                    {model.is_default ? '默认配置' : model.is_configured ? '已保存' : '目录候选'}
+                                  </span>
+                                  <span className="rounded bg-white/10 px-2 py-0.5 text-white/55">
+                                    {model.adapter_status === 'available' ? '真实提交' : '适配预留'}
+                                  </span>
+                                  <span className={`rounded border px-2 py-0.5 ${modelStatusClass(model.test_status)}`}>
+                                    {statusLabel(model.test_status)}
+                                  </span>
+                                </div>
+                              </div>
+                              {selectedModel === model.id && (
+                                <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-violet-400" />
+                              )}
+                            </div>
+                          </button>
+                        ))}
                       </div>
-                    </div>
-                  ))
-                )}
-                {selectedVideoModel && (
-                  <div className="rounded border border-white/10 bg-black/20 p-3 text-xs text-white/55">
-                    <div className="text-white/75">当前静音视频会调用：{selectedVideoModel.provider_id || 'volcano'} / {selectedVideoModel.api_model_id || selectedVideoModel.id}</div>
-                    <div className="mt-1">配置状态：{selectedVideoModel.is_configured ? '已保存配置' : '模型目录候选'}；验证状态：{statusLabel(selectedVideoModel.test_status)}。</div>
-                    {!selectedVideoModel.is_configured && (
-                      <div className="mt-1 text-yellow-100/70">
-                        该模型尚未保存 API Key 配置。生产环境请先到大模型配置页保存并测试通过。
-                      </div>
-                    )}
-                    {selectedVideoModel.is_configured && selectedVideoModel.test_status !== 'success' && !devModeEnabled && (
-                      <div className="mt-1 text-yellow-100/70">
-                        该配置尚未验证通过，正式生成前请先在大模型配置页测试连接。
-                      </div>
-                    )}
+                    ))}
                   </div>
                 )}
               </CardContent>
@@ -1882,16 +2079,255 @@ function VideoGenerationPageInner() {
                   直生音视频
                 </Button>
                 <div className="col-span-2 text-xs text-white/45">
-                  静音视频只消费火山视频模型和镜头一致性提示词；生产适配配置只在直生音视频或 workflow 云渲染中生效，并会生成字幕轨。
+                  静音视频从统一视频模型目录选择模型；真实提交按适配器状态放行，未接入厂商先用于配置预留和 DEV_MODE 流程验证。
                 </div>
               </CardContent>
             </Card>
+
+            {/* 参数配置 */}
+            <Card className="bg-white/5 border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Wand2 className="w-5 h-5" />
+                  参数配置
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div
+                  data-testid="video-input-package-summary"
+                  className={`min-w-0 overflow-hidden rounded-lg border p-3 ${
+                    selectedReferenceImageCapacity <= 0
+                      ? 'border-amber-500/25 bg-amber-500/10'
+                      : selectedReferenceImageCapacity === 1
+                        ? 'border-sky-500/25 bg-sky-500/10'
+                        : 'border-emerald-500/25 bg-emerald-500/10'
+                  }`}
+                >
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-white">本次输入包</div>
+                      <div className="mt-1 break-words text-xs leading-5 text-white/55">{selectedVideoContractHint}</div>
+                    </div>
+                    <span className="w-fit shrink-0 rounded bg-black/25 px-2 py-1 text-xs text-white/70">
+                      {videoInputContractLabel(selectedVideoModel)}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                    <div className="min-w-0 rounded bg-black/20 p-2">
+                      <div className="text-white/40">图片参考</div>
+                      <div className="mt-1 break-words text-white">
+                        {selectedReferenceImageCapacity <= 0 ? '不发送' : `最多${selectedReferenceImageCapacity}张`}
+                      </div>
+                    </div>
+                    <div className="min-w-0 rounded bg-black/20 p-2">
+                      <div className="text-white/40">镜头资产</div>
+                      <div className="mt-1 break-words text-white">
+                        {shotReferenceTotal > 0
+                          ? `${shotReferenceTotal}项`
+                          : currentShotId ? '未绑定' : '未选镜头'}
+                      </div>
+                    </div>
+                    <div className="min-w-0 rounded bg-black/20 p-2">
+                      <div className="text-white/40">可选时长</div>
+                      <div className="mt-1 break-words text-white">{supportedDurationSummary}</div>
+                    </div>
+                    <div className="min-w-0 rounded bg-black/20 p-2">
+                      <div className="text-white/40">可选分辨率</div>
+                      <div className="mt-1 break-words text-white">{supportedResolutionSummary}</div>
+                    </div>
+                  </div>
+                  {shotReferenceTotal > 0 && (
+                    <div className="mt-2 text-xs text-white/50">
+                      已绑定：人物{shotReferenceCounts.characters}、场景{shotReferenceCounts.scenes}、道具{shotReferenceCounts.props}、事件{shotReferenceCounts.events}
+                    </div>
+                  )}
+                </div>
+
+                {/* 视频描述 */}
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-white/80">视频描述</label>
+                    <button
+                      type="button"
+                      onClick={() => setPrompt(prompt.trim() ? `${prompt.trim()}\n${videoPromptTemplate}` : videoPromptTemplate)}
+                      disabled={status === 'generating'}
+                      className="rounded border border-white/10 px-2 py-1 text-xs text-violet-200 hover:border-violet-400/40 hover:text-violet-100 disabled:opacity-50"
+                    >
+                      套用结构
+                    </button>
+                  </div>
+                  <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
+                    {promptGuideItems.map((item) => (
+                      <span key={item} className="rounded bg-white/10 px-2 py-0.5 text-white/55">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="例如：银发少女在雨夜屋檐下回头，表情紧张；镜头缓慢推近，雨水和霓虹反光明显；日系动漫风，保持服装、发色和道具一致。"
+                    disabled={status === 'generating'}
+                    rows={6}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 resize-none"
+                  />
+                  {shot?.prompt && prompt !== shot.prompt && (
+                    <button
+                      onClick={() => setPrompt(shot.prompt || '')}
+                      className="text-xs text-violet-400 hover:text-violet-300 mt-1"
+                    >
+                      使用镜头prompt
+                    </button>
+                  )}
+                </div>
+
+                {/* 角色图像参考 */}
+                <div>
+                  <label className="text-white/80 mb-2 block">
+                    {selectedReferenceImageCapacity <= 0
+                      ? '角色图像参考（当前模型不发送图片）'
+                      : selectedReferenceImageCapacity === 1
+                        ? '首帧/角色图像参考（可选）'
+                        : '角色/资产参考（自动按模型容量打包）'}
+                  </label>
+                  <p className="mb-2 text-xs text-white/45">
+                    {selectedReferenceImageCapacity <= 0
+                      ? '当前模型是纯文本输入，选择角色只用于上下文记录和预检，不会向模型发送图片。'
+                      : selectedReferenceImageCapacity === 1
+                        ? '当前模型只接收一张图片，建议放首帧、角色定稿或最关键资产。'
+                        : `当前模型支持多参考图，后端会按最多 ${selectedReferenceImageCapacity} 张的容量打包当前镜头资产。`}
+                  </p>
+                  {characters.length > 0 ? (
+                    <select
+                      value={selectedCharacterId}
+                      onChange={(e) => handleCharacterChange(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white mb-2"
+                    >
+                      <option value="">不使用角色参考</option>
+                      {characters.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="text-white/40 text-sm mb-2">
+                      {selectedNovel ? '当前小说暂无角色' : '暂无角色'}
+                    </p>
+                  )}
+                  {imageUrl && (
+                    <div className={`flex items-center gap-2 ${selectedReferenceImageCapacity <= 0 ? 'opacity-60' : ''}`}>
+                      <img src={resolveMediaUrl(imageUrl)} alt="参考" width={64} height={64} loading="lazy" className="w-16 h-16 rounded object-cover border border-white/10" />
+                      <button
+                        onClick={() => { setImageUrl(''); setSelectedCharacterId(''); }}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        清除参考图
+                      </button>
+                    </div>
+                  )}
+                  {imageUrl && selectedReferenceImageCapacity <= 0 && (
+                    <p className="mt-2 text-xs text-amber-100/70">
+                      这张图片会留在页面预览中，但提交当前模型时不会发送。
+                    </p>
+                  )}
+                  {refNames(shotEntityRefs.characters) && (
+                    <p className="mt-2 text-xs text-white/50">
+                      镜头已绑定人物：{refNames(shotEntityRefs.characters)}
+                    </p>
+                  )}
+                </div>
+
+                {/* 时长 */}
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-white/80">时长</label>
+                    <span className="text-white">{duration}秒</span>
+                  </div>
+                  <div className="mb-2 text-xs text-white/45">
+                    当前模型支持：{supportedDurationSummary}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {supportedDurationValues.map(seconds => (
+                      <Button
+                        key={seconds}
+                        variant={duration === seconds ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setDuration(seconds)}
+                        disabled={status === 'generating'}
+                        className={duration === seconds ? 'min-w-[3.25rem] bg-violet-600' : 'min-w-[3.25rem] border-white/10'}
+                      >
+                        {seconds}s
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 分辨率 */}
+                <div>
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-white/80">分辨率</label>
+                    <span className="text-xs text-white/45">{supportedResolutionSummary}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {supportedResolutionValues.map(res => (
+                      <Button
+                        key={res}
+                        variant={resolution === res ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setResolution(res)}
+                        disabled={status === 'generating'}
+                        className={resolution === res ? 'min-w-[4rem] bg-violet-600' : 'min-w-[4rem] border-white/10'}
+                      >
+                        {res}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* 生成按钮 */}
+            <Button
+              onClick={generationMode === 'audio_video' ? handleGenerateAudioVideo : handleGenerate}
+              disabled={status === 'submitting' || status === 'generating' || apiConfigLoading || !videoModelReady}
+              className="w-full bg-violet-600 hover:bg-violet-700 h-12"
+            >
+              {status === 'submitting' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />提交中…</>}
+              {status === 'generating' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />生成中 {progress}%</>}
+              {status === 'completed' && <><CheckCircle className="w-5 h-5 mr-2" />生成完成</>}
+              {status === 'error' && <><AlertCircle className="w-5 h-5 mr-2" />重试</>}
+              {status === 'idle' && <><Sparkles className="w-5 h-5 mr-2" />{generationMode === 'audio_video' ? '生成音视频' : '开始生成'}</>}
+            </Button>
+
+            {/* 错误信息 */}
+            {error && (
+              <Card className="bg-red-500/10 border-red-500/30">
+                <CardContent className="p-3">
+                  <p className="text-red-400 text-sm">{error}</p>
+                </CardContent>
+              </Card>
+            )}
+            {generationPreflight && (
+              <Card
+                data-testid="video-generation-preflight"
+                className={generationPreflight.ready ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}
+              >
+                <CardContent className="p-3 space-y-2">
+                  <div className={generationPreflight.ready ? 'text-emerald-100 text-sm font-medium' : 'text-red-100 text-sm font-medium'}>
+                    {generationPreflight.ready ? '生成前预检通过' : '生成前预检未通过'}
+                  </div>
+                  <PreflightIssueList
+                    issues={generationPreflight.issues || []}
+                    emptyText="预检通过，可以提交生成。"
+                  />
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white flex items-center gap-2">
                   <PlugZap className="w-5 h-5" />
-                  生产适配上下文
+                  高级生产适配
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -1919,7 +2355,7 @@ function VideoGenerationPageInner() {
                 }`}>
                   {generationMode === 'audio_video'
                     ? `本次直生音视频会提交：${selectedExternalConfig ? `${selectedExternalConfig.provider_name} · ${selectedExternalConfig.name}` : 'DEV_MODE / 默认直生模型'}，并带入镜头、字幕、资产锁、关键帧、多视图和审核参数。`
-                    : '当前是静音视频模式，不会调用这里的 Sora/Veo/ComfyUI/口型配置；切换到直生音视频，或在 workflow 合成步骤选择 FFmpeg 云渲染时才会消费这些配置。'}
+                    : '静音视频不会调用这里的 Sora/Veo/ComfyUI/口型配置；切换到直生音视频或 workflow 云渲染时才会消费这些配置。'}
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   {productionContextUsage.map((item) => (
@@ -1971,152 +2407,6 @@ function VideoGenerationPageInner() {
                 )}
               </CardContent>
             </Card>
-
-            {/* 参数配置 */}
-            <Card className="bg-white/5 border-white/10">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Wand2 className="w-5 h-5" />
-                  参数配置
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                {/* 视频描述 */}
-                <div>
-                  <label className="text-white/80 mb-2 block">视频描述</label>
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="描述你想要生成的视频内容…"
-                    disabled={status === 'generating'}
-                    rows={5}
-                    className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white placeholder:text-white/40 resize-none"
-                  />
-                  {shot?.prompt && prompt !== shot.prompt && (
-                    <button
-                      onClick={() => setPrompt(shot.prompt || '')}
-                      className="text-xs text-violet-400 hover:text-violet-300 mt-1"
-                    >
-                      使用镜头prompt
-                    </button>
-                  )}
-                </div>
-
-                {/* 角色图像参考 */}
-                <div>
-                  <label className="text-white/80 mb-2 block">角色图像参考（可选）</label>
-                  {characters.length > 0 ? (
-                    <select
-                      value={selectedCharacterId}
-                      onChange={(e) => handleCharacterChange(e.target.value)}
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white mb-2"
-                    >
-                      <option value="">不使用角色参考</option>
-                      {characters.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="text-white/40 text-sm mb-2">
-                      {selectedNovel ? '当前小说暂无角色' : '暂无角色'}
-                    </p>
-                  )}
-                  {imageUrl && (
-                    <div className="flex items-center gap-2">
-                      <img src={resolveMediaUrl(imageUrl)} alt="参考" width={64} height={64} loading="lazy" className="w-16 h-16 rounded object-cover border border-white/10" />
-                      <button
-                        onClick={() => { setImageUrl(''); setSelectedCharacterId(''); }}
-                        className="text-xs text-red-400 hover:text-red-300"
-                      >
-                        清除参考图
-                      </button>
-                    </div>
-                  )}
-                  {refNames(shotEntityRefs.characters) && (
-                    <p className="mt-2 text-xs text-white/50">
-                      镜头已绑定人物：{refNames(shotEntityRefs.characters)}
-                    </p>
-                  )}
-                </div>
-
-                {/* 时长 */}
-                <div>
-                  <div className="flex justify-between mb-2">
-                    <label className="text-white/80">时长</label>
-                    <span className="text-white">{duration}秒</span>
-                  </div>
-                  <Slider
-                    value={[duration]}
-                    onValueChange={(v) => setDuration(v[0])}
-                    min={4}
-                    max={10}
-                    step={1}
-                    className="w-full"
-                  />
-                  <div className="flex justify-between text-white/40 text-xs mt-1">
-                    <span>4s</span>
-                    <span>10s</span>
-                  </div>
-                </div>
-
-                {/* 分辨率 */}
-                <div>
-                  <label className="text-white/80 mb-2 block">分辨率</label>
-                  <div className="flex gap-2">
-                    {['480p', '720p', '1080p'].map(res => (
-                      <Button
-                        key={res}
-                        variant={resolution === res ? 'default' : 'outline'}
-                        size="sm"
-                        onClick={() => setResolution(res)}
-                        disabled={status === 'generating'}
-                        className={resolution === res ? 'bg-violet-600' : 'border-white/10'}
-                      >
-                        {res}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* 生成按钮 */}
-            <Button
-              onClick={generationMode === 'audio_video' ? handleGenerateAudioVideo : handleGenerate}
-              disabled={status === 'submitting' || status === 'generating' || (!apiConfigured && !devModeEnabled) || apiConfigLoading || !videoModelReady}
-              className="w-full bg-violet-600 hover:bg-violet-700 h-12"
-            >
-              {status === 'submitting' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />提交中…</>}
-              {status === 'generating' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />生成中 {progress}%</>}
-              {status === 'completed' && <><CheckCircle className="w-5 h-5 mr-2" />生成完成</>}
-              {status === 'error' && <><AlertCircle className="w-5 h-5 mr-2" />重试</>}
-              {status === 'idle' && <><Sparkles className="w-5 h-5 mr-2" />{generationMode === 'audio_video' ? '生成音视频' : '开始生成'}</>}
-            </Button>
-
-            {/* 错误信息 */}
-            {error && (
-              <Card className="bg-red-500/10 border-red-500/30">
-                <CardContent className="p-3">
-                  <p className="text-red-400 text-sm">{error}</p>
-                </CardContent>
-              </Card>
-            )}
-            {generationPreflight && (
-              <Card
-                data-testid="video-generation-preflight"
-                className={generationPreflight.ready ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}
-              >
-                <CardContent className="p-3 space-y-2">
-                  <div className={generationPreflight.ready ? 'text-emerald-100 text-sm font-medium' : 'text-red-100 text-sm font-medium'}>
-                    {generationPreflight.ready ? '生成前预检通过' : '生成前预检未通过'}
-                  </div>
-                  <PreflightIssueList
-                    issues={generationPreflight.issues || []}
-                    emptyText="预检通过，可以提交生成。"
-                  />
-                </CardContent>
-              </Card>
-            )}
           </div>
 
           {/* 右侧：预览和历史 */}
@@ -2708,12 +2998,12 @@ function VideoGenerationPageInner() {
                   <Settings className="w-4 h-4" /> 当前使用
                 </h4>
                 <ul className="text-sm text-white/60 space-y-1">
-                  <li>• <strong className="text-white/80">生成模式:</strong> {generationMode === 'audio_video' ? '直生音视频（消费生产适配和字幕轨）' : '静音视频（火山视频模型）'}</li>
+                  <li>• <strong className="text-white/80">生成模式:</strong> {generationMode === 'audio_video' ? '直生音视频（消费生产适配和字幕轨）' : '静音视频（统一视频模型目录）'}</li>
                   <li>• <strong className="text-white/80">模型:</strong> {selectedVideoModel?.name_cn || selectedVideoModel?.name || selectedModel}</li>
                   <li>• <strong className="text-white/80">API模型:</strong> {selectedVideoModel?.api_model_id || selectedModel}</li>
                   <li>• <strong className="text-white/80">提供商:</strong> {generationMode === 'audio_video' ? (selectedExternalConfig?.provider_name || '直生音视频默认适配') : (selectedVideoModel?.provider_id || 'volcano')}</li>
                   <li>• <strong className="text-white/80">验证状态:</strong> {generationMode === 'audio_video' ? (selectedExternalConfig ? statusLabel(selectedExternalConfig.test_status) : 'DEV_MODE/默认') : statusLabel(selectedVideoModel?.test_status)}</li>
-                  <li>• <strong className="text-white/80">支持:</strong> {generationMode === 'audio_video' ? '音视频直生、字幕、资产锁、关键帧、多视图、口型/审核参数' : '文生视频、图生视频、一致性提示词'}</li>
+                  <li>• <strong className="text-white/80">支持:</strong> {generationMode === 'audio_video' ? '音视频直生、字幕、资产锁、关键帧、多视图、口型/审核参数' : `${videoInputContractLabel(selectedVideoModel)}；${selectedReferenceCapacityText}`}</li>
                   {selectedNovel && <li>• <strong className="text-white/80">小说ID:</strong> {selectedNovel.slice(0, 8)}...</li>}
                   {selectedChapter && <li>• <strong className="text-white/80">章节ID:</strong> {selectedChapter.slice(0, 8)}...</li>}
                   {currentShotId && <li>• <strong className="text-white/80">镜头ID:</strong> {currentShotId.slice(0, 8)}...</li>}

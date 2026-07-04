@@ -639,6 +639,33 @@ def test_video_generation_skips_local_reference_image_for_provider(
     assert "参考图接入说明" in job["prompt"]
 
 
+def test_video_generation_text_only_model_records_no_provider_image(client: TestClient) -> None:
+    user_id = "video-text-only-contract-user"
+    create_resp = client.post(
+        "/api/v1/video/generate",
+        json={
+            "prompt": "HappyHorse T2V should ignore image references",
+            "model": "happyhorse-1.1-t2v",
+            "duration": 5,
+            "resolution": "720P",
+            "image_url": "https://cdn.example.com/should-not-send.png",
+            "use_consistency_context": False,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert create_resp.status_code == 200, create_resp.text
+    job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
+    assert job_resp.status_code == 200
+    job = job_resp.json()
+    assert job["api_model_id"] == "happyhorse-1.1-t2v"
+    assert job["prompt_parameters"]["model_input_mode"] == "text"
+    assert job["prompt_parameters"]["image_url_sent"] is False
+    assert job["prompt_parameters"]["provider_reference_image_count"] == 0
+    assert job["extra_data"]["reference_package"]["mode"] == "text_only"
+    assert job["extra_data"]["reference_package"]["dropped_image_count"] == 1
+
+
 def test_video_generation_maps_local_reference_image_through_public_storage(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,

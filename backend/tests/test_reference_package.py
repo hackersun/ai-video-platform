@@ -167,7 +167,8 @@ def test_reference_limits_from_registry() -> None:
         "at_reference": False,
         "native_audio": False,
     }
-    assert get_limits("doubao-seedance-2.0-fast") == legacy
+    assert get_limits("doubao-seedance-2.0-fast") == fast
+    assert get_limits("doubao-seedance-2.0-pro") == legacy
     assert get_limits("unknown-video-model") == legacy
 
 
@@ -437,3 +438,34 @@ def test_provider_content_adapter_keeps_single_image_shape_when_limits_do_not_al
     ]
     assert result["metadata"]["image_count"] == 1
     assert result["metadata"]["video_count"] == 0
+
+
+def test_provider_content_adapter_respects_text_only_model_contract() -> None:
+    adapter = _adapter_module()
+    build_provider_content = getattr(adapter, "build_video_provider_content", None)
+    assert callable(build_provider_content)
+
+    result = build_provider_content(
+        final_prompt="纯文字生成镜头，不应发送任何参考图",
+        duration=5,
+        resolution="720P",
+        provider_image_url="https://cdn.example.com/should-not-send.png",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/sunjian-front.png", "role_tag": "protagonist", "at_index": 1},
+            ],
+            "videos": [],
+            "audios": [],
+            "at_reference_text": "@图1为主角孙剑正面形象基准",
+        },
+        model_limits={"images": 0, "videos": 0, "audios": 0, "at_reference": False, "native_audio": False},
+    )
+
+    assert result["mode"] == "text_only"
+    assert result["content"] == [
+        {
+            "type": "text",
+            "text": "纯文字生成镜头，不应发送任何参考图 --duration 5 --resolution 720P --camerafixed false --watermark true",
+        },
+    ]
+    assert result["metadata"]["image_count"] == 0
