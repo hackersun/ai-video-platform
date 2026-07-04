@@ -19,9 +19,21 @@ function chapterRangeLabel(episode: SeriesPlanEpisode) {
 function carryOverLabel(episode: SeriesPlanEpisode) {
   const state = episode.carry_over_state || {};
   const characters = Array.isArray(state.characters) ? state.characters.length : 0;
+  const scenes = Array.isArray(state.scenes) ? state.scenes.length : 0;
   const props = Array.isArray(state.props) ? state.props.length : 0;
   const events = Array.isArray(state.events) ? state.events.length : 0;
-  return `承接 角色 ${characters} · 道具 ${props} · 事件 ${events}`;
+  return `承接 角色 ${characters} · 场景 ${scenes} · 道具 ${props} · 事件 ${events}`;
+}
+
+function carryOverDetails(episode: SeriesPlanEpisode) {
+  const state = episode.carry_over_state || {};
+  const names = [
+    ...(Array.isArray(state.characters) ? state.characters : []),
+    ...(Array.isArray(state.scenes) ? state.scenes : []),
+    ...(Array.isArray(state.props) ? state.props : []),
+    ...(Array.isArray(state.events) ? state.events : []),
+  ].map((item) => String(item || '').trim()).filter(Boolean);
+  return names.length ? `承接明细：${names.slice(0, 6).join('、')}` : '';
 }
 
 export function EpisodePlanPanel({ snapshot }: { snapshot: StudioSnapshot | null }) {
@@ -49,6 +61,7 @@ export function EpisodePlanPanel({ snapshot }: { snapshot: StudioSnapshot | null
           episodes.map((episode, index) => {
             const episodeIndex = episode.episode_index || episode.episode_number || index + 1;
             const workflowHref = episode.workflow_id ? `/studio?workflow_id=${episode.workflow_id}` : '#studio-agent-panel';
+            const carryDetails = carryOverDetails(episode);
             return (
               <div key={`${episodeIndex}-${episode.title || index}`} className="grid gap-3 border-t border-white/10 py-3 first:border-t-0 first:pt-0 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
                 <div className="min-w-0">
@@ -59,6 +72,9 @@ export function EpisodePlanPanel({ snapshot }: { snapshot: StudioSnapshot | null
                   <div className="mt-1 break-words text-xs leading-5 text-white/50">
                     章节 {chapterRangeLabel(episode)} · {carryOverLabel(episode)}
                   </div>
+                  {carryDetails ? (
+                    <div className="mt-1 line-clamp-2 break-words text-xs leading-5 text-cyan-100/65">{carryDetails}</div>
+                  ) : null}
                   {episode.summary ? (
                     <div className="mt-1 line-clamp-2 break-words text-xs leading-5 text-white/45">{episode.summary}</div>
                   ) : null}

@@ -19,6 +19,7 @@ from app.models import (
     Novel,
     Script,
     Shot,
+    StoryBible,
     StoryEntity,
     Storyboard,
     VideoJob,
@@ -196,6 +197,35 @@ def _episode_missing_requirements(
     return requirements
 
 
+def _empty_carry_over_state() -> Dict[str, List[str]]:
+    return {"characters": [], "scenes": [], "props": [], "events": []}
+
+
+def _state_names(value: Any, *, limit: int = 8) -> List[str]:
+    if isinstance(value, dict):
+        return _uniq(value.keys(), limit)
+    if isinstance(value, list):
+        names = []
+        for item in value:
+            if isinstance(item, dict):
+                names.append(item.get("name") or item.get("title") or item.get("event"))
+            else:
+                names.append(item)
+        return _uniq(names, limit)
+    return []
+
+
+def _carry_over_from_snapshot(snapshot: Optional[Dict[str, Any]]) -> Dict[str, List[str]]:
+    if not snapshot:
+        return _empty_carry_over_state()
+    return {
+        "characters": _state_names(snapshot.get("characters")),
+        "scenes": _state_names(snapshot.get("scenes")),
+        "props": _state_names(snapshot.get("props")),
+        "events": _state_names(snapshot.get("events")),
+    }
+
+
 def _normalize_episode_contract(episode: Dict[str, Any], position: int) -> Dict[str, Any]:
     normalized = dict(episode)
     episode_index = normalized.get("episode_index")
@@ -203,8 +233,24 @@ def _normalize_episode_contract(episode: Dict[str, Any], position: int) -> Dict[
         episode_index = normalized.get("episode_number")
     normalized["episode_index"] = episode_index if episode_index is not None else position + 1
     if not isinstance(normalized.get("carry_over_state"), dict):
-        normalized["carry_over_state"] = {"characters": [], "props": [], "events": []}
+        normalized["carry_over_state"] = _empty_carry_over_state()
+    else:
+        carry_over_state = dict(normalized["carry_over_state"])
+        for key, value in _empty_carry_over_state().items():
+            carry_over_state.setdefault(key, value)
+        normalized["carry_over_state"] = carry_over_state
     return normalized
+
+
+async def _load_story_state_machine(db: AsyncSession, user_id: str, novel_id: str) -> Dict[str, Any]:
+    result = await db.execute(
+        select(StoryBible)
+        .where(and_(StoryBible.user_id == user_id, StoryBible.novel_id == novel_id))
+        .order_by(desc(StoryBible.updated_at), desc(StoryBible.created_at))
+        .limit(1)
+    )
+    story_bible = result.scalar_one_or_none()
+    return _json_dict(_json_dict(story_bible.extra_data).get("state_machine")) if story_bible else {}
 
 
 def _with_production_bible_summary(plan: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any]:
@@ -424,8 +470,15 @@ async def build_series_plan(
             workflows_by_chapter[workflow.chapter_id].append(workflow)
 
     production_bible_summary = await build_production_bible_summary(db, user_id, novel_id)
+    story_state_machine = await _load_story_state_machine(db, user_id, novel_id)
+    snapshots_by_chapter = {
+        snapshot.get("chapter_id"): snapshot
+        for snapshot in _json_list(story_state_machine.get("chapter_snapshots"))
+        if isinstance(snapshot, dict) and snapshot.get("chapter_id")
+    }
 
     episodes: List[Dict[str, Any]] = []
+    previous_episode_snapshot: Optional[Dict[str, Any]] = None
     for episode_index, start in enumerate(range(0, total_chapters, chunk_size), start=1):
         episode_chapters = chapters[start : start + chunk_size]
         episode_chapter_ids = _chapter_ids(episode_chapters)
@@ -470,6 +523,7 @@ async def build_series_plan(
             None,
         )
 
+        carry_over_state = _carry_over_from_snapshot(previous_episode_snapshot)
         episodes.append(
             {
                 "episode_index": episode_index,
@@ -502,7 +556,7 @@ async def build_series_plan(
                 "key_scenes": _uniq([entity.name for entity in entities_by_type.get("scene", [])], 8),
                 "key_props": _uniq([entity.name for entity in entities_by_type.get("prop", [])], 8),
                 "key_events": _uniq([entity.name for entity in entities_by_type.get("event", [])], 8),
-                "carry_over_state": {"characters": [], "props": [], "events": []},
+                "carry_over_state": carry_over_state,
                 "production_counts": {
                     "chapters": len(episode_chapters),
                     "scripts": len(episode_scripts),
@@ -515,6 +569,10 @@ async def build_series_plan(
                 "primary_chapter_id": first_chapter.id,
                 "workflow_id": workflow.id if workflow else None,
             }
+        )
+        previous_episode_snapshot = next(
+            (snapshots_by_chapter.get(chapter_id) for chapter_id in reversed(episode_chapter_ids) if snapshots_by_chapter.get(chapter_id)),
+            None,
         )
 
     now = utc_now().isoformat()

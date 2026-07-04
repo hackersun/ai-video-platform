@@ -161,6 +161,8 @@ test('multi episode plan and contract are visible', async ({ page }) => {
 
   await expect(page.getByTestId('episode-plan-panel').getByRole('heading', { name: '多集计划' })).toBeVisible();
   await expect(page.getByText('第 1 集 · 第一集')).toBeVisible();
+  await expect(page.getByTestId('episode-plan-panel')).toContainText('承接明细：沈砚、铜铃');
+  await expect(page.getByTestId('episode-plan-panel')).toContainText('承接明细：沈砚、铜铃、追查铜铃');
   await expect(page.getByTestId('episode-contract-panel').getByRole('heading', { name: '剧集合约' })).toBeVisible();
   await expect(page.getByRole('button', { name: /锁定剧集合约|重新锁定剧集合约/ })).toBeVisible();
 
