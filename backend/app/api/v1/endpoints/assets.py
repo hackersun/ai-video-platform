@@ -532,11 +532,14 @@ async def validate_asset_scope(
         entity = entity_result.scalar_one_or_none()
         if not entity:
             raise HTTPException(status_code=404, detail="实体不存在")
-        if novel_id and entity.novel_id and entity.novel_id != novel_id:
+        resolved_novel_id = resolved["novel_id"]
+        resolved_chapter_id = resolved["chapter_id"]
+        resolved_script_id = resolved["script_id"]
+        if resolved_novel_id and entity.novel_id and entity.novel_id != resolved_novel_id:
             raise HTTPException(status_code=400, detail="实体不属于指定小说")
-        if chapter_id and entity.chapter_id and entity.chapter_id != chapter_id:
+        if resolved_chapter_id and entity.chapter_id and entity.chapter_id != resolved_chapter_id:
             raise HTTPException(status_code=400, detail="实体不属于指定章节")
-        if script_id and getattr(entity, "script_id", None) and entity.script_id != script_id:
+        if resolved_script_id and getattr(entity, "script_id", None) and entity.script_id != resolved_script_id:
             raise HTTPException(status_code=400, detail="实体不属于指定剧本")
         resolved["novel_id"] = resolved["novel_id"] or entity.novel_id
         resolved["chapter_id"] = resolved["chapter_id"] or entity.chapter_id

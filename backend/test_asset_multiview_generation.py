@@ -304,6 +304,37 @@ def test_generate_entity_views_rejects_mismatched_novel_scope(client: TestClient
     assert "实体不属于指定小说" in response.json()["detail"]
 
 
+def test_generate_entity_views_rejects_script_inferred_novel_scope_mismatch(client: TestClient) -> None:
+    user_id = f"asset-script-scope-mismatch-user-{uuid4()}"
+    entity_novel_id = _create_novel(client, user_id)
+    script_novel_id = _create_novel(client, user_id)
+    entity_id = _create_entity(client, user_id, entity_novel_id, "character", "顾寒霜")
+    script_response = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": script_novel_id,
+            "title": "异书剧本",
+            "content": "角色：陌生人。场景：另一座山门。",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert script_response.status_code == 201, script_response.text
+
+    response = client.post(
+        "/api/v1/assets/generate-entity-views",
+        json={
+            "entity_id": entity_id,
+            "script_id": script_response.json()["id"],
+            "view_keys": ["front"],
+            "style": "anime",
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 400, response.text
+    assert "实体不属于指定小说" in response.json()["detail"]
+
+
 def test_standard_entity_view_generation_requires_novel_scope(client: TestClient) -> None:
     user_id = f"asset-standard-scope-user-{uuid4()}"
     response = client.post(
