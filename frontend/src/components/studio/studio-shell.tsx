@@ -30,9 +30,20 @@ import { StudioModeBanner } from './studio-mode-banner';
 import { StudioProductionBoard } from './studio-production-board';
 import { StudioSeriesBoard } from './studio-series-board';
 import { PromptSkillPanel } from './prompt-skill-panel';
+import { SeriesOverviewPanel } from './series-overview-panel';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
+}
+
+const EXECUTABLE_SAFE_ACTION_CODES = new Set(['apply_asset_locks', 'refresh_contracts', 'quality_check', 'media_audit']);
+
+function isExecutableSafeAction(action?: StudioAction | null) {
+  return Boolean(action && EXECUTABLE_SAFE_ACTION_CODES.has(action.code) && (!action.risk || action.risk === 'safe'));
+}
+
+function isNavigationAction(action?: StudioAction | null) {
+  return Boolean(action?.href || action?.risk === 'navigation');
 }
 
 type ContinuityTone = 'green' | 'yellow' | 'red';
@@ -375,6 +386,46 @@ export function StudioShell() {
     }
   };
 
+  const handlePrimaryAction = useCallback(async () => {
+    const actionCandidates = [
+      ...(snapshot?.actions || []),
+      ...(snapshot?.production_bible_summary?.next_actions || []),
+    ];
+    const executableAction = actionCandidates.find(isExecutableSafeAction);
+    const navigationAction = actionCandidates.find(isNavigationAction);
+    const action = executableAction || navigationAction;
+    const novelId = snapshot?.workflow?.novel_id || snapshot?.story_context?.novel?.id || '';
+
+    if (navigationAction && action === navigationAction) {
+      router.push(action.href || (novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards'));
+      return;
+    }
+
+    if (executableAction && action === executableAction && workflowId) {
+      setLoading(true);
+      try {
+        const result = await runStudioAction(workflowId, {
+          code: action.code,
+          mode,
+        });
+        setLastAction(result);
+        toast({
+          title: `${result.label || action.label}已执行`,
+          description: '已刷新工作台检查结果。',
+          type: 'success',
+        });
+        await loadSnapshot(workflowId, mode);
+      } catch (err: any) {
+        setError(err.message || '执行下一步失败');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    router.push(novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards');
+  }, [loadSnapshot, mode, router, snapshot, toast, workflowId]);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -450,6 +501,7 @@ export function StudioShell() {
               正在加载工作台快照…
             </div>
           ) : null}
+          {snapshot ? <SeriesOverviewPanel snapshot={snapshot} onPrimaryAction={handlePrimaryAction} /> : null}
           <PromptSkillPanel />
           <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} productionCards={productionCards} />
           <StudioContextPanel snapshot={snapshot} />

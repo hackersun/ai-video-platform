@@ -50,8 +50,32 @@ export type SeriesStudioContract = {
   expert_drilldowns: string[];
 };
 
+export type SeriesPlanEpisode = {
+  episode_index?: number;
+  episode_number?: number;
+  title?: string;
+  chapter_ids?: string[];
+  chapter_range?: [number, number] | number[];
+  status?: string;
+  summary?: string;
+  workflow_id?: string | null;
+  carry_over_state?: Record<string, any>;
+  production_readiness?: Record<string, any>;
+  continuity_summary?: Record<string, any>;
+  missing_requirements?: Array<Record<string, any>>;
+};
+
+export type SeriesPlan = {
+  novel_id?: string;
+  generated_at?: string;
+  current_episode?: SeriesPlanEpisode | null;
+  episodes?: SeriesPlanEpisode[];
+  production_bible_summary?: Record<string, any>;
+};
+
 export type StudioSnapshot = {
   series_studio?: SeriesStudioContract;
+  series_plan?: SeriesPlan | null;
   workflow?: {
     id?: string;
     title?: string;
@@ -64,6 +88,8 @@ export type StudioSnapshot = {
     latest_production_strategy?: 'draft_fast' | 'final_quality' | 'low_cost' | 'separate_video_tts' | 'direct_av_first' | string | null;
     latest_production_strategy_label?: string | null;
     latest_production_strategy_intent?: string | null;
+    latest_recommended_model_hint?: string | null;
+    metadata?: Record<string, any>;
     updated_at?: string;
   };
   story_context?: {
@@ -86,12 +112,14 @@ export type StudioSnapshot = {
     version?: string;
     novel_id?: string;
     story_bible_id?: string | null;
+    readiness_score?: number;
     style?: Record<string, any>;
     characters?: Array<Record<string, any>>;
     scenes?: Array<Record<string, any>>;
     props?: Array<Record<string, any>>;
     events?: Array<Record<string, any>>;
     voices?: Array<Record<string, any>>;
+    next_actions?: StudioAction[];
     asset_readiness?: {
       asset_count?: number;
       missing_asset_count?: number;
