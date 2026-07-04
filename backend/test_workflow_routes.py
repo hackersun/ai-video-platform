@@ -235,6 +235,7 @@ def test_studio_snapshot_exposes_series_studio_contract(client: TestClient) -> N
         "expert_drilldowns": [
             "/story-bibles",
             "/studio/cards",
+            "/studio/continuity-review",
             "/studio/shot-review",
             "/workflow",
             "/producer",

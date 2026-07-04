@@ -17,6 +17,7 @@ def series_studio_contract() -> Dict[str, Any]:
         "expert_drilldowns": [
             "/story-bibles",
             "/studio/cards",
+            "/studio/continuity-review",
             "/studio/shot-review",
             "/workflow",
             "/producer",

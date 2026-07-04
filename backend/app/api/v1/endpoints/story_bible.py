@@ -19,7 +19,7 @@ from app.core.api_key_utils import create_text_generation_service, get_user_text
 from app.core.database import get_db
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
-from app.models import Asset, Character, Chapter, Novel, Project, Script, Shot, StoryBible, StoryEntity
+from app.models import Asset, Character, Chapter, Novel, Project, Script, Shot, StoryBible, StoryEntity, Storyboard
 from app.services.entity_extraction_service import (
     ENTITY_TYPES,
     build_story_bible_sections,
@@ -406,6 +406,42 @@ class StoryStateMachineCheckResponse(BaseModel):
 
 class ProductionBibleSummaryResponse(BaseModel):
     summary: Dict[str, Any]
+
+
+class ContinuityReviewTask(BaseModel):
+    shot_id: str
+    shot_number: int
+    storyboard_id: Optional[str] = None
+    storyboard_title: Optional[str] = None
+    novel_id: Optional[str] = None
+    novel_title: Optional[str] = None
+    shot_summary: Optional[str] = None
+    entity_id: Optional[str] = None
+    entity_name: Optional[str] = None
+    entity_type: Optional[str] = None
+    episode_index: Optional[int] = None
+    review_reason: Optional[str] = None
+    review_at: Optional[str] = None
+    review_state: Optional[str] = None
+    review_notes: Optional[str] = None
+    change_note: Optional[str] = None
+    marked_at: Optional[str] = None
+
+
+class ContinuityReviewTasksResponse(BaseModel):
+    tasks: List[ContinuityReviewTask]
+    total: int
+
+
+def _json_dict(value: Any) -> Dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _shot_summary(shot: Shot) -> Optional[str]:
+    text = shot.visual_description or shot.prompt or shot.dialogue
+    if not text:
+        return None
+    return text if len(text) <= 96 else f"{text[:96]}..."
 
 
 def infer_approval_state(summary: Dict[str, Any]) -> str:
@@ -2571,6 +2607,66 @@ async def list_story_bibles(
     query = query.order_by(desc(StoryBible.updated_at)).limit(limit)
     result = await db.execute(query)
     return [build_story_bible_response(item) for item in result.scalars().all()]
+
+
+@router.get("/continuity-review-tasks", response_model=ContinuityReviewTasksResponse)
+async def list_continuity_review_tasks(
+    novel_id: Optional[str] = Query(None),
+    entity_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ContinuityReviewTasksResponse:
+    query = (
+        select(Shot, Storyboard, Novel)
+        .outerjoin(Storyboard, Shot.storyboard_id == Storyboard.id)
+        .outerjoin(Novel, Storyboard.novel_id == Novel.id)
+        .where(Shot.user_id == user_id, Shot.extra_data.is_not(None))
+        .order_by(desc(Shot.updated_at))
+    )
+    if novel_id:
+        query = query.where(Storyboard.novel_id == novel_id)
+
+    result = await db.execute(query)
+    tasks: List[ContinuityReviewTask] = []
+    for shot, storyboard, novel in result.all():
+        extra_data = _json_dict(shot.extra_data)
+        production_context = _json_dict(extra_data.get("production_context"))
+        continuity_change = _json_dict(production_context.get("continuity_change"))
+        review_state = production_context.get("review_state") or extra_data.get("review_state")
+        is_review_task = (
+            extra_data.get("needs_review") is True
+            or review_state == "changes_requested"
+            or bool(continuity_change)
+        )
+        if not is_review_task:
+            continue
+        if entity_id and str(continuity_change.get("entity_id") or "") != entity_id:
+            continue
+
+        tasks.append(ContinuityReviewTask(
+            shot_id=shot.id,
+            shot_number=shot.shot_number or 1,
+            storyboard_id=getattr(storyboard, "id", None),
+            storyboard_title=getattr(storyboard, "title", None),
+            novel_id=getattr(storyboard, "novel_id", None),
+            novel_title=getattr(novel, "title", None),
+            shot_summary=_shot_summary(shot),
+            entity_id=continuity_change.get("entity_id"),
+            entity_name=continuity_change.get("entity_name"),
+            entity_type=continuity_change.get("entity_type"),
+            episode_index=continuity_change.get("episode_index"),
+            review_reason=extra_data.get("review_reason") or production_context.get("review_notes"),
+            review_at=extra_data.get("review_at") or continuity_change.get("marked_at"),
+            review_state=review_state,
+            review_notes=production_context.get("review_notes"),
+            change_note=continuity_change.get("change_note"),
+            marked_at=continuity_change.get("marked_at"),
+        ))
+        if len(tasks) >= limit:
+            break
+
+    return ContinuityReviewTasksResponse(tasks=tasks, total=len(tasks))
 
 
 @router.get("/{story_bible_id}", response_model=StoryBibleResponse)

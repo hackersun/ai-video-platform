@@ -272,3 +272,41 @@ def test_story_entity_impact_review_plan_route_marks_affected_shots(client: Test
     assert shot_extra["needs_review"] is True
     assert shot_extra["production_context"]["review_state"] == "changes_requested"
     assert shot_extra["production_context"]["continuity_change"]["entity_id"] == fixture["entity_ids"]["沈砚"]
+
+
+def test_continuity_review_tasks_route_lists_marked_shots(client: TestClient) -> None:
+    user_id = f"continuity-review-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+
+    review_plan_resp = client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+    assert review_plan_resp.status_code == 200
+
+    response = client.get(
+        "/api/v1/story-bibles/continuity-review-tasks",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    task = payload["tasks"][0]
+    assert task["shot_id"] == review_plan_resp.json()["shot_ids"][0]
+    assert task["storyboard_title"] == "第一集分镜"
+    assert task["novel_id"] == fixture["novel_id"]
+    assert task["entity_id"] == fixture["entity_ids"]["沈砚"]
+    assert task["entity_name"] == "沈砚"
+    assert task["entity_type"] == "character"
+    assert task["episode_index"] == 1
+    assert task["review_state"] == "changes_requested"
+    assert task["change_note"] == "服装主色改为深蓝"
+    assert "服装主色改为深蓝" in task["review_reason"]

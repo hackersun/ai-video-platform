@@ -308,6 +308,7 @@ export function StudioShell() {
     ? [
         { href: '/story-bibles', label: 'Story Bible' },
         { href: '/studio/cards', label: '生产卡' },
+        { href: '/studio/continuity-review', label: '连续性复审' },
         { href: '/studio/shot-review', label: '镜头审阅' },
         { href: '/workflow', label: '工作流' },
         { href: '/producer', label: 'AI 制片' },

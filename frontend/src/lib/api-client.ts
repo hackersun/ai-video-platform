@@ -248,6 +248,31 @@ export type ProductionCardsResponse = {
   };
 };
 
+export type ContinuityReviewTask = {
+  shot_id: string;
+  shot_number: number;
+  storyboard_id?: string | null;
+  storyboard_title?: string | null;
+  novel_id?: string | null;
+  novel_title?: string | null;
+  shot_summary?: string | null;
+  entity_id?: string | null;
+  entity_name?: string | null;
+  entity_type?: string | null;
+  episode_index?: number | null;
+  review_reason?: string | null;
+  review_at?: string | null;
+  review_state?: string | null;
+  review_notes?: string | null;
+  change_note?: string | null;
+  marked_at?: string | null;
+};
+
+export type ContinuityReviewTasksResponse = {
+  tasks: ContinuityReviewTask[];
+  total: number;
+};
+
 export type BatchFinalizeSupportingRequest = {
   min_occurrences?: number;
   image_model_config_id?: string | null;
@@ -2227,6 +2252,19 @@ class ApiClient {
 
   async getStoryEntityImpact(entityId: string) {
     return this.request<any>(`/story-bibles/entities/${entityId}/impact`);
+  }
+
+  async getContinuityReviewTasks(params: {
+    novel_id?: string;
+    entity_id?: string;
+    limit?: number;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params.entity_id) searchParams.set('entity_id', params.entity_id);
+    if (params.limit) searchParams.set('limit', String(params.limit));
+    const qs = searchParams.toString();
+    return this.request<ContinuityReviewTasksResponse>(`/story-bibles/continuity-review-tasks${qs ? `?${qs}` : ''}`);
   }
 
   async createStoryEntityImpactReviewPlan(entityId: string, data: {
