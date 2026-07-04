@@ -1373,7 +1373,7 @@ async def regenerate_asset(
         script_id=asset.script_id or getattr(entity, "script_id", None),
         character_id=asset.character_id or (character.id if character else None),
         view_keys=[str(view_key)],
-        retry_prompt_advice=retry_prompt_advice_value,
+        retry_feedback_advice=retry_prompt_advice_value,
     )
     regenerated = generated.get(str(view_key))
     if not regenerated:

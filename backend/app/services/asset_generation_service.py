@@ -31,7 +31,7 @@ from app.services.image_prompt_policy import (
     is_composite_character_name,
 )
 from app.services.asset_visual_contract import build_visual_contract_from_story
-from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice
+from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice as build_retry_prompt_advice
 from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
 from app.services.prompt_skill_service import apply_active_prompt_skill_template
@@ -1120,7 +1120,7 @@ class AssetGenerationService:
         consistency_mode: str = "standard",
         force_contract_refresh: bool = False,
         anchor_view_key: Optional[str] = None,
-        retry_prompt_advice: Optional[str] = None,
+        retry_feedback_advice: Optional[str] = None,
     ) -> Dict[str, Asset]:
         """Generate creator-facing multi-view assets for one story entity."""
         self.last_generation_failures = []
@@ -1228,8 +1228,9 @@ class AssetGenerationService:
                     "prompt_hint": view["prompt_hint"],
                 },
             )
-            if retry_prompt_advice:
-                prompt = f"{prompt}\n一致性复修要求：{retry_prompt_advice}"
+            retry_feedback_text = retry_feedback_advice.strip() if isinstance(retry_feedback_advice, str) else ""
+            if retry_feedback_text:
+                prompt = f"{prompt}\n一致性复修要求：{retry_feedback_text}"
             try:
                 image_url = await self._generate_asset_image_url(
                     prompt,
@@ -1276,7 +1277,7 @@ class AssetGenerationService:
                     "character_id": character_id if entity_type == "character" else None,
                 }
                 if visual_review.get("status") != "passed" or visual_review.get("issues"):
-                    generation_params["retry_prompt_advice"] = retry_prompt_advice(
+                    generation_params["retry_prompt_advice"] = build_retry_prompt_advice(
                         visual_review.get("issues") or [],
                         visual_contract,
                     )

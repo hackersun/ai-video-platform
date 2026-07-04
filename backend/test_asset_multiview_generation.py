@@ -773,6 +773,18 @@ def test_regenerate_view_carries_consistency_feedback_into_prompt(
         lambda *args, **kwargs: _FakeImageService(),
         raising=False,
     )
+    monkeypatch.setattr(
+        "app.services.asset_generation_service.review_asset_against_contract",
+        lambda *args, **kwargs: {
+            "status": "needs_retry",
+            "score": 72,
+            "issues": [
+                {"field": "lighting_direction", "expected": "门外冷蓝雨光，室内右上方暖黄灯"},
+                {"field": "spatial_layout", "expected": "右侧木柜台"},
+            ],
+        },
+        raising=False,
+    )
 
     response = client.post(
         f"/api/v1/assets/{asset['id']}/regenerate",
@@ -783,6 +795,7 @@ def test_regenerate_view_carries_consistency_feedback_into_prompt(
     assert response.status_code == 200, response.text
     assert any("必须保持光源方向" in prompt for prompt in captured_prompts)
     assert any("右侧木柜台" in prompt for prompt in captured_prompts)
+    assert "必须保留空间固定元素：右侧木柜台" in response.json()["generation_params"]["retry_prompt_advice"]
 
 
 def test_character_view_generation_uses_single_character_contract_and_prompt_policy(
