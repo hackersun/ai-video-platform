@@ -1857,13 +1857,25 @@ class ApiClient {
 
   async generateEntityViewAssets(data: {
     entity_id: string;
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
     view_keys?: string[];
     style?: string;
     model_config_id?: string;
+    consistency_mode?: 'draft' | 'standard' | 'strict';
+    force_contract_refresh?: boolean;
+    anchor_view_key?: string;
   }) {
     return this.request<any>('/assets/generate-entity-views', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async reviewAssetContract(assetId: string) {
+    return this.request<any>(`/assets/${assetId}/review-contract`, {
+      method: 'POST',
     });
   }
 

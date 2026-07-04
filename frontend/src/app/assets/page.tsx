@@ -659,6 +659,7 @@ export default function AssetsPage() {
   const [selectedScope, setSelectedScope] = useState('');
   const [selectedEntityType, setSelectedEntityType] = useState('character');
   const [selectedGenerationStyle, setSelectedGenerationStyle] = useState('anime');
+  const [selectedConsistencyMode, setSelectedConsistencyMode] = useState<'draft' | 'standard' | 'strict'>('standard');
   const [includePublic, setIncludePublic] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -788,6 +789,11 @@ export default function AssetsPage() {
     }
     return mapping;
   }, [visibleAssets, selectedEntityId]);
+
+  const selectedVisualContract = useMemo(() => {
+    const current = Object.values(viewAssetsByKey).find((asset) => asset.generation_params?.visual_contract);
+    return current?.generation_params?.visual_contract || null;
+  }, [viewAssetsByKey]);
 
   const missingViewKeys = useMemo(
     () => activePreset.views.filter((view) => !viewAssetsByKey[view.key]?.url).map((view) => view.key),
@@ -959,7 +965,13 @@ export default function AssetsPage() {
         const presets = Array.isArray(presetData?.presets) ? presetData.presets : FALLBACK_VIEW_PRESETS;
         setViewPresets(presets.length ? presets : FALLBACK_VIEW_PRESETS);
         const templates = Array.isArray(styleData?.templates) ? styleData.templates : FALLBACK_STYLE_TEMPLATES;
-        setStyleTemplates(templates.length ? templates : FALLBACK_STYLE_TEMPLATES);
+        const nextTemplates = templates.length ? templates : FALLBACK_STYLE_TEMPLATES;
+        setStyleTemplates(nextTemplates);
+        setSelectedGenerationStyle((current) => (
+          nextTemplates.some((template) => template.style === current)
+            ? current
+            : nextTemplates[0]?.style || current
+        ));
       } catch {
         setNovels([]);
         setViewPresets(FALLBACK_VIEW_PRESETS);
@@ -1029,8 +1041,12 @@ export default function AssetsPage() {
           : activePreset.views.map((view) => view.key);
       const result = await apiClient.generateEntityViewAssets({
         entity_id: selectedEntityId,
+        novel_id: selectedNovelId || undefined,
+        chapter_id: selectedChapterId || undefined,
+        script_id: selectedScriptId || undefined,
         view_keys: keys,
         style: selectedGenerationStyle,
+        consistency_mode: selectedConsistencyMode,
       });
       const generatedCount = result?.total ?? keys.length;
       const failedCount = Array.isArray(result?.failures) ? result.failures.length : 0;
@@ -1737,6 +1753,19 @@ export default function AssetsPage() {
                       options={styleOptions}
                     />
                   </label>
+                  <label className="space-y-1 text-sm text-white/70" htmlFor="asset-wizard-consistency-mode">
+                    <span>一致性模式</span>
+                    <Select
+                      id="asset-wizard-consistency-mode"
+                      value={selectedConsistencyMode}
+                      onChange={(event) => setSelectedConsistencyMode(event.target.value as 'draft' | 'standard' | 'strict')}
+                      options={[
+                        { value: 'standard', label: '标准：故事契约 + 锚点参考' },
+                        { value: 'strict', label: '严格：必须支持参考图' },
+                        { value: 'draft', label: '草稿：快速生成后复审' },
+                      ]}
+                    />
+                  </label>
                 </div>
 
                 {(disabledWizardEntityCount > 0 || selectedWizardEntityInvalid) && (
@@ -1748,6 +1777,19 @@ export default function AssetsPage() {
                 {selectedWizardEntity && (
                   <div className="rounded-md border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs leading-5 text-emerald-50">
                     已绑定：{selectedWizardEntity.name}
+                  </div>
+                )}
+
+                {selectedVisualContract && (
+                  <div data-testid="asset-visual-contract-panel" className="rounded-lg border border-cyan-300/25 bg-cyan-400/10 p-3 text-sm text-cyan-50">
+                    <div className="font-medium text-white">视觉契约</div>
+                    <div className="mt-2 grid gap-1 text-xs leading-5 text-cyan-100/80">
+                      {selectedVisualContract.continuity_axes?.era && <div>时代：{selectedVisualContract.continuity_axes.era}</div>}
+                      {selectedVisualContract.continuity_axes?.weather && <div>天气：{selectedVisualContract.continuity_axes.weather}</div>}
+                      {selectedVisualContract.continuity_axes?.lighting_direction && <div>光源：{selectedVisualContract.continuity_axes.lighting_direction}</div>}
+                      {selectedVisualContract.continuity_axes?.color_palette && <div>色彩：{selectedVisualContract.continuity_axes.color_palette}</div>}
+                      {selectedVisualContract.spatial_layout?.fixed_elements?.length ? <div>固定空间：{selectedVisualContract.spatial_layout.fixed_elements.join('、')}</div> : null}
+                    </div>
                   </div>
                 )}
 
@@ -1861,6 +1903,11 @@ export default function AssetsPage() {
                   const matchedAsset = viewAssetsByKey[view.key];
                   const previewUrl = toMediaUrl(matchedAsset?.thumbnail_url || matchedAsset?.url);
                   const failure = matchedAsset ? assetFailureInfo(matchedAsset) : null;
+                  const review = matchedAsset?.generation_params?.visual_consistency;
+                  const retryAdvice = matchedAsset?.generation_params?.retry_prompt_advice;
+                  const retryAdviceSummary = typeof retryAdvice === 'string'
+                    ? retryAdvice.split('：')[0]
+                    : retryAdvice;
                   const isTargetView = productionCardTargetActive && view.key === targetViewKey;
                   return (
                     <div
@@ -1951,6 +1998,11 @@ export default function AssetsPage() {
                             ) : (
                               <Badge variant="outline" className="border-amber-400/40 px-2 py-0.5 text-xs text-amber-100">待补齐</Badge>
                             )}
+                            {review?.score !== undefined && (
+                              <Badge variant="outline" className={review.score >= 90 ? 'border-emerald-400/40 text-emerald-200' : 'border-amber-400/40 text-amber-100'}>
+                                一致性 {review.score}
+                              </Badge>
+                            )}
                           </div>
                         </div>
                         <div className="line-clamp-2 text-xs leading-5 text-white/45">
@@ -1960,6 +2012,11 @@ export default function AssetsPage() {
                         {failure && (
                           <div className="rounded-md border border-red-400/20 bg-red-500/10 p-2 text-xs leading-5 text-red-100">
                             {failure.error}
+                          </div>
+                        )}
+                        {retryAdviceSummary && (
+                          <div className="rounded-md border border-amber-400/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100" title={retryAdvice}>
+                            {retryAdviceSummary}
                           </div>
                         )}
                       </div>
@@ -2335,12 +2392,12 @@ export default function AssetsPage() {
                     )}
                     {consistencyScore !== null && (
                       <div className="rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-50">
-                        一致性 {consistencyScore}
+                        一致性评分 {consistencyScore}
                       </div>
                     )}
                     {lineageInfo && (
                       <div className="rounded-md border border-cyan-400/20 bg-cyan-500/10 px-2 py-1.5 text-xs leading-5 text-cyan-50">
-                        {lineageInfo.contractId && <div>视觉契约 {lineageInfo.contractId}</div>}
+                        {lineageInfo.contractId && <div>契约ID {lineageInfo.contractId}</div>}
                         {lineageInfo.referenceLabel && <div>继承{lineageInfo.referenceLabel}参考</div>}
                       </div>
                     )}
