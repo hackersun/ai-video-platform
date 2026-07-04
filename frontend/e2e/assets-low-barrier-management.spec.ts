@@ -269,3 +269,36 @@ test('asset edit supports URL previews, history backfill, entity-specific guidan
     was_final: true,
   });
 });
+
+test('asset library guides production-card missing view completion from contextual URL', async ({ page }) => {
+  await installAssetMocks(page);
+
+  let generatePayload: any = null;
+  await page.route('**/api/v1/assets/generate-entity-views', async (route) => {
+    generatePayload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ total: 1, failures: [] }),
+    });
+  });
+
+  await page.goto(`/assets?novel_id=${novel.id}&entity_type=character&entity_id=entity-character&view_key=back&action=generate-missing&source=production-card`);
+
+  const wizard = page.getByTestId('asset-wizard');
+  await expect(wizard.getByText('来自定稿卡的补齐任务')).toBeVisible();
+  await expect(wizard.getByText('沈砚 · 背面')).toBeVisible();
+  await expect(page.getByLabel('向导小说')).toHaveValue(novel.id);
+  await expect(page.getByLabel('资产对象类型')).toHaveValue('character');
+  await expect(page.getByLabel('小说对象')).toHaveValue('entity-character');
+  await expect(page.getByTestId('asset-wizard-view-back').getByText('定稿卡指定补齐项')).toBeVisible();
+
+  await wizard.getByRole('button', { name: '生成背面缺失视图' }).click();
+
+  await expect(page.getByText('已生成 1 张背面参考图')).toBeVisible();
+  expect(generatePayload).toEqual({
+    entity_id: 'entity-character',
+    view_keys: ['back'],
+    style: 'anime',
+  });
+});

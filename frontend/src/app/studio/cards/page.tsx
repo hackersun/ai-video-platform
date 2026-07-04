@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, ArrowUpRight, CheckCircle2, ImageIcon, Mic2, Wand2 } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, CheckCircle2, ImageIcon, Loader2, Mic2, Wand2 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -17,6 +17,19 @@ const ENTITY_LABELS: Record<ProductionCard['entity_type'], string> = {
   prop: '道具',
 };
 
+const VIEW_LABELS: Record<string, string> = {
+  front: '正面',
+  side: '侧面',
+  back: '背面',
+  establishing: '全景定场',
+  wide: '全景',
+  layout: '空间布局',
+  detail: '细节',
+  lighting: '光影氛围',
+  main: '主视图',
+  scale: '比例参考',
+};
+
 function scoreValue(card: ProductionCard) {
   return Math.max(0, Math.min(100, Math.round(card.readiness?.score ?? 0)));
 }
@@ -25,15 +38,56 @@ function firstView(card: ProductionCard) {
   return card.visual?.views?.find((view) => view.url) || card.visual?.views?.[0];
 }
 
-function ProductionCardItem({ card }: { card: ProductionCard }) {
+function viewKeyFromGap(code?: string) {
+  const match = code?.match(/^view_missing:(.+)$/);
+  return match?.[1] || '';
+}
+
+function viewLabel(card: ProductionCard, viewKey: string) {
+  return card.visual?.views?.find((view) => view.view_key === viewKey)?.view_label || VIEW_LABELS[viewKey] || viewKey;
+}
+
+function missingViewKeys(card: ProductionCard) {
+  const visualKeys = (card.visual?.missing_views || []).filter(Boolean);
+  const gapKeys = (card.readiness?.gaps || []).map((gap) => viewKeyFromGap(gap.code)).filter(Boolean);
+  return Array.from(new Set([...visualKeys, ...gapKeys]));
+}
+
+function completionKey(card: ProductionCard, viewKeys: string[]) {
+  return `${card.entity_id}:${viewKeys.join(',')}`;
+}
+
+function assetContextHref(card: ProductionCard, viewKey?: string) {
+  const params = new URLSearchParams();
+  params.set('novel_id', card.novel_id);
+  params.set('entity_type', card.entity_type);
+  params.set('entity_id', card.entity_id);
+  if (viewKey) params.set('view_key', viewKey);
+  params.set('action', 'generate-missing');
+  params.set('source', 'production-card');
+  return `/assets?${params.toString()}`;
+}
+
+function ProductionCardItem({
+  card,
+  completingKey,
+  onCompleteViews,
+}: {
+  card: ProductionCard;
+  completingKey: string | null;
+  onCompleteViews: (card: ProductionCard, viewKeys: string[]) => void;
+}) {
   const score = scoreValue(card);
   const gaps = card.readiness?.gaps || [];
   const preview = firstView(card);
   const isReady = Boolean(card.readiness?.final_ready);
   const isCharacter = card.entity_type === 'character';
+  const missingViews = missingViewKeys(card);
+  const cardCompletionKey = completionKey(card, missingViews);
+  const isCompletingCard = Boolean(completingKey) && (completingKey === 'all' || completingKey === cardCompletionKey);
 
   return (
-    <Card className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none">
+    <Card data-testid={`production-card-${card.entity_id}`} className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none">
       <div className="relative aspect-[16/10] bg-slate-900">
         {preview?.url ? (
           <img
@@ -101,26 +155,65 @@ function ProductionCardItem({ card }: { card: ProductionCard }) {
 
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-white/70">完整度 {score}%</span>
-          {(card.visual?.missing_views || []).map((view) => (
+          {missingViews.map((view) => (
             <span key={view} className="rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-100">
-              缺 {view}
+              缺 {viewLabel(card, view)}
             </span>
           ))}
         </div>
 
+        {missingViews.length ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300/20 bg-amber-400/10 p-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 bg-amber-500 text-slate-950 hover:bg-amber-400"
+              disabled={Boolean(completingKey)}
+              onClick={() => onCompleteViews(card, missingViews)}
+            >
+              {isCompletingCard ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Wand2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
+              {isCompletingCard ? '补齐中' : `补齐${card.name}缺口`}
+            </Button>
+            <Link href={assetContextHref(card, missingViews[0])} className="inline-flex items-center gap-1 text-xs text-amber-100 hover:text-white">
+              打开资产库定位
+              <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+            </Link>
+          </div>
+        ) : null}
+
         {gaps.length ? (
           <div className="space-y-2">
-            {gaps.slice(0, 3).map((gap) => (
-              <div key={`${card.entity_id}-${gap.code || gap.message}`} className="flex items-center justify-between gap-3 rounded-md bg-amber-400/10 px-3 py-2 text-sm text-amber-50">
-                <span className="min-w-0 truncate">{gap.message}</span>
-                {gap.fix_url ? (
-                  <Link href={gap.fix_url} className="inline-flex shrink-0 items-center gap-1 text-amber-100 hover:text-white">
-                    去补齐
-                    <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
-                  </Link>
-                ) : null}
-              </div>
-            ))}
+            {gaps.slice(0, 3).map((gap) => {
+              const gapViewKey = viewKeyFromGap(gap.code);
+              const targetViewKey = gapViewKey || missingViews[0];
+              const gapCompletionKey = targetViewKey ? completionKey(card, [targetViewKey]) : '';
+              const isCompletingGap = Boolean(completingKey) && (completingKey === 'all' || completingKey === gapCompletionKey);
+              const href = targetViewKey ? assetContextHref(card, targetViewKey) : (gap.fix_url || assetContextHref(card));
+              return (
+                <div key={`${card.entity_id}-${gap.code || gap.message}`} className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-amber-400/10 px-3 py-2 text-sm text-amber-50">
+                  <span className="min-w-0 flex-1 truncate">{gap.message}</span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {gapViewKey ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 border-amber-200/30 bg-transparent px-2 text-xs text-amber-50 hover:bg-amber-300/15"
+                        disabled={Boolean(completingKey)}
+                        onClick={() => onCompleteViews(card, [gapViewKey])}
+                      >
+                        {isCompletingGap ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" /> : <Wand2 className="mr-1 h-3 w-3" aria-hidden="true" />}
+                        补齐{viewLabel(card, gapViewKey)}
+                      </Button>
+                    ) : null}
+                    <Link href={href} className="inline-flex items-center gap-1 text-amber-100 hover:text-white">
+                      去资产库补齐
+                      <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="flex items-center gap-2 rounded-md bg-emerald-400/10 px-3 py-2 text-sm text-emerald-100">
@@ -140,6 +233,8 @@ function CardsContent() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [completingKey, setCompletingKey] = useState<string | null>(null);
+  const [completionMessage, setCompletionMessage] = useState<string | null>(null);
   const [finalizeResult, setFinalizeResult] = useState<BatchFinalizeSupportingResponse | null>(null);
   const [minOccurrences, setMinOccurrences] = useState('2');
   const [imageModelConfigId, setImageModelConfigId] = useState('');
@@ -205,6 +300,68 @@ function CardsContent() {
     }
   };
 
+  const generateViewsForCard = async (card: ProductionCard, viewKeys: string[]) => {
+    const payload: {
+      entity_id: string;
+      view_keys: string[];
+      style: string;
+      model_config_id?: string;
+    } = {
+      entity_id: card.entity_id,
+      view_keys: viewKeys,
+      style: 'anime',
+    };
+    if (imageModelConfigId.trim()) {
+      payload.model_config_id = imageModelConfigId.trim();
+    }
+    const result = await apiClient.generateEntityViewAssets(payload);
+    return typeof result?.total === 'number' ? result.total : viewKeys.length;
+  };
+
+  const handleCompleteViews = async (card: ProductionCard, viewKeys: string[]) => {
+    const keys = Array.from(new Set(viewKeys.filter(Boolean)));
+    if (!keys.length) return;
+    const key = completionKey(card, keys);
+    setCompletingKey(key);
+    setCompletionMessage(`正在补齐 ${card.name}：${keys.map((view) => viewLabel(card, view)).join('、')}`);
+    setError(null);
+    try {
+      const generatedCount = await generateViewsForCard(card, keys);
+      await refreshCards();
+      setCompletionMessage(`已补齐 ${generatedCount} 项缺失视图`);
+    } catch (err: any) {
+      setError(err?.message || `${card.name} 缺失视图补齐失败`);
+    } finally {
+      setCompletingKey(null);
+    }
+  };
+
+  const handleCompleteAllMissingViews = async () => {
+    const targets = (data?.cards || [])
+      .map((card) => ({ card, viewKeys: missingViewKeys(card) }))
+      .filter((item) => item.viewKeys.length > 0);
+    if (!targets.length) {
+      setCompletionMessage('当前定稿卡没有缺失视图需要补齐');
+      return;
+    }
+
+    setCompletingKey('all');
+    setError(null);
+    let generatedTotal = 0;
+    try {
+      for (const target of targets) {
+        setCompletionMessage(`正在补齐 ${target.card.name}：${target.viewKeys.map((view) => viewLabel(target.card, view)).join('、')}`);
+        generatedTotal += await generateViewsForCard(target.card, target.viewKeys);
+      }
+      await refreshCards();
+      setCompletionMessage(`已补齐 ${generatedTotal} 项缺失视图`);
+    } catch (err: any) {
+      setError(err?.message || '批量补齐缺失视图失败');
+    } finally {
+      setCompletingKey(null);
+    }
+  };
+
   const groups = useMemo(() => {
     const cards = data?.cards || [];
     return {
@@ -213,6 +370,11 @@ function CardsContent() {
       prop: cards.filter((card) => card.entity_type === 'prop'),
     };
   }, [data]);
+
+  const totalMissingViewCount = useMemo(
+    () => (data?.cards || []).reduce((total, card) => total + missingViewKeys(card).length, 0),
+    [data]
+  );
 
   return (
     <div className="min-h-screen bg-[#10131a] text-white">
@@ -264,11 +426,20 @@ function CardsContent() {
                 <Button
                   type="button"
                   onClick={handleFinalizeSupporting}
-                  disabled={finalizing || loading}
+                  disabled={finalizing || loading || Boolean(completingKey)}
                   className="h-9 bg-cyan-600 text-white hover:bg-cyan-700"
                 >
                   <Wand2 className="mr-2 h-4 w-4" aria-hidden="true" />
                   {finalizing ? '补齐中' : '一键补齐配角'}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleCompleteAllMissingViews}
+                  disabled={loading || finalizing || Boolean(completingKey) || totalMissingViewCount === 0}
+                  className="h-9 bg-amber-500 text-slate-950 hover:bg-amber-400"
+                >
+                  {completingKey === 'all' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Wand2 className="mr-2 h-4 w-4" aria-hidden="true" />}
+                  一键补齐全部缺口
                 </Button>
               </div>
             ) : null}
@@ -299,6 +470,13 @@ function CardsContent() {
           <div className="flex items-center gap-2 rounded-md border border-red-300/30 bg-red-400/10 px-4 py-3 text-sm text-red-100">
             <AlertCircle className="h-4 w-4" aria-hidden="true" />
             {error}
+          </div>
+        ) : null}
+
+        {completionMessage ? (
+          <div className="flex items-center gap-2 rounded-md border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-50">
+            {completingKey ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+            {completionMessage}
           </div>
         ) : null}
 
@@ -343,7 +521,14 @@ function CardsContent() {
                 </div>
                 <div className="space-y-4">
                   {groups[type].length ? (
-                    groups[type].map((card) => <ProductionCardItem key={card.entity_id} card={card} />)
+                    groups[type].map((card) => (
+                      <ProductionCardItem
+                        key={card.entity_id}
+                        card={card}
+                        completingKey={completingKey}
+                        onCompleteViews={handleCompleteViews}
+                      />
+                    ))
                   ) : (
                     <div className="rounded-md border border-dashed border-white/15 p-5 text-sm text-white/45">
                       暂无{ENTITY_LABELS[type]}定稿卡

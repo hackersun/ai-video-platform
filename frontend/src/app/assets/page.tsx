@@ -653,6 +653,9 @@ export default function AssetsPage() {
   const [selectedScriptId, setSelectedScriptId] = useState('');
   const [selectedEntityId, setSelectedEntityId] = useState('');
   const [pendingEntityId, setPendingEntityId] = useState('');
+  const [targetViewKey, setTargetViewKey] = useState('');
+  const [targetAction, setTargetAction] = useState('');
+  const [targetSource, setTargetSource] = useState('');
   const [selectedScope, setSelectedScope] = useState('');
   const [selectedEntityType, setSelectedEntityType] = useState('character');
   const [selectedGenerationStyle, setSelectedGenerationStyle] = useState('anime');
@@ -714,6 +717,15 @@ export default function AssetsPage() {
     () => viewPresets.find((preset) => preset.entity_type === selectedEntityType) || FALLBACK_VIEW_PRESETS[0],
     [viewPresets, selectedEntityType]
   );
+
+  const targetView = useMemo(
+    () => targetViewKey ? activePreset.views.find((view) => view.key === targetViewKey) || null : null,
+    [activePreset, targetViewKey]
+  );
+
+  const productionCardTargetActive = targetAction === 'generate-missing'
+    && targetSource === 'production-card'
+    && Boolean(targetViewKey && targetView);
 
   const styleOptions = useMemo(
     () => (styleTemplates.length ? styleTemplates : FALLBACK_STYLE_TEMPLATES).map((template) => ({
@@ -921,12 +933,18 @@ export default function AssetsPage() {
     const novelId = searchParams.get('novel_id') || '';
     const entityType = searchParams.get('entity_type') || '';
     const entityId = searchParams.get('entity_id') || '';
+    const viewKey = searchParams.get('view_key') || '';
+    const action = searchParams.get('action') || '';
+    const source = searchParams.get('source') || '';
     if (novelId) setSelectedNovelId(novelId);
     if (['character', 'scene', 'prop'].includes(entityType)) {
       setSelectedEntityType(entityType);
       setSelectedCategory(entityType);
     }
     if (entityId) setPendingEntityId(entityId);
+    if (viewKey) setTargetViewKey(viewKey);
+    if (action) setTargetAction(action);
+    if (source) setTargetSource(source);
   }, []);
 
   useEffect(() => {
@@ -1002,9 +1020,13 @@ export default function AssetsPage() {
       return;
     }
     setGeneratingViews(true);
-    setMessage('正在生成多视图参考图，请稍候...');
+    setMessage(productionCardTargetActive && targetView ? `正在生成${targetView.label}参考图，请稍候...` : '正在生成多视图参考图，请稍候...');
     try {
-      const keys = missingViewKeys.length > 0 ? missingViewKeys : activePreset.views.map((view) => view.key);
+      const keys = productionCardTargetActive && targetViewKey
+        ? [targetViewKey]
+        : missingViewKeys.length > 0
+          ? missingViewKeys
+          : activePreset.views.map((view) => view.key);
       const result = await apiClient.generateEntityViewAssets({
         entity_id: selectedEntityId,
         view_keys: keys,
@@ -1019,6 +1041,8 @@ export default function AssetsPage() {
         setMessage(`已生成 ${generatedCount} 张参考图，${failedCount} 个视图生成失败，已记录原因，可在资产列表中重试`);
       } else if (failedCount > 0) {
         setMessage(`${failedCount} 个视图生成失败，已记录原因，可在资产列表中重试`);
+      } else if (productionCardTargetActive && targetView) {
+        setMessage(`已生成 ${generatedCount} 张${targetView.label}参考图`);
       } else {
         setMessage(`已生成 ${generatedCount} 张${activePreset.title}参考图，可在下方预览并锁定定稿`);
       }
@@ -1556,7 +1580,9 @@ export default function AssetsPage() {
   const wizardProgress = totalRequiredViewCount ? Math.round((completedViewCount / totalRequiredViewCount) * 100) : 0;
   const selectedStyleLabel = styleOptions.find((option) => option.value === selectedGenerationStyle)?.label || selectedGenerationStyle || '未选择';
   const selectedEntityTypeLabel = ENTITY_TYPE_LABELS[selectedEntityType] || selectedEntityType;
-  const generationButtonLabel = `生成${selectedEntityTypeLabel}缺失视图`;
+  const generationButtonLabel = productionCardTargetActive && targetView
+    ? `生成${targetView.label}缺失视图`
+    : `生成${selectedEntityTypeLabel}缺失视图`;
 
   const resourcePreviewUrl = toMediaUrl(form.url);
   const thumbnailPreviewUrl = toMediaUrl(form.thumbnail_url);
@@ -1621,6 +1647,17 @@ export default function AssetsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {productionCardTargetActive && targetView ? (
+              <div className="rounded-lg border border-amber-300/25 bg-amber-400/10 p-3 text-sm text-amber-50">
+                <div className="font-medium text-white">来自定稿卡的补齐任务</div>
+                <div className="mt-1 text-amber-100">
+                  {(selectedWizardEntity?.name || entityLabel(selectedEntityId))} · {targetView.label}
+                </div>
+                <div className="mt-1 text-xs leading-5 text-amber-100/70">
+                  已带入小说、对象和视图位置；生成后会自动绑定当前对象，返回定稿卡即可继续复审。
+                </div>
+              </div>
+            ) : null}
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
               <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1652,6 +1689,9 @@ export default function AssetsPage() {
                         setSelectedEntityType(event.target.value);
                         setSelectedEntityId('');
                         setSelectedCategory(event.target.value);
+                        setTargetViewKey('');
+                        setTargetAction('');
+                        setTargetSource('');
                       }}
                       options={[
                         { value: 'character', label: '角色' },
@@ -1669,6 +1709,11 @@ export default function AssetsPage() {
                       onChange={(event) => {
                         setSelectedEntityId(event.target.value);
                         setSelectedScope('');
+                        if (event.target.value !== selectedEntityId) {
+                          setTargetViewKey('');
+                          setTargetAction('');
+                          setTargetSource('');
+                        }
                       }}
                       options={[
                         {
@@ -1816,11 +1861,12 @@ export default function AssetsPage() {
                   const matchedAsset = viewAssetsByKey[view.key];
                   const previewUrl = toMediaUrl(matchedAsset?.thumbnail_url || matchedAsset?.url);
                   const failure = matchedAsset ? assetFailureInfo(matchedAsset) : null;
+                  const isTargetView = productionCardTargetActive && view.key === targetViewKey;
                   return (
                     <div
                       key={view.key}
                       data-testid={`asset-wizard-view-${view.key}`}
-                      className="flex min-h-[340px] flex-col overflow-hidden rounded-lg border border-white/10 bg-black/20"
+                      className={`flex min-h-[340px] flex-col overflow-hidden rounded-lg border bg-black/20 ${isTargetView ? 'border-amber-300/50 shadow-[0_0_0_1px_rgba(252,211,77,0.25)]' : 'border-white/10'}`}
                     >
                       <div className="relative flex h-56 items-center justify-center bg-black/35">
                         {previewUrl ? (
@@ -1892,15 +1938,20 @@ export default function AssetsPage() {
                       <div className="flex flex-1 flex-col gap-2.5 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <div className="text-base font-semibold text-white">{view.label}</div>
-                          {matchedAsset?.is_locked ? (
-                            <Badge variant="outline" className="shrink-0 border-emerald-400/40 px-2 py-0.5 text-xs text-emerald-200">已定稿</Badge>
-                          ) : failure ? (
-                            <Badge variant="outline" className="shrink-0 border-red-400/40 px-2 py-0.5 text-xs text-red-200">生成失败</Badge>
-                          ) : previewUrl ? (
-                            <Badge variant="outline" className="shrink-0 border-cyan-400/40 px-2 py-0.5 text-xs text-cyan-100">已生成</Badge>
-                          ) : (
-                            <Badge variant="outline" className="shrink-0 border-amber-400/40 px-2 py-0.5 text-xs text-amber-100">待补齐</Badge>
-                          )}
+                          <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                            {isTargetView ? (
+                              <Badge variant="outline" className="border-amber-300/45 px-2 py-0.5 text-xs text-amber-100">定稿卡指定补齐项</Badge>
+                            ) : null}
+                            {matchedAsset?.is_locked ? (
+                              <Badge variant="outline" className="border-emerald-400/40 px-2 py-0.5 text-xs text-emerald-200">已定稿</Badge>
+                            ) : failure ? (
+                              <Badge variant="outline" className="border-red-400/40 px-2 py-0.5 text-xs text-red-200">生成失败</Badge>
+                            ) : previewUrl ? (
+                              <Badge variant="outline" className="border-cyan-400/40 px-2 py-0.5 text-xs text-cyan-100">已生成</Badge>
+                            ) : (
+                              <Badge variant="outline" className="border-amber-400/40 px-2 py-0.5 text-xs text-amber-100">待补齐</Badge>
+                            )}
+                          </div>
                         </div>
                         <div className="line-clamp-2 text-xs leading-5 text-white/45">
                           {view.aspect_ratio ? `推荐比例 ${view.aspect_ratio}。` : ''}

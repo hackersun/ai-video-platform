@@ -101,12 +101,12 @@ test('studio production cards show readiness gaps and repair links', async ({ pa
   await expect(page.getByRole('heading', { name: '定稿卡' })).toBeVisible();
   await expect(page.getByText('就绪 1')).toBeVisible();
   await expect(page.getByText('待补齐 1')).toBeVisible();
-  await expect(page.getByText('孙剑')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '孙剑' })).toBeVisible();
   await expect(page.getByText('完整度 62%')).toBeVisible();
   await expect(page.getByText('缺少背面定稿图')).toBeVisible();
-  await expect(page.getByRole('link', { name: '去补齐' }).first()).toHaveAttribute(
+  await expect(page.getByRole('link', { name: '去资产库补齐' }).first()).toHaveAttribute(
     'href',
-    '/assets?novel_id=novel-1&entity_type=character&entity_id=char-1'
+    '/assets?novel_id=novel-1&entity_type=character&entity_id=char-1&view_key=back&action=generate-missing&source=production-card'
   );
   await expect(page.getByText('云端车站')).toBeVisible();
   await expect(page.getByText('终稿就绪')).toBeVisible();
@@ -126,4 +126,123 @@ test('studio production cards show readiness gaps and repair links', async ({ pa
     image_model_config_id: 'img-config-9',
     voice_pool: ['voice_alpha', 'voice_beta'],
   });
+});
+
+test('studio production cards complete missing views directly and carry precise context into assets', async ({ page }) => {
+  const cardPayload = {
+    novel_id: 'novel-1',
+    summary: { ready: 0, incomplete: 3 },
+    cards: [
+      {
+        entity_id: 'char-1',
+        entity_type: 'character',
+        name: '孙剑',
+        novel_id: 'novel-1',
+        visual: {
+          views: [{ view_key: 'front', view_label: '正面', asset_id: 'asset-front', url: '/static/front.png', is_locked: true, is_final: true }],
+          required_views: ['front', 'side', 'back'],
+          missing_views: ['back'],
+          locked_count: 1,
+        },
+        voice: { voice: 'zh_male_01', locked: true },
+        profile: { description: '云上列车的年轻修理师' },
+        usage: { shot_count: 8 },
+        readiness: {
+          score: 66,
+          final_ready: false,
+          gaps: [
+            { code: 'view_missing:back', message: '缺少背面定稿图', fix_url: '/assets?novel_id=novel-1&entity_type=character&entity_id=char-1' },
+          ],
+        },
+      },
+      {
+        entity_id: 'scene-1',
+        entity_type: 'scene',
+        name: '云端车站',
+        novel_id: 'novel-1',
+        visual: {
+          views: [{ view_key: 'establishing', view_label: '全景定场', asset_id: 'scene-wide', url: '/static/scene.png', is_locked: true, is_final: true }],
+          required_views: ['establishing', 'layout', 'detail'],
+          missing_views: ['layout', 'detail'],
+          locked_count: 1,
+        },
+        voice: null,
+        profile: { description: '漂浮在云层间的中转站' },
+        usage: { shot_count: 4 },
+        readiness: {
+          score: 55,
+          final_ready: false,
+          gaps: [{ code: 'view_missing:layout', message: '缺少空间布局参考图' }],
+        },
+      },
+      {
+        entity_id: 'prop-1',
+        entity_type: 'prop',
+        name: '星轨罗盘',
+        novel_id: 'novel-1',
+        visual: {
+          views: [],
+          required_views: ['main', 'detail'],
+          missing_views: ['main', 'detail'],
+          locked_count: 0,
+        },
+        voice: null,
+        profile: { description: '主角定位云海航线的道具' },
+        usage: { shot_count: 3 },
+        readiness: {
+          score: 30,
+          final_ready: false,
+          gaps: [{ code: 'view_missing:main', message: '缺少主视图定稿图' }],
+        },
+      },
+    ],
+  };
+  const generateRequests: any[] = [];
+
+  await page.route('**/api/v1/assets/generate-entity-views', async (route) => {
+    const payload = route.request().postDataJSON();
+    generateRequests.push(payload);
+    if (generateRequests.length === 1) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ total: payload.view_keys?.length || 0, failures: [] }),
+    });
+  });
+
+  await page.route('**/api/v1/production-cards/novel/novel-1', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(cardPayload),
+    });
+  });
+
+  await page.goto('/studio/cards?novel_id=novel-1');
+  await expect(page.getByRole('heading', { name: '定稿卡' })).toBeVisible();
+
+  const sunCard = page.getByTestId('production-card-char-1');
+  await expect(sunCard.getByRole('link', { name: '去资产库补齐' })).toHaveAttribute(
+    'href',
+    '/assets?novel_id=novel-1&entity_type=character&entity_id=char-1&view_key=back&action=generate-missing&source=production-card'
+  );
+  await sunCard.getByRole('button', { name: '补齐背面' }).click();
+  await expect(page.getByText('正在补齐 孙剑：背面')).toBeVisible();
+  await expect(page.getByText('已补齐 1 项缺失视图')).toBeVisible();
+  expect(generateRequests[0]).toEqual({ entity_id: 'char-1', view_keys: ['back'], style: 'anime' });
+
+  const sceneCard = page.getByTestId('production-card-scene-1');
+  await sceneCard.getByRole('button', { name: '补齐云端车站缺口' }).click();
+  await expect(page.getByText('已补齐 2 项缺失视图')).toBeVisible();
+  expect(generateRequests[1]).toEqual({ entity_id: 'scene-1', view_keys: ['layout', 'detail'], style: 'anime' });
+
+  await page.getByRole('button', { name: '一键补齐全部缺口' }).click();
+  await expect(page.getByText('已补齐 5 项缺失视图')).toBeVisible();
+  expect(generateRequests.slice(2)).toEqual([
+    { entity_id: 'char-1', view_keys: ['back'], style: 'anime' },
+    { entity_id: 'scene-1', view_keys: ['layout', 'detail'], style: 'anime' },
+    { entity_id: 'prop-1', view_keys: ['main', 'detail'], style: 'anime' },
+  ]);
 });
