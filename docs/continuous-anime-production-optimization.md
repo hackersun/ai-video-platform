@@ -488,6 +488,18 @@ Prompt Skill 应从“单独的模板管理页”变成每个阶段的可见能�
 - 后端测试：Production Bible 快照写入 Workflow/VideoJob/TTSJob。
 - 后端测试：修改角色资产后，已生成任务仍保留旧 asset lock 快照。
 
+## Series Studio V2 Verification
+
+验证日期：2026-07-04。
+
+- Backend regression: `cd backend && DEV_MODE=true PYTHONPATH=. python3 -m pytest -q`，结果 `637 passed, 2 skipped, 17 warnings in 32.80s`。
+- Frontend typecheck: `pnpm --dir frontend typecheck`，结果 exit 0。
+- Frontend build: `pnpm --dir frontend build`，结果 exit 0，Next.js production build 完成。
+- Playwright all-scenario suite: 从前端发起的 10 个 spec 矩阵通过，覆盖 Quick Start、Series Studio、Production Bible、多集计划、Consistency Ledger、Shot Review、Video Generation Preflight、Workflow Guidance 和顶部导航，结果 `22 passed`。
+- Focused preflight regression: `e2e/video-generation-preflight.spec.ts --project=chromium --workers=1`，结果 `2 passed`，验证当前 `/video/models` 视频模型目录夹具与预检阻断文案一致。
+- Manual browser audit screenshots: `/tmp/ai-video-platform-series-studio-e2e/series-studio-overview.png`、`/tmp/ai-video-platform-series-studio-e2e/series-studio-mobile.png`。
+- Known limitations: 浏览器全流程套件使用 mock 后端和 mock 外部模型响应来保证可重复验证；未在本次验证中调用真实云端视频/TTS/图像生成服务。后端测试仍有既有 `datetime.utcnow()` deprecation warnings，不影响本次功能通过。
+
 ## 12. 参考资料
 
 - 火山引擎方舟文档：https://www.volcengine.com/docs/82379/1520757

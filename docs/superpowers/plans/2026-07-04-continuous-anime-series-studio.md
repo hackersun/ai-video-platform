@@ -1508,7 +1508,7 @@ git commit -m "test: add series studio end-to-end browser suite"
 - Modify: `docs/superpowers/plans/2026-07-04-continuous-anime-series-studio.md`
 - Test: all backend/frontend commands below.
 
-- [ ] **Step 1: Run backend regression**
+- [x] **Step 1: Run backend regression**
 
 Run:
 
@@ -1522,7 +1522,7 @@ Expected: PASS. If full suite is too broad because of external provider tests, r
 cd backend && DEV_MODE=true PYTHONPATH=. python3 -m pytest -q test_model_registry_story_bible.py test_novel_import_story_bible.py test_story_bible_auto_build.py test_workflow_routes.py tests/test_reference_package.py test_video_model_catalog.py tests/test_series_plan_service.py tests/test_episode_contract_service.py tests/test_consistency_ledger_service.py tests/test_production_bible_review.py
 ```
 
-- [ ] **Step 2: Run frontend static verification**
+- [x] **Step 2: Run frontend static verification**
 
 Run:
 
@@ -1533,7 +1533,7 @@ PATH="/Users/sunqinyue/.cache/codex-runtimes/codex-primary-runtime/dependencies/
 
 Expected: both commands exit 0.
 
-- [ ] **Step 3: Run frontend all-scenario browser tests**
+- [x] **Step 3: Run frontend all-scenario browser tests**
 
 Run:
 
@@ -1543,7 +1543,7 @@ PATH="/Users/sunqinyue/.cache/codex-runtimes/codex-primary-runtime/dependencies/
 
 Expected: PASS. Store screenshots and traces outside the repo.
 
-- [ ] **Step 4: Run manual browser audit from frontend**
+- [x] **Step 4: Run manual browser audit from frontend**
 
 Use the frontend only. Do not call backend APIs directly except for health checks.
 
@@ -1562,7 +1562,7 @@ Use the frontend only. Do not call backend APIs directly except for health check
 12. Capture desktop and mobile screenshots under /tmp/ai-video-platform-series-studio-e2e/.
 ```
 
-- [ ] **Step 5: Update outcome doc**
+- [x] **Step 5: Update outcome doc**
 
 Append to `docs/continuous-anime-production-optimization.md`:
 
@@ -1579,7 +1579,7 @@ Append to `docs/continuous-anime-production-optimization.md`:
 
 Fill each line with actual command, date, and result from this task.
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
 Run:
 
@@ -1587,6 +1587,16 @@ Run:
 git add docs/continuous-anime-production-optimization.md docs/superpowers/plans/2026-07-04-continuous-anime-series-studio.md
 git commit -m "docs: record series studio verification"
 ```
+
+**Actual results, 2026-07-04:**
+
+- Backend regression: `DEV_MODE=true PYTHONPATH=. python3 -m pytest -q` -> `637 passed, 2 skipped, 17 warnings in 32.80s`.
+- Frontend typecheck: `pnpm --dir frontend typecheck` -> exit 0.
+- Frontend build: `pnpm --dir frontend build` -> exit 0.
+- Focused preflight regression: `e2e/video-generation-preflight.spec.ts --project=chromium --workers=1` -> `2 passed`.
+- Frontend all-scenario browser suite: 10 spec matrix -> `22 passed`.
+- Screenshots: `/tmp/ai-video-platform-series-studio-e2e/series-studio-overview.png`, `/tmp/ai-video-platform-series-studio-e2e/series-studio-mobile.png`.
+- Known limitation: deterministic browser suite uses mocked backend/external model responses; real provider video/TTS/image calls were not invoked in this gate.
 
 ## Expected Outcomes
 
