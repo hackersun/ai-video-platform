@@ -254,6 +254,16 @@ export function StudioShell() {
     () => workflows.map((item) => ({ value: workflowIdOf(item), label: item.title || workflowIdOf(item) })),
     [workflows]
   );
+  const expertLinks = snapshot?.series_studio?.enabled
+    ? [
+        { href: '/story-bibles', label: 'Story Bible' },
+        { href: '/studio/cards', label: '生产卡' },
+        { href: '/studio/shot-review', label: '镜头审阅' },
+        { href: '/workflow', label: '工作流' },
+        { href: '/producer', label: 'AI 制片' },
+        { href: '/video-generation', label: '视频生成' },
+      ]
+    : [];
 
   const loadWorkflows = useCallback(async () => {
     try {
@@ -390,6 +400,23 @@ export function StudioShell() {
       </div>
 
       <StudioModeBanner mode={mode} onModeChange={handleModeChange} />
+
+      {expertLinks.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+          <span className="text-xs text-white/45">专家工具</span>
+          {expertLinks.map((link) => (
+            <Button
+              key={link.href}
+              variant="outline"
+              size="sm"
+              className="h-7 border-white/15 px-2 text-xs text-white/70 hover:bg-white/10"
+              onClick={() => router.push(link.href)}
+            >
+              {link.label}
+            </Button>
+          ))}
+        </div>
+      ) : null}
 
       {error && (
         <div className="flex items-start gap-2 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-50">

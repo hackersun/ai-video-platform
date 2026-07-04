@@ -28,6 +28,7 @@ from app.services.shot_quality_service import build_shot_quality_report
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.story_state_machine import get_story_state_machine
 from app.services.production_bible import build_production_bible_summary
+from app.services.series_studio_flags import series_studio_contract
 
 
 SHOT_LIMIT = 80
@@ -569,6 +570,7 @@ async def build_studio_snapshot(
     actions = _unique_actions(policy_result["issues"])
 
     return {
+        "series_studio": series_studio_contract(),
         "workflow": {
             "id": workflow.id,
             "title": workflow.title,

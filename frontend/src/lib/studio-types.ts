@@ -44,7 +44,14 @@ export type StudioActionResult = StudioAction & {
   updated_at?: string | null;
 };
 
+export type SeriesStudioContract = {
+  enabled: boolean;
+  primary_console: 'series_studio';
+  expert_drilldowns: string[];
+};
+
 export type StudioSnapshot = {
+  series_studio?: SeriesStudioContract;
   workflow?: {
     id?: string;
     title?: string;

@@ -3501,6 +3501,18 @@ def test_workflow_media_batch_tracks_final_quality_production_strategy(client: T
     snapshot_resp = client.get(f"/api/v1/studio/workflows/{workflow_id}/snapshot", headers=_auth_headers(user_id))
     assert snapshot_resp.status_code == 200
     snapshot = snapshot_resp.json()
+    assert snapshot["series_studio"] == {
+        "enabled": True,
+        "primary_console": "series_studio",
+        "expert_drilldowns": [
+            "/story-bibles",
+            "/studio/cards",
+            "/studio/shot-review",
+            "/workflow",
+            "/producer",
+            "/video-generation",
+        ],
+    }
     assert snapshot["workflow"]["latest_production_strategy"] == "final_quality"
     assert snapshot["workflow"]["latest_production_strategy_intent"] == "final"
     assert snapshot["workflow"]["metadata"]["latest_recommended_model_hint"] == "Seedance-2.0"
