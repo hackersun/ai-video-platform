@@ -310,3 +310,51 @@ def test_continuity_review_tasks_route_lists_marked_shots(client: TestClient) ->
     assert task["review_state"] == "changes_requested"
     assert task["change_note"] == "服装主色改为深蓝"
     assert "服装主色改为深蓝" in task["review_reason"]
+
+
+def test_continuity_review_task_resolve_route_removes_task_from_inbox(client: TestClient) -> None:
+    user_id = f"continuity-resolve-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+
+    review_plan_resp = client.post(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact/review-plan",
+        json={"episode_index": 1, "change_note": "服装主色改为深蓝"},
+        headers=_auth_headers(user_id),
+    )
+    assert review_plan_resp.status_code == 200
+    shot_id = review_plan_resp.json()["shot_ids"][0]
+
+    response = client.post(
+        f"/api/v1/story-bibles/continuity-review-tasks/{shot_id}/resolve",
+        json={"resolution_note": "已按新设定复核画面"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "resolved"
+    assert payload["shot_id"] == shot_id
+    assert payload["review_state"] == "approved"
+
+    tasks_resp = client.get(
+        "/api/v1/story-bibles/continuity-review-tasks",
+        headers=_auth_headers(user_id),
+    )
+    assert tasks_resp.status_code == 200
+    assert tasks_resp.json()["total"] == 0
+
+    shot_resp = client.get(f"/api/v1/shots/{shot_id}", headers=_auth_headers(user_id))
+    assert shot_resp.status_code == 200
+    shot_extra = shot_resp.json()["extra_data"]
+    production_context = shot_extra["production_context"]
+    assert shot_extra["needs_review"] is False
+    assert shot_extra["review_resolution_note"] == "已按新设定复核画面"
+    assert production_context["review_state"] == "approved"
+    assert production_context["continuity_change"]["resolved_at"]
+    assert production_context["continuity_change"]["resolution_note"] == "已按新设定复核画面"

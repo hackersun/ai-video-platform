@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { AlertCircle, ArrowUpRight, RefreshCcw } from 'lucide-react';
+import { AlertCircle, ArrowUpRight, CheckCircle2, RefreshCcw } from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -41,7 +41,15 @@ function taskKey(task: ContinuityReviewTask) {
   return `${task.shot_id}-${task.entity_id || 'entity'}-${task.episode_index || 'episode'}`;
 }
 
-function ContinuityTaskCard({ task }: { task: ContinuityReviewTask }) {
+function ContinuityTaskCard({
+  task,
+  resolving,
+  onResolve,
+}: {
+  task: ContinuityReviewTask;
+  resolving: boolean;
+  onResolve: (task: ContinuityReviewTask) => void;
+}) {
   return (
     <Card className="border-white/10 bg-white/[0.04] text-white shadow-none">
       <CardHeader className="space-y-4 p-4">
@@ -87,6 +95,12 @@ function ContinuityTaskCard({ task }: { task: ContinuityReviewTask }) {
             {task.shot_summary}
           </p>
         ) : null}
+        <div className="flex justify-end">
+          <Button type="button" size="sm" onClick={() => onResolve(task)} disabled={resolving}>
+            <CheckCircle2 className="mr-2 h-4 w-4" aria-hidden="true" />
+            {resolving ? '处理中' : '标记已复审'}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
@@ -95,6 +109,7 @@ function ContinuityTaskCard({ task }: { task: ContinuityReviewTask }) {
 function ContinuityReviewContent() {
   const [data, setData] = useState<ContinuityReviewTasksResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [resolvingShotId, setResolvingShotId] = useState('');
   const [error, setError] = useState('');
 
   const loadTasks = async () => {
@@ -118,6 +133,23 @@ function ContinuityReviewContent() {
   const groupedCount = useMemo(() => {
     return new Set(tasks.map((task) => task.entity_id || task.entity_name || task.shot_id)).size;
   }, [tasks]);
+
+  const resolveTask = async (task: ContinuityReviewTask) => {
+    setResolvingShotId(task.shot_id);
+    setError('');
+    try {
+      await apiClient.resolveContinuityReviewTask(task.shot_id);
+      setData((current) => {
+        if (!current) return current;
+        const nextTasks = current.tasks.filter((item) => item.shot_id !== task.shot_id);
+        return { ...current, tasks: nextTasks, total: nextTasks.length };
+      });
+    } catch (err: any) {
+      setError(err?.message || '标记复审完成失败');
+    } finally {
+      setResolvingShotId('');
+    }
+  };
 
   return (
     <MainLayout>
@@ -150,7 +182,12 @@ function ContinuityReviewContent() {
         ) : tasks.length ? (
           <div className="grid gap-3">
             {tasks.map((task) => (
-              <ContinuityTaskCard key={taskKey(task)} task={task} />
+              <ContinuityTaskCard
+                key={taskKey(task)}
+                task={task}
+                resolving={resolvingShotId === task.shot_id}
+                onResolve={resolveTask}
+              />
             ))}
           </div>
         ) : (

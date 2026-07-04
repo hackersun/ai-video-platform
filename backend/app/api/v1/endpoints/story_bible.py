@@ -433,6 +433,18 @@ class ContinuityReviewTasksResponse(BaseModel):
     total: int
 
 
+class ContinuityReviewResolveRequest(BaseModel):
+    resolution_note: Optional[str] = Field(None, max_length=500)
+
+
+class ContinuityReviewResolveResponse(BaseModel):
+    status: str
+    shot_id: str
+    review_state: str
+    resolved_at: str
+    resolution_note: Optional[str] = None
+
+
 def _json_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -2637,7 +2649,7 @@ async def list_continuity_review_tasks(
         is_review_task = (
             extra_data.get("needs_review") is True
             or review_state == "changes_requested"
-            or bool(continuity_change)
+            or (bool(continuity_change) and not continuity_change.get("resolved_at"))
         )
         if not is_review_task:
             continue
@@ -2667,6 +2679,51 @@ async def list_continuity_review_tasks(
             break
 
     return ContinuityReviewTasksResponse(tasks=tasks, total=len(tasks))
+
+
+@router.post("/continuity-review-tasks/{shot_id}/resolve", response_model=ContinuityReviewResolveResponse)
+async def resolve_continuity_review_task(
+    shot_id: str,
+    request: ContinuityReviewResolveRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ContinuityReviewResolveResponse:
+    result = await db.execute(select(Shot).where(Shot.id == shot_id, Shot.user_id == user_id))
+    shot = result.scalar_one_or_none()
+    if shot is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="镜头不存在")
+
+    now = utc_now().isoformat()
+    extra_data = dict(_json_dict(shot.extra_data))
+    production_context = dict(_json_dict(extra_data.get("production_context")))
+    continuity_change = dict(_json_dict(production_context.get("continuity_change")))
+    note = request.resolution_note or "连续性复审已完成"
+
+    if continuity_change:
+        continuity_change["resolved_at"] = now
+        continuity_change["resolution_note"] = note
+        production_context["continuity_change"] = continuity_change
+
+    extra_data["needs_review"] = False
+    extra_data["review_resolved_at"] = now
+    extra_data["review_resolution_note"] = note
+    production_context["review_state"] = "approved"
+    production_context["review_notes"] = note
+    production_context["updated_at"] = now
+    extra_data["production_context"] = production_context
+    shot.extra_data = extra_data
+    shot.updated_at = utc_now()
+
+    await db.commit()
+    await db.refresh(shot)
+
+    return ContinuityReviewResolveResponse(
+        status="resolved",
+        shot_id=shot.id,
+        review_state="approved",
+        resolved_at=now,
+        resolution_note=note,
+    )
 
 
 @router.get("/{story_bible_id}", response_model=StoryBibleResponse)

@@ -273,6 +273,14 @@ export type ContinuityReviewTasksResponse = {
   total: number;
 };
 
+export type ContinuityReviewResolveResponse = {
+  status: string;
+  shot_id: string;
+  review_state: string;
+  resolved_at: string;
+  resolution_note?: string | null;
+};
+
 export type BatchFinalizeSupportingRequest = {
   min_occurrences?: number;
   image_model_config_id?: string | null;
@@ -2265,6 +2273,15 @@ class ApiClient {
     if (params.limit) searchParams.set('limit', String(params.limit));
     const qs = searchParams.toString();
     return this.request<ContinuityReviewTasksResponse>(`/story-bibles/continuity-review-tasks${qs ? `?${qs}` : ''}`);
+  }
+
+  async resolveContinuityReviewTask(shotId: string, data: {
+    resolution_note?: string;
+  } = {}) {
+    return this.request<ContinuityReviewResolveResponse>(`/story-bibles/continuity-review-tasks/${shotId}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   async createStoryEntityImpactReviewPlan(entityId: string, data: {
