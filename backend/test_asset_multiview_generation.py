@@ -747,6 +747,8 @@ def test_regenerate_view_carries_consistency_feedback_into_prompt(
             "view_key": "layout",
             "view_label": "空间布局",
             "style": "cinematic-2d",
+            "consistency_mode": "strict",
+            "anchor_view_key": "establishing",
             "visual_contract": {
                 "id": "contract-old-post-office",
                 "entity_type": "scene",
@@ -795,7 +797,10 @@ def test_regenerate_view_carries_consistency_feedback_into_prompt(
     assert response.status_code == 200, response.text
     assert any("必须保持光源方向" in prompt for prompt in captured_prompts)
     assert any("右侧木柜台" in prompt for prompt in captured_prompts)
-    assert "必须保留空间固定元素：右侧木柜台" in response.json()["generation_params"]["retry_prompt_advice"]
+    generation_params = response.json()["generation_params"]
+    assert generation_params["consistency_mode"] == "strict"
+    assert generation_params["anchor_view_key"] == "establishing"
+    assert "必须保留空间固定元素：右侧木柜台" in generation_params["retry_prompt_advice"]
 
 
 def test_character_view_generation_uses_single_character_contract_and_prompt_policy(
