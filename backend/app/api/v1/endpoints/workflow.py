@@ -27,6 +27,7 @@ from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.services.audio_route_service import resolve_shot_audio_route
+from app.services.episode_contract_service import lock_episode_contract
 from app.services.production_bible import build_production_bible_summary
 from app.services.production_strategy_routing import resolve_strategy_video_config_id
 from app.services.publication_readiness import evaluate_publication_readiness
@@ -2054,6 +2055,15 @@ async def start_workflow(
         title=title,
         message="工作流创建成功",
     )
+
+
+@router.post("/{workflow_id}/episode-contract/lock", response_model=Dict[str, Any])
+async def lock_workflow_episode_contract(
+    workflow_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await lock_episode_contract(db, user_id, workflow_id)
 
 
 @router.post("/{workflow_id}/generate-media-batch", response_model=WorkflowMediaBatchResponse)

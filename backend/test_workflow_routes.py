@@ -151,6 +151,49 @@ def _create_storyboard(client: TestClient, user_id: str) -> str:
     return response.json()["id"]
 
 
+def test_lock_episode_contract_route_stores_workflow_metadata(client: TestClient) -> None:
+    user_id = uuid4().hex
+    novel_id = _create_novel(client, user_id)
+    workflow_id = f"workflow-{uuid4()}"
+
+    async def _insert_workflow() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=workflow_id,
+                    user_id=user_id,
+                    title="Episode contract route workflow",
+                    status="running",
+                    novel_id=novel_id,
+                    metadata_={"existing": "kept"},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert_workflow())
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/episode-contract/lock",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["contract_id"]
+    assert payload["workflow_id"] == workflow_id
+    assert payload["production_bible_hash"]
+
+    async def _load_metadata() -> dict:
+        async with AsyncSessionLocal() as session:
+            workflow = await session.get(Workflow, workflow_id)
+            assert workflow is not None
+            return workflow.metadata_ or {}
+
+    metadata = asyncio.run(_load_metadata())
+    assert metadata["existing"] == "kept"
+    assert metadata["episode_contract"] == payload
+
+
 def _create_shot(client: TestClient, user_id: str) -> tuple[str, str, str]:
     script_id = _create_script(client, user_id)
     storyboard_resp = client.post(
