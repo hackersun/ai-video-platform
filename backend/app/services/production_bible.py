@@ -48,6 +48,27 @@ def _uniq(values: Iterable[Any], limit: int = 12) -> List[str]:
     return result
 
 
+async def approve_story_entity(
+    db: AsyncSession,
+    user_id: str,
+    entity_id: str,
+    approved: bool,
+    note: str | None = None,
+) -> Dict[str, Any]:
+    result = await db.execute(select(StoryEntity).where(StoryEntity.id == entity_id, StoryEntity.user_id == user_id))
+    entity = result.scalar_one_or_none()
+    if entity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="实体不存在")
+
+    attrs = dict(_json_dict(entity.attributes))
+    attrs["approval_note"] = note
+    attrs["approved_at"] = utc_now().isoformat() if approved else None
+    entity.attributes = attrs
+    entity.is_approved = approved
+    await db.commit()
+    return {"entity_id": entity.id, "approved": entity.is_approved, "attributes": attrs}
+
+
 async def _load_novel(db: AsyncSession, user_id: str, novel_id: str) -> Novel:
     result = await db.execute(select(Novel).where(Novel.id == novel_id, Novel.user_id == user_id))
     novel = result.scalar_one_or_none()

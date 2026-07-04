@@ -29,7 +29,7 @@ from app.services.entity_extraction_service import (
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_blocks, apply_active_prompt_skill_template
-from app.services.production_bible import build_production_bible_summary
+from app.services.production_bible import approve_story_entity, build_production_bible_summary
 from app.services.story_state_machine import (
     build_story_state_machine,
     check_story_state_machine,
@@ -69,6 +69,17 @@ class StoryBibleUpdateRequest(BaseModel):
     event_timeline: Optional[List[Dict[str, Any]]] = None
     negative_prompt: Optional[str] = None
     extra_data: Optional[Dict[str, Any]] = None
+
+
+class EntityApprovalRequest(BaseModel):
+    approved: bool
+    approval_note: Optional[str] = None
+
+
+class ProductionBiblePatchRequest(BaseModel):
+    style: Optional[Dict[str, Any]] = None
+    voices: Optional[List[Dict[str, Any]]] = None
+    state_machine: Optional[Dict[str, Any]] = None
 
 
 class StoryBibleResponse(StoryBibleBase):
@@ -389,6 +400,13 @@ class StoryStateMachineCheckResponse(BaseModel):
 
 class ProductionBibleSummaryResponse(BaseModel):
     summary: Dict[str, Any]
+
+
+def infer_approval_state(summary: Dict[str, Any]) -> str:
+    missing = summary.get("missing_requirements") or []
+    if missing:
+        return "needs_review"
+    return "approved" if summary.get("readiness_score", 0) >= 80 else "draft"
 
 
 def build_story_bible_response(story_bible: StoryBible) -> StoryBibleResponse:
@@ -1452,6 +1470,20 @@ async def get_production_bible_summary(
     return ProductionBibleSummaryResponse(summary=summary)
 
 
+@router.get("/novel/{novel_id}/production-bible/review", response_model=Dict[str, Any])
+async def review_production_bible(
+    novel_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    summary = await build_production_bible_summary(db, user_id, novel_id)
+    return {
+        "sections": ["style", "characters", "scenes", "props", "events", "voices"],
+        "approval_state": infer_approval_state(summary),
+        "summary": summary,
+    }
+
+
 @router.post("/entities/check-consistency", response_model=EntityConsistencyCheckResponse)
 async def check_entities_consistency(
     request: EntityConsistencyCheckRequest,
@@ -1717,6 +1749,16 @@ async def create_story_entity(
     await db.commit()
     await db.refresh(entity)
     return build_story_entity_response(entity)
+
+
+@router.post("/entities/{entity_id}/approve", response_model=Dict[str, Any])
+async def approve_entity(
+    entity_id: str,
+    request: EntityApprovalRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await approve_story_entity(db, user_id, entity_id, request.approved, request.approval_note)
 
 
 @router.get("/entities/{entity_id}", response_model=StoryEntityResponse)
