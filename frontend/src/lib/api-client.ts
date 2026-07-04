@@ -593,6 +593,13 @@ class ApiClient {
     });
   }
 
+  async createSeriesPlan(novelId: string, targetEpisodeCount?: number) {
+    return this.request<any>(`/novels/${novelId}/series-plan`, {
+      method: 'POST',
+      body: JSON.stringify({ target_episode_count: targetEpisodeCount }),
+    });
+  }
+
   async previewNovelImport(file: File) {
     const formData = new FormData();
     formData.append('file', file);
@@ -1382,6 +1389,10 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  async lockEpisodeContract(workflowId: string) {
+    return this.request<any>(`/workflow/${workflowId}/episode-contract/lock`, { method: 'POST' });
   }
 
   // ========== Short Video Production 相关 ==========

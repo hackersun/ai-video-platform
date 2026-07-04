@@ -129,6 +129,28 @@ def _create_chapter(client: TestClient, user_id: str, novel_id: str, title: str 
     return response.json()["id"]
 
 
+def _create_numbered_chapter(
+    client: TestClient,
+    user_id: str,
+    novel_id: str,
+    *,
+    chapter_number: int,
+    title: str,
+) -> str:
+    response = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": title,
+            "chapter_number": chapter_number,
+            "content": f"{title}正文推动连续剧情。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
 def _create_script(client: TestClient, user_id: str) -> str:
     novel_id = _create_novel(client, user_id)
     response = client.post(
@@ -219,6 +241,73 @@ def test_studio_snapshot_exposes_series_studio_contract(client: TestClient) -> N
             "/video-generation",
         ],
     }
+
+
+def test_studio_snapshot_exposes_series_plan_and_episode_contract(client: TestClient) -> None:
+    user_id = uuid4().hex
+    novel_id = _create_novel(client, user_id)
+    chapter_1_id = _create_numbered_chapter(
+        client,
+        user_id,
+        novel_id,
+        chapter_number=1,
+        title="第一章 雾港铜铃",
+    )
+    _create_numbered_chapter(
+        client,
+        user_id,
+        novel_id,
+        chapter_number=2,
+        title="第二章 旧码头",
+    )
+    plan_resp = client.post(
+        f"/api/v1/novels/{novel_id}/series-plan",
+        json={"target_episode_count": 2},
+        headers=_signed_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200, plan_resp.text
+
+    workflow_id = f"workflow-{uuid4()}"
+    contract = {
+        "contract_id": "contract-test",
+        "workflow_id": workflow_id,
+        "novel_id": novel_id,
+        "chapter_id": chapter_1_id,
+        "locked_at": "2026-07-04T00:00:00+00:00",
+        "production_bible_hash": "hash-test",
+        "entity_locks": [{"entity_id": "char-1", "entity_type": "character", "name": "沈砚"}],
+        "required_checks": ["style", "characters"],
+    }
+
+    async def _insert_workflow() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=workflow_id,
+                    user_id=user_id,
+                    title="Series plan snapshot workflow",
+                    status="running",
+                    novel_id=novel_id,
+                    chapter_id=chapter_1_id,
+                    metadata_={"episode_contract": contract},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert_workflow())
+
+    snapshot_resp = client.get(
+        f"/api/v1/studio/workflows/{workflow_id}/snapshot",
+        headers=_signed_auth_headers(user_id),
+    )
+
+    assert snapshot_resp.status_code == 200, snapshot_resp.text
+    payload = snapshot_resp.json()
+    assert payload["series_plan"]["novel_id"] == novel_id
+    assert payload["series_plan"]["current_episode"]["episode_index"] == 1
+    assert payload["series_plan"]["current_episode"]["chapter_ids"] == [chapter_1_id]
+    assert payload["episode_contract"]["contract_id"] == "contract-test"
+    assert payload["episode_contract"]["entity_locks"][0]["name"] == "沈砚"
 
 
 def _create_shot(client: TestClient, user_id: str) -> tuple[str, str, str]:

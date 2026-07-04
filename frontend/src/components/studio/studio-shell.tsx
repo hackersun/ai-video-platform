@@ -32,6 +32,8 @@ import { StudioSeriesBoard } from './studio-series-board';
 import { PromptSkillPanel } from './prompt-skill-panel';
 import { SeriesOverviewPanel } from './series-overview-panel';
 import { ProductionBiblePanel } from './production-bible-panel';
+import { EpisodePlanPanel } from './episode-plan-panel';
+import { EpisodeContractPanel } from './episode-contract-panel';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
@@ -315,6 +317,13 @@ export function StudioShell() {
   }, [loadWorkflows]);
 
   useEffect(() => {
+    const queryWorkflowId = searchParams.get('workflow_id') || '';
+    if (queryWorkflowId && queryWorkflowId !== workflowId) {
+      setWorkflowId(queryWorkflowId);
+    }
+  }, [searchParams, workflowId]);
+
+  useEffect(() => {
     if (workflowId) loadSnapshot(workflowId, mode);
   }, [workflowId, mode, loadSnapshot]);
 
@@ -445,6 +454,24 @@ export function StudioShell() {
     }
   }, [loadSnapshot, mode, toast, workflowId]);
 
+  const handleLockEpisodeContract = useCallback(async () => {
+    if (!workflowId) return;
+    setLoading(true);
+    try {
+      await apiClient.lockEpisodeContract(workflowId);
+      toast({
+        title: '剧集合约已锁定',
+        description: '本集连续性快照已刷新。',
+        type: 'success',
+      });
+      await loadSnapshot(workflowId, mode);
+    } catch (err: any) {
+      setError(err.message || '锁定剧集合约失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [loadSnapshot, mode, toast, workflowId]);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -524,6 +551,14 @@ export function StudioShell() {
           <PromptSkillPanel />
           <StudioSeriesBoard snapshot={snapshot} workflowId={workflowId} productionCards={productionCards} />
           <ProductionBiblePanel snapshot={snapshot} onApproveEntity={handleApproveProductionEntity} />
+          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+            <EpisodePlanPanel snapshot={snapshot} />
+            <EpisodeContractPanel
+              contract={snapshot?.episode_contract || snapshot?.workflow?.metadata?.episode_contract}
+              loading={loading}
+              onLock={handleLockEpisodeContract}
+            />
+          </div>
           <StudioContextPanel snapshot={snapshot} />
           <StudioProductionBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContinuityBoard snapshot={snapshot} />

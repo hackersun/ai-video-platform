@@ -55,10 +55,26 @@ export type SeriesPlanEpisode = {
   episode_number?: number;
   title?: string;
   chapter_ids?: string[];
-  chapter_range?: [number, number] | number[];
+  chapters?: Array<{ id?: string; title?: string; chapter_number?: number }>;
+  chapter_range?: [number, number] | number[] | {
+    start_number?: number;
+    end_number?: number;
+    label?: string;
+  };
   status?: string;
   summary?: string;
+  next_action?: StudioAction;
+  primary_chapter_id?: string | null;
   workflow_id?: string | null;
+  target_duration_seconds?: number;
+  aspect_ratio?: string;
+  style?: string | null;
+  narrative?: Record<string, string>;
+  key_characters?: string[];
+  key_scenes?: string[];
+  key_props?: string[];
+  key_events?: string[];
+  production_counts?: Record<string, number>;
   carry_over_state?: Record<string, any>;
   production_readiness?: Record<string, any>;
   continuity_summary?: Record<string, any>;
@@ -68,14 +84,30 @@ export type SeriesPlanEpisode = {
 export type SeriesPlan = {
   novel_id?: string;
   generated_at?: string;
+  target_duration_seconds?: number;
+  aspect_ratio?: string;
+  style?: string | null;
   current_episode?: SeriesPlanEpisode | null;
   episodes?: SeriesPlanEpisode[];
   production_bible_summary?: Record<string, any>;
 };
 
+export type EpisodeContract = {
+  contract_id?: string;
+  workflow_id?: string;
+  novel_id?: string;
+  chapter_id?: string | null;
+  locked_at?: string;
+  production_bible_hash?: string;
+  style_lock?: Record<string, any>;
+  entity_locks?: Array<Record<string, any>>;
+  required_checks?: string[];
+};
+
 export type StudioSnapshot = {
   series_studio?: SeriesStudioContract;
   series_plan?: SeriesPlan | null;
+  episode_contract?: EpisodeContract | null;
   workflow?: {
     id?: string;
     title?: string;

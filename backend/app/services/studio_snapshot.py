@@ -28,6 +28,7 @@ from app.services.shot_quality_service import build_shot_quality_report
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.story_state_machine import get_story_state_machine
 from app.services.production_bible import build_production_bible_summary
+from app.services.series_production import get_series_plan
 from app.services.series_studio_flags import series_studio_contract
 
 
@@ -212,6 +213,28 @@ def _unique_actions(issues: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         seen.add(code)
         actions.append(action)
     return actions
+
+
+def _chapter_ids_from_episode(episode: Dict[str, Any]) -> List[str]:
+    return [str(value) for value in _json_list(episode.get("chapter_ids")) if value]
+
+
+def _series_plan_with_current_episode(plan: Dict[str, Any], chapter_id: Optional[str]) -> Dict[str, Any]:
+    if not plan:
+        return {}
+
+    payload = dict(plan)
+    episodes = [episode for episode in _json_list(payload.get("episodes")) if isinstance(episode, dict)]
+    current_episode = None
+    if chapter_id:
+        current_episode = next(
+            (episode for episode in episodes if chapter_id in _chapter_ids_from_episode(episode)),
+            None,
+        )
+    if current_episode is None and episodes:
+        current_episode = episodes[0]
+    payload["current_episode"] = current_episode
+    return payload
 
 
 async def _get_or_none(db: AsyncSession, model: Any, item_id: Optional[str], user_id: str) -> Any:
@@ -565,6 +588,13 @@ async def build_studio_snapshot(
     )
     if production_bible_summary is None and workflow.novel_id:
         production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
+    series_plan = {}
+    if workflow.novel_id:
+        series_plan = _series_plan_with_current_episode(
+            await get_series_plan(db, user_id, workflow.novel_id),
+            workflow.chapter_id,
+        )
+    episode_contract = metadata.get("episode_contract") if isinstance(metadata.get("episode_contract"), dict) else None
     raw_issues = _build_issues(workflow=workflow, story_bible=story_bible, shots=shots, jobs=jobs)
     policy_result = apply_mode_policy(raw_issues, mode_policy or StudioModePolicy())
     actions = _unique_actions(policy_result["issues"])
@@ -597,6 +627,8 @@ async def build_studio_snapshot(
         },
         "story_bible": _story_bible_payload(story_bible),
         "production_bible_summary": production_bible_summary,
+        "series_plan": series_plan,
+        "episode_contract": episode_contract,
         "state_machine": state_machine,
         "production": {
             "shot_count": len(shots),
