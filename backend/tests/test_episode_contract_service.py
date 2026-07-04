@@ -183,8 +183,40 @@ def test_stable_hash_ignores_volatile_fields() -> None:
     )
 
 
+def test_stable_hash_ignores_top_level_entity_order() -> None:
+    assert stable_hash({"characters": [{"entity_id": "b"}, {"entity_id": "a"}]}) == stable_hash(
+        {"characters": [{"entity_id": "a"}, {"entity_id": "b"}]}
+    )
+
+
+def test_stable_hash_ignores_entity_asset_id_order() -> None:
+    assert stable_hash({"characters": [{"entity_id": "a", "asset_ids": ["b", "a"]}]}) == stable_hash(
+        {"characters": [{"entity_id": "a", "asset_ids": ["a", "b"]}]}
+    )
+
+
+def test_stable_hash_ignores_missing_requirement_item_order() -> None:
+    assert stable_hash(
+        {"missing_requirements": [{"code": "missing", "items": [{"entity_id": "b"}, {"entity_id": "a"}]}]}
+    ) == stable_hash(
+        {"missing_requirements": [{"code": "missing", "items": [{"entity_id": "a"}, {"entity_id": "b"}]}]}
+    )
+
+
 def test_stable_hash_changes_when_content_changes() -> None:
     assert stable_hash({"name": "A"}) != stable_hash({"name": "B"})
+
+
+def test_stable_hash_changes_when_list_content_changes() -> None:
+    assert stable_hash({"characters": [{"entity_id": "a"}, {"entity_id": "b"}]}) != stable_hash(
+        {"characters": [{"entity_id": "a"}, {"entity_id": "c"}]}
+    )
+
+
+def test_stable_hash_preserves_ordered_timeline_lists() -> None:
+    assert stable_hash({"state_machine": {"latest_events": [{"name": "A"}, {"name": "B"}]}}) != stable_hash(
+        {"state_machine": {"latest_events": [{"name": "B"}, {"name": "A"}]}}
+    )
 
 
 @pytest.mark.asyncio
