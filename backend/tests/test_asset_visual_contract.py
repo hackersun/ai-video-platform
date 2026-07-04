@@ -118,19 +118,7 @@ async def seeded_story(db_session: AsyncSession) -> dict[str, StoryEntity | str]
         entity_type="scene",
         name="旧邮局",
         description="雨夜里的旧邮局。",
-        attributes={
-            "scene_dna": {
-                "era": "1980年代小城",
-                "weather": "雨夜",
-                "lighting_direction": "门外冷蓝雨光，室内右上方暖黄灯",
-                "color_palette": "冷蓝雨光与暖黄钨丝灯",
-                "spatial_layout": {
-                    "fixed_elements": ["左侧正门", "右侧木柜台", "后墙绿色分拣信箱"],
-                    "action_zones": ["门口积水区", "柜台前"],
-                    "forbidden_changes": ["不要现代快递点"],
-                },
-            }
-        },
+        attributes={"mood": "潮湿、陈旧"},
     )
     character = StoryEntity(
         id="character-lin-che",
@@ -142,14 +130,7 @@ async def seeded_story(db_session: AsyncSession) -> dict[str, StoryEntity | str]
         name="林澈",
         description="17岁少年，旧邮局事件的调查者。",
         appearance="银灰短发",
-        attributes={
-            "identity": {
-                "age": "17岁少年",
-                "appearance": "银灰短发，瘦削脸型",
-                "wardrobe": "蓝色工装夹克",
-                "signature_items": ["机械手套"],
-            }
-        },
+        attributes={"role": "调查者"},
     )
     prop = StoryEntity(
         id="prop-cracked-bronze-bell",
@@ -160,13 +141,7 @@ async def seeded_story(db_session: AsyncSession) -> dict[str, StoryEntity | str]
         entity_type="prop",
         name="裂纹铜铃",
         description="巴掌大小的旧铜铃。",
-        attributes={
-            "prop_dna": {
-                "material": "青铜材质",
-                "scale": "巴掌大小",
-                "fixed_marks": ["裂纹中泛青光", "红绳"],
-            }
-        },
+        attributes={"state": "轻响"},
     )
     db_session.add_all([novel, chapter, script, story_bible, scene, character, prop])
     await db_session.commit()
@@ -196,6 +171,8 @@ async def test_scene_contract_preserves_old_post_office_values(
     )
 
     assert contract["story_scope"]["novel_id"] == "novel-1"
+    assert "scene_dna" not in (seeded_story["scene"].attributes or {})
+    assert contract["matched_rule"]["scene_dna"]["era"] == "1980年代小城"
     assert contract["continuity_axes"]["era"] == "1980年代小城"
     assert contract["continuity_axes"]["weather"] == "雨夜"
     assert contract["continuity_axes"]["lighting_direction"] == "门外冷蓝雨光，室内右上方暖黄灯"
@@ -227,6 +204,8 @@ async def test_character_contract_preserves_lin_che_identity(
         script_id=str(seeded_story["script_id"]),
     )
 
+    assert "identity" not in (seeded_story["character"].attributes or {})
+    assert contract["matched_rule"]["identity"]["wardrobe"] == "蓝色工装夹克"
     assert contract["identity"]["age"] == "17岁少年"
     assert "银灰短发" in contract["identity"]["appearance"]
     assert contract["identity"]["wardrobe"] == "蓝色工装夹克"
@@ -248,6 +227,8 @@ async def test_prop_contract_preserves_cracked_bronze_bell_dna(
         script_id=str(seeded_story["script_id"]),
     )
 
+    assert "prop_dna" not in (seeded_story["prop"].attributes or {})
+    assert contract["matched_rule"]["prop_dna"]["material"] == "青铜材质"
     assert contract["prop_dna"]["material"] == "青铜材质"
     assert contract["prop_dna"]["scale"] == "巴掌大小"
     assert "裂纹中泛青光" in contract["prop_dna"]["fixed_marks"]

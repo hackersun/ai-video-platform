@@ -11,8 +11,10 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models import StoryBible
 from app.services.story_prompt_context import compact_text, load_story_prompt_context
 
 
@@ -78,13 +80,83 @@ def _names_match(rule: Dict[str, Any], name: str) -> bool:
     return any(candidate and (candidate == name or name in candidate or candidate in name) for candidate in candidates)
 
 
-def _matching_rule(context: Dict[str, Any], entity_type: str, name: str) -> Dict[str, Any]:
+def _merge_values(current: Any, incoming: Any) -> Any:
+    if incoming in (None, "", [], {}):
+        return current
+    if current in (None, "", [], {}):
+        return incoming
+    if isinstance(current, dict) and isinstance(incoming, dict):
+        return _merge_rule_dicts(current, incoming)
+    if isinstance(current, list) and isinstance(incoming, list):
+        merged = list(current)
+        seen = {str(item) for item in merged}
+        for item in incoming:
+            marker = str(item)
+            if marker not in seen:
+                merged.append(item)
+                seen.add(marker)
+        return merged
+    return current
+
+
+def _merge_rule_dicts(*rules: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for rule in rules:
+        for key, value in rule.items():
+            merged[key] = _merge_values(merged.get(key), value)
+    return merged
+
+
+def _story_bible_rule_list(story_bible: Optional[StoryBible], entity_type: str) -> List[Dict[str, Any]]:
+    if not story_bible:
+        return []
+    list_key = {
+        "character": "character_rules",
+        "scene": "scene_rules",
+        "prop": "prop_rules",
+    }[entity_type]
+    return [_as_dict(item) for item in (getattr(story_bible, list_key, None) or []) if isinstance(item, dict)]
+
+
+async def _load_story_bible(db: AsyncSession, user_id: str, context: Dict[str, Any]) -> Optional[StoryBible]:
+    if context.get("story_bible_id"):
+        result = await db.execute(
+            select(StoryBible).where(
+                and_(StoryBible.id == context["story_bible_id"], StoryBible.user_id == user_id)
+            )
+        )
+        return result.scalar_one_or_none()
+    if context.get("novel_id"):
+        result = await db.execute(
+            select(StoryBible)
+            .where(and_(StoryBible.user_id == user_id, StoryBible.novel_id == context["novel_id"]))
+            .order_by(desc(StoryBible.updated_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    return None
+
+
+async def _matching_rule(
+    db: AsyncSession,
+    user_id: str,
+    context: Dict[str, Any],
+    entity_type: str,
+    name: str,
+) -> Dict[str, Any]:
     list_key = {"character": "characters", "scene": "scenes", "prop": "props"}[entity_type]
+    candidates: List[Dict[str, Any]] = []
     for item in context.get(list_key) or []:
         rule = _as_dict(item)
         if rule and _names_match(rule, name):
-            return rule
-    return {}
+            candidates.append(rule)
+
+    story_bible = await _load_story_bible(db, user_id, context)
+    for rule in _story_bible_rule_list(story_bible, entity_type):
+        if rule and _names_match(rule, name):
+            candidates.append(rule)
+
+    return _merge_rule_dicts(*candidates) if candidates else {}
 
 
 def _collect_source_text(context: Dict[str, Any], entity: Any, rule: Dict[str, Any], style: str) -> str:
@@ -128,19 +200,111 @@ def _nested(*containers: Dict[str, Any], names: Iterable[str]) -> Dict[str, Any]
     return {}
 
 
-def _scene_contract(rule: Dict[str, Any], attrs: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+def _source_text(context: Dict[str, Any], entity: Any, attrs: Dict[str, Any]) -> str:
+    parts = [
+        context.get("description"),
+        context.get("worldview"),
+        context.get("chapter_summary"),
+        context.get("script_summary"),
+        context.get("negative_prompt"),
+        _entity_value(entity, "description"),
+        _entity_value(entity, "appearance"),
+        _entity_value(entity, "visual_prompt"),
+        _stable_json(attrs) if attrs else "",
+    ]
+    return "\n".join(str(part).strip() for part in parts if str(part or "").strip())
+
+
+def _first_match(text: str, patterns: Iterable[str]) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            return match.group(1).strip(" ，,。；;、")
+    return ""
+
+
+def _known_phrase(text: str, phrases: Iterable[str]) -> str:
+    for phrase in phrases:
+        if phrase in text:
+            return phrase
+    return ""
+
+
+def _source_items(text: str, patterns: Iterable[str]) -> List[str]:
+    items: List[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            item = match.group(1).strip(" ，,。；;、")
+            if item and item not in items:
+                items.append(item)
+    return items
+
+
+def _scene_fallbacks(source_text: str) -> Dict[str, Any]:
+    fixed_elements = _source_items(
+        source_text,
+        (
+            r"((?:左侧|右侧|后墙|前墙|中央|中间|门口|柜台前)[^，,。；;、\n]{1,24})",
+        ),
+    )
+    return {
+        "era": _first_match(source_text, (r"(\d{4}年代(?:小城|城市|县城|乡镇|港口|街区)?)",)),
+        "weather": _known_phrase(source_text, ("雨夜", "雪夜", "暴雨", "小雨", "阴天", "晴天", "冷雾", "薄雾")),
+        "lighting_direction": _first_match(
+            source_text,
+            (
+                r"((?:门外|室外|窗外)[^。；;\n]{0,40}?(?:灯|光)[，,][^。；;\n]{0,40}?(?:灯|光))",
+                r"((?:光源方向|光源|灯光)[:：][^。；;\n]+)",
+            ),
+        ),
+        "fixed_elements": fixed_elements,
+    }
+
+
+def _character_fallbacks(source_text: str) -> Dict[str, Any]:
+    return {
+        "age": _first_match(source_text, (r"(\d{1,2}岁(?:少年|少女|青年|女孩|男孩)?)",)),
+        "appearance": _known_phrase(source_text, ("银灰短发", "黑色短发", "长发", "瘦削脸型")),
+        "wardrobe": _first_match(
+            source_text,
+            (r"((?:蓝色|灰蓝|黑色|白色|红色|旧式)[^，,。；;、\n]{0,12}(?:夹克|长衫|校服|外套|工装))",),
+        ),
+        "signature_items": _source_items(source_text, (r"([^，,。；;、\n]{0,8}手套)", r"([^，,。；;、\n]{0,8}罗盘)")),
+    }
+
+
+def _prop_fallbacks(source_text: str) -> Dict[str, Any]:
+    return {
+        "material": _first_match(source_text, (r"((?:青铜|旧铜|木质|铁质|银质|陶瓷)[^，,。；;、\n]{0,4})",)),
+        "scale": _known_phrase(source_text, ("巴掌大小", "半人高", "指节大小")),
+        "fixed_marks": _source_items(
+            source_text,
+            (r"(裂纹中泛青光)", r"(红绳)", r"([^，,。；;、\n]{0,8}裂纹)"),
+        ),
+    }
+
+
+def _scene_contract(
+    rule: Dict[str, Any],
+    attrs: Dict[str, Any],
+    context: Dict[str, Any],
+    entity: Any,
+) -> Dict[str, Any]:
     dna = _nested(rule, attrs, names=("scene_dna", "continuity_axes", "visual_dna"))
     layout = _nested(rule, attrs, dna, names=("spatial_layout", "layout"))
+    fallbacks = _scene_fallbacks(_source_text(context, entity, attrs))
     continuity_axes = {
-        "era": _first_text(_field(rule, attrs, dna, keys=("era", "period", "time_period", "age"))),
-        "weather": _first_text(_field(rule, attrs, dna, keys=("weather", "climate"))),
+        "era": _first_text(_field(rule, attrs, dna, keys=("era", "period", "time_period", "age")), fallbacks["era"]),
+        "weather": _first_text(_field(rule, attrs, dna, keys=("weather", "climate")), fallbacks["weather"]),
         "lighting_direction": _first_text(
-            _field(rule, attrs, dna, keys=("lighting_direction", "lighting", "light", "light_source"))
+            _field(rule, attrs, dna, keys=("lighting_direction", "lighting", "light", "light_source")),
+            fallbacks["lighting_direction"],
         ),
         "color_palette": _first_text(_field(rule, attrs, dna, keys=("color_palette", "palette", "colors"))),
     }
     spatial_layout = {
-        "fixed_elements": _as_list(_field(rule, attrs, dna, layout, keys=("fixed_elements", "fixed", "anchors"))),
+        "fixed_elements": _as_list(_field(rule, attrs, dna, layout, keys=("fixed_elements", "fixed", "anchors")))
+        or fallbacks["fixed_elements"],
         "action_zones": _as_list(_field(rule, attrs, dna, layout, keys=("action_zones", "zones"))),
         "forbidden_changes": _as_list(
             _field(rule, attrs, dna, layout, keys=("forbidden_changes", "negative_constraints", "do_not_change"))
@@ -153,28 +317,41 @@ def _scene_contract(rule: Dict[str, Any], attrs: Dict[str, Any], context: Dict[s
     }
 
 
-def _character_contract(rule: Dict[str, Any], attrs: Dict[str, Any], entity: Any) -> Dict[str, Any]:
+def _character_contract(
+    rule: Dict[str, Any],
+    attrs: Dict[str, Any],
+    entity: Any,
+    context: Dict[str, Any],
+) -> Dict[str, Any]:
     dna = _nested(rule, attrs, names=("identity", "visual_dna", "character_dna"))
+    fallbacks = _character_fallbacks(_source_text(context, entity, attrs))
     identity = {
-        "age": _first_text(_field(rule, attrs, dna, keys=("age", "age_look", "age_range"))),
+        "age": _first_text(_field(rule, attrs, dna, keys=("age", "age_look", "age_range")), fallbacks["age"]),
         "appearance": _first_text(
             _field(rule, attrs, dna, keys=("appearance", "face", "hair", "body")),
             _entity_value(entity, "appearance"),
+            fallbacks["appearance"],
             _entity_value(entity, "description"),
         ),
-        "wardrobe": _first_text(_field(rule, attrs, dna, keys=("wardrobe", "costume", "clothing", "outfit"))),
-        "signature_items": _as_list(_field(rule, attrs, dna, keys=("signature_items", "items", "props"))),
+        "wardrobe": _first_text(
+            _field(rule, attrs, dna, keys=("wardrobe", "costume", "clothing", "outfit")),
+            fallbacks["wardrobe"],
+        ),
+        "signature_items": _as_list(_field(rule, attrs, dna, keys=("signature_items", "items", "props")))
+        or fallbacks["signature_items"],
     }
     return {"identity": identity}
 
 
-def _prop_contract(rule: Dict[str, Any], attrs: Dict[str, Any]) -> Dict[str, Any]:
+def _prop_contract(rule: Dict[str, Any], attrs: Dict[str, Any], context: Dict[str, Any], entity: Any) -> Dict[str, Any]:
     dna = _nested(rule, attrs, names=("prop_dna", "visual_dna"))
+    fallbacks = _prop_fallbacks(_source_text(context, entity, attrs))
     return {
         "prop_dna": {
-            "material": _first_text(_field(rule, attrs, dna, keys=("material", "texture"))),
-            "scale": _first_text(_field(rule, attrs, dna, keys=("scale", "size"))),
-            "fixed_marks": _as_list(_field(rule, attrs, dna, keys=("fixed_marks", "marks", "signature_marks"))),
+            "material": _first_text(_field(rule, attrs, dna, keys=("material", "texture")), fallbacks["material"]),
+            "scale": _first_text(_field(rule, attrs, dna, keys=("scale", "size")), fallbacks["scale"]),
+            "fixed_marks": _as_list(_field(rule, attrs, dna, keys=("fixed_marks", "marks", "signature_marks")))
+            or fallbacks["fixed_marks"],
         }
     }
 
@@ -208,7 +385,7 @@ async def build_visual_contract_from_story(
         script_id=resolved_script_id,
         style=style,
     )
-    rule = _matching_rule(context, entity_type, entity_name)
+    rule = await _matching_rule(db, user_id, context, entity_type, entity_name)
     attrs = _entity_attrs(entity)
     source_text = _collect_source_text(context, entity, rule, style)
     contract_hash = _stable_hash(
@@ -250,12 +427,12 @@ async def build_visual_contract_from_story(
     }
 
     if entity_type == "scene":
-        contract.update(_scene_contract(rule, attrs, context))
+        contract.update(_scene_contract(rule, attrs, context, entity))
     elif entity_type == "character":
-        contract.update(_character_contract(rule, attrs, entity))
+        contract.update(_character_contract(rule, attrs, entity, context))
         contract["negative_constraints"] = _as_list(context.get("negative_prompt"))
     elif entity_type == "prop":
-        contract.update(_prop_contract(rule, attrs))
+        contract.update(_prop_contract(rule, attrs, context, entity))
         contract["negative_constraints"] = _as_list(context.get("negative_prompt"))
 
     return contract
