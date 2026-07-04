@@ -149,12 +149,15 @@ def entity_view_prompt(
     direction_constraint = ""
     if entity_type == "character" and view_key:
         direction_constraint = CHARACTER_VIEW_DIRECTION_CONSTRAINTS.get(view_key, "")
+    from app.services.asset_visual_contract import render_contract_prompt_block
+
+    contract_block = render_contract_prompt_block(contract, view_key=view_key or "", view_label=view_label)
     return "\n".join(
         part
         for part in [
             f"{style_keywords}。",
+            contract_block,
             f"生成对象：{entity_labels.get(entity_type, entity_type)}「{name}」的{view_label}参考图。",
-            f"视觉契约ID：{contract.get('id')}，后续所有视图必须是同一个对象。",
             f"设定描述：{description or '保持小说设定一致'}。",
             contract.get("gender_age_hint") or "",
             reference_line,

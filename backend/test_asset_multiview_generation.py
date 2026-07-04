@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from init_db import init_db
 from main import app
 from app.services.asset_generation_service import AssetGenerationService, style_keywords_for
+from app.services.image_prompt_policy import entity_view_prompt
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -233,6 +234,50 @@ def test_unknown_style_falls_back_to_anime_not_realistic() -> None:
 
     assert "2D日系动画" in prompt
     assert "真人写实" not in prompt
+
+
+def test_entity_view_prompt_includes_story_contract_for_scene() -> None:
+    prompt = entity_view_prompt(
+        entity_type="scene",
+        name="旧邮局",
+        description="雨夜里的旧邮局。",
+        style_keywords="手绘电影感二维动画",
+        view_label="建立镜头",
+        prompt_hint="展示完整空间结构和门口雨光",
+        view_key="establishing",
+        contract={
+            "contract_id": "visual-contract-old-post-office",
+            "entity_type": "scene",
+            "entity_name": "旧邮局",
+            "story_scope": {"novel_id": "novel-1", "chapter_id": "chapter-1", "script_id": "script-1"},
+            "context_sources": {
+                "title": "雨巷旧邮局",
+                "worldview": "1980年代小城，潮湿雨巷、旧邮局和慢节奏邮政系统。",
+                "style": "手绘电影感二维动画",
+                "chapter_title": "雨夜来信",
+                "script_title": "旧邮局开场",
+                "negative_prompt": "不要现代快递点",
+            },
+            "continuity_axes": {
+                "era": "1980年代小城",
+                "weather": "雨夜",
+                "lighting_direction": "门外冷蓝雨光，室内右上方暖黄灯",
+                "color_palette": "冷蓝雨光与暖黄钨丝灯",
+            },
+            "spatial_layout": {
+                "fixed_elements": ["左侧正门", "右侧木柜台", "后墙绿色分拣信箱"],
+                "action_zones": ["门口积水区", "柜台前"],
+                "forbidden_changes": ["不要现代快递点"],
+            },
+        },
+    )
+
+    assert "小说关联视觉契约" in prompt
+    assert "1980年代小城" in prompt
+    assert "右侧木柜台" in prompt
+    assert "门外冷蓝雨光，室内右上方暖黄灯" in prompt
+    assert "不要现代快递点" in prompt
+    assert prompt.index("小说关联视觉契约") < prompt.index("视图要求")
 
 
 def test_asset_entity_filter_does_not_mix_global_assets(client: TestClient) -> None:

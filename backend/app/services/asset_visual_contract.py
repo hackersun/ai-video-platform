@@ -400,10 +400,12 @@ async def build_visual_contract_from_story(
 
     contract: Dict[str, Any] = {
         "contract_id": f"visual-contract-{contract_hash}",
+        "id": f"visual-contract-{contract_hash}",
         "force_refresh": bool(force_refresh),
         "entity_id": entity_id,
         "entity_type": entity_type,
         "entity_name": entity_name,
+        "name": entity_name,
         "style": style,
         "story_scope": {
             "novel_id": context.get("novel_id"),
@@ -447,9 +449,12 @@ def render_contract_prompt_block(contract: Dict[str, Any], *, view_key: str, vie
     """Render a Chinese prompt block for one generated asset view."""
     context_sources = _as_dict(contract.get("context_sources"))
     scope = _as_dict(contract.get("story_scope"))
+    contract_id = contract.get("contract_id") or contract.get("id") or "-"
+    entity_name = contract.get("entity_name") or contract.get("name") or "-"
     lines = [
         "【小说关联视觉契约】",
-        f"资产：{contract.get('entity_name')}（{contract.get('entity_type')}）",
+        f"契约ID：{contract_id}，后续所有视图必须是同一个对象。",
+        f"资产：{entity_name}（{contract.get('entity_type')}）",
         f"视图：{view_label}（{view_key}）",
         f"故事范围：小说 {scope.get('novel_id') or '-'} / 章节 {scope.get('chapter_id') or '-'} / 剧本 {scope.get('script_id') or '-'}",
     ]
