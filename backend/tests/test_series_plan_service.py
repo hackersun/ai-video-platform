@@ -9,7 +9,8 @@ from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401 - ensure all SQLAlchemy models are registered
 from app.core.database import Base
-from app.models import Chapter, Novel, StoryBible
+from app.models import Chapter, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard
+from app.services.entity_impact_service import analyze_entity_change_impact
 from app.services.series_production import SERIES_PLAN_KEY, build_series_plan, get_series_plan
 
 
@@ -177,3 +178,201 @@ async def test_get_series_plan_normalizes_legacy_saved_episode_contract(
     assert saved_plan["episodes"][0]["episode_index"] == 2
     assert saved_plan["episodes"][0]["episode_number"] == 2
     assert saved_plan["episodes"][0]["carry_over_state"] == {"characters": [], "scenes": [], "props": [], "events": []}
+
+
+@pytest.mark.asyncio
+async def test_entity_change_impact_lists_affected_episodes_and_shots(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    entity = StoryEntity(
+        id="entity-hero",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        entity_type="character",
+        name="沈砚",
+        canonical_name="沈砚",
+        aliases=["主角"],
+        attributes={"role": "protagonist"},
+    )
+    script_1 = Script(
+        id="script-1",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapter_id="chapter-1",
+        title="第一集剧本",
+    )
+    script_3 = Script(
+        id="script-3",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapter_id="chapter-3",
+        title="第三集剧本",
+    )
+    storyboard_1 = Storyboard(
+        id="storyboard-1",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        script_id="script-1",
+        title="第一集分镜",
+    )
+    storyboard_3 = Storyboard(
+        id="storyboard-3",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        script_id="script-3",
+        title="第三集分镜",
+    )
+    shot_1 = Shot(
+        id="shot-1",
+        user_id=seeded_novel_with_chapters.user_id,
+        storyboard_id="storyboard-1",
+        shot_number=1,
+        prompt="沈砚在旧城追查密信",
+        character_refs=[{"character_id": "entity-hero", "name": "沈砚"}],
+        extra_data={
+            "novel_id": seeded_novel_with_chapters.id,
+            "chapter_id": "chapter-1",
+            "entity_refs": {"characters": [{"entity_id": "entity-hero", "name": "沈砚"}]},
+        },
+    )
+    shot_3 = Shot(
+        id="shot-3",
+        user_id=seeded_novel_with_chapters.user_id,
+        storyboard_id="storyboard-3",
+        shot_number=2,
+        prompt="主角在钟楼前看见星光",
+        extra_data={
+            "novel_id": seeded_novel_with_chapters.id,
+            "chapter_id": "chapter-3",
+            "entity_refs": {"characters": [{"entity_id": "entity-hero", "name": "沈砚"}]},
+        },
+    )
+    db_session.add_all([entity, script_1, script_3, storyboard_1, storyboard_3, shot_1, shot_3])
+    await db_session.flush()
+
+    await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapters_per_episode=1,
+    )
+
+    impact = await analyze_entity_change_impact(db_session, seeded_novel_with_chapters.user_id, "entity-hero")
+
+    assert impact["entity"]["id"] == "entity-hero"
+    assert impact["affected_episode_count"] == 5
+    assert impact["affected_shot_count"] == 2
+    assert impact["episodes"][0]["episode_index"] == 1
+    assert impact["episodes"][0]["affected_shot_count"] == 1
+    assert impact["episodes"][0]["affected_shots"][0]["id"] == "shot-1"
+    assert impact["episodes"][2]["episode_index"] == 3
+    assert impact["episodes"][2]["affected_shots"][0]["id"] == "shot-3"
+    assert impact["apply_options"][0]["episode_index"] == 1
+    assert "从第 1 集起应用" in impact["apply_options"][0]["label"]
+
+
+@pytest.mark.asyncio
+async def test_entity_change_impact_uses_storyboard_content_chapter_id(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    entity = StoryEntity(
+        id="entity-storyboard-chapter",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        entity_type="character",
+        name="林晚",
+    )
+    script = Script(
+        id="script-without-chapter",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        title="未绑定章节剧本",
+    )
+    storyboard = Storyboard(
+        id="storyboard-content-chapter",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        script_id=script.id,
+        title="分镜内容带章节",
+        content={"chapter_id": "chapter-2"},
+    )
+    shot = Shot(
+        id="shot-content-chapter",
+        user_id=seeded_novel_with_chapters.user_id,
+        storyboard_id=storyboard.id,
+        shot_number=1,
+        prompt="林晚在庭院中回望",
+        extra_data={
+            "entity_refs": {"characters": [{"entity_id": entity.id, "name": "林晚"}]},
+        },
+    )
+    db_session.add_all([entity, script, storyboard, shot])
+    await db_session.flush()
+
+    await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapters_per_episode=1,
+    )
+
+    impact = await analyze_entity_change_impact(db_session, seeded_novel_with_chapters.user_id, entity.id)
+
+    assert impact["episodes"][0]["episode_index"] == 2
+    assert impact["episodes"][0]["affected_shot_count"] == 1
+    assert impact["episodes"][0]["affected_shots"][0]["id"] == shot.id
+
+
+@pytest.mark.asyncio
+async def test_entity_change_impact_accepts_legacy_singular_entity_refs(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    entity = StoryEntity(
+        id="entity-legacy-ref",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        entity_type="character",
+        name="旧引用角色",
+    )
+    script = Script(
+        id="script-legacy-ref",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapter_id="chapter-2",
+        title="历史引用剧本",
+    )
+    storyboard = Storyboard(
+        id="storyboard-legacy-ref",
+        user_id=seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        script_id=script.id,
+        title="历史引用分镜",
+    )
+    shot = Shot(
+        id="shot-legacy-ref",
+        user_id=seeded_novel_with_chapters.user_id,
+        storyboard_id=storyboard.id,
+        shot_number=1,
+        prompt="旧引用角色进入画面",
+        extra_data={
+            "entity_refs": {"character": [{"entity_id": entity.id, "name": "旧引用角色"}]},
+        },
+    )
+    db_session.add_all([entity, script, storyboard, shot])
+    await db_session.flush()
+
+    await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+        chapters_per_episode=1,
+    )
+
+    impact = await analyze_entity_change_impact(db_session, seeded_novel_with_chapters.user_id, entity.id)
+
+    assert impact["affected_shot_count"] == 1
+    assert impact["episodes"][0]["episode_index"] == 2
+    assert impact["episodes"][0]["affected_shots"][0]["id"] == shot.id

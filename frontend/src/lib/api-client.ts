@@ -2225,6 +2225,10 @@ class ApiClient {
     });
   }
 
+  async getStoryEntityImpact(entityId: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/impact`);
+  }
+
   async updateStoryEntityScope(entityId: string, data: {
     scope: 'global' | 'novel' | 'chapter' | 'script';
     novel_id?: string;

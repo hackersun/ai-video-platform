@@ -27,6 +27,7 @@ from app.services.entity_extraction_service import (
     normalize_extracted_entities,
 )
 from app.services.default_anime_library import ensure_default_story_entities
+from app.services.entity_impact_service import analyze_entity_change_impact
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_blocks, apply_active_prompt_skill_template
 from app.services.production_bible import approve_story_entity, build_production_bible_summary
@@ -1759,6 +1760,15 @@ async def approve_entity(
     user_id: str = Depends(get_current_user_id),
 ):
     return await approve_story_entity(db, user_id, entity_id, request.approved, request.approval_note)
+
+
+@router.get("/entities/{entity_id}/impact", response_model=Dict[str, Any])
+async def get_story_entity_impact(
+    entity_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await analyze_entity_change_impact(db, user_id, entity_id)
 
 
 @router.get("/entities/{entity_id}", response_model=StoryEntityResponse)

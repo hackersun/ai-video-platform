@@ -93,6 +93,26 @@ interface EntityAssetsResponse {
   total: number;
 }
 
+interface EntityImpactEpisode {
+  episode_index: number;
+  title?: string;
+  affected_shot_count: number;
+  affected_shots?: Array<{ id: string; title?: string }>;
+}
+
+interface EntityImpact {
+  affected_episode_count: number;
+  affected_shot_count: number;
+  first_affected_episode_index?: number | null;
+  apply_options?: Array<{
+    episode_index: number;
+    label: string;
+    affected_episode_count?: number;
+    affected_shot_count?: number;
+  }>;
+  episodes?: EntityImpactEpisode[];
+}
+
 interface AssetViewPreset {
   entity_type: string;
   category: string;
@@ -181,6 +201,9 @@ export default function EntitiesPage() {
   // Detail dialog state
   const [detailEntity, setDetailEntity] = useState<StoryEntity | null>(null);
   const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [detailImpact, setDetailImpact] = useState<EntityImpact | null>(null);
+  const [detailImpactLoading, setDetailImpactLoading] = useState(false);
+  const [detailImpactError, setDetailImpactError] = useState<string | null>(null);
 
   useEffect(() => {
     loadEntities();
@@ -493,9 +516,21 @@ export default function EntitiesPage() {
     }
   };
 
-  const handleViewDetail = (entity: StoryEntity) => {
+  const handleViewDetail = async (entity: StoryEntity) => {
     setDetailEntity(entity);
     setDetailDialogOpen(true);
+    setDetailImpact(null);
+    setDetailImpactError(null);
+    setDetailImpactLoading(true);
+    try {
+      const impact = await apiClient.getStoryEntityImpact(entity.id);
+      setDetailImpact(impact || null);
+    } catch (error) {
+      console.error('加载实体变更影响失败:', error);
+      setDetailImpactError('影响范围暂不可用');
+    } finally {
+      setDetailImpactLoading(false);
+    }
   };
 
   const assetViewKey = (asset?: Asset) => (
@@ -1033,11 +1068,16 @@ export default function EntitiesPage() {
                     <div className={`w-10 h-10 rounded ${
                       ENTITY_TYPE_CONFIG[detailEntity.entity_type as keyof typeof ENTITY_TYPE_CONFIG]?.bgColor
                     } flex items-center justify-center`}>
-                      {(ENTITY_TYPE_CONFIG[detailEntity.entity_type as keyof typeof ENTITY_TYPE_CONFIG]?.icon || Users)({
-                        className: `w-5 h-5 ${
-                          ENTITY_TYPE_CONFIG[detailEntity.entity_type as keyof typeof ENTITY_TYPE_CONFIG]?.color
-                        }`,
-                      })}
+                      {(() => {
+                        const Icon = ENTITY_TYPE_CONFIG[detailEntity.entity_type as keyof typeof ENTITY_TYPE_CONFIG]?.icon || Users;
+                        return (
+                          <Icon
+                            className={`w-5 h-5 ${
+                              ENTITY_TYPE_CONFIG[detailEntity.entity_type as keyof typeof ENTITY_TYPE_CONFIG]?.color
+                            }`}
+                          />
+                        );
+                      })()}
                     </div>
                     <div>
                       <div className="text-lg font-medium">{detailEntity.name}</div>
@@ -1122,6 +1162,46 @@ export default function EntitiesPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                )}
+
+                {(detailImpactLoading || detailImpact || detailImpactError) && (
+                  <div>
+                    <h4 className="text-sm text-white/60 mb-2">变更影响</h4>
+                    {detailImpactLoading ? (
+                      <div className="rounded-md border border-white/10 bg-white/5 p-3 text-sm text-white/60">
+                        正在分析影响范围...
+                      </div>
+                    ) : detailImpact ? (
+                      <div className="rounded-md border border-cyan-400/20 bg-cyan-400/10 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="text-sm font-medium text-white">
+                            影响 {detailImpact.affected_episode_count || 0} 集 · {detailImpact.affected_shot_count || 0} 个镜头
+                          </div>
+                          {detailImpact.apply_options?.[0]?.label && (
+                            <Badge className="border-cyan-300/30 bg-cyan-300/15 text-cyan-100">
+                              {detailImpact.apply_options[0].label}
+                            </Badge>
+                          )}
+                        </div>
+                        {detailImpact.episodes?.length ? (
+                          <div className="mt-3 space-y-2">
+                            {detailImpact.episodes.slice(0, 4).map((episode) => (
+                              <div key={episode.episode_index} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                                <span className="text-white/80">
+                                  第 {episode.episode_index} 集 · {episode.affected_shot_count || 0} 个镜头
+                                </span>
+                                {episode.title && <span className="text-xs text-white/50">{episode.title}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-white/10 bg-white/5 p-3 text-sm text-white/60">
+                        {detailImpactError}
+                      </div>
+                    )}
                   </div>
                 )}
 

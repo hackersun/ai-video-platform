@@ -58,6 +58,7 @@ def _create_series_fixture(client: TestClient, user_id: str) -> dict:
         assert chapter_resp.status_code == 201
         chapter_ids.append(chapter_resp.json()["id"])
 
+    entity_ids = {}
     for entity_type, name in [
         ("character", "沈砚"),
         ("character", "林晚"),
@@ -79,6 +80,7 @@ def _create_series_fixture(client: TestClient, user_id: str) -> dict:
             headers=_auth_headers(user_id),
         )
         assert entity_resp.status_code == 201
+        entity_ids[name] = entity_resp.json()["id"]
 
     script_resp = client.post(
         "/api/v1/scripts",
@@ -118,6 +120,7 @@ def _create_series_fixture(client: TestClient, user_id: str) -> dict:
             "prompt": "雨夜天桥上，青铜吊坠裂纹发光。",
             "dialogue": "它又裂开了。",
             "visual_description": "雨夜天桥上，青铜吊坠裂纹发光。",
+            "character_refs": [{"character_id": entity_ids["沈砚"], "name": "沈砚"}],
         },
         headers=_auth_headers(user_id),
     )
@@ -135,7 +138,7 @@ def _create_series_fixture(client: TestClient, user_id: str) -> dict:
         headers=_auth_headers(user_id),
     )
     assert workflow_resp.status_code == 201
-    return {"novel_id": novel_id, "chapter_ids": chapter_ids}
+    return {"novel_id": novel_id, "chapter_ids": chapter_ids, "entity_ids": entity_ids}
 
 
 def test_series_plan_generates_and_persists_episode_plan(client: TestClient) -> None:
@@ -209,3 +212,28 @@ def test_series_plan_requires_chapters(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert "章节" in response.json()["detail"]
+
+
+def test_story_entity_impact_route_reports_affected_episode_range(client: TestClient) -> None:
+    user_id = f"entity-impact-route-user-{uuid4()}"
+    fixture = _create_series_fixture(client, user_id)
+    plan_resp = client.post(
+        f"/api/v1/novels/{fixture['novel_id']}/series-plan",
+        json={"chapters_per_episode": 1},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_resp.status_code == 200
+
+    response = client.get(
+        f"/api/v1/story-bibles/entities/{fixture['entity_ids']['沈砚']}/impact",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["entity"]["name"] == "沈砚"
+    assert payload["affected_episode_count"] == 4
+    assert payload["affected_shot_count"] == 1
+    assert payload["episodes"][0]["episode_index"] == 1
+    assert payload["episodes"][0]["affected_shots"][0]["id"]
+    assert payload["apply_options"][0]["label"] == "从第 1 集起应用新设定"
