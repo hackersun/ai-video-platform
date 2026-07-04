@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
+import { ExpertToolBanner } from '@/components/layout/main-layout';
 import {
   Dialog,
   DialogContent,
@@ -420,6 +421,7 @@ export default function StoryBiblesPage() {
   return (
     <div className="min-h-screen bg-gray-950">
       <div className="max-w-7xl mx-auto p-4 space-y-6 sm:p-6">
+        <ExpertToolBanner />
         {/* Header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">

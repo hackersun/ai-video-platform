@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { MainLayout } from '@/components/layout/main-layout';
+import { ExpertToolBanner, MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import { ProductionStatusRail } from '@/components/production/production-status-rail';
 import { Button } from '@/components/ui/button';
@@ -1111,6 +1111,7 @@ function ProducerCenterContent() {
   return (
     <MainLayout>
       <div className="space-y-6">
+        <ExpertToolBanner />
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-xs text-cyan-100">

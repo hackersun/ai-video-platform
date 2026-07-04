@@ -156,7 +156,7 @@ test('quick start keeps partial work and can skip audio after MiniMax voice fail
   await expect(page.getByText('错误摘要：MiniMax TTS失败 [2054]: voice id not exist')).toBeVisible();
   await expect(page.getByText('已创建')).toBeVisible();
   await expect(page.getByRole('button', { name: /重试生产阶段/ })).toBeVisible();
-  await expect(page.getByRole('link', { name: /进入工作台处理/ })).toBeVisible();
+  await expect(page.getByRole('link', { name: /进入工作室处理/ })).toBeVisible();
   await expect(page.getByText('视频任务 ID')).toHaveCount(0);
 
   const mediaStep = page.getByText('批量生成音视频草稿').locator('xpath=ancestor::div[contains(@class,"rounded")][1]');
@@ -294,7 +294,7 @@ test('model config keeps test and noisy TTS models hidden until advanced mode is
   await expect(page.getByText('普通 TTS 声音模型').first()).toBeVisible();
 });
 
-test('top navigation defaults to beginner mode and can reveal expert tools', async ({ page }) => {
+test('top navigation keeps production path primary and expert tools grouped', async ({ page }) => {
   await page.route('**/api/v1/novels**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
@@ -308,13 +308,17 @@ test('top navigation defaults to beginner mode and can reveal expert tools', asy
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
 
-  await page.addInitScript(() => localStorage.removeItem('ai-video-platform:expert-nav'));
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto('/dashboard');
 
-  await expect(page.getByRole('link', { name: '连续动漫向导' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '打开故事创作菜单' })).toHaveCount(0);
+  const navigation = page.getByRole('navigation').first();
+  await expect(navigation.getByText('工作室')).toBeVisible();
+  await expect(navigation.getByText('快速开始')).toBeVisible();
+  await expect(navigation.getByText('小说')).toBeVisible();
+  await expect(navigation.getByText('资产')).toBeVisible();
+
   await page.getByRole('button', { name: '专家工具' }).click();
-  await expect(page.getByRole('button', { name: '打开故事创作菜单' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '收起专家工具' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Story Bible' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '工作流' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '视频生成' })).toBeVisible();
 });

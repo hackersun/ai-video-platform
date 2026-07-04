@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { MainLayout } from '@/components/layout/main-layout';
+import { ExpertToolBanner, MainLayout } from '@/components/layout/main-layout';
 import {
   Video,
   Play,
@@ -1642,6 +1642,7 @@ function VideoGenerationPageInner() {
   return (
     <MainLayout>
       <div className="space-y-6">
+        <ExpertToolBanner />
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <div>

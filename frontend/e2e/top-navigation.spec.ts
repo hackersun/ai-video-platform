@@ -20,16 +20,31 @@ test.beforeEach(async ({ page }) => {
   }, { authToken: token, authUserId: userId });
 });
 
-test('顶部工具和更多菜单可展开并显示功能入口', async ({ page }) => {
-  await page.goto('/dashboard');
+test('顶部导航突出工作室主线，并把专业工具收进专家菜单', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+  });
+
+  await page.goto('/studio');
   await page.waitForLoadState('networkidle');
 
-  await page.getByRole('button', { name: /工具/ }).click();
-  await expect(page.getByRole('menuitem', { name: '语音合成' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: '资产库' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: '任务队列' })).toBeVisible();
+  const navigation = page.getByRole('navigation').first();
+  await expect(navigation.getByText('工作室')).toBeVisible();
+  await expect(navigation.getByText('快速开始')).toBeVisible();
+  await expect(navigation.getByText('小说')).toBeVisible();
+  await expect(navigation.getByText('资产')).toBeVisible();
 
-  await page.getByRole('button', { name: /更多/ }).click();
-  await expect(page.getByRole('menuitem', { name: '团队' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: '设置' })).toBeVisible();
+  await page.getByRole('button', { name: /专家工具|更多/ }).click();
+  await expect(page.getByRole('menuitem', { name: '工作流' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '视频生成' })).toBeVisible();
+});
+
+test('专家工具页面提示回到工作室统一管控', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+  });
+
+  await page.goto('/workflow');
+  await expect(page.getByText('这是专家工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
+  await expect(page.getByRole('button', { name: '回到工作室' })).toBeVisible();
 });

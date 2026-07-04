@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select } from '@/components/ui/select';
-import { MainLayout } from '@/components/layout/main-layout';
+import { ExpertToolBanner, MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import { ProductionStatusRail } from '@/components/production/production-status-rail';
 import { PreflightIssueList } from '@/components/production/preflight-issue-list';
@@ -690,6 +690,7 @@ function WorkflowPageContent() {
   return (
     <MainLayout>
       <div className="space-y-6">
+        <ExpertToolBanner />
         {/* 页面标题 */}
         <div className="flex items-center justify-between">
           <div>
