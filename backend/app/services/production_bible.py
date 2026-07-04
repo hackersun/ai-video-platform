@@ -192,6 +192,10 @@ def _state_machine_summary(story_bible: Optional[StoryBible]) -> Dict[str, Any]:
     }
 
 
+def _readiness_score(missing_requirements: List[Dict[str, Any]]) -> int:
+    return max(0, 100 - len(missing_requirements) * 25)
+
+
 async def build_production_bible_summary(
     db: AsyncSession,
     user_id: str,
@@ -252,6 +256,7 @@ async def build_production_bible_summary(
         "novel_title": novel.title,
         "story_bible_id": story_bible.id if story_bible else None,
         "generated_at": utc_now().isoformat(),
+        "readiness_score": _readiness_score(missing_requirements),
         "style": _style_summary(novel, story_bible),
         "characters": characters[:60],
         "scenes": scenes[:60],
