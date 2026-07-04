@@ -461,6 +461,7 @@ async def build_series_plan(
 
         episodes.append(
             {
+                "episode_index": episode_index,
                 "episode_number": episode_index,
                 "title": f"第{episode_index}集 {first_chapter.title}",
                 "status": status_value,
@@ -490,6 +491,7 @@ async def build_series_plan(
                 "key_scenes": _uniq([entity.name for entity in entities_by_type.get("scene", [])], 8),
                 "key_props": _uniq([entity.name for entity in entities_by_type.get("prop", [])], 8),
                 "key_events": _uniq([entity.name for entity in entities_by_type.get("event", [])], 8),
+                "carry_over_state": {"characters": [], "props": [], "events": []},
                 "production_counts": {
                     "chapters": len(episode_chapters),
                     "scripts": len(episode_scripts),

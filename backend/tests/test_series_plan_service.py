@@ -74,9 +74,11 @@ async def test_build_series_plan_groups_chapters_into_episodes(
     )
 
     assert len(plan["episodes"]) == 3
+    assert plan["episodes"][0]["episode_index"] == 1
     assert plan["episodes"][0]["episode_number"] == 1
     assert plan["episodes"][0]["chapter_ids"] == ["chapter-1", "chapter-2"]
     assert plan["episodes"][0]["status"] == "planned"
+    assert plan["episodes"][0]["carry_over_state"] == {"characters": [], "props": [], "events": []}
     assert plan["episodes"][0]["workflow_id"] is None
     assert "continuity_summary" in plan["episodes"][0]
     assert plan["episodes"][0]["production_readiness"]["next_action"]["code"] == "generate_script"
