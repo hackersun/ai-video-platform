@@ -41,13 +41,12 @@ test('asset wizard shows story contract controls and strict-mode review results'
           lighting_direction: '门外冷蓝雨光，室内右上方暖黄灯',
           color_palette: '灰蓝冷雨色 + 暖黄室内灯',
         },
-        spatial_layout: { fixed_elements: ['左侧正门', '右侧木柜台', '后墙绿色分拣信箱'] },
+        spatial_layout: { fixed_elements: '左侧正门' },
       },
-      visual_consistency: { score: 88, status: 'needs_review', issues: ['lighting_direction'] },
+      visual_consistency: { score: 88.4, status: 'needs_review', issues: ['lighting_direction'] },
       retry_prompt_advice: '必须保持光源方向：门外冷蓝雨光，室内右上方暖黄灯',
     },
   };
-  let generatePayload: any = null;
 
   await page.route('**/api/v1/novels**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([novel]) }));
   await page.route('**/api/v1/story-bibles/entities**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([entity]) }));
@@ -75,21 +74,24 @@ test('asset wizard shows story contract controls and strict-mode review results'
   await page.route('**/api/v1/assets/style-templates', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ templates: [{ style: 'cinematic-2d', label: '2D电影' }] }) }));
   await page.route('**/api/v1/assets?**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([generatedAsset]) }));
   await page.route('**/api/v1/assets/generate-entity-views', async (route) => {
-    generatePayload = route.request().postDataJSON();
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entity_type: 'scene', entity_id: entity.id, assets: { layout: generatedAsset }, total: 1, failures: [] }) });
   });
 
   await page.goto('/assets?novel_id=novel-1&entity_type=scene&entity_id=scene-1&view_key=layout&action=generate-missing&source=production-card');
-  await expect(page.getByText('视觉契约')).toBeVisible();
-  await expect(page.getByText('1980年代小城')).toBeVisible();
-  await expect(page.getByText('门外冷蓝雨光，室内右上方暖黄灯')).toBeVisible();
+  const contractPanel = page.getByTestId('asset-visual-contract-panel');
+  await expect(contractPanel.getByText('视觉契约')).toBeVisible();
+  await expect(contractPanel.getByText('1980年代小城')).toBeVisible();
+  await expect(contractPanel.getByText('门外冷蓝雨光，室内右上方暖黄灯')).toBeVisible();
   await expect(page.getByText('一致性 88')).toBeVisible();
-  await expect(page.getByText('必须保持光源方向')).toBeVisible();
+  await expect(page.getByText('必须保持光源方向：门外冷蓝雨光，室内右上方暖黄灯')).toBeVisible();
 
   await page.getByLabel('一致性模式').selectOption('strict');
-  await page.getByRole('button', { name: '生成空间布局缺失视图' }).click();
+  const [generateRequest] = await Promise.all([
+    page.waitForRequest((request) => request.url().includes('/api/v1/assets/generate-entity-views') && request.method() === 'POST'),
+    page.getByRole('button', { name: '生成空间布局缺失视图' }).click(),
+  ]);
 
-  expect(generatePayload).toMatchObject({
+  expect(generateRequest.postDataJSON()).toMatchObject({
     entity_id: 'scene-1',
     novel_id: 'novel-1',
     view_keys: ['layout'],

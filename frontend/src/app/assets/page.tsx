@@ -1788,7 +1788,7 @@ export default function AssetsPage() {
                       {selectedVisualContract.continuity_axes?.weather && <div>天气：{selectedVisualContract.continuity_axes.weather}</div>}
                       {selectedVisualContract.continuity_axes?.lighting_direction && <div>光源：{selectedVisualContract.continuity_axes.lighting_direction}</div>}
                       {selectedVisualContract.continuity_axes?.color_palette && <div>色彩：{selectedVisualContract.continuity_axes.color_palette}</div>}
-                      {selectedVisualContract.spatial_layout?.fixed_elements?.length ? <div>固定空间：{selectedVisualContract.spatial_layout.fixed_elements.join('、')}</div> : null}
+                      {Array.isArray(selectedVisualContract.spatial_layout?.fixed_elements) && selectedVisualContract.spatial_layout.fixed_elements.length ? <div>固定空间：{selectedVisualContract.spatial_layout.fixed_elements.join('、')}</div> : null}
                     </div>
                   </div>
                 )}
@@ -1904,10 +1904,12 @@ export default function AssetsPage() {
                   const previewUrl = toMediaUrl(matchedAsset?.thumbnail_url || matchedAsset?.url);
                   const failure = matchedAsset ? assetFailureInfo(matchedAsset) : null;
                   const review = matchedAsset?.generation_params?.visual_consistency;
-                  const retryAdvice = matchedAsset?.generation_params?.retry_prompt_advice;
-                  const retryAdviceSummary = typeof retryAdvice === 'string'
-                    ? retryAdvice.split('：')[0]
-                    : retryAdvice;
+                  const reviewScore = typeof review?.score === 'number' && Number.isFinite(review.score)
+                    ? Math.round(review.score)
+                    : null;
+                  const retryAdvice = typeof matchedAsset?.generation_params?.retry_prompt_advice === 'string'
+                    ? matchedAsset.generation_params.retry_prompt_advice.trim()
+                    : '';
                   const isTargetView = productionCardTargetActive && view.key === targetViewKey;
                   return (
                     <div
@@ -1998,9 +2000,9 @@ export default function AssetsPage() {
                             ) : (
                               <Badge variant="outline" className="border-amber-400/40 px-2 py-0.5 text-xs text-amber-100">待补齐</Badge>
                             )}
-                            {review?.score !== undefined && (
-                              <Badge variant="outline" className={review.score >= 90 ? 'border-emerald-400/40 text-emerald-200' : 'border-amber-400/40 text-amber-100'}>
-                                一致性 {review.score}
+                            {reviewScore !== null && (
+                              <Badge variant="outline" className={reviewScore >= 90 ? 'border-emerald-400/40 text-emerald-200' : 'border-amber-400/40 text-amber-100'}>
+                                一致性 {reviewScore}
                               </Badge>
                             )}
                           </div>
@@ -2014,9 +2016,9 @@ export default function AssetsPage() {
                             {failure.error}
                           </div>
                         )}
-                        {retryAdviceSummary && (
-                          <div className="rounded-md border border-amber-400/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100" title={retryAdvice}>
-                            {retryAdviceSummary}
+                        {retryAdvice && (
+                          <div className="rounded-md border border-amber-400/20 bg-amber-500/10 p-2 text-xs leading-5 text-amber-100">
+                            {retryAdvice}
                           </div>
                         )}
                       </div>
