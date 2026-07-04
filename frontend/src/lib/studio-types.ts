@@ -104,10 +104,25 @@ export type EpisodeContract = {
   required_checks?: string[];
 };
 
+export type ConsistencyLedger = {
+  workflow_id?: string;
+  overall_score?: number;
+  dimensions?: Record<string, number>;
+  findings?: Array<{
+    code?: string;
+    severity?: 'blocking' | 'warning' | 'info' | string;
+    shot_id?: string;
+    entity_id?: string;
+    message?: string;
+    repair_action?: StudioAction | null;
+  }>;
+};
+
 export type StudioSnapshot = {
   series_studio?: SeriesStudioContract;
   series_plan?: SeriesPlan | null;
   episode_contract?: EpisodeContract | null;
+  consistency_ledger?: ConsistencyLedger | null;
   workflow?: {
     id?: string;
     title?: string;

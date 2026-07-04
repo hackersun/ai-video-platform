@@ -310,6 +310,111 @@ def test_studio_snapshot_exposes_series_plan_and_episode_contract(client: TestCl
     assert payload["episode_contract"]["entity_locks"][0]["name"] == "沈砚"
 
 
+def test_studio_snapshot_exposes_consistency_ledger(client: TestClient) -> None:
+    user_id = uuid4().hex
+    novel_id = _create_novel(client, user_id)
+    workflow_id = f"workflow-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    contract = {
+        "contract_id": "contract-ledger",
+        "workflow_id": workflow_id,
+        "novel_id": novel_id,
+        "production_bible_hash": "hash-ledger",
+        "entity_locks": [{"entity_id": "char-1", "entity_type": "character", "name": "孙剑"}],
+        "required_checks": ["characters"],
+    }
+
+    async def _insert_workflow_and_shot() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=workflow_id,
+                    user_id=user_id,
+                    title="Consistency ledger workflow",
+                    status="running",
+                    novel_id=novel_id,
+                    storyboard_id=storyboard_id,
+                    metadata_={"episode_contract": contract},
+                )
+            )
+            session.add(
+                Shot(
+                    id=f"shot-{uuid4()}",
+                    user_id=user_id,
+                    storyboard_id=storyboard_id,
+                    shot_number=1,
+                    prompt="角色尚未绑定参考",
+                    extra_data={"entity_refs": {"character": []}},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert_workflow_and_shot())
+
+    snapshot_resp = client.get(
+        f"/api/v1/studio/workflows/{workflow_id}/snapshot",
+        headers=_signed_auth_headers(user_id),
+    )
+
+    assert snapshot_resp.status_code == 200, snapshot_resp.text
+    ledger = snapshot_resp.json()["consistency_ledger"]
+    assert ledger["overall_score"] < 80
+    assert ledger["findings"][0]["code"] == "shot_character_unbound"
+
+
+def test_studio_snapshot_consistency_ledger_uses_shot_character_refs(client: TestClient) -> None:
+    user_id = uuid4().hex
+    novel_id = _create_novel(client, user_id)
+    workflow_id = f"workflow-{uuid4()}"
+    storyboard_id = f"storyboard-{uuid4()}"
+    contract = {
+        "contract_id": "contract-ledger-bound",
+        "workflow_id": workflow_id,
+        "novel_id": novel_id,
+        "production_bible_hash": "hash-ledger-bound",
+        "entity_locks": [{"entity_id": "char-1", "entity_type": "character", "name": "孙剑"}],
+        "required_checks": ["characters"],
+    }
+
+    async def _insert_workflow_and_bound_shot() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(
+                Workflow(
+                    id=workflow_id,
+                    user_id=user_id,
+                    title="Consistency ledger bound workflow",
+                    status="running",
+                    novel_id=novel_id,
+                    storyboard_id=storyboard_id,
+                    metadata_={"episode_contract": contract},
+                )
+            )
+            session.add(
+                Shot(
+                    id=f"shot-{uuid4()}",
+                    user_id=user_id,
+                    storyboard_id=storyboard_id,
+                    shot_number=1,
+                    prompt="角色已绑定参考",
+                    character_refs=[{"character_id": "char-1"}],
+                    extra_data={"entity_refs": {"character": []}},
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_insert_workflow_and_bound_shot())
+
+    snapshot_resp = client.get(
+        f"/api/v1/studio/workflows/{workflow_id}/snapshot",
+        headers=_signed_auth_headers(user_id),
+    )
+
+    assert snapshot_resp.status_code == 200, snapshot_resp.text
+    ledger = snapshot_resp.json()["consistency_ledger"]
+    assert ledger["overall_score"] == 100
+    assert ledger["findings"] == []
+
+
 def _create_shot(client: TestClient, user_id: str) -> tuple[str, str, str]:
     script_id = _create_script(client, user_id)
     storyboard_resp = client.post(

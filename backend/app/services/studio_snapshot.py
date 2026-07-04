@@ -28,6 +28,7 @@ from app.services.shot_quality_service import build_shot_quality_report
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.story_state_machine import get_story_state_machine
 from app.services.production_bible import build_production_bible_summary
+from app.services.consistency_ledger_service import build_consistency_ledger
 from app.services.series_production import get_series_plan
 from app.services.series_studio_flags import series_studio_contract
 
@@ -305,6 +306,7 @@ def _shot_payload(shot: Shot) -> Dict[str, Any]:
         "audio_url": shot.audio_url,
         "video_status": shot.video_status,
         "audio_status": shot.audio_status,
+        "character_refs": _json_list(shot.character_refs),
         "entity_refs": entity_refs,
         "entity_ref_count": sum(len(_json_list(value)) for value in entity_refs.values()),
         "asset_version_locks": asset_locks,
@@ -595,6 +597,11 @@ async def build_studio_snapshot(
             workflow.chapter_id,
         )
     episode_contract = metadata.get("episode_contract") if isinstance(metadata.get("episode_contract"), dict) else None
+    consistency_ledger = build_consistency_ledger(
+        shots,
+        episode_contract or {},
+        [*_json_list(jobs.get("video_jobs")), *_json_list(jobs.get("media_jobs"))],
+    )
     raw_issues = _build_issues(workflow=workflow, story_bible=story_bible, shots=shots, jobs=jobs)
     policy_result = apply_mode_policy(raw_issues, mode_policy or StudioModePolicy())
     actions = _unique_actions(policy_result["issues"])
@@ -629,6 +636,7 @@ async def build_studio_snapshot(
         "production_bible_summary": production_bible_summary,
         "series_plan": series_plan,
         "episode_contract": episode_contract,
+        "consistency_ledger": consistency_ledger,
         "state_machine": state_machine,
         "production": {
             "shot_count": len(shots),

@@ -34,6 +34,7 @@ import { SeriesOverviewPanel } from './series-overview-panel';
 import { ProductionBiblePanel } from './production-bible-panel';
 import { EpisodePlanPanel } from './episode-plan-panel';
 import { EpisodeContractPanel } from './episode-contract-panel';
+import { ConsistencyLedgerPanel } from './consistency-ledger-panel';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
@@ -472,6 +473,36 @@ export function StudioShell() {
     }
   }, [loadSnapshot, mode, toast, workflowId]);
 
+  const handleLedgerRepair = useCallback(async (action: StudioAction) => {
+    if (!workflowId) return;
+    if (isExecutableSafeAction(action)) {
+      setLoading(true);
+      try {
+        const result = await runStudioAction(workflowId, {
+          code: action.code,
+          mode,
+        });
+        setLastAction(result);
+        toast({
+          title: `${result.label || action.label}已执行`,
+          description: '已刷新工作台检查结果。',
+          type: 'success',
+        });
+        await loadSnapshot(workflowId, mode);
+      } catch (err: any) {
+        setError(err.message || '执行一致性修复失败');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    if (action.href || action.code === 'bind_character_reference') {
+      router.push(action.href || `/studio/shot-review?workflow_id=${workflowId}`);
+      return;
+    }
+    router.push(`/studio/shot-review?workflow_id=${workflowId}`);
+  }, [loadSnapshot, mode, router, toast, workflowId]);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -559,6 +590,7 @@ export function StudioShell() {
               onLock={handleLockEpisodeContract}
             />
           </div>
+          <ConsistencyLedgerPanel snapshot={snapshot} onRepair={handleLedgerRepair} />
           <StudioContextPanel snapshot={snapshot} />
           <StudioProductionBoard snapshot={snapshot} workflowId={workflowId} />
           <StudioContinuityBoard snapshot={snapshot} />
