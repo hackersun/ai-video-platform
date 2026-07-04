@@ -104,3 +104,23 @@ async def test_build_series_plan_persists_on_novel_extra_data(
 
     saved_plan = await get_series_plan(db_session, seeded_novel_with_chapters.user_id, seeded_novel_with_chapters.id)
     assert saved_plan["episodes"][0]["chapter_ids"] == ["chapter-1", "chapter-2"]
+
+
+@pytest.mark.asyncio
+async def test_get_series_plan_normalizes_legacy_saved_episode_contract(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    seeded_novel_with_chapters.extra_data = {
+        SERIES_PLAN_KEY: {
+            "novel_id": seeded_novel_with_chapters.id,
+            "episodes": [{"episode_number": 2}],
+        }
+    }
+    await db_session.flush()
+
+    saved_plan = await get_series_plan(db_session, seeded_novel_with_chapters.user_id, seeded_novel_with_chapters.id)
+
+    assert saved_plan["episodes"][0]["episode_index"] == 2
+    assert saved_plan["episodes"][0]["episode_number"] == 2
+    assert saved_plan["episodes"][0]["carry_over_state"] == {"characters": [], "props": [], "events": []}

@@ -196,6 +196,17 @@ def _episode_missing_requirements(
     return requirements
 
 
+def _normalize_episode_contract(episode: Dict[str, Any], position: int) -> Dict[str, Any]:
+    normalized = dict(episode)
+    episode_index = normalized.get("episode_index")
+    if episode_index is None:
+        episode_index = normalized.get("episode_number")
+    normalized["episode_index"] = episode_index if episode_index is not None else position + 1
+    if not isinstance(normalized.get("carry_over_state"), dict):
+        normalized["carry_over_state"] = {"characters": [], "props": [], "events": []}
+    return normalized
+
+
 def _with_production_bible_summary(plan: Dict[str, Any], summary: Dict[str, Any]) -> Dict[str, Any]:
     if not plan:
         return plan
@@ -204,11 +215,11 @@ def _with_production_bible_summary(plan: Dict[str, Any], summary: Dict[str, Any]
     compact_summary = _compact_production_bible_summary(summary)
     enriched["production_bible_summary"] = compact_summary
     episodes = []
-    for episode in _json_list(plan.get("episodes")):
+    for position, episode in enumerate(_json_list(plan.get("episodes"))):
         if not isinstance(episode, dict):
             episodes.append(episode)
             continue
-        episode_payload = dict(episode)
+        episode_payload = _normalize_episode_contract(episode, position)
         missing_asset_count = _episode_missing_asset_count(summary, episode_payload)
         readiness = {
             "has_workflow": bool(episode_payload.get("workflow_id")),
