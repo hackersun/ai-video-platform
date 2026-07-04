@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -174,3 +175,43 @@ async def test_lock_episode_contract_stores_snapshot(
     ).scalar_one()
     assert refreshed.metadata_["existing"] == "kept"
     assert refreshed.metadata_["episode_contract"] == contract
+
+
+@pytest.mark.asyncio
+async def test_lock_episode_contract_raises_404_when_workflow_missing(db_session: AsyncSession) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await lock_episode_contract(db_session, "user-missing", "workflow-missing")
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "工作流不存在"
+
+
+@pytest.mark.asyncio
+async def test_lock_episode_contract_raises_404_for_other_user(
+    db_session: AsyncSession,
+    seeded_workflow: Workflow,
+) -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await lock_episode_contract(db_session, f"other-{uuid4()}", seeded_workflow.id)
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "工作流不存在"
+
+
+@pytest.mark.asyncio
+async def test_lock_episode_contract_raises_400_without_novel_id(db_session: AsyncSession) -> None:
+    workflow = Workflow(
+        id=f"workflow-{uuid4()}",
+        user_id=f"user-{uuid4()}",
+        title="未绑定小说工作流",
+        status="running",
+        metadata_={},
+    )
+    db_session.add(workflow)
+    await db_session.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await lock_episode_contract(db_session, workflow.user_id, workflow.id)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "工作流没有绑定小说"
