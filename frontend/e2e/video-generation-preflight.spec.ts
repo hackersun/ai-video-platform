@@ -7,6 +7,42 @@ function devToken(userId: string) {
   return `dev.${payload}.sig`;
 }
 
+const verifiedVideoCatalog = {
+  task: 'shot_video',
+  display_name: '镜头视频生成',
+  required_capabilities: ['video'],
+  default_model_id: 'video-model-001',
+  models: [{
+    id: 'video-model-001',
+    name: '已验证视频模型',
+    name_cn: '已验证视频模型',
+    display_name: '已验证视频模型',
+    provider_id: 'volcano',
+    provider_name: '火山引擎',
+    api_model_id: 'doubao-seedance-2-0-fast-260128',
+    model_id: 'doubao-seedance-2-0-fast-260128',
+    config_model_id: 'video-model-001',
+    config_id: 'config-video-001',
+    model_config_id: 'config-video-001',
+    model_type: 'video-generation',
+    model_capabilities: ['video'],
+    capabilities: ['video'],
+    desc: '火山引擎 · recommended',
+    limits: {
+      durations: [4, 5, 8, 10],
+      resolutions: ['480p', '720p', '1080p'],
+      reference_images: 1,
+    },
+    protocol: { input_mode: 'image_text' },
+    lane: 'recommended',
+    adapter_status: 'available',
+    is_configured: true,
+    is_default: true,
+    test_status: 'success',
+    key_available: true,
+  }],
+};
+
 test.beforeEach(async ({ page }) => {
   const userId = `video-preflight-block-user-${Date.now()}`;
   const token = devToken(userId);
@@ -34,6 +70,11 @@ test('video generation shows consistency preflight blockers before submitting', 
       return;
     }
 
+    if (path === '/api/v1/video/models') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(verifiedVideoCatalog) });
+      return;
+    }
+
     if (path === '/api/v1/llm/models') {
       await route.fulfill({
         status: 200,
@@ -45,6 +86,9 @@ test('video generation shows consistency preflight blockers before submitting', 
           model_name_cn: '已验证视频模型',
           model_type: 'video',
           capabilities: ['video'],
+          is_configured: true,
+          test_status: 'success',
+          adapter_status: 'available',
         }]),
       });
       return;
@@ -215,7 +259,7 @@ test('video generation shows consistency preflight blockers before submitting', 
   expect(videoGenerateCalls).toBe(0);
   await expect(page.getByTestId('video-generation-preflight')).toContainText('生成前预检未通过');
   await expect(page.getByText('角色参考图不是公网地址')).toBeVisible();
-  await expect(page.getByTestId('video-generation-preflight')).toContainText('处理位置：生产适配');
+  await expect(page.getByTestId('video-generation-preflight')).toContainText('位置：生产适配');
   await expect(page.getByTestId('video-generation-preflight').locator('a[href="/production-adapters"]')).toContainText('去处理');
 });
 
@@ -233,6 +277,11 @@ test('direct audio-video generation shows consistency preflight blockers before 
       return;
     }
 
+    if (path === '/api/v1/video/models') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(verifiedVideoCatalog) });
+      return;
+    }
+
     if (path === '/api/v1/llm/models') {
       await route.fulfill({
         status: 200,
@@ -244,6 +293,9 @@ test('direct audio-video generation shows consistency preflight blockers before 
           model_name_cn: '已验证视频模型',
           model_type: 'video',
           capabilities: ['video'],
+          is_configured: true,
+          test_status: 'success',
+          adapter_status: 'available',
         }]),
       });
       return;
@@ -414,6 +466,6 @@ test('direct audio-video generation shows consistency preflight blockers before 
   expect(mediaGenerateCalls).toBe(0);
   await expect(page.getByTestId('video-generation-preflight')).toContainText('生成前预检未通过');
   await expect(page.getByText('镜头缺少角色/场景/道具定稿资产锁')).toBeVisible();
-  await expect(page.getByTestId('video-generation-preflight')).toContainText('处理位置：资产库');
+  await expect(page.getByTestId('video-generation-preflight')).toContainText('位置：资产库');
   await expect(page.getByTestId('video-generation-preflight').locator('a[href="/assets"]')).toContainText('去锁定资产');
 });
