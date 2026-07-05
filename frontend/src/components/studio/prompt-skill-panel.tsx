@@ -43,7 +43,7 @@ export function PromptSkillPanel() {
           <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
             <Link href="/prompt-skills">
               <Settings className="mr-2 h-4 w-4" />
-              管理 Prompt 技能
+              管理全部任务提示词
             </Link>
           </Button>
         </div>

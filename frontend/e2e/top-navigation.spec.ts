@@ -37,6 +37,9 @@ test('顶部导航突出工作室主线，并把专业工具收进专家菜单',
   await page.getByRole('button', { name: /专家工具|更多/ }).click();
   await expect(page.getByRole('menuitem', { name: '工作流' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: '视频生成' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '提示词管理' })).toBeVisible();
+  await page.getByRole('menuitem', { name: '提示词管理' }).click();
+  await expect(page).toHaveURL(/\/prompt-skills$/);
 });
 
 test('专家工具页面提示回到工作室统一管控', async ({ page }) => {

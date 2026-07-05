@@ -372,11 +372,13 @@ test('prompt skill page manages clone edit preview and activation flow', async (
   await expect(page.getByText('{dialogue}').first()).toBeVisible();
   await expect(page.getByText('字幕文本', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('系统可填').first()).toBeVisible();
-  await expect(page.getByRole('link', { name: '工作台' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '打开内容创作菜单' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '打开资产设定菜单' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '打开生产菜单' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '打开配置菜单' })).toBeVisible();
+  const navigation = page.getByRole('navigation').first();
+  await expect(navigation.getByText('工作室')).toBeVisible();
+  await expect(navigation.getByText('快速开始')).toBeVisible();
+  await expect(navigation.getByText('小说')).toBeVisible();
+  await expect(navigation.getByText('资产')).toBeVisible();
+  await page.getByRole('button', { name: /专家工具|更多/ }).click();
+  await expect(page.getByRole('menuitem', { name: '提示词管理' })).toBeVisible();
   await page.getByLabel('选择冷蓝短剧一致性').check();
   await expect(page.getByRole('button', { name: '批量克隆' })).toBeVisible();
   await expect(page.getByRole('button', { name: '批量标签' })).toBeVisible();

@@ -228,5 +228,5 @@ test('studio supports repair, test bypass audit, production gate, and active pro
   await page.getByRole('button', { name: '生产出片' }).click();
   await expect(page.getByRole('button', { name: '确认临时跳过并继续验证' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: /配置模型/ })).toHaveAttribute('href', '/llm-config');
-  await expect(page.getByRole('link', { name: /管理 Prompt 技能/ })).toHaveAttribute('href', '/prompt-skills');
+  await expect(page.getByRole('link', { name: /管理全部任务提示词/ })).toHaveAttribute('href', '/prompt-skills');
 });
