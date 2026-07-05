@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.core.database import AsyncSessionLocal
 from app.models.workflow import Workflow
 from app.models.video_job import VideoJob
+from app.services.studio_guidance import build_studio_guidance
 from init_db import init_db
 from main import app
 from test_short_video_production import _auth_headers, _create_short_video_fixture
@@ -83,6 +84,8 @@ def test_studio_snapshot_allows_confirmable_test_mode_bypass(client: TestClient)
     assert payload["mode_policy"]["mode"] == "test"
     assert payload["mode_policy"]["bypassed_issue_count"] >= 1
     assert payload["mode_policy"]["bypass_audit"]["reason"] == "本地验证完整流程"
+    review_stage = next(stage for stage in payload["guidance"]["stages"] if stage["id"] == "review")
+    assert review_stage["status"] == "working"
 
 
 def test_studio_snapshot_updates_asset_lock_coverage_after_existing_action(client: TestClient) -> None:
@@ -181,8 +184,60 @@ def test_studio_snapshot_includes_guidance_stages_and_next_action(client: TestCl
 
     assert response.status_code == 200
     guidance = response.json()["guidance"]
-    assert guidance["current_stage"] in {"content", "bible", "episode", "draft", "review"}
+    assert guidance["current_stage"] == "episode"
     assert [stage["id"] for stage in guidance["stages"]] == ["content", "bible", "episode", "draft", "review"]
-    assert guidance["next_action"]["code"]
+    assert guidance["next_action"]["code"] == "apply_asset_locks"
     assert guidance["next_action"]["reason"]
     assert guidance["next_action"]["risk"] in {"safe", "navigation", "confirm", "production"}
+    assert guidance["next_action"]["source_issue_code"] == "missing_asset_locks"
+    assert guidance["blocker_count"] >= 1
+
+
+def test_studio_guidance_review_action_uses_review_endpoint_metadata() -> None:
+    guidance = build_studio_guidance(
+        workflow={"id": "workflow-review", "novel_id": "novel-1", "chapter_id": "chapter-1"},
+        story_context={"novel": {"title": "测试小说"}, "chapter": {"title": "第一集"}},
+        story_bible={"id": "story-bible-1"},
+        production_bible_summary={"readiness_score": 90},
+        production={"shot_count": 3, "asset_lock_coverage": 1},
+        timeline={"clip_count": 3},
+        issues=[],
+        actions=[],
+        mode_policy={
+            "mode": "production",
+            "blocking_issue_count": 1,
+            "confirmable_issue_count": 0,
+            "bypassed_issue_count": 0,
+        },
+    )
+
+    assert guidance["current_stage"] == "review"
+    assert guidance["next_action"]["code"] == "create_review"
+    assert guidance["next_action"]["execution"] == "review"
+    assert guidance["next_action"]["method"] == "POST"
+    assert guidance["next_action"]["endpoint"] == "/studio/workflows/workflow-review/review"
+
+
+def test_studio_guidance_producer_href_preserves_workflow_context() -> None:
+    guidance = build_studio_guidance(
+        workflow={"id": "workflow-draft", "novel_id": "novel-1", "chapter_id": "chapter-1"},
+        story_context={"novel": {"title": "测试小说"}, "chapter": {"title": "第一集"}},
+        story_bible={"id": "story-bible-1"},
+        production_bible_summary={"readiness_score": 90},
+        production={"shot_count": 3, "asset_lock_coverage": 1},
+        timeline={},
+        issues=[],
+        actions=[],
+        mode_policy={
+            "mode": "production",
+            "blocking_issue_count": 0,
+            "confirmable_issue_count": 0,
+            "bypassed_issue_count": 0,
+        },
+    )
+
+    assert guidance["current_stage"] == "draft"
+    assert guidance["next_action"]["code"] == "open_producer"
+    assert "workflow_id=workflow-draft" in guidance["next_action"]["href"]
+    assert "novel_id=novel-1" in guidance["next_action"]["href"]
+    assert "chapter_id=chapter-1" in guidance["next_action"]["href"]

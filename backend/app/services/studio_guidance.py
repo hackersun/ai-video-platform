@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
+
+
+def _href(path: str, params: Dict[str, Any]) -> str:
+    query = urlencode({key: value for key, value in params.items() if value})
+    return f"{path}?{query}" if query else path
+
+
+def _context_params(workflow: Dict[str, Any], source_issue_code: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "workflow_id": workflow.get("id"),
+        "novel_id": workflow.get("novel_id"),
+        "chapter_id": workflow.get("chapter_id"),
+        "source_issue": source_issue_code,
+    }
 
 
 def _stage(
@@ -32,9 +47,12 @@ def _guided_action(
     expected_outputs: Optional[List[str]] = None,
     source_issue_code: Optional[str] = None,
     params: Optional[Dict[str, Any]] = None,
+    execution: Optional[str] = None,
+    method: Optional[str] = None,
+    endpoint: Optional[str] = None,
 ) -> Dict[str, Any]:
     confirmation_required = risk in {"confirm", "production"}
-    return {
+    payload = {
         "code": code,
         "label": label,
         "reason": reason,
@@ -52,6 +70,13 @@ def _guided_action(
             "confirm_label": "确认执行" if confirmation_required else "执行",
         },
     }
+    if execution:
+        payload["execution"] = execution
+    if method:
+        payload["method"] = method
+    if endpoint:
+        payload["endpoint"] = endpoint
+    return payload
 
 
 def _issue_by_code(issues: List[Dict[str, Any]], code: str) -> Optional[Dict[str, Any]]:
@@ -86,6 +111,8 @@ def build_studio_guidance(
     asset_coverage = float(production.get("asset_lock_coverage") or 0)
     readiness_score = int(production_bible_summary.get("readiness_score") or 0)
     blockers = int(mode_policy.get("blocking_issue_count") or 0)
+    confirmable = int(mode_policy.get("confirmable_issue_count") or 0)
+    bypassed = int(mode_policy.get("bypassed_issue_count") or 0)
     has_bible = bool(story_bible.get("id") or production_bible_summary.get("story_bible_id"))
     has_timeline = bool(timeline.get("preview_url") or timeline.get("clip_count"))
 
@@ -110,7 +137,10 @@ def build_studio_guidance(
             "生成 Story Bible",
             reason=missing_story_bible.get("message") or "缺少小说级设定本。",
             risk="navigation",
-            href=f"/novels/{workflow.get('novel_id')}?tab=story-bible",
+            href=_href(
+                f"/novels/{workflow.get('novel_id')}",
+                {"tab": "story-bible", **_context_params(workflow, "missing_story_bible")},
+            ),
             scope=[str(novel.get("title") or workflow.get("novel_id"))],
             expected_outputs=["风格规则", "角色规则", "场景规则", "道具规则"],
             source_issue_code="missing_story_bible",
@@ -122,7 +152,7 @@ def build_studio_guidance(
             "生成或编辑分镜镜头",
             reason=missing_shots.get("message") or "缺少镜头，无法生成草片。",
             risk="navigation",
-            href="/storyboards",
+            href=_href("/storyboards", _context_params(workflow, "missing_shots")),
             scope=[str(chapter.get("title") or workflow.get("chapter_id"))],
             expected_outputs=["分镜", "镜头列表"],
             source_issue_code="missing_shots",
@@ -145,7 +175,7 @@ def build_studio_guidance(
             "生成本集草片",
             reason="设定与镜头已具备基础条件，下一步进入草片生产。",
             risk="navigation",
-            href=f"/producer?workflow_id={workflow.get('id')}",
+            href=_href("/producer", _context_params(workflow)),
             scope=[str(chapter.get("title") or "当前章节")],
             expected_outputs=["镜头音视频任务", "可审阅草片"],
         )
@@ -158,6 +188,9 @@ def build_studio_guidance(
             risk="confirm",
             scope=[f"{blockers} 个阻断项"],
             expected_outputs=["复审记录", "修复建议"],
+            execution="review",
+            method="POST",
+            endpoint=f"/studio/workflows/{workflow.get('id')}/review",
         )
         current_stage = "review"
     else:
@@ -171,6 +204,7 @@ def build_studio_guidance(
         )
         current_stage = "review"
 
+    review_status = "blocked" if blockers else "working" if confirmable or bypassed else "ready"
     stages = [
         _stage(
             "content",
@@ -199,7 +233,7 @@ def build_studio_guidance(
         _stage(
             "review",
             "复审出片",
-            "blocked" if blockers else "ready",
+            review_status,
             "连续性复审、质量检查和成片验证。",
         ),
     ]
