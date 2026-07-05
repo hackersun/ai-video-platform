@@ -1,5 +1,7 @@
 export type StudioRunMode = 'test' | 'production';
 
+export type StudioActionRisk = 'safe' | 'navigation' | 'confirm' | 'production' | string;
+
 export type StudioWorkflowOption = {
   workflow_id?: string;
   id?: string;
@@ -24,7 +26,38 @@ export type StudioAction = {
   code: string;
   label: string;
   href?: string;
-  risk?: 'safe' | 'navigation' | 'confirm' | string;
+  risk?: StudioActionRisk;
+};
+
+export type StudioGuidedAction = StudioAction & {
+  description?: string;
+  reason?: string;
+  scope?: string[];
+  expected_outputs?: string[];
+  confirmation?: {
+    required?: boolean;
+    title?: string;
+    description?: string;
+    impact?: string[];
+    confirm_label?: string;
+  };
+  params?: Record<string, any>;
+  source_issue_code?: string | null;
+};
+
+export type NovelProductionEntry = {
+  novel_id: string;
+  stage: 'content_prepare' | 'series_plan' | 'workflow_create' | 'studio_fix' | 'studio_ready' | 'not_found' | string;
+  label: string;
+  description: string;
+  primary_action: StudioGuidedAction;
+  metrics?: {
+    chapter_count?: number;
+    episode_count?: number;
+    workflow_count?: number;
+  };
+  workflow_id?: string | null;
+  chapter_id?: string | null;
 };
 
 export type StudioActionResult = StudioAction & {

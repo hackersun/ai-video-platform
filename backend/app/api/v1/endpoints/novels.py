@@ -33,6 +33,7 @@ from app.services.asset_generation_service import style_keywords_for
 from app.services.image_prompt_policy import append_global_image_constraints
 from app.services.media_persistence import persist_remote_media_url
 from app.services.novel_import_service import parse_novel_import, validate_import_filename
+from app.services.novel_production_entry import build_novel_production_entries, build_novel_production_entry
 from app.services.prompt_skill_service import apply_active_prompt_skill_template
 from app.services.series_production import build_series_plan, get_series_plan
 from app.services.story_prompt_context import build_cover_prompt, load_story_prompt_context
@@ -626,6 +627,25 @@ async def list_novels(
         )
         for n in novels
     ]
+
+
+@router.get("/production-entries", response_model=dict)
+async def read_novel_production_entries(
+    novel_ids: str = Query("", description="逗号分隔的小说 ID 列表"),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    ids = [item.strip() for item in novel_ids.split(",") if item.strip()]
+    return await build_novel_production_entries(db, user_id, ids)
+
+
+@router.get("/{novel_id}/production-entry", response_model=dict)
+async def read_novel_production_entry(
+    novel_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await build_novel_production_entry(db, user_id, novel_id)
 
 
 @router.get("/{novel_id}", response_model=NovelResponse)

@@ -3,6 +3,8 @@
  * 统一处理前后端API通信
  */
 
+import type { NovelProductionEntry } from './studio-types';
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
 const TOKEN_KEY = 'auth_token';
@@ -608,6 +610,18 @@ class ApiClient {
 
   async getNovel(novelId: string) {
     return this.request<any>(`/novels/${novelId}`);
+  }
+
+  async getNovelProductionEntries(novelIds: string[]) {
+    const searchParams = new URLSearchParams();
+    searchParams.set('novel_ids', novelIds.join(','));
+    return this.request<{ entries: Record<string, NovelProductionEntry>; count: number }>(
+      `/novels/production-entries?${searchParams.toString()}`
+    );
+  }
+
+  async getNovelProductionEntry(novelId: string) {
+    return this.request<NovelProductionEntry>(`/novels/${novelId}/production-entry`);
   }
 
   async createNovel(novel: any) {
