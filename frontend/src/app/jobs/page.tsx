@@ -18,6 +18,7 @@ import {
   Trash2,
   Download,
   Eye,
+  Layers,
   XCircle
 } from 'lucide-react';
 import apiClient from '@/lib/api-client';
@@ -34,8 +35,8 @@ const toMediaUrl = (url?: string | null) => {
 interface Job {
   id: string;
   name: string;
-  type: 'video' | 'tts' | 'image' | 'synthesis' | 'media';
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+  type: 'video' | 'tts' | 'image' | 'synthesis' | 'media' | 'batch';
+  status: 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   createdAt: string;
   createdAtTime: number;
@@ -51,7 +52,8 @@ const TYPE_ICONS = {
   tts: Mic,
   image: ImageIcon,
   synthesis: ListTodo,
-  media: Video
+  media: Video,
+  batch: Layers
 };
 
 const TYPE_LABELS = {
@@ -59,12 +61,14 @@ const TYPE_LABELS = {
   tts: '语音合成',
   image: '图片生成',
   synthesis: '音视频合成',
-  media: '直生媒体'
+  media: '直生媒体',
+  batch: '批量任务'
 };
 
 const STATUS_LABELS = {
   pending: '等待中',
   running: '运行中',
+  paused: '已暂停',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消'
@@ -73,6 +77,7 @@ const STATUS_LABELS = {
 const STATUS_COLORS = {
   pending: 'bg-yellow-500/20 text-yellow-400',
   running: 'bg-blue-500/20 text-blue-400',
+  paused: 'bg-amber-500/20 text-amber-400',
   completed: 'bg-green-500/20 text-green-400',
   failed: 'bg-red-500/20 text-red-400',
   cancelled: 'bg-gray-500/20 text-gray-400'
@@ -90,6 +95,7 @@ const typeOptions = [
   { value: 'image', label: TYPE_LABELS.image },
   { value: 'synthesis', label: TYPE_LABELS.synthesis },
   { value: 'media', label: TYPE_LABELS.media },
+  { value: 'batch', label: TYPE_LABELS.batch },
 ];
 
 const timeRangeOptions = [
@@ -131,6 +137,7 @@ export default function JobsPage() {
   const normalizeStatus = (status?: string): Job['status'] => {
     if (status === 'succeeded' || status === 'completed') return 'completed';
     if (status === 'running' || status === 'generating' || status === 'processing') return 'running';
+    if (status === 'paused') return 'paused';
     if (status === 'failed') return 'failed';
     if (status === 'cancelled') return 'cancelled';
     return 'pending';
@@ -153,26 +160,28 @@ export default function JobsPage() {
     name: raw.title || raw.prompt || raw.text || `${TYPE_LABELS[type]}任务`,
     type,
     status: normalizeStatus(raw.status),
-    progress: raw.progress ?? (raw.status === 'succeeded' ? 100 : 0),
+    progress: raw.progress_percent ?? raw.progress ?? (raw.status === 'succeeded' || raw.status === 'completed' ? 100 : 0),
     createdAt: toDateText(raw.created_at),
     createdAtTime: toDateTime(raw.created_at),
     completedAt: raw.completed_at ? toDateText(raw.completed_at) : undefined,
     duration: Math.round(raw.duration_seconds || raw.duration || 0) || undefined,
     output: raw.output_url || raw.video_url || raw.audio_url || raw.output_video_url || raw.output_audio_url || raw.output_manifest_url || raw.image_urls?.[0],
-    error: raw.error_message,
+    error: raw.error_message || raw.message,
   });
 
   const loadJobs = async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [videos, ttsJobs, images, synthesis, media] = await Promise.all([
+      const [videos, ttsJobs, images, synthesis, media, batchJobs] = await Promise.all([
         apiClient.getVideoJobs(),
         apiClient.getTTSJobs(),
         apiClient.getImageJobs({ limit: 100 }),
         apiClient.getSynthesisJobs(),
         apiClient.getMediaJobs(),
+        apiClient.getBatchJobs({ limit: 100 }),
       ]);
+      const batchJobItems = Array.isArray(batchJobs) ? batchJobs : batchJobs.jobs || [];
 
       const mergedJobs = [
         ...videos.map((job: any) => mapJob(job, 'video')),
@@ -180,6 +189,7 @@ export default function JobsPage() {
         ...images.map((job: any) => mapJob(job, 'image')),
         ...synthesis.map((job: any) => mapJob(job, 'synthesis')),
         ...media.map((job: any) => mapJob(job, 'media')),
+        ...batchJobItems.map((job: any) => mapJob(job, 'batch')),
       ].sort((a, b) => b.createdAtTime - a.createdAtTime);
 
       setJobs(mergedJobs);
@@ -224,8 +234,10 @@ export default function JobsPage() {
         await apiClient.deleteImageJob(job.id);
       } else if (job.type === 'synthesis') {
         await apiClient.deleteSynthesisJob(job.id);
-      } else {
+      } else if (job.type === 'media') {
         await apiClient.deleteMediaJob(job.id);
+      } else {
+        await apiClient.deleteBatchJob(job.id);
       }
       setJobs(prev => prev.filter(item => item.id !== job.id));
     } catch (err: any) {
@@ -337,6 +349,7 @@ export default function JobsPage() {
     total: jobs.length,
     pending: jobs.filter(j => j.status === 'pending').length,
     running: jobs.filter(j => j.status === 'running').length,
+    paused: jobs.filter(j => j.status === 'paused').length,
     completed: jobs.filter(j => j.status === 'completed').length,
     failed: jobs.filter(j => j.status === 'failed').length,
     cancelled: jobs.filter(j => j.status === 'cancelled').length
@@ -360,7 +373,7 @@ export default function JobsPage() {
         </div>
 
         {/* 统计卡片 */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-4">
           <Card className="bg-white/5 border-white/10">
             <CardContent className="p-4 text-center">
               <div className="text-2xl font-bold text-white">{stats.total}</div>
@@ -381,6 +394,12 @@ export default function JobsPage() {
           </Card>
           <Card className="bg-white/5 border-white/10">
             <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-amber-400">{stats.paused}</div>
+              <div className="text-sm text-white/60">已暂停</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-white/5 border-white/10">
+            <CardContent className="p-4 text-center">
               <div className="text-2xl font-bold text-green-400">{stats.completed}</div>
               <div className="text-sm text-white/60">已完成</div>
             </CardContent>
@@ -389,6 +408,12 @@ export default function JobsPage() {
             <CardContent className="p-4 text-center">
               <div className="text-2xl font-bold text-red-400">{stats.failed}</div>
               <div className="text-sm text-white/60">失败</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-white/5 border-white/10">
+            <CardContent className="p-4 text-center">
+              <div className="text-2xl font-bold text-gray-400">{stats.cancelled}</div>
+              <div className="text-sm text-white/60">已取消</div>
             </CardContent>
           </Card>
         </div>
@@ -513,6 +538,7 @@ export default function JobsPage() {
             <TabsTrigger value="all" className="data-[state=active]:bg-teal-600">全部</TabsTrigger>
             <TabsTrigger value="pending" className="data-[state=active]:bg-teal-600">等待中</TabsTrigger>
             <TabsTrigger value="running" className="data-[state=active]:bg-teal-600">运行中</TabsTrigger>
+            <TabsTrigger value="paused" className="data-[state=active]:bg-teal-600">已暂停</TabsTrigger>
             <TabsTrigger value="completed" className="data-[state=active]:bg-teal-600">已完成</TabsTrigger>
             <TabsTrigger value="failed" className="data-[state=active]:bg-teal-600">失败</TabsTrigger>
             <TabsTrigger value="cancelled" className="data-[state=active]:bg-teal-600">已取消</TabsTrigger>
