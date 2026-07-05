@@ -342,6 +342,39 @@ export default function QuickStartPage() {
     return [...details, ...(idMap[step.id] || [])].filter((item) => item.value !== undefined && item.value !== '');
   };
 
+  const stepRecovery = (step: QuickStartProgressStep) => {
+    if (!['failed', 'stopped', 'waiting'].includes(step.status)) return null;
+    const matchingIssue = issue?.stepId === step.id ? issue : null;
+    if (matchingIssue) {
+      return {
+        summary: matchingIssue.summary,
+        cause: matchingIssue.cause,
+        advice: matchingIssue.advice.slice(0, 3),
+        canRetryProduction: matchingIssue.canRetryProduction,
+        canSkipAudio: matchingIssue.canSkipAudio,
+        showTts: matchingIssue.canSkipAudio || step.id === 'media',
+      };
+    }
+    if (step.status === 'waiting') {
+      return {
+        summary: '云端任务仍在等待，可先检查任务或保留进度',
+        cause: '该环节已经发起请求，但云端模型或渲染任务还没有返回最终结果。',
+        advice: ['等待 1-2 分钟后查看任务明细。', '如果长时间没有变化，停止等待后进入工作室查看具体任务。'],
+        canRetryProduction: Boolean(result?.workflowId),
+        canSkipAudio: false,
+        showTts: step.id === 'media',
+      };
+    }
+    return {
+      summary: '当前等待已停止，已创建内容会保留',
+      cause: '前端已经停止继续等待，已发出的后端或云端任务不会被强制取消。',
+      advice: ['进入工作室查看已创建内容和任务状态。', '确认模型配置后，可以重新执行生产阶段。'],
+      canRetryProduction: Boolean(result?.workflowId),
+      canSkipAudio: false,
+      showTts: step.id === 'media',
+    };
+  };
+
   useEffect(() => {
     loadModelConfigs();
     try {
@@ -1041,8 +1074,9 @@ export default function QuickStartPage() {
                   {progressSteps.map((step) => {
                     const expanded = expandedStepIds.includes(step.id);
                     const details = stepDetails(step);
+                    const recovery = stepRecovery(step);
                     return (
-                      <div key={step.id} className="rounded border border-white/10 bg-white/5 p-3">
+                      <div key={step.id} data-testid={`quick-start-progress-step-${step.id}`} className="rounded border border-white/10 bg-white/5 p-3">
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <span className="text-sm text-white">{step.label}</span>
@@ -1074,6 +1108,64 @@ export default function QuickStartPage() {
                                 错误：{issue.rawMessage.split('\n')[0]}
                               </div>
                             )}
+                          </div>
+                        )}
+                        {recovery && (
+                          <div className="mt-3 space-y-3 rounded-lg border border-amber-300/25 bg-amber-500/10 p-3">
+                            <div>
+                              <div className="text-xs font-semibold text-amber-100">快速修复</div>
+                              <div className="mt-1 text-sm text-white">{recovery.summary}</div>
+                              <div className="mt-1 text-xs leading-5 text-amber-100/80">{recovery.cause}</div>
+                            </div>
+                            {recovery.advice.length > 0 && (
+                              <ul className="space-y-1 text-xs leading-5 text-white/70">
+                                {recovery.advice.map((item) => (
+                                  <li key={`${step.id}-${item}`}>- {item}</li>
+                                ))}
+                              </ul>
+                            )}
+                            <div className="flex flex-wrap gap-2">
+                              {recovery.canRetryProduction && (
+                                <Button type="button" size="sm" onClick={retryProductionStage} disabled={isRunning} className="bg-emerald-600 hover:bg-emerald-700">
+                                  {isRunning ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
+                                  重试生产阶段
+                                </Button>
+                              )}
+                              {recovery.canSkipAudio && result?.workflowId && (
+                                <Button type="button" size="sm" onClick={continueWithoutAudio} disabled={isRunning} className="bg-cyan-600 hover:bg-cyan-700">
+                                  {isRunning ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Film className="mr-1 h-3 w-3" />}
+                                  跳过配音继续
+                                </Button>
+                              )}
+                              {result?.workflowId && (
+                                <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
+                                  <Link href={buildStudioHref(result)}>
+                                    <Route className="mr-1 h-3 w-3" />
+                                    进入工作室
+                                  </Link>
+                                </Button>
+                              )}
+                              <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
+                                <Link href="/jobs">
+                                  <Clapperboard className="mr-1 h-3 w-3" />
+                                  任务中心
+                                </Link>
+                              </Button>
+                              <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
+                                <Link href="/llm-config">
+                                  <CheckCircle className="mr-1 h-3 w-3" />
+                                  去模型与密钥
+                                </Link>
+                              </Button>
+                              {recovery.showTts && (
+                                <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
+                                  <Link href="/tts">
+                                    <PlayCircle className="mr-1 h-3 w-3" />
+                                    去 TTS
+                                  </Link>
+                                </Button>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>

@@ -329,6 +329,65 @@ test('quick start auto preview uses canonical episode production pipeline with a
   await expect(page.getByRole('link', { name: '播放预览包' })).toBeVisible();
 });
 
+test('quick start progress cards expose recovery guidance and actions for failed stages', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('ai-video-platform:quick-start-last-run', JSON.stringify({
+      savedAt: new Date().toISOString(),
+      progressSteps: [
+        { id: 'novel', label: '创建作品', status: 'done', detail: '作品已保存', updatedAt: new Date().toISOString() },
+        { id: 'chapter', label: '创建首章', status: 'done', detail: '首章已保存', updatedAt: new Date().toISOString() },
+        { id: 'storyboard', label: '智能生成剧本与分镜', status: 'done', detail: '已生成 2 个镜头', updatedAt: new Date().toISOString() },
+        { id: 'workflow', label: '创建首集工作流', status: 'done', detail: '工作流已创建', updatedAt: new Date().toISOString() },
+        { id: 'media', label: '批量生成音视频草稿', status: 'failed', detail: 'MiniMax voice id not exist', updatedAt: new Date().toISOString() },
+        { id: 'render', label: '生成本地预览包与字幕', status: 'stopped', detail: '已停止等待；可稍后继续处理。', updatedAt: new Date().toISOString() },
+      ],
+      result: {
+        novelId: 'novel-recovery-e2e',
+        chapterId: 'chapter-recovery-e2e',
+        scriptId: 'script-recovery-e2e',
+        storyboardId: 'storyboard-recovery-e2e',
+        workflowId: 'workflow-recovery-e2e',
+        shotCount: 2,
+      },
+      issue: {
+        stepId: 'media',
+        stepLabel: '批量生成音视频草稿',
+        summary: '配音音色不可用，已暂停在音视频草稿阶段',
+        rawMessage: '[2054] voice id not exist',
+        cause: '当前角色声线或默认 TTS 音色在 MiniMax 账号下不存在。',
+        advice: [
+          '去模型与密钥中检查当前 TTS 配置。',
+          '去 TTS 工作台试听同一个音色。',
+          '先跳过配音继续生成无声视频和字幕。',
+        ],
+        canSkipAudio: true,
+        canRetryProduction: true,
+      },
+    }));
+  });
+  await page.route('**/api/v1/llm/configs', (route) => route.fulfill({ json: [] }));
+
+  await page.goto('/quick-start');
+
+  const failedStep = page.getByTestId('quick-start-progress-step-media');
+  await expect(failedStep.getByText('批量生成音视频草稿')).toBeVisible();
+  await expect(failedStep.getByText('快速修复')).toBeVisible();
+  await expect(failedStep.getByText('配音音色不可用，已暂停在音视频草稿阶段')).toBeVisible();
+  await expect(failedStep.getByText('去 TTS 工作台试听同一个音色。')).toBeVisible();
+  await expect(failedStep.getByRole('button', { name: '重试生产阶段' })).toBeVisible();
+  await expect(failedStep.getByRole('button', { name: '跳过配音继续' })).toBeVisible();
+  await expect(failedStep.getByRole('link', { name: '去模型与密钥' })).toHaveAttribute('href', '/llm-config');
+  await expect(failedStep.getByRole('link', { name: '进入工作室' })).toHaveAttribute('href', /workflow_id=workflow-recovery-e2e/);
+  await expect(failedStep.getByRole('link', { name: '任务中心' })).toHaveAttribute('href', '/jobs');
+
+  const stoppedStep = page.getByTestId('quick-start-progress-step-render');
+  await expect(stoppedStep.getByText('生成本地预览包与字幕')).toBeVisible();
+  await expect(stoppedStep.getByText('当前等待已停止，已创建内容会保留')).toBeVisible();
+  await expect(stoppedStep.getByRole('button', { name: '重试生产阶段' })).toBeVisible();
+  await expect(stoppedStep.getByRole('link', { name: '进入工作室' })).toHaveAttribute('href', /workflow_id=workflow-recovery-e2e/);
+  await expect(stoppedStep.getByRole('link', { name: '任务中心' })).toHaveAttribute('href', '/jobs');
+});
+
 test('novel detail opens the whole-book plan tab from query params', async ({ page }) => {
   await page.route('**/api/v1/llm/configs', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/v1/novels/novel-series-e2e', (route) => route.fulfill({
