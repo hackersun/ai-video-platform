@@ -2638,6 +2638,7 @@ async def list_story_bibles(
 
 @router.get("/continuity-review-tasks", response_model=ContinuityReviewTasksResponse)
 async def list_continuity_review_tasks(
+    workflow_id: Optional[str] = Query(None),
     novel_id: Optional[str] = Query(None),
     entity_id: Optional[str] = Query(None),
     episode_index: Optional[int] = Query(None, ge=1),
@@ -2651,6 +2652,7 @@ async def list_continuity_review_tasks(
     payload = await list_continuity_review_tasks_payload(
         db,
         user_id,
+        workflow_id=workflow_id,
         novel_id=novel_id,
         entity_id=entity_id,
         episode_index=episode_index,

@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -163,6 +164,7 @@ function ContinuityTaskCard({
 }
 
 function ContinuityReviewContent() {
+  const searchParams = useSearchParams();
   const [data, setData] = useState<ContinuityReviewTasksResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [resolvingShotId, setResolvingShotId] = useState('');
@@ -170,9 +172,10 @@ function ContinuityReviewContent() {
   const [actionWorking, setActionWorking] = useState('');
   const [error, setError] = useState('');
   const [actionMessage, setActionMessage] = useState('');
-  const [novelFilter, setNovelFilter] = useState('');
-  const [entityFilter, setEntityFilter] = useState('');
-  const [episodeFilter, setEpisodeFilter] = useState('');
+  const [workflowFilter] = useState(() => searchParams.get('workflow_id') || '');
+  const [novelFilter, setNovelFilter] = useState(() => searchParams.get('novel_id') || '');
+  const [entityFilter, setEntityFilter] = useState(() => searchParams.get('entity_id') || '');
+  const [episodeFilter, setEpisodeFilter] = useState(() => searchParams.get('episode_index') || '');
   const [statusFilter, setStatusFilter] = useState('open');
   const [sort, setSort] = useState('updated_desc');
   const [selectedShotIds, setSelectedShotIds] = useState<Set<string>>(() => new Set());
@@ -201,6 +204,7 @@ function ContinuityReviewContent() {
     setActionMessage('');
     try {
       const response = await apiClient.getContinuityReviewTasks({
+        workflow_id: workflowFilter || undefined,
         novel_id: novelFilter || undefined,
         entity_id: entityFilter || undefined,
         episode_index: episodeFilter.trim() ? Number(episodeFilter) : undefined,
@@ -397,6 +401,11 @@ function ContinuityReviewContent() {
         </div>
 
         <div className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
+          {workflowFilter ? (
+            <div className="mb-3 rounded-md border border-cyan-300/20 bg-cyan-400/10 px-3 py-2 text-sm text-cyan-50">
+              已按工作流筛选：{workflowFilter}
+            </div>
+          ) : null}
           <div className="grid gap-3 md:grid-cols-5">
             <label className="space-y-1.5 text-sm text-white/70">
               <span>小说筛选</span>
@@ -561,5 +570,9 @@ function ContinuityReviewContent() {
 }
 
 export default function ContinuityReviewPage() {
-  return <ContinuityReviewContent />;
+  return (
+    <Suspense fallback={<div className="p-6 text-white/60">正在加载连续性复审…</div>}>
+      <ContinuityReviewContent />
+    </Suspense>
+  );
 }

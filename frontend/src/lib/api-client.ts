@@ -281,6 +281,7 @@ export type ContinuityReviewTasksResponse = {
   total: number;
   workflow_id?: string | null;
   filters?: {
+    workflow_id?: string | null;
     novel_id?: string | null;
     entity_id?: string | null;
     episode_index?: number | null;
@@ -2320,6 +2321,7 @@ class ApiClient {
   }
 
   async getContinuityReviewTasks(params: {
+    workflow_id?: string;
     novel_id?: string;
     entity_id?: string;
     episode_index?: number;
@@ -2329,6 +2331,7 @@ class ApiClient {
     limit?: number;
   } = {}) {
     const searchParams = new URLSearchParams();
+    if (params.workflow_id) searchParams.set('workflow_id', params.workflow_id);
     if (params.novel_id) searchParams.set('novel_id', params.novel_id);
     if (params.entity_id) searchParams.set('entity_id', params.entity_id);
     if (params.episode_index) searchParams.set('episode_index', String(params.episode_index));

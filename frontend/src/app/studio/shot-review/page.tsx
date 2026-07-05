@@ -149,6 +149,7 @@ function ShotCard({
       id={`shot-review-${shot.shot_id}`}
       className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none"
       data-testid={`shot-review-card-${shot.shot_id}`}
+      data-shot-id={shot.shot_id}
       data-target-shot={target ? 'true' : undefined}
     >
       <div className="relative aspect-video bg-slate-950">
@@ -237,6 +238,7 @@ function ShotReviewContent() {
   const searchParams = useSearchParams();
   const workflowId = searchParams.get('workflow_id') || '';
   const targetShotId = searchParams.get('shot_id') || '';
+  const sourceIssueCode = searchParams.get('source_issue_code') || '';
   const [data, setData] = useState<WorkflowShotReviewResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [characterName, setCharacterName] = useState('');
@@ -388,6 +390,12 @@ function ShotReviewContent() {
             </Button>
           </div>
         </header>
+
+        {sourceIssueCode ? (
+          <div className="rounded-md border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-50">
+            来自问题：{sourceIssueCode}
+          </div>
+        ) : null}
 
         {!workflowId ? (
           <div className="rounded-md border border-white/10 bg-white/[0.04] p-6 text-sm text-white/65">

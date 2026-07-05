@@ -23,7 +23,17 @@ import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
 import { getStudioSnapshot, getStudioWorkflows, runStudioAction } from '@/lib/studio-api';
 import apiClient, { type ProductionCardsResponse } from '@/lib/api-client';
-import type { StudioAction, StudioActionResult, StudioIssue, StudioRunMode, StudioSnapshot, StudioWorkflowOption } from '@/lib/studio-types';
+import { withStudioContext } from '@/lib/studio-context-links';
+import { requiresConfirmation } from '@/lib/studio-guidance';
+import type {
+  StudioAction,
+  StudioActionResult,
+  StudioGuidedAction,
+  StudioIssue,
+  StudioRunMode,
+  StudioSnapshot,
+  StudioWorkflowOption,
+} from '@/lib/studio-types';
 import { StudioAgentPanel } from './studio-agent-panel';
 import { StudioContextPanel } from './studio-context-panel';
 import { StudioModeBanner } from './studio-mode-banner';
@@ -35,6 +45,11 @@ import { ProductionBiblePanel } from './production-bible-panel';
 import { EpisodePlanPanel } from './episode-plan-panel';
 import { EpisodeContractPanel } from './episode-contract-panel';
 import { ConsistencyLedgerPanel } from './consistency-ledger-panel';
+import { StudioActionConfirmationDialog } from './studio-action-confirmation-dialog';
+import { StudioActionProgress } from './studio-action-progress';
+import { StudioCommandBar } from './studio-command-bar';
+import { StudioExpertSections } from './studio-expert-sections';
+import { StudioStageFlow } from './studio-stage-flow';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
@@ -289,6 +304,8 @@ export function StudioShell() {
   const [productionCards, setProductionCards] = useState<ProductionCardsResponse | null>(null);
   const [bypassReason, setBypassReason] = useState('');
   const [lastAction, setLastAction] = useState<StudioActionResult | null>(null);
+  const [pendingAction, setPendingAction] = useState<StudioGuidedAction | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snapshotRetryMessage, setSnapshotRetryMessage] = useState('');
@@ -464,27 +481,25 @@ export function StudioShell() {
     }
   };
 
-  const handlePrimaryAction = useCallback(async () => {
-    const actionCandidates = [
-      ...(activeSnapshot?.actions || []),
-      ...(activeSnapshot?.production_bible_summary?.next_actions || []),
-    ];
-    const executableAction = actionCandidates.find(isExecutableSafeAction);
-    const navigationAction = actionCandidates.find(isNavigationAction);
-    const action = executableAction || navigationAction;
+  const executeStudioAction = useCallback(async (action?: StudioAction | null) => {
     const novelId = activeSnapshot?.workflow?.novel_id || activeSnapshot?.story_context?.novel?.id || '';
+    const fallbackHref = novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards';
 
-    if (navigationAction && action === navigationAction) {
-      router.push(action.href || (novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards'));
+    if (isNavigationAction(action)) {
+      router.push(withStudioContext(action?.href || fallbackHref, activeSnapshot));
       return;
     }
 
-    if (executableAction && action === executableAction && workflowId) {
+    if (action?.code && workflowId) {
+      const guidedAction = action as StudioGuidedAction;
       setLoading(true);
+      setError('');
       try {
         const result = await runStudioAction(workflowId, {
           code: action.code,
+          params: guidedAction.params,
           mode,
+          source_issue_code: guidedAction.source_issue_code || undefined,
         });
         setLastAction(result);
         toast({
@@ -501,8 +516,47 @@ export function StudioShell() {
       return;
     }
 
-    router.push(novelId ? `/studio/cards?novel_id=${novelId}` : '/studio/cards');
+    router.push(withStudioContext(fallbackHref, activeSnapshot));
   }, [activeSnapshot, loadSnapshot, mode, router, toast, workflowId]);
+
+  const handlePrimaryAction = useCallback((preferredAction?: StudioAction) => {
+    const actionCandidates = [
+      ...(activeSnapshot?.actions || []),
+      ...(activeSnapshot?.production_bible_summary?.next_actions || []),
+    ];
+    const executableAction = actionCandidates.find(isExecutableSafeAction);
+    const navigationAction = actionCandidates.find(isNavigationAction);
+    const preferredActionIsSupported =
+      isExecutableSafeAction(preferredAction) ||
+      isNavigationAction(preferredAction) ||
+      requiresConfirmation(preferredAction as StudioGuidedAction);
+    const action = preferredActionIsSupported ? preferredAction : executableAction || navigationAction;
+
+    if (requiresConfirmation(action as StudioGuidedAction)) {
+      setPendingAction(action as StudioGuidedAction);
+      setConfirmOpen(true);
+      return;
+    }
+
+    void executeStudioAction(action);
+  }, [activeSnapshot, executeStudioAction]);
+
+  const handleGuidedAction = useCallback((action: StudioGuidedAction) => {
+    handlePrimaryAction(action);
+  }, [handlePrimaryAction]);
+
+  const handleConfirmationOpenChange = useCallback((open: boolean) => {
+    setConfirmOpen(open);
+    if (!open) setPendingAction(null);
+  }, []);
+
+  const handleConfirmGuidedAction = useCallback(() => {
+    const action = pendingAction;
+    if (!action) return;
+    setConfirmOpen(false);
+    setPendingAction(null);
+    void executeStudioAction(action);
+  }, [executeStudioAction, pendingAction]);
 
   const handleApproveProductionEntity = useCallback(async (entityId: string) => {
     if (!entityId) return;
@@ -598,14 +652,14 @@ export function StudioShell() {
 
       {expertLinks.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-          <span className="text-xs text-white/45">专家工具</span>
+          <span className="text-xs text-white/45">高级工具</span>
           {expertLinks.map((link) => (
             <Button
               key={link.href}
               variant="outline"
               size="sm"
               className="h-7 border-white/15 px-2 text-xs text-white/70 hover:bg-white/10"
-              onClick={() => router.push(link.href)}
+              onClick={() => router.push(withStudioContext(link.href, activeSnapshot))}
             >
               {link.label}
             </Button>
@@ -658,36 +712,66 @@ export function StudioShell() {
               {snapshotRetryMessage || '正在加载工作台快照…'}
             </div>
           ) : null}
-          {activeSnapshot ? <SeriesOverviewPanel snapshot={activeSnapshot} onPrimaryAction={handlePrimaryAction} /> : null}
-          <PromptSkillPanel />
-          <StudioSeriesBoard snapshot={activeSnapshot} workflowId={workflowId} productionCards={productionCards} />
-          <ProductionBiblePanel snapshot={activeSnapshot} onApproveEntity={handleApproveProductionEntity} />
-          <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-            <EpisodePlanPanel snapshot={activeSnapshot} />
-            <EpisodeContractPanel
-              contract={activeSnapshot?.episode_contract || activeSnapshot?.workflow?.metadata?.episode_contract}
-              loading={loading}
-              onLock={handleLockEpisodeContract}
-            />
-          </div>
-          <ConsistencyLedgerPanel snapshot={activeSnapshot} onRepair={handleLedgerRepair} />
-          <StudioContextPanel snapshot={activeSnapshot} />
-          <StudioProductionBoard snapshot={activeSnapshot} workflowId={workflowId} />
-          <StudioContinuityBoard snapshot={activeSnapshot} />
-          <div id="studio-agent-panel">
-            <StudioAgentPanel
-              snapshot={activeSnapshot}
-              mode={mode}
-              loading={loading}
-              bypassReason={bypassReason}
-              lastAction={lastAction}
-              onBypassReasonChange={setBypassReason}
-              onRefresh={() => loadSnapshot(workflowId, mode)}
-              onAction={handleAction}
-            />
-          </div>
+          {activeSnapshot ? (
+            <div className="space-y-3">
+              <StudioCommandBar
+                snapshot={activeSnapshot}
+                mode={mode}
+                loading={loading}
+                onPrimaryAction={handleGuidedAction}
+              />
+              <StudioStageFlow snapshot={activeSnapshot} />
+              <StudioActionProgress action={lastAction} loading={loading} retryMessage={snapshotRetryMessage} />
+              <SeriesOverviewPanel snapshot={activeSnapshot} onPrimaryAction={handlePrimaryAction} />
+            </div>
+          ) : null}
+          <StudioExpertSections
+            setup={(
+              <>
+                <StudioSeriesBoard snapshot={activeSnapshot} workflowId={workflowId} productionCards={productionCards} />
+                <ProductionBiblePanel snapshot={activeSnapshot} onApproveEntity={handleApproveProductionEntity} />
+                <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+                  <EpisodePlanPanel snapshot={activeSnapshot} />
+                  <EpisodeContractPanel
+                    contract={activeSnapshot?.episode_contract || activeSnapshot?.workflow?.metadata?.episode_contract}
+                    loading={loading}
+                    onLock={handleLockEpisodeContract}
+                  />
+                </div>
+                <ConsistencyLedgerPanel snapshot={activeSnapshot} onRepair={handleLedgerRepair} />
+                <StudioContextPanel snapshot={activeSnapshot} />
+              </>
+            )}
+            production={(
+              <>
+                <PromptSkillPanel />
+                <StudioProductionBoard snapshot={activeSnapshot} workflowId={workflowId} />
+                <div id="studio-agent-panel">
+                  <StudioAgentPanel
+                    snapshot={activeSnapshot}
+                    mode={mode}
+                    loading={loading}
+                    bypassReason={bypassReason}
+                    lastAction={lastAction}
+                    onBypassReasonChange={setBypassReason}
+                    onRefresh={() => loadSnapshot(workflowId, mode)}
+                    onAction={handleAction}
+                  />
+                </div>
+              </>
+            )}
+            review={<StudioContinuityBoard snapshot={activeSnapshot} />}
+            operations={<StudioContextPanel snapshot={activeSnapshot} />}
+          />
         </>
       )}
+      <StudioActionConfirmationDialog
+        action={pendingAction}
+        open={confirmOpen}
+        loading={loading}
+        onOpenChange={handleConfirmationOpenChange}
+        onConfirm={handleConfirmGuidedAction}
+      />
     </div>
   );
 }
