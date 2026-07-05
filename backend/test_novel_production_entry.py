@@ -31,6 +31,21 @@ def _create_novel(client: TestClient, user_id: str, title: str = "入口测试�
     return response.json()["id"]
 
 
+def _create_chapter(client: TestClient, user_id: str, novel_id: str, title: str = "入口测试章节") -> str:
+    response = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": title,
+            "chapter_number": 1,
+            "content": "沈砚在雨夜发现吊坠裂纹，故事由此开始。",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
+
+
 def test_novel_production_entry_no_chapters_points_to_content_prepare(client: TestClient) -> None:
     user_id = f"novel-entry-no-chapters-{uuid4()}"
     novel_id = _create_novel(client, user_id)
@@ -44,6 +59,45 @@ def test_novel_production_entry_no_chapters_points_to_content_prepare(client: Te
     assert payload["primary_action"]["code"] == "open_chapters"
     assert payload["primary_action"]["href"] == f"/novels/{novel_id}?tab=chapters"
     assert payload["metrics"]["chapter_count"] == 0
+
+
+def test_novel_production_entry_with_chapter_points_to_series_plan(client: TestClient) -> None:
+    user_id = f"novel-entry-series-plan-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    _create_chapter(client, user_id, novel_id)
+
+    response = client.get(f"/api/v1/novels/{novel_id}/production-entry", headers=_auth_headers(user_id))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stage"] == "series_plan"
+    assert payload["primary_action"]["code"] == "open_series_plan"
+    assert payload["primary_action"]["href"] == f"/novels/{novel_id}?tab=series-plan"
+    assert payload["metrics"]["chapter_count"] == 1
+    assert payload["metrics"]["episode_count"] == 0
+
+
+def test_novel_production_entry_with_series_plan_points_to_workflow_create(client: TestClient) -> None:
+    user_id = f"novel-entry-workflow-create-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    _create_chapter(client, user_id, novel_id)
+
+    plan_response = client.post(
+        f"/api/v1/novels/{novel_id}/series-plan",
+        json={"target_episode_count": 1, "target_duration_seconds": 60},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_response.status_code == 200
+
+    response = client.get(f"/api/v1/novels/{novel_id}/production-entry", headers=_auth_headers(user_id))
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["stage"] == "workflow_create"
+    assert payload["primary_action"]["code"] == "open_series_plan"
+    assert payload["metrics"]["chapter_count"] == 1
+    assert payload["metrics"]["episode_count"] >= 1
+    assert payload["metrics"]["workflow_count"] == 0
 
 
 def test_novel_production_entry_with_fixture_points_to_studio(client: TestClient) -> None:
@@ -79,3 +133,20 @@ def test_novel_production_entries_batch_returns_map(client: TestClient) -> None:
     assert payload["count"] == 2
     assert payload["entries"][first_id]["stage"] == "content_prepare"
     assert payload["entries"][second_id]["stage"] == "content_prepare"
+
+
+def test_novel_production_entries_batch_caps_unique_ids(client: TestClient) -> None:
+    user_id = f"novel-entry-batch-cap-{uuid4()}"
+    novel_ids = [str(uuid4()) for _ in range(101)]
+
+    response = client.get(
+        "/api/v1/novels/production-entries",
+        params={"novel_ids": ",".join(novel_ids)},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["count"] == 100
+    assert novel_ids[99] in payload["entries"]
+    assert novel_ids[100] not in payload["entries"]
