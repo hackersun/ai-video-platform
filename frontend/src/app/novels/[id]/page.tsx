@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -406,7 +406,9 @@ export default function NovelDetailPage() {
   const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const novelId = params.id as string;
+  const tabParam = searchParams.get('tab');
   
   const [novel, setNovel] = useState<Novel | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -416,7 +418,7 @@ export default function NovelDetailPage() {
   const [videoSummaries, setVideoSummaries] = useState<VideoJobSummary[]>([]);
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
   const [seriesPlan, setSeriesPlan] = useState<SeriesPlan | null>(null);
-  const [productionEntry, setProductionEntry] = useState<NovelProductionEntry | null>(null);
+  const [productionEntry, setProductionEntry] = useState<NovelProductionEntry | null | undefined>(undefined);
   const [storyStateMachine, setStoryStateMachine] = useState<StoryStateMachine | null>(null);
   const [stateMachineIssues, setStateMachineIssues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -467,12 +469,11 @@ export default function NovelDetailPage() {
   const [styleTemplates, setStyleTemplates] = useState<ImageStyleTemplate[]>(FALLBACK_IMAGE_STYLES);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const requestedTab = normalizeDetailTab(new URLSearchParams(window.location.search).get('tab'));
+    const requestedTab = normalizeDetailTab(tabParam);
     if (requestedTab) {
       setActiveTab(requestedTab);
     }
-  }, []);
+  }, [tabParam]);
 
   useEffect(() => {
     if (novelId) {
@@ -509,6 +510,7 @@ export default function NovelDetailPage() {
   };
 
   const loadProductionEntry = async () => {
+    setProductionEntry(undefined);
     try {
       setProductionEntry(await apiClient.getNovelProductionEntry(novelId));
     } catch {
@@ -966,7 +968,6 @@ export default function NovelDetailPage() {
         throw new Error('后端未返回本集工程 ID');
       }
       await loadNovelData();
-      await loadProductionEntry();
       router.push(`/producer?workflow_id=${workflowId}&novel_id=${novelId}&chapter_id=${chapterId}`);
     } catch (err: any) {
       toast({ title: '本集工程创建失败', description: err?.message || '请稍后重试。', type: 'error' });
@@ -1124,7 +1125,12 @@ export default function NovelDetailPage() {
           </div>
         </div>
 
-        <NovelProductionEntryCard entry={productionEntry} />
+        <NovelProductionEntryCard
+          entry={productionEntry}
+          fallbackHref={`/novels/${novelId}?tab=chapters`}
+          fallbackLabel="继续处理章节"
+          novelId={novelId}
+        />
 
         {/* 作品概览 */}
         <Card data-testid="novel-overview-card" className="bg-white/5 border-white/10 overflow-hidden">

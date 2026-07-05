@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -82,6 +82,8 @@ function NovelsContent() {
   const { toast } = useToast();
   const [novels, setNovels] = useState<Novel[]>([]);
   const [productionEntries, setProductionEntries] = useState<Record<string, NovelProductionEntry>>({});
+  const [productionEntriesLoaded, setProductionEntriesLoaded] = useState(false);
+  const [productionEntriesFailed, setProductionEntriesFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -98,17 +100,23 @@ function NovelsContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const highlightId = searchParams.get('highlight');
+  const productionEntriesRequestRef = useRef(0);
 
   // 从后端API加载小说
   const loadNovelsFromAPI = async () => {
+    const requestId = productionEntriesRequestRef.current + 1;
+    productionEntriesRequestRef.current = requestId;
     setLoading(true);
     setError(null);
+    setProductionEntriesLoaded(false);
+    setProductionEntriesFailed(false);
     try {
       const response = await fetchWithAuth(`${API_BASE}/novels`);
       if (!response.ok) {
         throw new Error('加载失败');
       }
       const data: ApiNovel[] = await response.json();
+      if (productionEntriesRequestRef.current !== requestId) return;
       
       // 转换API数据为前端格式
       const convertedNovels: Novel[] = data.map(n => ({
@@ -127,18 +135,35 @@ function NovelsContent() {
       const ids = convertedNovels.map((item) => item.id);
       if (ids.length) {
         apiClient.getNovelProductionEntries(ids)
-          .then((response) => setProductionEntries(response.entries || {}))
-          .catch(() => setProductionEntries({}));
+          .then((response) => {
+            if (productionEntriesRequestRef.current !== requestId) return;
+            setProductionEntries(response.entries || {});
+            setProductionEntriesFailed(false);
+            setProductionEntriesLoaded(true);
+          })
+          .catch(() => {
+            if (productionEntriesRequestRef.current !== requestId) return;
+            setProductionEntries({});
+            setProductionEntriesFailed(true);
+            setProductionEntriesLoaded(true);
+          });
       } else {
         setProductionEntries({});
+        setProductionEntriesFailed(false);
+        setProductionEntriesLoaded(true);
       }
     } catch (err) {
+      if (productionEntriesRequestRef.current !== requestId) return;
       console.error('加载小说失败:', err);
       setError('加载失败，请检查后端服务是否启动');
       setNovels([]);
       setProductionEntries({});
+      setProductionEntriesFailed(false);
+      setProductionEntriesLoaded(true);
     } finally {
-      setLoading(false);
+      if (productionEntriesRequestRef.current === requestId) {
+        setLoading(false);
+      }
     }
   };
 
@@ -442,7 +467,11 @@ function NovelsContent() {
                               </span>
                             </div>
                             <div className="mt-3">
-                              <NovelProductionEntryCard entry={productionEntries[novel.id]} />
+                              <NovelProductionEntryCard
+                                entry={productionEntries[novel.id] || (productionEntriesLoaded ? null : undefined)}
+                                failed={productionEntriesFailed}
+                                novelId={novel.id}
+                              />
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
