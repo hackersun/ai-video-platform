@@ -440,6 +440,48 @@ def test_provider_content_adapter_keeps_single_image_shape_when_limits_do_not_al
     assert result["metadata"]["video_count"] == 0
 
 
+def test_provider_content_adapter_keeps_media_references_without_images() -> None:
+    adapter = _adapter_module()
+    build_provider_content = getattr(adapter, "build_video_provider_content", None)
+    assert callable(build_provider_content)
+
+    result = build_provider_content(
+        final_prompt="旧山门内烛火摇动，角色暂未入镜",
+        duration=6,
+        resolution="720p",
+        provider_image_url=None,
+        reference_package={
+            "images": [],
+            "videos": [
+                {"url": "https://cdn.example.com/previous-shot.mp4", "role_tag": "previous_shot", "at_index": 1}
+            ],
+            "audios": [
+                {"url": "https://cdn.example.com/voice-lock.mp3", "role_tag": "voice_lock", "at_index": 1}
+            ],
+        },
+        model_limits={"images": 9, "videos": 1, "audios": 1, "at_reference": True, "native_audio": False},
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["video_url", "audio_url", "text"]
+    assert result["content"][0] == {
+        "type": "video_url",
+        "video_url": {"url": "https://cdn.example.com/previous-shot.mp4"},
+        "role": "reference_video",
+    }
+    assert result["content"][1] == {
+        "type": "audio_url",
+        "audio_url": {"url": "https://cdn.example.com/voice-lock.mp3"},
+        "role": "reference_audio",
+    }
+    assert result["metadata"] == {
+        "mode": "multimodal",
+        "image_count": 0,
+        "video_count": 1,
+        "audio_count": 1,
+    }
+
+
 def test_provider_content_adapter_respects_text_only_model_contract() -> None:
     adapter = _adapter_module()
     build_provider_content = getattr(adapter, "build_video_provider_content", None)
