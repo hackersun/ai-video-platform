@@ -43,6 +43,32 @@ export type StudioGuidedAction = StudioAction & {
   };
   params?: Record<string, any>;
   source_issue_code?: string | null;
+  execution?: string;
+  method?: string;
+  endpoint?: string;
+};
+
+export type StudioGuidanceStage = {
+  id: 'content' | 'bible' | 'episode' | 'draft' | 'review' | string;
+  label: string;
+  status: 'ready' | 'working' | 'blocked' | string;
+  description?: string;
+  action?: StudioGuidedAction | null;
+};
+
+export type StudioGuidance = {
+  readiness_score?: number;
+  current_stage?: string;
+  next_action?: StudioGuidedAction | null;
+  stages?: StudioGuidanceStage[];
+  blocker_count?: number;
+  mode?: StudioRunMode | string;
+  breadcrumbs?: {
+    novel_id?: string | null;
+    chapter_id?: string | null;
+    workflow_id?: string | null;
+  };
+  secondary_actions?: StudioAction[];
 };
 
 export type NovelProductionEntry = {
@@ -153,6 +179,7 @@ export type ConsistencyLedger = {
 
 export type StudioSnapshot = {
   series_studio?: SeriesStudioContract;
+  guidance?: StudioGuidance | null;
   series_plan?: SeriesPlan | null;
   episode_contract?: EpisodeContract | null;
   consistency_ledger?: ConsistencyLedger | null;
