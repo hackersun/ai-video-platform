@@ -61,6 +61,8 @@ async def _seed_character_card_fixture() -> dict[str, str]:
                 novel_id=novel_id,
                 entity_type="character",
                 name="林澈",
+                canonical_name="云桥林澈",
+                aliases=["云桥少年"],
                 description="黑发少年，青色长衫",
                 attributes={
                     "visual_dna": {"hair": "black", "costume": "青色长衫"},
@@ -77,7 +79,7 @@ async def _seed_character_card_fixture() -> dict[str, str]:
                 user_id=user_id,
                 novel_id=novel_id,
                 title="定稿卡 Story Bible",
-                character_rules=[{"name": "林澈", "voice": "calm_male", "voice_speed": 0.9}],
+                character_rules=[{"entity_id": entity_id, "name": "旧称林澈", "voice": "calm_male", "voice_speed": 0.9}],
                 extra_data={
                     "state_machine": {
                         "current_state": {

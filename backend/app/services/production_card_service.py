@@ -164,7 +164,14 @@ async def _build_voice(db: AsyncSession, entity: StoryEntity, story_bible: Optio
     if story_bible is None:
         return {"voice": None, "voice_speed": None, "story_bible_id": story_bible.id if story_bible else None, "locked": False}
 
-    voice_config = await get_character_voice_from_story_bible(db, entity.name, story_bible.id)
+    voice_config = await get_character_voice_from_story_bible(
+        db,
+        entity.name,
+        story_bible.id,
+        entity_id=entity.id,
+        canonical_name=entity.canonical_name,
+        aliases=_json_list(entity.aliases),
+    )
     voice = None
     voice_speed = None
     if voice_config:

@@ -3,7 +3,7 @@ Story Bible Voice Service
 从Story Bible获取角色音色配置
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,10 +11,45 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import StoryBible
 
 
+def _string_set(values: Iterable[Any]) -> set[str]:
+    return {str(value).strip() for value in values if value and str(value).strip()}
+
+
+def _aliases(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _rule_matches_character(
+    rule: Dict[str, Any],
+    character_name: str,
+    *,
+    entity_id: Optional[str] = None,
+    canonical_name: Optional[str] = None,
+    aliases: Optional[Iterable[Any]] = None,
+) -> bool:
+    rule_entity_id = rule.get("entity_id") or rule.get("id") or rule.get("story_entity_id")
+    if entity_id and rule_entity_id and str(rule_entity_id) == str(entity_id):
+        return True
+
+    target_names = _string_set([character_name, canonical_name, *list(aliases or [])])
+    rule_names = _string_set(
+        [
+            rule.get("name"),
+            rule.get("canonical_name"),
+            *_aliases(rule.get("aliases")),
+        ]
+    )
+    return bool(target_names and rule_names and target_names.intersection(rule_names))
+
+
 async def get_character_voice_from_story_bible(
     db: AsyncSession,
     character_name: str,
-    story_bible_id: str
+    story_bible_id: str,
+    *,
+    entity_id: Optional[str] = None,
+    canonical_name: Optional[str] = None,
+    aliases: Optional[Iterable[Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
     从Story Bible获取角色音色配置
@@ -37,7 +72,13 @@ async def get_character_voice_from_story_bible(
 
     character_rules = story_bible.character_rules or []
     for rule in character_rules:
-        if rule.get("name") == character_name:
+        if isinstance(rule, dict) and _rule_matches_character(
+            rule,
+            character_name,
+            entity_id=entity_id,
+            canonical_name=canonical_name,
+            aliases=aliases,
+        ):
             return {
                 "voice": rule.get("voice"),
                 "voice_model": rule.get("voice_model"),

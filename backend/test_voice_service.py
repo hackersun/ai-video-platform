@@ -88,6 +88,59 @@ async def test_get_character_voice_not_found():
 
 
 @pytest.mark.asyncio
+async def test_get_character_voice_matches_entity_id():
+    """Test getting voice config by StoryEntity id when names diverge"""
+    story_bible = MockStoryBible(
+        id="sb-001",
+        character_rules=[
+            {"entity_id": "entity-linzhou", "name": "旧名", "voice": "male_youth"},
+        ],
+    )
+    db = MockSession(story_bible)
+
+    result = await get_character_voice_from_story_bible(
+        db,
+        "林舟",
+        "sb-001",
+        entity_id="entity-linzhou",
+    )
+
+    assert result is not None
+    assert result["voice"] == "male_youth"
+
+
+@pytest.mark.asyncio
+async def test_get_character_voice_matches_alias_or_canonical_name():
+    """Test getting voice config by alias/canonical name"""
+    story_bible = MockStoryBible(
+        id="sb-001",
+        character_rules=[
+            {"name": "沈砚", "aliases": ["雾港青年"], "voice": "calm_male"},
+            {"canonical_name": "林舟", "voice": "male_youth"},
+        ],
+    )
+    db = MockSession(story_bible)
+
+    alias_result = await get_character_voice_from_story_bible(
+        db,
+        "阿砚",
+        "sb-001",
+        aliases=["雾港青年"],
+    )
+    canonical_result = await get_character_voice_from_story_bible(
+        db,
+        "小舟",
+        "sb-001",
+        canonical_name="林舟",
+    )
+
+    assert alias_result is not None
+    assert alias_result["voice"] == "calm_male"
+    assert canonical_result is not None
+    assert canonical_result["voice"] == "male_youth"
+
+
+@pytest.mark.asyncio
 async def test_get_character_voice_no_story_bible():
     """Test when story bible does not exist"""
     db = MockSession(None)
