@@ -25,6 +25,7 @@ from app.models import (
     Workflow,
 )
 from app.services.shot_quality_service import build_shot_quality_report
+from app.services.studio_guidance import build_studio_guidance
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.story_state_machine import get_story_state_machine
 from app.services.production_bible import build_production_bible_summary
@@ -606,7 +607,7 @@ async def build_studio_snapshot(
     policy_result = apply_mode_policy(raw_issues, mode_policy or StudioModePolicy())
     actions = _unique_actions(policy_result["issues"])
 
-    return {
+    payload = {
         "series_studio": series_studio_contract(),
         "workflow": {
             "id": workflow.id,
@@ -669,3 +670,15 @@ async def build_studio_snapshot(
             }
         },
     }
+    payload["guidance"] = build_studio_guidance(
+        workflow=payload["workflow"],
+        story_context=payload["story_context"],
+        story_bible=payload["story_bible"],
+        production_bible_summary=payload["production_bible_summary"] or {},
+        production=payload["production"],
+        timeline=payload["timeline"] or {},
+        issues=payload["issues"],
+        actions=payload["actions"],
+        mode_policy=payload["mode_policy"],
+    )
+    return payload

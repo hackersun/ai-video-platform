@@ -168,3 +168,21 @@ def test_studio_snapshot_video_jobs_include_reference_package_summary(client: Te
             {"reason": "duplicate"},
         ],
     }
+
+
+def test_studio_snapshot_includes_guidance_stages_and_next_action(client: TestClient) -> None:
+    user_id = f"studio-guidance-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+
+    response = client.get(
+        f"/api/v1/studio/workflows/{fixture['workflow_id']}/snapshot",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    guidance = response.json()["guidance"]
+    assert guidance["current_stage"] in {"content", "bible", "episode", "draft", "review"}
+    assert [stage["id"] for stage in guidance["stages"]] == ["content", "bible", "episode", "draft", "review"]
+    assert guidance["next_action"]["code"]
+    assert guidance["next_action"]["reason"]
+    assert guidance["next_action"]["risk"] in {"safe", "navigation", "confirm", "production"}

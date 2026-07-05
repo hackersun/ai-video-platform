@@ -172,6 +172,22 @@ def test_studio_action_execute_compat_route_and_safe_audit_action(client: TestCl
     assert audit_payload["result"]["summary"]["missing_count"] == 0
 
 
+def test_studio_safe_actions_include_confirmation_metadata(client: TestClient) -> None:
+    user_id = f"studio-action-meta-user-{uuid4()}"
+    fixture = _create_short_video_fixture(client, user_id)
+
+    response = client.post(
+        f"/api/v1/studio/workflows/{fixture['workflow_id']}/actions/apply_asset_locks/execute",
+        json={"mode": "production"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["risk"] == "safe"
+    assert payload["result"]["applied_shot_count"] == 3
+
+
 def test_studio_action_refresh_contracts_persists_real_contracts(client: TestClient) -> None:
     user_id = f"studio-refresh-contracts-user-{uuid4()}"
     fixture = _create_short_video_fixture(client, user_id)
