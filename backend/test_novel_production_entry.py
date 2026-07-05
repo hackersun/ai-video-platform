@@ -117,6 +117,39 @@ def test_novel_production_entry_with_fixture_points_to_studio(client: TestClient
     assert payload["metrics"]["workflow_count"] >= 1
 
 
+def test_novel_production_entries_batch_reports_series_plan_metrics_with_workflow(client: TestClient) -> None:
+    user_id = f"novel-entry-batch-plan-workflow-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id)
+
+    plan_response = client.post(
+        f"/api/v1/novels/{novel_id}/series-plan",
+        json={"target_episode_count": 1, "target_duration_seconds": 60},
+        headers=_auth_headers(user_id),
+    )
+    assert plan_response.status_code == 200
+
+    workflow_response = client.post(
+        "/api/v1/workflow/start",
+        json={"title": "入口批量指标工作流", "novel_id": novel_id, "chapter_id": chapter_id},
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_response.status_code == 201
+
+    response = client.get(
+        "/api/v1/novels/production-entries",
+        params={"novel_ids": novel_id},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    entry = response.json()["entries"][novel_id]
+    assert entry["stage"] == "studio_fix"
+    assert entry["metrics"]["episode_count"] >= 1
+    assert entry["metrics"]["workflow_count"] == 1
+    assert f"workflow_id={workflow_response.json()['workflow_id']}" in entry["primary_action"]["href"]
+
+
 def test_novel_production_entries_batch_returns_map(client: TestClient) -> None:
     user_id = f"novel-entry-batch-{uuid4()}"
     first_id = _create_novel(client, user_id, "批量入口 A")

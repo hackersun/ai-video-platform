@@ -613,11 +613,20 @@ class ApiClient {
   }
 
   async getNovelProductionEntries(novelIds: string[]) {
-    const searchParams = new URLSearchParams();
-    searchParams.set('novel_ids', novelIds.join(','));
-    return this.request<{ entries: Record<string, NovelProductionEntry>; count: number }>(
-      `/novels/production-entries?${searchParams.toString()}`
-    );
+    const uniqueNovelIds = Array.from(new Set(novelIds.map((id) => id.trim()).filter(Boolean)));
+    const entries: Record<string, NovelProductionEntry> = {};
+    const batchSize = 100;
+
+    for (let index = 0; index < uniqueNovelIds.length; index += batchSize) {
+      const searchParams = new URLSearchParams();
+      searchParams.set('novel_ids', uniqueNovelIds.slice(index, index + batchSize).join(','));
+      const batch = await this.request<{ entries: Record<string, NovelProductionEntry>; count: number }>(
+        `/novels/production-entries?${searchParams.toString()}`
+      );
+      Object.assign(entries, batch.entries);
+    }
+
+    return { entries, count: Object.keys(entries).length };
   }
 
   async getNovelProductionEntry(novelId: string) {

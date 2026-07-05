@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlencode
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Chapter, Novel, Workflow
-from app.services.series_production import get_series_plan
+from app.services.series_production import SERIES_PLAN_KEY, get_series_plan
 
 
 BATCH_LIMIT = 100
 
 
 def _query_params(params: Dict[str, Optional[str]]) -> str:
-    pairs = [(key, value) for key, value in params.items() if value]
-    return "&".join(f"{key}={value}" for key, value in pairs)
+    return urlencode({key: value for key, value in params.items() if value})
 
 
 def _action(code: str, label: str, href: str, description: str, risk: str = "navigation") -> Dict[str, Any]:
@@ -114,6 +114,16 @@ def _entry_from_state(
     }
 
 
+def _saved_episode_count(extra_data: Any) -> int:
+    if not isinstance(extra_data, dict):
+        return 0
+    plan = extra_data.get(SERIES_PLAN_KEY)
+    if not isinstance(plan, dict):
+        return 0
+    episodes = plan.get("episodes")
+    return len(episodes) if isinstance(episodes, list) else 0
+
+
 async def _chapter_count(db: AsyncSession, user_id: str, novel_id: str) -> int:
     result = await db.execute(
         select(func.count(Chapter.id)).where(Chapter.user_id == user_id, Chapter.novel_id == novel_id)
@@ -157,16 +167,25 @@ async def _workflow_counts(db: AsyncSession, user_id: str, novel_ids: List[str])
 
 
 async def _latest_workflows(db: AsyncSession, user_id: str, novel_ids: List[str]) -> Dict[str, Workflow]:
+    ranked_workflows = (
+        select(
+            Workflow.id.label("workflow_id"),
+            func.row_number()
+            .over(
+                partition_by=Workflow.novel_id,
+                order_by=(desc(Workflow.updated_at), desc(Workflow.created_at)),
+            )
+            .label("rn"),
+        )
+        .where(Workflow.user_id == user_id, Workflow.novel_id.in_(novel_ids))
+        .subquery()
+    )
     result = await db.execute(
         select(Workflow)
-        .where(Workflow.user_id == user_id, Workflow.novel_id.in_(novel_ids))
-        .order_by(desc(Workflow.updated_at), desc(Workflow.created_at))
+        .join(ranked_workflows, Workflow.id == ranked_workflows.c.workflow_id)
+        .where(ranked_workflows.c.rn == 1)
     )
-    workflows: Dict[str, Workflow] = {}
-    for workflow in result.scalars().all():
-        if workflow.novel_id and workflow.novel_id not in workflows:
-            workflows[workflow.novel_id] = workflow
-    return workflows
+    return {workflow.novel_id: workflow for workflow in result.scalars().all() if workflow.novel_id}
 
 
 async def build_novel_production_entry(db: AsyncSession, user_id: str, novel_id: str) -> Dict[str, Any]:
@@ -193,8 +212,11 @@ async def build_novel_production_entries(
     if not ids:
         return {"entries": {}, "count": 0}
 
-    novels_result = await db.execute(select(Novel.id).where(Novel.user_id == user_id, Novel.id.in_(ids)))
-    existing_ids = set(novels_result.scalars().all())
+    novels_result = await db.execute(
+        select(Novel.id, Novel.extra_data).where(Novel.user_id == user_id, Novel.id.in_(ids))
+    )
+    novel_extra_data = {novel_id: extra_data for novel_id, extra_data in novels_result.all()}
+    existing_ids = set(novel_extra_data)
     chapter_counts = await _chapter_counts(db, user_id, ids)
     workflow_counts = await _workflow_counts(db, user_id, ids)
     latest_workflows = await _latest_workflows(db, user_id, ids)
@@ -207,16 +229,11 @@ async def build_novel_production_entries(
 
         chapter_count = chapter_counts.get(novel_id, 0)
         latest_workflow = latest_workflows.get(novel_id)
-        episode_count = 0
-        if chapter_count > 0 and latest_workflow is None:
-            plan = await get_series_plan(db, user_id, novel_id)
-            episodes = plan.get("episodes") if isinstance(plan, dict) else []
-            episode_count = len(episodes or [])
 
         entries[novel_id] = _entry_from_state(
             novel_id,
             chapter_count,
-            episode_count,
+            _saved_episode_count(novel_extra_data.get(novel_id)),
             latest_workflow,
             workflow_counts.get(novel_id, 0),
         )
