@@ -16,6 +16,7 @@ import {
   Wand2,
   Workflow,
   MonitorPlay,
+  ListTodo,
 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
@@ -24,6 +25,7 @@ const primaryNav = [
   { href: '/quick-start', label: '快速开始' },
   { href: '/novels', label: '小说' },
   { href: '/assets', label: '资产' },
+  { href: '/jobs', label: '任务中心' },
 ];
 
 const expertNav = [
@@ -48,6 +50,7 @@ const iconByHref: Record<string, typeof BookOpen> = {
   '/quick-start': Wand2,
   '/novels': BookOpen,
   '/assets': Images,
+  '/jobs': ListTodo,
   '/story-bibles': Sparkles,
   '/producer': Bot,
   '/workflow': Workflow,

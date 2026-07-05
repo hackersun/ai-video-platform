@@ -32,7 +32,9 @@ import {
   Filter,
   Search,
   PlugZap,
-  ShieldCheck
+  ShieldCheck,
+  Ban,
+  Trash2
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
@@ -82,6 +84,10 @@ const safeDownloadName = (name?: string | null) => {
   const filename = clean || 'video';
   return filename.toLowerCase().endsWith('.mp4') ? filename : `${filename}.mp4`;
 };
+
+const canCancelJobStatus = (status?: string | null) => (
+  status === 'pending' || status === 'running' || status === 'processing'
+);
 
 // 视频模型类型（从后端加载后填充）
 interface VideoModelOption {
@@ -1283,6 +1289,58 @@ function VideoGenerationPageInner() {
       }
     } catch (err) {
       console.error('刷新状态失败:', err);
+    }
+  };
+
+  const handleCancelVideoHistory = async (job: VideoJob) => {
+    if (!job.id) return;
+    try {
+      await apiClient.cancelVideoJob(job.id);
+      toast({ title: '视频任务已取消', type: 'success' });
+      loadHistory();
+    } catch (err: any) {
+      toast({ title: '取消失败', description: err.message || '请稍后重试。', type: 'error' });
+    }
+  };
+
+  const handleDeleteVideoHistory = async (job: VideoJob) => {
+    if (!job.id) return;
+    if (!window.confirm('确定删除这条视频生成历史吗？')) return;
+    try {
+      await apiClient.deleteVideoJob(job.id);
+      if (playingHistory?.type === 'video' && playingHistory.id === job.id) {
+        setPlayingHistory(null);
+      }
+      toast({ title: '视频历史已删除', type: 'success' });
+      loadHistory();
+    } catch (err: any) {
+      toast({ title: '删除失败', description: err.message || '请稍后重试。', type: 'error' });
+    }
+  };
+
+  const handleCancelMediaHistory = async (job: MediaJob) => {
+    if (!job.id) return;
+    try {
+      await apiClient.cancelMediaJob(job.id);
+      toast({ title: '音视频任务已取消', type: 'success' });
+      loadHistory();
+    } catch (err: any) {
+      toast({ title: '取消失败', description: err.message || '请稍后重试。', type: 'error' });
+    }
+  };
+
+  const handleDeleteMediaHistory = async (job: MediaJob) => {
+    if (!job.id) return;
+    if (!window.confirm('确定删除这条音视频直生历史吗？')) return;
+    try {
+      await apiClient.deleteMediaJob(job.id);
+      if (playingHistory?.type === 'media' && playingHistory.id === job.id) {
+        setPlayingHistory(null);
+      }
+      toast({ title: '音视频历史已删除', type: 'success' });
+      loadHistory();
+    } catch (err: any) {
+      toast({ title: '删除失败', description: err.message || '请稍后重试。', type: 'error' });
     }
   };
 
@@ -2778,9 +2836,20 @@ function VideoGenerationPageInner() {
                             >
                               {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             </Button>
-                            {(job.status === 'pending' || job.status === 'running') && (
+                            {canCancelJobStatus(job.status) && (
                               <Button variant="ghost" size="sm" onClick={() => handleRefreshStatus(job)} className="h-8 w-8 p-0" title="刷新状态">
                                 <RefreshCw className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {canCancelJobStatus(job.status) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="取消任务"
+                                onClick={() => handleCancelVideoHistory(job)}
+                                className="h-8 w-8 p-0 text-yellow-300 hover:text-yellow-200"
+                              >
+                                <Ban className="h-4 w-4" />
                               </Button>
                             )}
                             {job.video_url && (
@@ -2817,6 +2886,15 @@ function VideoGenerationPageInner() {
                                 <ShieldCheck className="h-4 w-4" />
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="删除历史"
+                              onClick={() => handleDeleteVideoHistory(job)}
+                              className="h-8 w-8 p-0 text-red-300 hover:text-red-200"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
                         {isPlaying && (
@@ -2928,6 +3006,17 @@ function VideoGenerationPageInner() {
                             >
                               {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                             </Button>
+                            {canCancelJobStatus(job.status) && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="取消任务"
+                                onClick={() => handleCancelMediaHistory(job)}
+                                className="h-8 w-8 p-0 text-yellow-300 hover:text-yellow-200"
+                              >
+                                <Ban className="h-4 w-4" />
+                              </Button>
+                            )}
                             {job.output_video_url && (
                               <Button
                                 variant="ghost"
@@ -2937,6 +3026,17 @@ function VideoGenerationPageInner() {
                                 className="h-8 w-8 p-0"
                               >
                                 <Play className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {job.output_video_url && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                title="下载视频"
+                                onClick={() => handleDownload(job.output_video_url, job.title || job.task_id || 'audio-video')}
+                                className="h-8 w-8 p-0"
+                              >
+                                <Download className="h-4 w-4" />
                               </Button>
                             )}
                             {canAttachHistoryVideo(job.status, job.output_video_url, job.shot_id) && (
@@ -2956,6 +3056,15 @@ function VideoGenerationPageInner() {
                                 <Download className="h-4 w-4" />
                               </Button>
                             )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="删除历史"
+                              onClick={() => handleDeleteMediaHistory(job)}
+                              className="h-8 w-8 p-0 text-red-300 hover:text-red-200"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
                         {isPlaying && (

@@ -138,6 +138,7 @@ export default function SynthesisPage() {
   const historyFiltersRef = useRef(historyFilters);
   const [publications, setPublications] = useState<Publication[]>([]);
   const [publishingJobId, setPublishingJobId] = useState<string | null>(null);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -340,6 +341,22 @@ export default function SynthesisPage() {
       setPublishMessage(err?.message || '归档失败');
     } finally {
       setPublishingJobId(null);
+    }
+  };
+
+  const deleteHistoryJob = async (job: SynthesisJob) => {
+    setDeletingJobId(job.id);
+    try {
+      await apiClient.deleteSynthesisJob(job.id);
+      if (selectedHistoryJob?.id === job.id) {
+        setSelectedHistoryJob(null);
+      }
+      await loadHistory(historyFiltersRef.current);
+      toast({ title: '合成记录已归档', description: `《${job.title || '未命名合成'}》已从历史列表移除。`, type: 'success' });
+    } catch (err: any) {
+      toast({ title: '归档失败', description: err?.message || '无法归档该合成记录，请稍后重试。', type: 'error' });
+    } finally {
+      setDeletingJobId(null);
     }
   };
 
@@ -947,6 +964,17 @@ export default function SynthesisPage() {
                                 <ExternalLink className="w-4 h-4" />
                               </Button>
                             )}
+                            <Button
+                              title="归档合成记录"
+                              aria-label={`归档 ${job.title || '合成记录'}`}
+                              variant="ghost"
+                              size="sm"
+                              className="text-red-300 hover:text-red-200"
+                              disabled={deletingJobId === job.id}
+                              onClick={() => deleteHistoryJob(job)}
+                            >
+                              {deletingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            </Button>
                           </div>
                         </div>
                       </div>

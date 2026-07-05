@@ -12,7 +12,7 @@ import { useToast } from '@/components/ui/toast';
 import {
   Volume2, Play, Pause, Download, Loader2, AlertCircle,
   Copy, RefreshCw, Clock, Settings, User, BookOpen, CheckCircle,
-  Headphones, Mic2, Upload
+  Headphones, Mic2, Upload, Trash2
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
@@ -100,6 +100,7 @@ export default function TTSPage() {
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<TTSJob[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [deletingHistoryJobId, setDeletingHistoryJobId] = useState<string | null>(null);
   const [availableVoices, setAvailableVoices] = useState<VoiceOption[]>([]);
   const [previewingVoice, setPreviewingVoice] = useState(false);
   const [voicePreviewAudio, setVoicePreviewAudio] = useState<string | null>(null);
@@ -302,6 +303,19 @@ export default function TTSPage() {
       const res = await fetchWithAuth(`${API_BASE}/tts/jobs`);
       if (res.ok) setHistory(await res.json());
     } catch {} finally { setLoadingHistory(false); }
+  };
+
+  const handleDeleteHistoryJob = async (job: TTSJob) => {
+    setDeletingHistoryJobId(job.id);
+    try {
+      await apiClient.deleteTTSJob(job.id);
+      toast({ title: 'TTS记录已归档', description: '历史列表已更新。', type: 'success' });
+      await loadHistory();
+    } catch (err: any) {
+      toast({ title: '归档失败', description: err?.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setDeletingHistoryJobId(null);
+    }
   };
 
   const loadLLMConfigs = async () => {
@@ -1245,6 +1259,21 @@ export default function TTSPage() {
                               <Play className="w-4 h-4" />
                             </Button>
                           )}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`归档${job.title || 'TTS记录'}`}
+                            title="归档"
+                            className="text-white/60 hover:text-red-300"
+                            onClick={() => handleDeleteHistoryJob(job)}
+                            disabled={deletingHistoryJobId === job.id}
+                          >
+                            {deletingHistoryJobId === job.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="w-4 h-4" />
+                            )}
+                          </Button>
                         </div>
                       </div>
                     ))}
