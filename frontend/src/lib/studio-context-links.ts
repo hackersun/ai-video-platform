@@ -33,8 +33,18 @@ export function withStudioContext(
   snapshot: StudioSnapshot | null,
   extra: Record<string, string | undefined | null> = {}
 ) {
-  const params = studioContextParams(snapshot, extra);
+  const hashIndex = path.indexOf('#');
+  const pathWithoutHash = hashIndex >= 0 ? path.slice(0, hashIndex) : path;
+  const hash = hashIndex >= 0 ? path.slice(hashIndex) : '';
+  const queryIndex = pathWithoutHash.indexOf('?');
+  const basePath = queryIndex >= 0 ? pathWithoutHash.slice(0, queryIndex) : pathWithoutHash;
+  const existingQuery = queryIndex >= 0 ? pathWithoutHash.slice(queryIndex + 1) : '';
+  const params = new URLSearchParams(existingQuery);
+
+  studioContextParams(snapshot, extra).forEach((value, key) => {
+    params.set(key, value);
+  });
+
   const qs = params.toString();
-  if (!qs) return path;
-  return `${path}${path.includes('?') ? '&' : '?'}${qs}`;
+  return `${basePath}${qs ? `?${qs}` : ''}${hash}`;
 }
