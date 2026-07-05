@@ -30,6 +30,8 @@ import { Suspense } from 'react';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/components/ui/toast';
+import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
+import type { NovelProductionEntry } from '@/lib/studio-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -79,6 +81,7 @@ const GENRE_OPTIONS = ['全部', '仙侠', '都市', '科幻', '历史', '言情
 function NovelsContent() {
   const { toast } = useToast();
   const [novels, setNovels] = useState<Novel[]>([]);
+  const [productionEntries, setProductionEntries] = useState<Record<string, NovelProductionEntry>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -121,10 +124,19 @@ function NovelsContent() {
       }));
       
       setNovels(convertedNovels);
+      const ids = convertedNovels.map((item) => item.id);
+      if (ids.length) {
+        apiClient.getNovelProductionEntries(ids)
+          .then((response) => setProductionEntries(response.entries || {}))
+          .catch(() => setProductionEntries({}));
+      } else {
+        setProductionEntries({});
+      }
     } catch (err) {
       console.error('加载小说失败:', err);
       setError('加载失败，请检查后端服务是否启动');
       setNovels([]);
+      setProductionEntries({});
     } finally {
       setLoading(false);
     }
@@ -428,6 +440,9 @@ function NovelsContent() {
                                 <Clock className="w-4 h-4" />
                                 更新于 {novel.updatedAt}
                               </span>
+                            </div>
+                            <div className="mt-3">
+                              <NovelProductionEntryCard entry={productionEntries[novel.id]} />
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2 sm:justify-end">

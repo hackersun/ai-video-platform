@@ -53,10 +53,12 @@ import {
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
+import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
 } from '@/lib/model-configs';
+import type { NovelProductionEntry } from '@/lib/studio-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
@@ -414,6 +416,7 @@ export default function NovelDetailPage() {
   const [videoSummaries, setVideoSummaries] = useState<VideoJobSummary[]>([]);
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
   const [seriesPlan, setSeriesPlan] = useState<SeriesPlan | null>(null);
+  const [productionEntry, setProductionEntry] = useState<NovelProductionEntry | null>(null);
   const [storyStateMachine, setStoryStateMachine] = useState<StoryStateMachine | null>(null);
   const [stateMachineIssues, setStateMachineIssues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -473,7 +476,7 @@ export default function NovelDetailPage() {
 
   useEffect(() => {
     if (novelId) {
-      loadNovelData();
+      loadNovelData().then(() => loadProductionEntry());
       loadModelConfigs();
       loadStyleTemplates();
     }
@@ -502,6 +505,14 @@ export default function NovelDetailPage() {
       if (imageDefault) setImageModelConfigId(imageDefault.id);
     } catch (err) {
       console.error('加载模型配置失败:', err);
+    }
+  };
+
+  const loadProductionEntry = async () => {
+    try {
+      setProductionEntry(await apiClient.getNovelProductionEntry(novelId));
+    } catch {
+      setProductionEntry(null);
     }
   };
 
@@ -923,6 +934,7 @@ export default function NovelDetailPage() {
       setSeriesPlan(plan);
       setSeriesPlanMessage(`已生成 ${plan?.episodes?.length || 0} 集整书生产计划`);
       toast({ title: '整书生产计划已生成', type: 'success' });
+      await loadProductionEntry();
     } catch (err: any) {
       const message = err?.message || '整书生产计划生成失败';
       setSeriesPlanMessage(message);
@@ -954,6 +966,7 @@ export default function NovelDetailPage() {
         throw new Error('后端未返回本集工程 ID');
       }
       await loadNovelData();
+      await loadProductionEntry();
       router.push(`/producer?workflow_id=${workflowId}&novel_id=${novelId}&chapter_id=${chapterId}`);
     } catch (err: any) {
       toast({ title: '本集工程创建失败', description: err?.message || '请稍后重试。', type: 'error' });
@@ -1110,6 +1123,8 @@ export default function NovelDetailPage() {
             </Button>
           </div>
         </div>
+
+        <NovelProductionEntryCard entry={productionEntry} />
 
         {/* 作品概览 */}
         <Card data-testid="novel-overview-card" className="bg-white/5 border-white/10 overflow-hidden">
