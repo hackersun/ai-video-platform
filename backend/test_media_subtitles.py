@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from uuid import uuid4
 
+from app.core.database import SyncSessionLocal
+from app.models import MediaGenerationJob
 from init_db import init_db
 from main import app
 
@@ -20,6 +23,30 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 def _auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
+
+
+def _create_media_job(user_id: str, *, status: str = "pending") -> str:
+    job_id = str(uuid4())
+    db = SyncSessionLocal()
+    try:
+        db.add(
+            MediaGenerationJob(
+                id=job_id,
+                user_id=user_id,
+                task_id=f"test-media-{job_id}",
+                task_type="shot_audio_video",
+                media_type="audio_video",
+                title="待维护媒体任务",
+                prompt="用于验证任务中心取消和归档",
+                status=status,
+                progress=10,
+                is_active=True,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+    return job_id
 
 
 def _create_shot_with_lineage(client: TestClient, user_id: str) -> tuple[str, str, str, str, str]:
@@ -146,6 +173,41 @@ def test_direct_audio_video_generation_creates_subtitle_track_and_exports_srt(cl
     )
     assert script_filter_resp.status_code == 200
     assert any(item["id"] == media_job["id"] and item["script_id"] == script_id for item in script_filter_resp.json())
+
+
+def test_media_job_cancel_and_archive_management(client: TestClient) -> None:
+    user_id = "media-job-manage-user"
+    job_id = _create_media_job(user_id)
+
+    cancel_resp = client.post(f"/api/v1/media/jobs/{job_id}/cancel", headers=_auth_headers(user_id))
+    assert cancel_resp.status_code == 200
+    cancelled = cancel_resp.json()
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["error_message"] == "任务已由用户取消"
+
+    list_resp = client.get("/api/v1/media/jobs", headers=_auth_headers(user_id))
+    assert list_resp.status_code == 200
+    assert any(item["id"] == job_id for item in list_resp.json())
+
+    delete_resp = client.delete(f"/api/v1/media/jobs/{job_id}", headers=_auth_headers(user_id))
+    assert delete_resp.status_code == 200
+    assert delete_resp.json()["job_id"] == job_id
+
+    archived_list = client.get("/api/v1/media/jobs", headers=_auth_headers(user_id))
+    assert archived_list.status_code == 200
+    assert all(item["id"] != job_id for item in archived_list.json())
+
+    detail_resp = client.get(f"/api/v1/media/jobs/{job_id}", headers=_auth_headers(user_id))
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["status"] == "archived"
+
+
+def test_completed_media_job_cannot_be_cancelled(client: TestClient) -> None:
+    user_id = "media-job-completed-user"
+    job_id = _create_media_job(user_id, status="succeeded")
+
+    cancel_resp = client.post(f"/api/v1/media/jobs/{job_id}/cancel", headers=_auth_headers(user_id))
+    assert cancel_resp.status_code == 400
 
 
 def test_subtitle_segment_can_be_edited(client: TestClient) -> None:

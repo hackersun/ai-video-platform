@@ -1573,6 +1573,18 @@ class ApiClient {
     return this.request<any[]>(`/media/jobs${qs ? `?${qs}` : ''}`);
   }
 
+  async cancelMediaJob(jobId: string) {
+    return this.request<any>(`/media/jobs/${jobId}/cancel`, {
+      method: 'POST',
+    });
+  }
+
+  async deleteMediaJob(jobId: string) {
+    return this.request<any>(`/media/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
+  }
+
   async getSubtitleTrack(trackId: string) {
     return this.request<any>(`/subtitles/tracks/${trackId}`);
   }

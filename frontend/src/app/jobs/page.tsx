@@ -34,7 +34,7 @@ const toMediaUrl = (url?: string | null) => {
 interface Job {
   id: string;
   name: string;
-  type: 'video' | 'tts' | 'image' | 'synthesis';
+  type: 'video' | 'tts' | 'image' | 'synthesis' | 'media';
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   createdAt: string;
@@ -50,14 +50,16 @@ const TYPE_ICONS = {
   video: Video,
   tts: Mic,
   image: ImageIcon,
-  synthesis: ListTodo
+  synthesis: ListTodo,
+  media: Video
 };
 
 const TYPE_LABELS = {
   video: '视频生成',
   tts: '语音合成',
   image: '图片生成',
-  synthesis: '音视频合成'
+  synthesis: '音视频合成',
+  media: '直生媒体'
 };
 
 const STATUS_LABELS = {
@@ -87,6 +89,7 @@ const typeOptions = [
   { value: 'tts', label: TYPE_LABELS.tts },
   { value: 'image', label: TYPE_LABELS.image },
   { value: 'synthesis', label: TYPE_LABELS.synthesis },
+  { value: 'media', label: TYPE_LABELS.media },
 ];
 
 const timeRangeOptions = [
@@ -155,7 +158,7 @@ export default function JobsPage() {
     createdAtTime: toDateTime(raw.created_at),
     completedAt: raw.completed_at ? toDateText(raw.completed_at) : undefined,
     duration: Math.round(raw.duration_seconds || raw.duration || 0) || undefined,
-    output: raw.output_url || raw.video_url || raw.audio_url || raw.image_urls?.[0],
+    output: raw.output_url || raw.video_url || raw.audio_url || raw.output_video_url || raw.output_audio_url || raw.output_manifest_url || raw.image_urls?.[0],
     error: raw.error_message,
   });
 
@@ -163,11 +166,12 @@ export default function JobsPage() {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [videos, ttsJobs, images, synthesis] = await Promise.all([
+      const [videos, ttsJobs, images, synthesis, media] = await Promise.all([
         apiClient.getVideoJobs(),
         apiClient.getTTSJobs(),
         apiClient.getImageJobs({ limit: 100 }),
         apiClient.getSynthesisJobs(),
+        apiClient.getMediaJobs(),
       ]);
 
       const mergedJobs = [
@@ -175,6 +179,7 @@ export default function JobsPage() {
         ...ttsJobs.map((job: any) => mapJob(job, 'tts')),
         ...images.map((job: any) => mapJob(job, 'image')),
         ...synthesis.map((job: any) => mapJob(job, 'synthesis')),
+        ...media.map((job: any) => mapJob(job, 'media')),
       ].sort((a, b) => b.createdAtTime - a.createdAtTime);
 
       setJobs(mergedJobs);
@@ -187,16 +192,18 @@ export default function JobsPage() {
   };
 
   const canCancel = (job: Job) => (
-    job.type === 'video' && ['pending', 'running', 'failed'].includes(job.status)
+    (job.type === 'video' || job.type === 'media') && ['pending', 'running', 'failed'].includes(job.status)
   );
 
   const handleCancel = async (job: Job) => {
     setActionJobId(job.id);
     setLoadError(null);
     try {
-      const updated = await apiClient.cancelVideoJob(job.id);
+      const updated = job.type === 'media'
+        ? await apiClient.cancelMediaJob(job.id)
+        : await apiClient.cancelVideoJob(job.id);
       setJobs(prev => prev.map(item => (
-        item.id === job.id ? mapJob(updated, 'video') : item
+        item.id === job.id ? mapJob(updated, job.type) : item
       )));
     } catch (err: any) {
       setLoadError(err.message || '取消任务失败');
@@ -215,8 +222,10 @@ export default function JobsPage() {
         await apiClient.deleteTTSJob(job.id);
       } else if (job.type === 'image') {
         await apiClient.deleteImageJob(job.id);
-      } else {
+      } else if (job.type === 'synthesis') {
         await apiClient.deleteSynthesisJob(job.id);
+      } else {
+        await apiClient.deleteMediaJob(job.id);
       }
       setJobs(prev => prev.filter(item => item.id !== job.id));
     } catch (err: any) {

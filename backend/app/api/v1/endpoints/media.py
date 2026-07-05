@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.dev_generation import dev_audio_url, dev_video_url, is_dev_mode
 from app.core.model_registry import get_model, get_task_default
 from app.core.security import get_current_user_id
+from app.core.time_utils import utc_now
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
@@ -589,6 +590,60 @@ async def get_media_job(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体任务不存在")
     return _job_response(job)
+
+
+@router.post("/jobs/{job_id}/cancel", response_model=MediaJobResponse)
+async def cancel_media_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """取消本地跟踪的统一媒体任务。外部供应商取消能力由适配器单独实现。"""
+    result = await db.execute(
+        select(MediaGenerationJob).where(
+            MediaGenerationJob.id == job_id,
+            MediaGenerationJob.user_id == user_id,
+            MediaGenerationJob.is_active == True,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体任务不存在")
+    if job.status in {"succeeded", "completed"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="已完成任务不能取消")
+
+    job.status = "cancelled"
+    job.progress = job.progress or 0
+    job.error_message = job.error_message or "任务已由用户取消"
+    job.updated_at = utc_now()
+    await db.commit()
+    await db.refresh(job)
+    return _job_response(job)
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_media_job(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """软删除统一媒体任务，保留记录用于审计和后续恢复。"""
+    result = await db.execute(
+        select(MediaGenerationJob).where(
+            MediaGenerationJob.id == job_id,
+            MediaGenerationJob.user_id == user_id,
+            MediaGenerationJob.is_active == True,
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体任务不存在")
+
+    job.is_active = False
+    job.status = "archived"
+    job.updated_at = utc_now()
+    await db.commit()
+    return {"message": "媒体任务已归档", "job_id": job_id}
 
 
 @router.post("/jobs/{job_id}/export-subtitles")
