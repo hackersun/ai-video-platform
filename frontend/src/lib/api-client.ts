@@ -395,6 +395,9 @@ export type WorkflowShotRegenerateResponse = {
   video_job_ids: string[];
   tts_job_ids?: string[];
   media_job_ids?: string[];
+  concatenate_video_job_ids?: string[];
+  concatenate_tts_job_ids?: string[];
+  concatenate_media_job_ids?: string[];
   subtitle_track_ids?: string[];
   skipped?: Array<{ shot_id?: string; reason?: string }>;
   ready_for_concatenate?: boolean;

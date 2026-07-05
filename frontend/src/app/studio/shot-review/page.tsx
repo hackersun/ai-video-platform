@@ -315,13 +315,16 @@ function ShotReviewContent() {
         ...payload,
         audio_mode: 'model_audio',
       });
+      const concatenateVideoJobIds = result.concatenate_video_job_ids || result.video_job_ids || [];
+      const concatenateMediaJobIds = result.concatenate_media_job_ids || result.media_job_ids || [];
+      const concatenateTtsJobIds = result.concatenate_tts_job_ids || result.tts_job_ids || [];
 
-      if (result.ready_for_concatenate !== false && ((result.video_job_ids || []).length || (result.media_job_ids || []).length)) {
+      if (result.ready_for_concatenate !== false && (concatenateVideoJobIds.length || concatenateMediaJobIds.length)) {
         const resumed = await resumeEpisodePreviewFromConcatenate({
           workflowId,
-          videoJobIds: result.video_job_ids || [],
-          mediaJobIds: result.media_job_ids || [],
-          ttsJobIds: result.tts_job_ids || [],
+          videoJobIds: concatenateVideoJobIds,
+          mediaJobIds: concatenateMediaJobIds,
+          ttsJobIds: concatenateTtsJobIds,
           title: '镜头重生后连续成片',
         });
         setRenderResult(resumed);

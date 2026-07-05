@@ -354,6 +354,10 @@ def test_regenerate_only_failed_shots(client: TestClient) -> None:
     assert payload["regenerated_shot_ids"] == [shot_ids[1]]
     assert payload["created_count"] == 1
     assert len(payload["video_job_ids"]) == 1
+    new_video_id = payload["video_job_ids"][0]
+    assert payload["concatenate_video_job_ids"] == [old_jobs[0], new_video_id, old_jobs[2]]
+    assert payload["concatenate_tts_job_ids"] == []
+    assert payload["concatenate_media_job_ids"] == []
     all_jobs = _video_jobs_for_workflow(workflow_id)
     assert len([job for job in all_jobs if job["id"] not in old_jobs]) == 1
 

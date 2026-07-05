@@ -170,6 +170,33 @@ def _latest_non_superseded_by_shot(jobs: List[Any]) -> Dict[str, Any]:
     return {**fallback, **latest}
 
 
+def _job_has_ready_video(job: Any) -> bool:
+    return getattr(job, "status", None) in {"succeeded", "completed"} and bool(
+        getattr(job, "video_url", None) or getattr(job, "output_video_url", None)
+    )
+
+
+def _job_has_ready_audio(job: Any) -> bool:
+    return getattr(job, "status", None) in {"succeeded", "completed"} and bool(getattr(job, "audio_url", None))
+
+
+def _lineage_int(job: Any, key: str) -> Optional[int]:
+    value = _lineage_value(job, key)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _workflow_job_sort_key(job: Any, shot_map: Dict[str, Shot], fallback_index: int) -> tuple[int, int, int]:
+    shot_id = _job_shot_id(job)
+    shot = shot_map.get(shot_id) if shot_id else None
+    shot_number = getattr(shot, "shot_number", None) if shot else _lineage_int(job, "shot_number")
+    if shot_number is not None:
+        return (0, int(shot_number), fallback_index)
+    return (1, fallback_index, fallback_index)
+
+
 def _dedupe_latest_per_shot(jobs: List[Any]) -> List[Any]:
     selected: Dict[str, Any] = {}
     passthrough: List[Any] = []
@@ -276,6 +303,67 @@ async def _tts_jobs_for_workflow_shots(
         ).order_by(desc(TTSJob.created_at))
     )
     return list(result.scalars().all())
+
+
+async def _media_jobs_for_workflow_shots(
+    db: AsyncSession,
+    workflow_id: str,
+    user_id: str,
+    shot_ids: List[str],
+) -> List[MediaGenerationJob]:
+    if not shot_ids:
+        return []
+    result = await db.execute(
+        select(MediaGenerationJob).where(
+            MediaGenerationJob.workflow_id == workflow_id,
+            MediaGenerationJob.user_id == user_id,
+            MediaGenerationJob.shot_id.in_(shot_ids),
+            MediaGenerationJob.is_active == True,
+        ).order_by(desc(MediaGenerationJob.created_at))
+    )
+    return list(result.scalars().all())
+
+
+async def _concatenate_job_ids_for_workflow_shots(
+    db: AsyncSession,
+    *,
+    workflow_id: str,
+    user_id: str,
+    shots: List[Shot],
+) -> Dict[str, List[str]]:
+    shot_ids = [shot.id for shot in shots]
+    video_jobs = await _video_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    media_jobs = await _media_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    tts_jobs = await _tts_jobs_for_workflow_shots(db, workflow_id, user_id, shot_ids)
+    latest_video_by_shot = _latest_non_superseded_by_shot(video_jobs)
+    latest_media_by_shot = _latest_non_superseded_by_shot(media_jobs)
+    latest_tts_by_shot = _latest_non_superseded_by_shot(tts_jobs)
+
+    concatenate_video_job_ids: List[str] = []
+    concatenate_media_job_ids: List[str] = []
+    concatenate_tts_job_ids: List[str] = []
+    for shot in shots:
+        candidates = [
+            job
+            for job in (latest_video_by_shot.get(shot.id), latest_media_by_shot.get(shot.id))
+            if job is not None and _job_has_ready_video(job)
+        ]
+        if candidates:
+            latest = max(candidates, key=_job_created_key)
+            if isinstance(latest, MediaGenerationJob):
+                concatenate_media_job_ids.append(latest.id)
+            else:
+                concatenate_video_job_ids.append(latest.id)
+
+        tts_job = latest_tts_by_shot.get(shot.id)
+        if tts_job is not None and _job_has_ready_audio(tts_job):
+            concatenate_tts_job_ids.append(tts_job.id)
+
+    return {
+        "video_job_ids": concatenate_video_job_ids,
+        "media_job_ids": concatenate_media_job_ids,
+        "tts_job_ids": concatenate_tts_job_ids,
+    }
 
 
 def _reference_package_mode(extra: Dict[str, Any]) -> Optional[Any]:
@@ -1978,6 +2066,9 @@ class WorkflowShotRegenerateResponse(BaseModel):
     video_job_ids: List[str] = Field(default_factory=list)
     tts_job_ids: List[str] = Field(default_factory=list)
     media_job_ids: List[str] = Field(default_factory=list)
+    concatenate_video_job_ids: List[str] = Field(default_factory=list)
+    concatenate_tts_job_ids: List[str] = Field(default_factory=list)
+    concatenate_media_job_ids: List[str] = Field(default_factory=list)
     subtitle_track_ids: List[str] = Field(default_factory=list)
     skipped: List[Dict[str, Any]] = Field(default_factory=list)
     ready_for_concatenate: bool = True
@@ -2923,6 +3014,15 @@ async def regenerate_workflow_shots(
         db,
         user_id,
     )
+    concatenate_shots = await _workflow_shots_for_request(db, workflow, user_id)
+    if not concatenate_shots:
+        concatenate_shots = shots
+    concatenate_ids = await _concatenate_job_ids_for_workflow_shots(
+        db,
+        workflow_id=workflow.id,
+        user_id=user_id,
+        shots=concatenate_shots,
+    )
 
     return WorkflowShotRegenerateResponse(
         workflow_id=workflow.id,
@@ -2931,6 +3031,9 @@ async def regenerate_workflow_shots(
         video_job_ids=batch_response.video_job_ids,
         tts_job_ids=batch_response.tts_job_ids,
         media_job_ids=batch_response.media_job_ids,
+        concatenate_video_job_ids=concatenate_ids["video_job_ids"],
+        concatenate_tts_job_ids=concatenate_ids["tts_job_ids"],
+        concatenate_media_job_ids=concatenate_ids["media_job_ids"],
         subtitle_track_ids=batch_response.subtitle_track_ids,
         skipped=skipped,
         ready_for_concatenate=batch_response.ready_for_concatenate,
@@ -4014,6 +4117,14 @@ async def concatenate_videos(
             )
         )
         shot_map = {shot.id: shot for shot in shot_result.scalars().all()}
+
+    original_video_order = {job.id: index for index, job in enumerate(ordered_video_jobs)}
+    ordered_video_jobs = sorted(
+        ordered_video_jobs,
+        key=lambda job: _workflow_job_sort_key(job, shot_map, original_video_order[job.id]),
+    )
+    video_job_ids = [job.id for job in ordered_video_jobs if not isinstance(job, MediaGenerationJob)]
+    media_job_ids = [job.id for job in ordered_video_jobs if isinstance(job, MediaGenerationJob)]
 
     music_assets_by_cue: Dict[str, Asset] = {}
     music_cues = sorted(

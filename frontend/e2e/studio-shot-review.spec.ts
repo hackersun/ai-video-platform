@@ -110,6 +110,9 @@ test('studio shot review renders evidence and regenerates failed shots before co
           regenerated_shot_ids: ['shot-2'],
           video_job_ids: ['video-shot-2-new'],
           tts_job_ids: ['tts-shot-2-new'],
+          concatenate_video_job_ids: ['video-shot-1-existing', 'video-shot-2-new'],
+          concatenate_tts_job_ids: ['tts-shot-1-existing', 'tts-shot-2-new'],
+          concatenate_media_job_ids: [],
           skipped: [],
           ready_for_concatenate: true,
         }),
@@ -193,8 +196,8 @@ test('studio shot review renders evidence and regenerates failed shots before co
   expect(regenerateRequests[0]).toMatchObject({ filter: 'failed' });
   await expect.poll(() => concatenateRequests.length).toBe(1);
   expect(concatenateRequests[0]).toMatchObject({
-    video_job_ids: ['video-shot-2-new'],
-    tts_job_ids: ['tts-shot-2-new'],
+    video_job_ids: ['video-shot-1-existing', 'video-shot-2-new'],
+    tts_job_ids: ['tts-shot-1-existing', 'tts-shot-2-new'],
     quality_profile: 'review',
   });
   await expect.poll(() => renderRequests.length).toBe(1);
