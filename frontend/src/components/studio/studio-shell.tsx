@@ -738,8 +738,6 @@ export function StudioShell() {
                     onLock={handleLockEpisodeContract}
                   />
                 </div>
-                <ConsistencyLedgerPanel snapshot={activeSnapshot} onRepair={handleLedgerRepair} />
-                <StudioContextPanel snapshot={activeSnapshot} />
               </>
             )}
             production={(
@@ -760,7 +758,12 @@ export function StudioShell() {
                 </div>
               </>
             )}
-            review={<StudioContinuityBoard snapshot={activeSnapshot} />}
+            review={(
+              <>
+                <StudioContinuityBoard snapshot={activeSnapshot} />
+                <ConsistencyLedgerPanel snapshot={activeSnapshot} onRepair={handleLedgerRepair} />
+              </>
+            )}
             operations={<StudioContextPanel snapshot={activeSnapshot} />}
           />
         </>

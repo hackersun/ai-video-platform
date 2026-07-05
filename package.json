@@ -7,8 +7,9 @@
     "test": "npm run verify:quick",
     "verify:backend": "cd backend && python -m pytest",
     "verify:frontend": "npm --prefix frontend run typecheck && npm --prefix frontend run build",
-    "verify:e2e": "npm --prefix e2e test",
-    "verify:quick": "npm run verify:frontend"
+    "verify:e2e": "npm --prefix frontend run e2e:smoke",
+    "verify:e2e:legacy": "npm --prefix e2e test",
+    "verify:quick": "npm run verify:frontend && npm run verify:e2e"
   },
   "keywords": [],
   "author": "",

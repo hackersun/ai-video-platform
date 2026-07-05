@@ -71,7 +71,7 @@ def build_video_provider_content(
     package_videos = [item for item in package.get("videos") or [] if _content_url(item)]
     package_audios = [item for item in package.get("audios") or [] if _content_url(item)]
 
-    if image_limit <= 0:
+    if image_limit <= 0 and video_limit <= 0 and audio_limit <= 0:
         content = [
             _text_content(
                 final_prompt,
@@ -97,7 +97,7 @@ def build_video_provider_content(
     videos = package_videos[:video_limit] if video_limit > 0 else []
     audios = package_audios[:audio_limit] if audio_limit > 0 else []
 
-    if image_limit > 1 and (images or videos or audios):
+    if (image_limit > 1 or video_limit > 0 or audio_limit > 0) and (images or videos or audios):
         content: List[Dict[str, Any]] = [
             {
                 "type": "image_url",

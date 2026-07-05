@@ -440,6 +440,53 @@ async def _previous_video_candidates(
     ]
 
 
+async def _audio_candidates(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    shot: Shot,
+) -> List[ReferenceCandidate]:
+    candidates: List[ReferenceCandidate] = []
+    if getattr(shot, "audio_url", None):
+        candidates.append(
+            ReferenceCandidate(
+                source_url=shot.audio_url,
+                role_tag="shot_audio",
+                entity_type="audio",
+                entity_id=shot.id,
+                source="shot_audio",
+            )
+        )
+
+    result = await db.execute(
+        select(Asset)
+        .where(
+            and_(
+                Asset.is_active == True,
+                Asset.is_locked == True,
+                or_(Asset.user_id == user_id, Asset.is_public == True),
+                or_(Asset.asset_type == "audio", Asset.category.in_(["voice", "music", "sfx"])),
+            )
+        )
+        .order_by(desc(Asset.is_final), desc(Asset.is_locked), desc(Asset.version), desc(Asset.updated_at), Asset.id)
+        .limit(10)
+    )
+    for asset in result.scalars().all():
+        if not asset.url:
+            continue
+        candidates.append(
+            ReferenceCandidate(
+                source_url=asset.url,
+                role_tag=asset.category or "audio",
+                entity_type="audio",
+                entity_id=asset.entity_id or asset.id,
+                entity_name=asset.name,
+                source="locked_asset",
+            )
+        )
+    return candidates
+
+
 async def _build_single_image_package(
     db: AsyncSession,
     user_id: str,
@@ -498,9 +545,10 @@ async def build_reference_package(
     limits = model_limits if isinstance(model_limits, dict) else {}
     image_limit = _positive_int(limits.get("images"), 1)
     video_limit = _positive_int(limits.get("videos"), 0)
+    audio_limit = _positive_int(limits.get("audios"), 0)
     supports_at_reference = bool(limits.get("at_reference"))
 
-    if image_limit <= 1:
+    if image_limit <= 1 and video_limit <= 0 and audio_limit <= 0:
         return await _build_single_image_package(
             db,
             user_id,
@@ -512,17 +560,28 @@ async def build_reference_package(
     dropped: List[Dict[str, Any]] = []
     images: List[Dict[str, Any]] = []
     accepted_candidates: List[ReferenceCandidate] = []
-    for candidate in await _image_candidates(db, user_id, shot=shot, lineage=lineage or {}):
-        if len(images) >= image_limit:
-            dropped.append(_drop(candidate, "exceeds_model_reference_image_limit"))
-            continue
-        public_url, reason = await _resolve_public_url(resolve_public_url, db, user_id, candidate.source_url)
-        if not public_url:
-            dropped.append(_drop(candidate, reason or "参考资源不是公网 URL"))
-            continue
-        item = _image_item(candidate, public_url, len(images) + 1)
-        images.append(item)
-        accepted_candidates.append(candidate)
+    if 0 < image_limit <= 1:
+        single_image_package = await _build_single_image_package(
+            db,
+            user_id,
+            shot=shot,
+            lineage=lineage or {},
+            resolve_public_url=resolve_public_url,
+        )
+        images = single_image_package.get("images") or []
+        dropped.extend(single_image_package.get("dropped") or [])
+    elif image_limit > 1:
+        for candidate in await _image_candidates(db, user_id, shot=shot, lineage=lineage or {}):
+            if len(images) >= image_limit:
+                dropped.append(_drop(candidate, "exceeds_model_reference_image_limit"))
+                continue
+            public_url, reason = await _resolve_public_url(resolve_public_url, db, user_id, candidate.source_url)
+            if not public_url:
+                dropped.append(_drop(candidate, reason or "参考资源不是公网 URL"))
+                continue
+            item = _image_item(candidate, public_url, len(images) + 1)
+            images.append(item)
+            accepted_candidates.append(candidate)
 
     videos: List[Dict[str, Any]] = []
     if video_limit > 0:
@@ -543,6 +602,25 @@ async def build_reference_package(
                 }
             )
 
+    audios: List[Dict[str, Any]] = []
+    if audio_limit > 0:
+        for candidate in await _audio_candidates(db, user_id, shot=shot):
+            if len(audios) >= audio_limit:
+                dropped.append(_drop(candidate, "exceeds_model_reference_audio_limit"))
+                continue
+            public_url, reason = await _resolve_public_url(resolve_public_url, db, user_id, candidate.source_url)
+            if not public_url:
+                dropped.append(_drop(candidate, reason or "参考音频不是公网 URL"))
+                continue
+            audios.append(
+                {
+                    "url": public_url,
+                    "role_tag": candidate.role_tag,
+                    "source_id": candidate.entity_id,
+                    "at_index": len(audios) + 1,
+                }
+            )
+
     at_reference_text = None
     if supports_at_reference and images:
         at_reference_text = "；".join(
@@ -553,7 +631,7 @@ async def build_reference_package(
     return {
         "images": images,
         "videos": videos,
-        "audios": [],
+        "audios": audios,
         "at_reference_text": at_reference_text,
         "dropped": dropped,
         "mode": "multimodal",

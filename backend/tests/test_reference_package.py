@@ -58,7 +58,7 @@ async def _cdn_resolver(_db: AsyncSession, _user_id: str, url: str | None) -> st
     return url if url and url.startswith("https://") else None
 
 
-def _shot(user_id: str, *, image_url: str | None = None) -> Shot:
+def _shot(user_id: str, *, image_url: str | None = None, audio_url: str | None = None) -> Shot:
     return Shot(
         id=f"shot-{uuid4()}",
         user_id=user_id,
@@ -67,6 +67,7 @@ def _shot(user_id: str, *, image_url: str | None = None) -> Shot:
         duration=4,
         prompt="孙剑持剑踏入旧山门",
         image_url=image_url,
+        audio_url=audio_url,
         character_refs=[
             {"entity_id": "char-main", "name": "孙剑"},
             {"entity_id": "char-side", "name": "林遥"},
@@ -297,6 +298,58 @@ async def test_single_image_model_unchanged(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_package_includes_shot_audio_when_model_allows_audio(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = _shot(
+        user_id,
+        image_url="https://cdn.example.com/current-shot-reference.png",
+        audio_url="https://cdn.example.com/current-shot-dialogue.mp3",
+    )
+    await _seed_reference_assets(db_session, user_id)
+    db_session.add(
+        Asset(
+            id=f"asset-audio-{uuid4()}",
+            user_id=user_id,
+            category="voice",
+            asset_type="audio",
+            name="孙剑锁定声线",
+            url="https://cdn.example.com/locked-voice.mp3",
+            is_active=True,
+            is_locked=True,
+            is_final=True,
+        )
+    )
+    await db_session.flush()
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 1, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert [item["url"] for item in package["images"]] == ["https://cdn.example.com/current-shot-reference.png"]
+    assert package["audios"] == [
+        {
+            "url": "https://cdn.example.com/current-shot-dialogue.mp3",
+            "role_tag": "shot_audio",
+            "source_id": shot.id,
+            "at_index": 1,
+        }
+    ]
+    assert package["reference_image"] == "https://cdn.example.com/current-shot-reference.png"
+    assert len(package["dropped"]) == 1
+    assert package["dropped"][0]["reason"] == "exceeds_model_reference_audio_limit"
+    assert package["dropped"][0]["entity_name"] == "孙剑锁定声线"
+
+
+@pytest.mark.asyncio
 async def test_non_public_urls_skipped_unless_resolver_maps_public_url(db_session: AsyncSession) -> None:
     builder = _builder_module()
     build_reference_package = getattr(builder, "build_reference_package", None)
@@ -438,6 +491,78 @@ def test_provider_content_adapter_keeps_single_image_shape_when_limits_do_not_al
     ]
     assert result["metadata"]["image_count"] == 1
     assert result["metadata"]["video_count"] == 0
+
+
+def test_provider_content_adapter_allows_audio_with_single_image_limit() -> None:
+    adapter = _adapter_module()
+    build_provider_content = getattr(adapter, "build_video_provider_content", None)
+    assert callable(build_provider_content)
+
+    result = build_provider_content(
+        final_prompt="旧山门外的定场镜头",
+        duration=4,
+        resolution="480p",
+        provider_image_url="https://cdn.example.com/current-shot.png",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/current-shot.png", "role_tag": "reference_image", "at_index": 1},
+            ],
+            "videos": [],
+            "audios": [
+                {"url": "https://cdn.example.com/current-shot-dialogue.mp3", "role_tag": "shot_audio", "at_index": 1},
+            ],
+        },
+        model_limits={"images": 1, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["image_url", "audio_url", "text"]
+    assert result["content"][1] == {
+        "type": "audio_url",
+        "audio_url": {"url": "https://cdn.example.com/current-shot-dialogue.mp3"},
+        "role": "reference_audio",
+    }
+    assert result["metadata"] == {
+        "mode": "multimodal",
+        "image_count": 1,
+        "video_count": 0,
+        "audio_count": 1,
+    }
+
+
+def test_provider_content_adapter_allows_audio_without_image_capacity() -> None:
+    adapter = _adapter_module()
+    build_provider_content = getattr(adapter, "build_video_provider_content", None)
+    assert callable(build_provider_content)
+
+    result = build_provider_content(
+        final_prompt="旧山门外只有对白音频参考",
+        duration=4,
+        resolution="480p",
+        provider_image_url="https://cdn.example.com/ignored.png",
+        reference_package={
+            "images": [],
+            "videos": [],
+            "audios": [
+                {"url": "https://cdn.example.com/current-shot-dialogue.mp3", "role_tag": "shot_audio", "at_index": 1},
+            ],
+        },
+        model_limits={"images": 0, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["audio_url", "text"]
+    assert result["content"][0] == {
+        "type": "audio_url",
+        "audio_url": {"url": "https://cdn.example.com/current-shot-dialogue.mp3"},
+        "role": "reference_audio",
+    }
+    assert result["metadata"] == {
+        "mode": "multimodal",
+        "image_count": 0,
+        "video_count": 0,
+        "audio_count": 1,
+    }
 
 
 def test_provider_content_adapter_keeps_media_references_without_images() -> None:

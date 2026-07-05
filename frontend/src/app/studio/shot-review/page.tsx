@@ -238,7 +238,7 @@ function ShotReviewContent() {
   const searchParams = useSearchParams();
   const workflowId = searchParams.get('workflow_id') || '';
   const targetShotId = searchParams.get('shot_id') || '';
-  const sourceIssueCode = searchParams.get('source_issue_code') || '';
+  const sourceIssueCode = searchParams.get('source_issue_code') || searchParams.get('source_issue') || '';
   const [data, setData] = useState<WorkflowShotReviewResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [characterName, setCharacterName] = useState('');

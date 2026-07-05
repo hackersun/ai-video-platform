@@ -59,12 +59,21 @@ function taskKey(task: ContinuityReviewTask) {
   return `${task.shot_id}-${task.entity_id || 'entity'}-${task.episode_index || 'episode'}`;
 }
 
-function taskReviewUrl(task: ContinuityReviewTask) {
-  if (task.shot_review_url) return task.shot_review_url;
+function taskReviewUrl(task: ContinuityReviewTask, sourceIssueCode?: string) {
+  const appendSourceIssue = (href: string) => {
+    if (!sourceIssueCode) return href;
+    const [path, hash = ''] = href.split('#', 2);
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}source_issue_code=${encodeURIComponent(sourceIssueCode)}${hash ? `#${hash}` : ''}`;
+  };
+
+  if (task.shot_review_url) return appendSourceIssue(task.shot_review_url);
   if (task.workflow_id) {
-    return `/studio/shot-review?workflow_id=${encodeURIComponent(task.workflow_id)}&shot_id=${encodeURIComponent(task.shot_id)}`;
+    return appendSourceIssue(
+      `/studio/shot-review?workflow_id=${encodeURIComponent(task.workflow_id)}&shot_id=${encodeURIComponent(task.shot_id)}`,
+    );
   }
-  return '/studio/shot-review';
+  return appendSourceIssue('/studio/shot-review');
 }
 
 function isResolvedTask(task: ContinuityReviewTask) {
@@ -75,12 +84,14 @@ function ContinuityTaskCard({
   task,
   selected,
   resolving,
+  sourceIssueCode,
   onSelect,
   onResolve,
 }: {
   task: ContinuityReviewTask;
   selected: boolean;
   resolving: boolean;
+  sourceIssueCode?: string;
   onSelect: (task: ContinuityReviewTask, selected: boolean) => void;
   onResolve: (task: ContinuityReviewTask) => void;
 }) {
@@ -124,7 +135,7 @@ function ContinuityTaskCard({
             </div>
           </div>
           <Button asChild size="sm" variant="secondary" className="shrink-0">
-            <Link href={taskReviewUrl(task)}>
+            <Link href={taskReviewUrl(task, sourceIssueCode)}>
               打开镜头审阅
               <ArrowUpRight className="ml-1.5 h-4 w-4" aria-hidden="true" />
             </Link>
@@ -181,6 +192,7 @@ function ContinuityReviewContent() {
   const [selectedShotIds, setSelectedShotIds] = useState<Set<string>>(() => new Set());
   const [novelOptionCatalog, setNovelOptionCatalog] = useState<FilterOption[]>([]);
   const [entityOptionCatalog, setEntityOptionCatalog] = useState<FilterOption[]>([]);
+  const sourceIssueCode = searchParams.get('source_issue_code') || searchParams.get('source_issue') || '';
 
   const mergeFilterOptions = (responseTasks: ContinuityReviewTask[]) => {
     const novelOptions = new Map(novelOptionCatalog.map((option) => [option.value, option.label]));
@@ -513,6 +525,7 @@ function ContinuityReviewContent() {
                 task={task}
                 selected={selectedShotIds.has(task.shot_id)}
                 resolving={resolvingShotId === task.shot_id}
+                sourceIssueCode={sourceIssueCode}
                 onSelect={toggleTaskSelection}
                 onResolve={resolveTask}
               />

@@ -884,6 +884,15 @@ async def _final_quality_lock_snapshots(
     return snapshots
 
 
+def _supports_reference_package(model_limits: Dict[str, Any]) -> bool:
+    limits = model_limits if isinstance(model_limits, dict) else {}
+    return (
+        int(limits.get("images") or 1) > 1
+        or int(limits.get("videos") or 0) > 0
+        or int(limits.get("audios") or 0) > 0
+    )
+
+
 async def _final_quality_reference_packages(
     db: AsyncSession,
     user_id: str,
@@ -893,7 +902,7 @@ async def _final_quality_reference_packages(
     model_limits: Dict[str, Any],
     resolve_public_url: Any,
 ) -> Dict[str, Dict[str, Any]]:
-    if int(model_limits.get("images") or 1) <= 1:
+    if not _supports_reference_package(model_limits):
         return {}
 
     packages: Dict[str, Dict[str, Any]] = {}
@@ -2284,7 +2293,7 @@ async def generate_workflow_media_batch(
             package = await _build_video_consistency_package(db, user_id, video_request, lineage)
             effective_image_url = package["reference_image"]
             reference_package = None
-            if video_reference_limits.get("images", 1) > 1:
+            if _supports_reference_package(video_reference_limits):
                 reference_package = final_quality_reference_packages.get(shot.id)
                 if reference_package is None:
                     reference_package = await build_reference_package(

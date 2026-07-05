@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "npm run typecheck",
     "e2e": "playwright test",
+    "e2e:smoke": "playwright test e2e/smoke.spec.ts --project=chromium",
     "e2e:headed": "playwright test --headed"
   },
   "dependencies": {

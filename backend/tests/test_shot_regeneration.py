@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.database import AsyncSessionLocal
-from app.models import Asset, Shot, Workflow
+from app.models import Asset, MediaGenerationJob, Shot, Workflow
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
 from init_db import init_db
@@ -171,6 +171,63 @@ def _insert_video_job_for_shot(
             shot.extra_data = {**(shot.extra_data or {}), "latest_video_job_id": job_id}
             if job.video_url:
                 shot.video_url = job.video_url
+                shot.video_status = status
+            await session.commit()
+
+    asyncio.run(_insert())
+    return job_id
+
+
+def _insert_media_job_for_shot(
+    *,
+    user_id: str,
+    workflow_id: str,
+    shot_id: str,
+    shot_number: int,
+    status: str = "succeeded",
+    video_url: str | None = None,
+) -> str:
+    job_id = f"media-{uuid4()}"
+
+    async def _insert() -> None:
+        async with AsyncSessionLocal() as session:
+            job = MediaGenerationJob(
+                id=job_id,
+                user_id=user_id,
+                workflow_id=workflow_id,
+                task_id=f"task-{job_id}",
+                task_type="video_generation",
+                media_type="video",
+                title=f"镜头{shot_number} 统一媒体",
+                prompt=f"shot {shot_number}",
+                provider_id="volcano",
+                model_id="test-media-video",
+                model_name="Test Media Video",
+                shot_id=shot_id,
+                duration_seconds=4,
+                resolution="720p",
+                status=status,
+                progress=100 if status in {"succeeded", "completed"} else 0,
+                output_video_url=video_url or (f"https://example.com/{job_id}.mp4" if status in {"succeeded", "completed"} else None),
+                extra_data={
+                    "workflow_id": workflow_id,
+                    "shot_id": shot_id,
+                    "shot_number": shot_number,
+                },
+                is_active=True,
+            )
+            session.add(job)
+            workflow = await session.get(Workflow, workflow_id)
+            assert workflow is not None
+            workflow.metadata_ = {
+                **(workflow.metadata_ or {}),
+                "media_job_ids": list(dict.fromkeys(((workflow.metadata_ or {}).get("media_job_ids") or []) + [job_id])),
+            }
+            shot = await session.get(Shot, shot_id)
+            assert shot is not None
+            shot.extra_data = {**(shot.extra_data or {}), "latest_media_job_id": job_id}
+            if job.output_video_url:
+                shot.video_url = job.output_video_url
                 shot.video_status = status
             await session.commit()
 
@@ -362,6 +419,54 @@ def test_regenerate_only_failed_shots(client: TestClient) -> None:
     assert len([job for job in all_jobs if job["id"] not in old_jobs]) == 1
 
 
+def test_regenerate_failed_shot_keeps_media_jobs_for_concatenate(client: TestClient) -> None:
+    user_id = uuid4().hex
+    model_config_id = _insert_dev_video_model_config(user_id)
+    workflow_id, shot_ids = _create_workflow_with_shots(
+        client,
+        user_id,
+        shot_specs=[
+            {"prompt": "已有统一媒体任务的成功镜头"},
+            {"prompt": "需要重生的失败镜头"},
+        ],
+    )
+    existing_media_id = _insert_media_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+    )
+    failed_video_id = _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[1],
+        shot_number=2,
+        status="failed",
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/regenerate-shots",
+        json={
+            "shot_ids": shot_ids,
+            "filter": "failed",
+            "model_config_id": model_config_id,
+            "audio_mode": "none",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["regenerated_shot_ids"] == [shot_ids[1]]
+    assert payload["created_count"] == 1
+    assert len(payload["video_job_ids"]) == 1
+    new_video_id = payload["video_job_ids"][0]
+    assert new_video_id != failed_video_id
+    assert payload["concatenate_media_job_ids"] == [existing_media_id]
+    assert payload["concatenate_video_job_ids"] == [new_video_id]
+    assert payload["concatenate_tts_job_ids"] == []
+
+
 def test_regenerate_by_character(client: TestClient) -> None:
     user_id = uuid4().hex
     model_config_id = _insert_dev_video_model_config(user_id)
@@ -431,6 +536,8 @@ def test_regeneration_marks_superseded_and_concatenate_uses_latest(client: TestC
     assert response.status_code == 200, response.text
     payload = response.json()
     new_video_id = payload["video_job_ids"][0]
+    assert payload["concatenate_video_job_ids"] == [new_video_id]
+    assert payload["concatenate_media_job_ids"] == []
     assert _get_video_job(old_video_id)["extra_data"]["superseded_by_regeneration"] is True
     assert _get_tts_job(old_tts_id)["extra_data"]["superseded_by_regeneration"] is True
 
