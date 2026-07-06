@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
 @dataclass(frozen=True)
@@ -34,9 +34,26 @@ SEED_ASSET_PREFIX = "backend/static/starter/"
 
 
 def _normalize_path(path: Path) -> str:
-    normalized = path.as_posix()
-    while normalized.startswith("./"):
-        normalized = normalized[2:]
+    raw_path = path.as_posix()
+    while raw_path.startswith("./"):
+        raw_path = raw_path[2:]
+
+    posix_path = PurePosixPath(raw_path)
+    parts: list[str] = []
+    for part in posix_path.parts:
+        if part in ("", ".", "/"):
+            continue
+        if part == "..":
+            if parts and parts[-1] != "..":
+                parts.pop()
+            elif not posix_path.is_absolute():
+                parts.append(part)
+            continue
+        parts.append(part)
+
+    normalized = "/".join(parts) or "."
+    if posix_path.is_absolute():
+        return f"/{normalized}" if normalized != "." else "/"
     return normalized
 
 

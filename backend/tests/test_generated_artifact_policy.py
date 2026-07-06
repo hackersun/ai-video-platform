@@ -26,6 +26,13 @@ def test_seed_starter_assets_require_review_not_blanket_ignore() -> None:
     assert result.should_ignore is False
 
 
+def test_normalizes_parent_segments_before_classifying_seed_assets() -> None:
+    result = classify_generated_artifact(Path("backend/static/generated/../starter/style.svg"))
+
+    assert result.bucket == "seed_asset_review_required"
+    assert result.should_ignore is False
+
+
 def test_source_files_are_not_generated_artifacts() -> None:
     result = classify_generated_artifact(Path("backend/app/api/v1/endpoints/workflow.py"))
 

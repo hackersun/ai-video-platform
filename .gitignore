@@ -41,17 +41,17 @@ npm-debug.log*
 .netlify
 
 # Local generated media and automation outputs
-backend/static/dev/
-backend/static/generated/
-backend/static/exports/
-output/playwright/
-output/live-anime/
-frontend/test-results/
-test-results/
+/backend/static/dev/
+/backend/static/generated/
+/backend/static/exports/
+/output/playwright/
+/output/live-anime/
+/frontend/test-results/
+/test-results/
 *.tsbuildinfo
 
 # Local tool caches
-.codegraph/
-.logs/
-.playwright-cli/
-.superpowers/
+/.codegraph/
+/.logs/
+/.playwright-cli/
+/.superpowers/
