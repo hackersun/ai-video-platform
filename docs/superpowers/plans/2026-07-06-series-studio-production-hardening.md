@@ -1285,3 +1285,22 @@ git commit -m "docs: record series studio hardening verification"
 - Agent Plan remains single-reference until proven otherwise.
 - Generated media directories are ignored, but `backend/static/starter/` is left visible for explicit product review.
 - Contract status remains visible in job metadata so reviewers can tell whether a render used experimental reference semantics.
+
+## Execution Record
+
+Date: 2026-07-06
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Deterministic regression | Pass | `git diff --check` passed; `npm run verify:frontend` passed; `cd backend && DEV_MODE=true PYTHONPATH=. python3 -m pytest -q` passed with 707 passed, 2 skipped, 17 warnings; `npm run verify:e2e` passed with 2 passed. |
+| Real-context acceptance | Ready, not executed | `frontend/e2e/series-studio-real-context.spec.ts` default skip verified earlier; real run still requires `REAL_CONTEXT_E2E_TOKEN`, `REAL_CONTEXT_WORKFLOW_ID`, `REAL_CONTEXT_NOVEL_ID`, and `REAL_CONTEXT_CHAPTER_ID`. |
+| Live canary | Skipped by design | `npm run verify:live:anime` and invalid-budget/count variants were verified to skip unless `LIVE_ANIME_E2E=1` plus valid budget and count env vars are supplied; no cloud cost was incurred. |
+| Seedance contract status | Experimental | `docs/seedance-2-contract-checklist.md` remains unverified; no official role, pricing, prompt syntax, or Agent Plan multi-reference promotion evidence has been recorded. |
+| Artifact hygiene | Pass | `npm run audit:artifacts` reported `runtime_generated: 15151 files, 1068.28 MB`, `acceptance_output: 7 files, 3.78 MB`, and `seed_asset_review_required: 78 files, 4.48 MB`; `git status --short` is no longer flooded by runtime media/cache files. |
+
+Decision:
+
+- `deterministic_hardening_passed`: default deterministic regression, contract metadata, fixture builder, opt-in real-context smoke, opt-in live canary gate, and artifact hygiene are in place.
+- Not yet `internal_trial_ready`: the real-context browser acceptance still needs seeded `workflow_id` / `novel_id` / `chapter_id` and token, then a non-skipped run.
+- Not yet `series_production_candidate`: live cloud canary was intentionally not run and Seedance 2.x official contract remains `experimental`.
+- Not yet `commercial_series_ready`: requires confirmed Seedance contract plus three consecutive approved live canaries on separate days with no manual database repair.
