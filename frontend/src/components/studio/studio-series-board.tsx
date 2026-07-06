@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { ProductionCardsResponse } from '@/lib/api-client';
+import { withStudioContext } from '@/lib/studio-context-links';
 import type { StudioIssue, StudioSnapshot } from '@/lib/studio-types';
 
 type StageTone = 'ready' | 'working' | 'blocked';
@@ -176,7 +177,7 @@ export function StudioSeriesBoard({
   const producerHref = workflowId ? `/producer?workflow_id=${workflowId}` : '/producer';
   const shotReviewHref = workflowId ? `/studio/shot-review?workflow_id=${workflowId}` : '/studio/shot-review';
   const quickStartHref = '/quick-start';
-  const productionCardsHref = snapshot?.workflow?.novel_id ? `/studio/cards?novel_id=${snapshot.workflow.novel_id}` : '/studio/cards';
+  const productionCardsHref = withStudioContext('/studio/cards', snapshot, { source: 'studio' });
 
   return (
     <Card className="border-cyan-400/15 bg-cyan-500/[0.06]">

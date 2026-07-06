@@ -3,11 +3,11 @@
 import { Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, ArrowUpRight, CheckCircle2, ImageIcon, Loader2, Mic2, Wand2 } from 'lucide-react';
+import { AlertCircle, ArrowLeft, ArrowUpRight, CheckCircle2, ClipboardCheck, ImageIcon, Layers3, Loader2, Map, Mic2, Package, UserRound, Wand2 } from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import apiClient, { BatchFinalizeSupportingRequest, BatchFinalizeSupportingResponse, ProductionCard, ProductionCardsResponse } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
@@ -15,6 +15,27 @@ const ENTITY_LABELS: Record<ProductionCard['entity_type'], string> = {
   character: '角色',
   scene: '场景',
   prop: '道具',
+};
+
+const ENTITY_META: Record<ProductionCard['entity_type'], { icon: any; tone: string; rail: string; chip: string }> = {
+  character: {
+    icon: UserRound,
+    tone: 'border-cyan-300/25 bg-cyan-400/10 text-cyan-100',
+    rail: 'from-cyan-300 to-blue-400',
+    chip: 'bg-cyan-300/10 text-cyan-100',
+  },
+  scene: {
+    icon: Map,
+    tone: 'border-violet-300/25 bg-violet-400/10 text-violet-100',
+    rail: 'from-violet-300 to-fuchsia-400',
+    chip: 'bg-violet-300/10 text-violet-100',
+  },
+  prop: {
+    icon: Package,
+    tone: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100',
+    rail: 'from-emerald-300 to-teal-400',
+    chip: 'bg-emerald-300/10 text-emerald-100',
+  },
 };
 
 const VIEW_LABELS: Record<string, string> = {
@@ -68,6 +89,22 @@ function assetContextHref(card: ProductionCard, viewKey?: string) {
   return `/assets?${params.toString()}`;
 }
 
+function studioHref(workflowId: string) {
+  if (!workflowId) return '/studio';
+  const params = new URLSearchParams({ workflow_id: workflowId });
+  return `/studio?${params.toString()}`;
+}
+
+function MetricTile({ label, value, detail, tone }: { label: string; value: string | number; detail: string; tone: string }) {
+  return (
+    <div className={cn('rounded-xl border px-4 py-3', tone)}>
+      <div className="text-xs text-white/50">{label}</div>
+      <div className="mt-2 text-2xl font-semibold leading-none text-white">{value}</div>
+      <div className="mt-2 text-xs leading-5 text-white/55">{detail}</div>
+    </div>
+  );
+}
+
 function ProductionCardItem({
   card,
   completingKey,
@@ -85,43 +122,49 @@ function ProductionCardItem({
   const missingViews = missingViewKeys(card);
   const cardCompletionKey = completionKey(card, missingViews);
   const isCompletingCard = Boolean(completingKey) && (completingKey === 'all' || completingKey === cardCompletionKey);
+  const meta = ENTITY_META[card.entity_type];
+  const EntityIcon = meta.icon;
 
   return (
-    <Card data-testid={`production-card-${card.entity_id}`} className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none">
-      <div className="relative aspect-[16/10] bg-slate-900">
+    <Card data-testid={`production-card-${card.entity_id}`} className="group overflow-hidden border-white/10 bg-[#151a22] text-white shadow-[0_18px_60px_rgba(0,0,0,0.22)] transition-colors hover:border-white/20">
+      <div className={cn('h-1 bg-gradient-to-r', meta.rail)} />
+      <div className="relative aspect-[16/10] bg-slate-950">
         {preview?.url ? (
           <img
             src={preview.url}
             alt={`${card.name} ${preview.view_label || preview.view_key || '定稿图'}`}
-            className="h-full w-full object-cover"
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
           />
         ) : (
-          <div className="flex h-full items-center justify-center text-white/35">
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-white/35">
             <ImageIcon className="h-9 w-9" aria-hidden="true" />
+            <span className="text-xs">等待定稿参考图</span>
           </div>
         )}
-        <div className="absolute left-3 top-3">
+        <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-slate-950/90 to-transparent" />
+        <div className="absolute left-3 top-3 flex items-center gap-2">
           <Badge variant={isReady ? 'success' : 'warning'}>{isReady ? '终稿就绪' : '待补齐'}</Badge>
+          <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-1 text-xs', meta.tone)}>
+            <EntityIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            {ENTITY_LABELS[card.entity_type]}
+          </span>
+        </div>
+        <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <div className="truncate text-lg font-semibold leading-6 text-white">{card.name}</div>
+            <div className="mt-1 text-xs text-white/55">出镜 {card.usage?.shot_count ?? 0} · 锁定视图 {card.visual?.locked_count ?? 0}</div>
+          </div>
+          <div className={cn('shrink-0 rounded-lg border px-2.5 py-2 text-center', isReady ? 'border-emerald-300/35 bg-emerald-300/15' : 'border-amber-300/35 bg-amber-300/15')}>
+            <div className="text-lg font-semibold leading-none">{score}%</div>
+            <div className="mt-1 text-[10px] text-white/55">完整度</div>
+          </div>
         </div>
       </div>
 
       <CardHeader className="space-y-3 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="truncate text-lg leading-6">{card.name}</CardTitle>
-            <p className="mt-1 text-sm text-white/55">{ENTITY_LABELS[card.entity_type]}</p>
-          </div>
-          <div
-            className={cn(
-              'flex h-12 w-12 shrink-0 items-center justify-center rounded-full border text-sm font-semibold',
-              isReady ? 'border-emerald-300/40 text-emerald-200' : 'border-amber-300/40 text-amber-200'
-            )}
-            aria-label={`完整度 ${score}%`}
-          >
-            {score}%
-          </div>
+        <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]" aria-label={`完整度 ${score}%`}>
+          <div className={cn('h-full rounded-full bg-gradient-to-r', meta.rail)} style={{ width: `${score}%` }} />
         </div>
-
         <div className="grid grid-cols-3 gap-2 text-xs text-white/70">
           <div className="rounded-md bg-white/[0.05] px-2 py-2">
             <div className="text-white/40">锁定视图</div>
@@ -154,7 +197,7 @@ function ProductionCardItem({
         </p>
 
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-white/70">完整度 {score}%</span>
+          <span className={cn('rounded-full px-2.5 py-1', meta.chip)}>完整度 {score}%</span>
           {missingViews.map((view) => (
             <span key={view} className="rounded-full bg-amber-400/10 px-2.5 py-1 text-amber-100">
               缺 {viewLabel(card, view)}
@@ -229,6 +272,8 @@ function ProductionCardItem({
 function CardsContent() {
   const searchParams = useSearchParams();
   const novelId = searchParams.get('novel_id') || '';
+  const workflowId = searchParams.get('workflow_id') || '';
+  const fromStudio = searchParams.get('source') === 'studio' || Boolean(workflowId);
   const [data, setData] = useState<ProductionCardsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -375,20 +420,55 @@ function CardsContent() {
     () => (data?.cards || []).reduce((total, card) => total + missingViewKeys(card).length, 0),
     [data]
   );
+  const totalCards = data?.cards?.length ?? 0;
+  const readyCount = data?.summary?.ready ?? 0;
+  const incompleteCount = data?.summary?.incomplete ?? 0;
 
   return (
-    <div className="min-h-screen bg-[#10131a] text-white">
+    <div className="min-h-screen bg-[#0b0f14] text-white">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-4 border-b border-white/10 pb-5 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-normal">定稿卡</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
-              聚合角色、场景和道具的视图锁、声线和使用证据，方便进入终稿前快速补齐。
-            </p>
+        {fromStudio ? (
+          <div className="flex flex-col gap-3 rounded-xl border border-cyan-300/20 bg-cyan-400/[0.08] px-4 py-3 text-sm text-cyan-50 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <ClipboardCheck className="mt-0.5 h-4 w-4 shrink-0 text-cyan-200" aria-hidden="true" />
+              <div>
+                <div className="font-medium">已从工作台进入定稿卡</div>
+                <div className="mt-1 text-xs leading-5 text-cyan-100/70">
+                  当前保留了工作流上下文，补齐定稿图或声线后可返回工作台继续执行快捷操作和质量门禁检查。
+                </div>
+              </div>
+            </div>
+            <Button asChild size="sm" variant="outline" className="shrink-0 border-cyan-100/30 text-cyan-50 hover:bg-cyan-200/10">
+              <Link href={studioHref(workflowId)}>
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                返回工作台
+              </Link>
+            </Button>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
+        ) : null}
+
+        <header className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.24)]">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-sm text-white/50">
+                <Layers3 className="h-4 w-4 text-cyan-200" aria-hidden="true" />
+                终稿前资产核对
+              </div>
+              <h1 className="mt-2 text-2xl font-semibold tracking-normal">定稿卡检查台</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-white/60">
+                聚合角色、场景和道具的视图锁、声线和使用证据，方便进入终稿前快速补齐。
+              </p>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3 lg:w-[520px]">
+              <MetricTile label="定稿卡" value={totalCards} detail="角色、场景、道具总数" tone="border-white/10 bg-slate-950/35" />
+              <MetricTile label="终稿就绪" value={readyCount} detail="可进入终稿门禁" tone="border-emerald-300/20 bg-emerald-400/10" />
+              <MetricTile label="待补齐" value={incompleteCount} detail={`缺失视图 ${totalMissingViewCount}`} tone="border-amber-300/20 bg-amber-400/10" />
+            </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
             {novelId ? (
-              <div className="flex flex-wrap items-end gap-2 rounded-md border border-white/10 bg-white/[0.04] p-2">
+              <div className="flex flex-wrap items-end gap-2 rounded-xl border border-white/10 bg-slate-950/35 p-3">
                 <label className="flex flex-col gap-1 text-xs text-white/55">
                   最低出镜次数
                   <input
@@ -443,12 +523,6 @@ function CardsContent() {
                 </Button>
               </div>
             ) : null}
-            <span className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-3 py-2 text-emerald-100">
-              就绪 {data?.summary?.ready ?? 0}
-            </span>
-            <span className="rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-amber-100">
-              待补齐 {data?.summary?.incomplete ?? 0}
-            </span>
           </div>
         </header>
 
@@ -513,11 +587,19 @@ function CardsContent() {
 
         {data && !loading ? (
           <div className="grid gap-6 lg:grid-cols-3">
-            {(['character', 'scene', 'prop'] as const).map((type) => (
-              <section key={type} className="min-w-0">
-                <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-base font-semibold">{ENTITY_LABELS[type]}</h2>
-                  <Badge variant="outline" className="text-white/70">{groups[type].length}</Badge>
+            {(['character', 'scene', 'prop'] as const).map((type) => {
+              const meta = ENTITY_META[type];
+              const EntityIcon = meta.icon;
+              return (
+              <section key={type} className="min-w-0 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
+                <div className="mb-3 flex items-center justify-between px-1">
+                  <h2 className="flex items-center gap-2 text-base font-semibold">
+                    <span className={cn('inline-flex h-8 w-8 items-center justify-center rounded-lg border', meta.tone)}>
+                      <EntityIcon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    {ENTITY_LABELS[type]}
+                  </h2>
+                  <Badge variant="outline" className="border-white/15 text-white/70">{groups[type].length}</Badge>
                 </div>
                 <div className="space-y-4">
                   {groups[type].length ? (
@@ -530,13 +612,14 @@ function CardsContent() {
                       />
                     ))
                   ) : (
-                    <div className="rounded-md border border-dashed border-white/15 p-5 text-sm text-white/45">
+                    <div className="rounded-xl border border-dashed border-white/15 bg-slate-950/25 p-5 text-sm text-white/45">
                       暂无{ENTITY_LABELS[type]}定稿卡
                     </div>
                   )}
                 </div>
               </section>
-            ))}
+              );
+            })}
           </div>
         ) : null}
       </div>
