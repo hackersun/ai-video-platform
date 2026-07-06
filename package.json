@@ -9,6 +9,7 @@
     "verify:frontend": "npm --prefix frontend run typecheck && npm --prefix frontend run build",
     "verify:e2e": "npm --prefix frontend run e2e:smoke",
     "verify:e2e:legacy": "npm --prefix e2e test",
+    "verify:live:anime": "npm --prefix frontend run e2e -- live-anime-production-seedance.spec.ts --project=chromium --workers=1",
     "verify:quick": "npm run verify:frontend && npm run verify:e2e"
   },
   "keywords": [],

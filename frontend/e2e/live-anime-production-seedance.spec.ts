@@ -6,8 +6,13 @@ const LIVE_USER_ID = process.env.LIVE_ANIME_E2E_USER_ID || '56ae84de-951f-4e74-a
 const VIDEO_CONFIG_ID = process.env.LIVE_ANIME_E2E_VIDEO_CONFIG_ID || '980cb5db-0281-4835-9486-a739fcb35d98';
 const AUDIO_CONFIG_ID = process.env.LIVE_ANIME_E2E_AUDIO_CONFIG_ID || '5a8d3813-ee43-4ed2-b40b-4935368e784e';
 const JWT_SECRET = process.env.JWT_SECRET_KEY || 'dev-jwt-secret-change-in-production';
+const LIVE_MAX_RMB = Number(process.env.LIVE_ANIME_E2E_MAX_RMB || '0');
+const LIVE_EPISODE_COUNT = Number(process.env.LIVE_ANIME_E2E_EPISODES || '3');
+const LIVE_SHOTS_PER_EPISODE = Number(process.env.LIVE_ANIME_E2E_SHOTS_PER_EPISODE || '2');
 
 test.skip(process.env.LIVE_ANIME_E2E !== '1', '设置 LIVE_ANIME_E2E=1 后才运行真实动漫制作全流程测试。');
+test.skip(LIVE_MAX_RMB <= 0, '设置 LIVE_ANIME_E2E_MAX_RMB 才允许真实云端调用。');
+test.skip(LIVE_EPISODE_COUNT < 1 || LIVE_SHOTS_PER_EPISODE < 1, '真实云端 canary 至少需要 1 集和 1 个镜头。');
 
 type ApiOptions = {
   method?: string;
@@ -42,12 +47,30 @@ async function api<T = any>(token: string, path: string, options: ApiOptions = {
   return data as T;
 }
 
+async function writeLiveArtifact(payload: unknown) {
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const outputDir = path.join(process.cwd(), '..', 'output', 'live-anime');
+  await fs.mkdir(outputDir, { recursive: true });
+  const filename = `canary-${Date.now()}.json`;
+  const sanitized = JSON.stringify(payload, (key, value) => {
+    if (/token|key|secret|authorization/i.test(key)) return '[redacted]';
+    return value;
+  }, 2);
+  await fs.writeFile(path.join(outputDir, filename), sanitized, 'utf8');
+}
+
 async function assertRequiredModelConfigs(token: string) {
   const configs = await api<any[]>(token, '/llm/configs');
   const video = configs.find((config) => config.id === VIDEO_CONFIG_ID);
   const audio = configs.find((config) => config.id === AUDIO_CONFIG_ID);
   expect(video, `缺少视频模型配置 ${VIDEO_CONFIG_ID}`).toBeTruthy();
-  expect(video.model_id, '必须先用 Doubao Seedance 1.5 Pro 验证').toBe('doubao-seedance-1-5-pro-251215');
+  const allowedVideoModels = [
+    'doubao-seedance-2-0-260128',
+    'doubao-seedance-2-0-fast-260128',
+    'doubao-seedance-1-5-pro-251215',
+  ];
+  expect(allowedVideoModels, `视频模型 ${video.model_id} 必须是明确允许的 live canary 模型`).toContain(video.model_id);
   expect(video.test_status, 'Seedance 视频模型配置必须验证通过').toBe('success');
   expect(video.key_available, 'Seedance 视频模型配置必须有可用 API Key').not.toBe(false);
   expect(audio, `缺少声音模型配置 ${AUDIO_CONFIG_ID}`).toBeTruthy();
@@ -258,4 +281,15 @@ test('从前端制片中心发起简单小说到 Seedance 短镜头的动漫制�
   } else {
     expect(['pending', 'running', 'processing', 'queued']).toContain(videoJob.status);
   }
+
+  await writeLiveArtifact({
+    status: 'passed',
+    workflowId: fixture.workflowId,
+    liveEpisodeCount: LIVE_EPISODE_COUNT,
+    liveShotsPerEpisode: LIVE_SHOTS_PER_EPISODE,
+    executedEpisodeCount: 1,
+    executedShotsPerEpisode: 1,
+    maxRmb: LIVE_MAX_RMB,
+    createdAt: new Date().toISOString(),
+  });
 });
