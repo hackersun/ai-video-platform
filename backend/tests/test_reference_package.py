@@ -46,6 +46,20 @@ def _adapter_module():
         pytest.fail(f"video_reference_adapter module is missing: {exc}")
 
 
+def _seedance_contract_metadata() -> dict[str, Any]:
+    return {
+        "contract_status": "experimental",
+        "contract_model_family": "seedance_2",
+        "contract_roles": {
+            "image": "reference_image",
+            "video": "reference_video",
+            "audio": "reference_audio",
+        },
+        "contract_pricing_status": "unconfirmed",
+        "contract_agent_plan_multireference": False,
+    }
+
+
 async def _public_resolver(_db: AsyncSession, _user_id: str, url: str | None) -> dict[str, Any]:
     if url and url.startswith("https://"):
         return {"provider_url": url, "omitted_reason": None}
@@ -457,6 +471,7 @@ def test_provider_content_adapter_submits_multimodal_references() -> None:
         "image_count": 2,
         "video_count": 1,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -527,6 +542,7 @@ def test_provider_content_adapter_allows_audio_with_single_image_limit() -> None
         "image_count": 1,
         "video_count": 0,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -562,6 +578,7 @@ def test_provider_content_adapter_allows_audio_without_image_capacity() -> None:
         "image_count": 0,
         "video_count": 0,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -604,6 +621,7 @@ def test_provider_content_adapter_keeps_media_references_without_images() -> Non
         "image_count": 0,
         "video_count": 1,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -636,3 +654,33 @@ def test_provider_content_adapter_respects_text_only_model_contract() -> None:
         },
     ]
     assert result["metadata"]["image_count"] == 0
+
+
+def test_provider_content_records_seedance_contract_status() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [{"url": "https://cdn.example.com/mili-front.png"}],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+            "at_reference_text": "@image1 主角定稿图；@video1 上一镜头；@audio1 角色声线。",
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
+    )
+
+    metadata = result["metadata"]
+    assert metadata["contract_status"] == "experimental"
+    assert metadata["contract_model_family"] == "seedance_2"
+    assert metadata["contract_roles"] == {
+        "image": "reference_image",
+        "video": "reference_video",
+        "audio": "reference_audio",
+    }
+    assert metadata["contract_pricing_status"] == "unconfirmed"

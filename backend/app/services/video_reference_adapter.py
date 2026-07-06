@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.services.seedance_contract import get_seedance_contract
 
-REFERENCE_IMAGE_ROLE = "reference_image"
-REFERENCE_VIDEO_ROLE = "reference_video"
-REFERENCE_AUDIO_ROLE = "reference_audio"
+
+DEFAULT_MULTIMODAL_CONTRACT_MODEL_ID = "doubao-seedance-2-0-260128"
 
 
 def _positive_int(value: Any, default: int) -> int:
@@ -51,6 +51,35 @@ def _model_limit(model_limits: Optional[Dict[str, Any]], key: str, default: int)
     return _positive_int(limits.get(key), default)
 
 
+def _contract_lookup_model_id(
+    model_id: Optional[str],
+    *,
+    image_limit: int,
+    video_limit: int,
+    audio_limit: int,
+) -> Optional[str]:
+    if model_id:
+        return model_id
+    # Older callers omitted model identity while already sending Seedance-style multimodal roles.
+    if image_limit > 1 or video_limit > 0 or audio_limit > 0:
+        return DEFAULT_MULTIMODAL_CONTRACT_MODEL_ID
+    return None
+
+
+def _contract_metadata(contract: Any) -> Dict[str, Any]:
+    return {
+        "contract_status": contract.status,
+        "contract_model_family": contract.model_family,
+        "contract_roles": {
+            "image": contract.roles.image,
+            "video": contract.roles.video,
+            "audio": contract.roles.audio,
+        },
+        "contract_pricing_status": contract.pricing_status,
+        "contract_agent_plan_multireference": contract.agent_plan_multireference,
+    }
+
+
 def build_video_provider_content(
     *,
     final_prompt: str,
@@ -59,6 +88,8 @@ def build_video_provider_content(
     provider_image_url: Optional[str] = None,
     reference_package: Optional[Dict[str, Any]] = None,
     model_limits: Optional[Dict[str, Any]] = None,
+    model_id: Optional[str] = None,
+    provider: Optional[str] = None,
     camera_fixed: bool = False,
     watermark: bool = True,
 ) -> Dict[str, Any]:
@@ -67,6 +98,16 @@ def build_video_provider_content(
     image_limit = _model_limit(model_limits, "images", 1)
     video_limit = _model_limit(model_limits, "videos", 0)
     audio_limit = _model_limit(model_limits, "audios", 0)
+    contract = get_seedance_contract(
+        _contract_lookup_model_id(
+            model_id,
+            image_limit=image_limit,
+            video_limit=video_limit,
+            audio_limit=audio_limit,
+        ),
+        provider,
+    )
+    contract_metadata = _contract_metadata(contract)
     package_images = [item for item in package.get("images") or [] if _content_url(item)]
     package_videos = [item for item in package.get("videos") or [] if _content_url(item)]
     package_audios = [item for item in package.get("audios") or [] if _content_url(item)]
@@ -90,6 +131,7 @@ def build_video_provider_content(
                 "video_count": 0,
                 "audio_count": 0,
                 "dropped_image_count": len(package_images) + (1 if provider_image_url else 0),
+                **contract_metadata,
             },
         }
 
@@ -102,7 +144,7 @@ def build_video_provider_content(
             {
                 "type": "image_url",
                 "image_url": {"url": _content_url(item)},
-                "role": REFERENCE_IMAGE_ROLE,
+                "role": contract.roles.image,
             }
             for item in images
         ]
@@ -110,7 +152,7 @@ def build_video_provider_content(
             {
                 "type": "video_url",
                 "video_url": {"url": _content_url(item)},
-                "role": REFERENCE_VIDEO_ROLE,
+                "role": contract.roles.video,
             }
             for item in videos
         )
@@ -118,7 +160,7 @@ def build_video_provider_content(
             {
                 "type": "audio_url",
                 "audio_url": {"url": _content_url(item)},
-                "role": REFERENCE_AUDIO_ROLE,
+                "role": contract.roles.audio,
             }
             for item in audios
         )
@@ -141,6 +183,7 @@ def build_video_provider_content(
                 "image_count": len(images),
                 "video_count": len(videos),
                 "audio_count": len(audios),
+                **contract_metadata,
             },
         }
 
@@ -164,6 +207,7 @@ def build_video_provider_content(
             "image_count": 1 if provider_image_url else 0,
             "video_count": 0,
             "audio_count": 0,
+            **contract_metadata,
         },
     }
 

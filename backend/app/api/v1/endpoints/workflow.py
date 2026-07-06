@@ -2446,6 +2446,17 @@ async def generate_workflow_media_batch(
                 provider_image_url=provider_image_url,
                 reference_package=reference_package,
                 model_limits=video_reference_limits,
+                model_id=(
+                    selected_video_model.get("api_model")
+                    or selected_video_model.get("api_model_id")
+                    or selected_video_model.get("model_id")
+                    or selected_video_model.get("config_model_id")
+                ),
+                provider=(
+                    selected_video_model.get("provider")
+                    or selected_video_model.get("provider_id")
+                    or selected_video_model.get("provider_name")
+                ),
                 camera_fixed=False,
                 watermark=True,
             )
