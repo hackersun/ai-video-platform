@@ -41,6 +41,7 @@ from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_entries
 from app.services.reference_package_builder import build_reference_package
 from app.services.video_reference_adapter import (
+    apply_seedance_contract_limits,
     build_reference_package_metadata,
     build_video_provider_content,
     enrich_prompt_parameters_with_reference_contract,
@@ -1642,6 +1643,18 @@ async def generate_video(
             "shot_id": lineage.get("shot_id"),
         })
         video_model_config = await _resolve_video_model_config(db, user_id, request.model, request.model_config_id)
+        selected_video_model_id = (
+            video_model_config.get("api_model")
+            or video_model_config.get("api_model_id")
+            or video_model_config.get("model_id")
+            or video_model_config.get("config_model_id")
+            or request.model
+        )
+        selected_video_provider = (
+            video_model_config.get("provider")
+            or video_model_config.get("provider_id")
+            or video_model_config.get("provider_name")
+        )
         real_adapter_available = video_model_config.get("provider_id") in ARK_VIDEO_PROVIDER_IDS
         if not real_adapter_available and not is_dev_mode():
             raise HTTPException(
@@ -1651,10 +1664,14 @@ async def generate_video(
                     "视频模型已进入目录和配置体系，但真实提交适配器尚未接入。"
                 ),
             )
-        video_reference_limits = get_model_reference_limits(
-            video_model_config.get("api_model_id")
-            or video_model_config.get("config_model_id")
-            or request.model
+        video_reference_limits = apply_seedance_contract_limits(
+            get_model_reference_limits(
+                video_model_config.get("api_model_id")
+                or video_model_config.get("config_model_id")
+                or request.model
+            ),
+            model_id=selected_video_model_id,
+            provider=selected_video_provider,
         )
         if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
             raise HTTPException(
@@ -1756,6 +1773,8 @@ async def generate_video(
             provider_image_url=provider_image_url,
             reference_package=reference_package,
             model_limits=video_reference_limits,
+            model_id=selected_video_model_id,
+            provider=selected_video_provider,
             camera_fixed=False,
             watermark=True,
         )
