@@ -445,6 +445,8 @@ def test_provider_content_adapter_submits_multimodal_references() -> None:
             "at_reference_text": "@图1为主角孙剑正面形象基准；@图2为主角孙剑侧面形象基准",
         },
         model_limits={"images": 9, "videos": 3, "audios": 3, "at_reference": True, "native_audio": False},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -528,6 +530,8 @@ def test_provider_content_adapter_allows_audio_with_single_image_limit() -> None
             ],
         },
         model_limits={"images": 1, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -564,6 +568,8 @@ def test_provider_content_adapter_allows_audio_without_image_capacity() -> None:
             ],
         },
         model_limits={"images": 0, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -602,6 +608,8 @@ def test_provider_content_adapter_keeps_media_references_without_images() -> Non
             ],
         },
         model_limits={"images": 9, "videos": 1, "audios": 1, "at_reference": True, "native_audio": False},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -684,3 +692,62 @@ def test_provider_content_records_seedance_contract_status() -> None:
         "audio": "reference_audio",
     }
     assert metadata["contract_pricing_status"] == "unconfirmed"
+
+
+def test_provider_content_without_model_id_does_not_infer_seedance_contract() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [{"url": "https://cdn.example.com/mili-front.png"}],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["image_url", "video_url", "audio_url", "text"]
+    metadata = result["metadata"]
+    assert metadata["contract_model_family"] == "legacy"
+    assert metadata["contract_status"] == "legacy_single_reference"
+
+
+def test_provider_content_clamps_agent_plan_to_single_reference() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/mili-front.png"},
+                {"url": "https://cdn.example.com/mili-side.png"},
+            ],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+        model_id="doubao-seedance-2.0-fast",
+        provider="volcano_agent_plan",
+    )
+
+    assert result["mode"] == "single_image"
+    assert result["content"] == [
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/mili-front.png"}},
+        {
+            "type": "text",
+            "text": "米粒举起星灯尾巴，照亮雨夜屋顶。 --duration 4 --resolution 720p --camerafixed false --watermark true",
+        },
+    ]
+    metadata = result["metadata"]
+    assert metadata["image_count"] == 1
+    assert metadata["video_count"] == 0
+    assert metadata["audio_count"] == 0
+    assert metadata["contract_agent_plan_multireference"] is False

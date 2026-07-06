@@ -7,9 +7,6 @@ from typing import Any, Dict, List, Optional
 from app.services.seedance_contract import get_seedance_contract
 
 
-DEFAULT_MULTIMODAL_CONTRACT_MODEL_ID = "doubao-seedance-2-0-260128"
-
-
 def _positive_int(value: Any, default: int) -> int:
     try:
         parsed = int(value)
@@ -51,19 +48,28 @@ def _model_limit(model_limits: Optional[Dict[str, Any]], key: str, default: int)
     return _positive_int(limits.get(key), default)
 
 
-def _contract_lookup_model_id(
-    model_id: Optional[str],
+def _limits_with_contract_caps(
+    model_limits: Optional[Dict[str, Any]],
     *,
-    image_limit: int,
-    video_limit: int,
-    audio_limit: int,
-) -> Optional[str]:
-    if model_id:
-        return model_id
-    # Older callers omitted model identity while already sending Seedance-style multimodal roles.
-    if image_limit > 1 or video_limit > 0 or audio_limit > 0:
-        return DEFAULT_MULTIMODAL_CONTRACT_MODEL_ID
-    return None
+    contract: Any,
+    enforce_contract: bool,
+) -> Dict[str, Any]:
+    limits = dict(model_limits) if isinstance(model_limits, dict) else {}
+    image_limit = _model_limit(limits, "images", 1)
+    video_limit = _model_limit(limits, "videos", 0)
+    audio_limit = _model_limit(limits, "audios", 0)
+
+    if enforce_contract:
+        image_limit = min(image_limit, contract.max_images)
+        video_limit = min(video_limit, contract.max_videos)
+        audio_limit = min(audio_limit, contract.max_audios)
+
+    return {
+        **limits,
+        "images": image_limit,
+        "videos": video_limit,
+        "audios": audio_limit,
+    }
 
 
 def _contract_metadata(contract: Any) -> Dict[str, Any]:
@@ -78,6 +84,21 @@ def _contract_metadata(contract: Any) -> Dict[str, Any]:
         "contract_pricing_status": contract.pricing_status,
         "contract_agent_plan_multireference": contract.agent_plan_multireference,
     }
+
+
+def apply_seedance_contract_limits(
+    model_limits: Optional[Dict[str, Any]],
+    *,
+    model_id: Optional[str] = None,
+    provider: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Clamp registry limits when a concrete model contract is known."""
+    contract = get_seedance_contract(model_id, provider)
+    return _limits_with_contract_caps(
+        model_limits,
+        contract=contract,
+        enforce_contract=bool(model_id),
+    )
 
 
 def build_video_provider_content(
@@ -95,18 +116,15 @@ def build_video_provider_content(
 ) -> Dict[str, Any]:
     """Build Ark content while preserving the legacy single-image shape."""
     package = reference_package if isinstance(reference_package, dict) else {}
-    image_limit = _model_limit(model_limits, "images", 1)
-    video_limit = _model_limit(model_limits, "videos", 0)
-    audio_limit = _model_limit(model_limits, "audios", 0)
-    contract = get_seedance_contract(
-        _contract_lookup_model_id(
-            model_id,
-            image_limit=image_limit,
-            video_limit=video_limit,
-            audio_limit=audio_limit,
-        ),
-        provider,
+    contract = get_seedance_contract(model_id, provider)
+    effective_limits = _limits_with_contract_caps(
+        model_limits,
+        contract=contract,
+        enforce_contract=bool(model_id),
     )
+    image_limit = _model_limit(effective_limits, "images", 1)
+    video_limit = _model_limit(effective_limits, "videos", 0)
+    audio_limit = _model_limit(effective_limits, "audios", 0)
     contract_metadata = _contract_metadata(contract)
     package_images = [item for item in package.get("images") or [] if _content_url(item)]
     package_videos = [item for item in package.get("videos") or [] if _content_url(item)]
@@ -188,8 +206,9 @@ def build_video_provider_content(
         }
 
     content = []
-    if provider_image_url:
-        content.append({"type": "image_url", "image_url": {"url": provider_image_url}})
+    single_image_url = provider_image_url or (_content_url(images[0]) if images else None)
+    if single_image_url:
+        content.append({"type": "image_url", "image_url": {"url": single_image_url}})
     content.append(
         _text_content(
             final_prompt,
@@ -204,7 +223,7 @@ def build_video_provider_content(
         "mode": "single_image",
         "metadata": {
             "mode": "single_image",
-            "image_count": 1 if provider_image_url else 0,
+            "image_count": 1 if single_image_url else 0,
             "video_count": 0,
             "audio_count": 0,
             **contract_metadata,

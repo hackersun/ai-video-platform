@@ -33,6 +33,7 @@ from app.services.production_strategy_routing import resolve_strategy_video_conf
 from app.services.publication_readiness import evaluate_publication_readiness
 from app.services.reference_package_builder import build_reference_package
 from app.services.video_reference_adapter import (
+    apply_seedance_contract_limits,
     build_reference_package_metadata,
     build_video_provider_content,
     enrich_prompt_parameters_with_reference_contract,
@@ -2236,8 +2237,23 @@ async def generate_workflow_media_batch(
         )
 
         selected_video_model = await _resolve_video_model_config(db, user_id, None, effective_video_config_id)
-        video_reference_limits = get_model_reference_limits(
-            selected_video_model.get("api_model_id") or selected_video_model.get("config_model_id") or ""
+        selected_video_model_id = (
+            selected_video_model.get("api_model")
+            or selected_video_model.get("api_model_id")
+            or selected_video_model.get("model_id")
+            or selected_video_model.get("config_model_id")
+        )
+        selected_video_provider = (
+            selected_video_model.get("provider")
+            or selected_video_model.get("provider_id")
+            or selected_video_model.get("provider_name")
+        )
+        video_reference_limits = apply_seedance_contract_limits(
+            get_model_reference_limits(
+                selected_video_model.get("api_model_id") or selected_video_model.get("config_model_id") or ""
+            ),
+            model_id=selected_video_model_id,
+            provider=selected_video_provider,
         )
         final_quality_reference_packages: Dict[str, Dict[str, Any]] = {}
         if request.production_strategy == "final_quality":
@@ -2446,17 +2462,8 @@ async def generate_workflow_media_batch(
                 provider_image_url=provider_image_url,
                 reference_package=reference_package,
                 model_limits=video_reference_limits,
-                model_id=(
-                    selected_video_model.get("api_model")
-                    or selected_video_model.get("api_model_id")
-                    or selected_video_model.get("model_id")
-                    or selected_video_model.get("config_model_id")
-                ),
-                provider=(
-                    selected_video_model.get("provider")
-                    or selected_video_model.get("provider_id")
-                    or selected_video_model.get("provider_name")
-                ),
+                model_id=selected_video_model_id,
+                provider=selected_video_provider,
                 camera_fixed=False,
                 watermark=True,
             )
