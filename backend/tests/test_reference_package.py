@@ -717,6 +717,37 @@ def test_provider_content_without_model_id_does_not_infer_seedance_contract() ->
     assert metadata["contract_status"] == "legacy_single_reference"
 
 
+def test_non_seedance_contract_limits_keep_registry_multireference_limits() -> None:
+    adapter = _adapter_module()
+    apply_limits = getattr(adapter, "apply_seedance_contract_limits")
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    limits = {"images": 9, "videos": 3, "audios": 2}
+    assert apply_limits(
+        limits,
+        model_id="happyhorse-1.1-r2v",
+        provider="alibaba",
+    ) == limits
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [{"url": "https://cdn.example.com/mili-front.png"}],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits=limits,
+        model_id="happyhorse-1.1-r2v",
+        provider="alibaba",
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["image_url", "video_url", "audio_url", "text"]
+    assert result["metadata"]["contract_model_family"] == "legacy"
+
+
 def test_provider_content_clamps_agent_plan_to_single_reference() -> None:
     adapter = _adapter_module()
     build_content = getattr(adapter, "build_video_provider_content")

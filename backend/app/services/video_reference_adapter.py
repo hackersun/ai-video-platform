@@ -92,12 +92,12 @@ def apply_seedance_contract_limits(
     model_id: Optional[str] = None,
     provider: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Clamp registry limits when a concrete model contract is known."""
+    """Clamp registry limits only for recognized Seedance 2 contracts."""
     contract = get_seedance_contract(model_id, provider)
     return _limits_with_contract_caps(
         model_limits,
         contract=contract,
-        enforce_contract=bool(model_id),
+        enforce_contract=contract.model_family == "seedance_2",
     )
 
 
@@ -120,7 +120,7 @@ def build_video_provider_content(
     effective_limits = _limits_with_contract_caps(
         model_limits,
         contract=contract,
-        enforce_contract=bool(model_id),
+        enforce_contract=contract.model_family == "seedance_2",
     )
     image_limit = _model_limit(effective_limits, "images", 1)
     video_limit = _model_limit(effective_limits, "videos", 0)
