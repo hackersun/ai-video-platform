@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime
 from typing import Any, Dict
 
 
 def build_fixture_payload(stamp: str | None = None) -> Dict[str, Any]:
-    suffix = stamp or datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    suffix = stamp or "dry-run"
     title = f"Series Studio Acceptance - 星轨少年 - {suffix}"
     return {
         "novel": {

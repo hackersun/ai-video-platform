@@ -26,3 +26,11 @@ def test_fixture_payload_has_acceptance_urls() -> None:
         "/studio/continuity-review?workflow_id={workflow_id}&novel_id={novel_id}&chapter_id={chapter_id}",
         "/studio/shot-review?workflow_id={workflow_id}&novel_id={novel_id}&chapter_id={chapter_id}",
     ]
+
+
+def test_fixture_payload_without_stamp_is_deterministic() -> None:
+    first_payload = build_fixture_payload()
+    second_payload = build_fixture_payload()
+
+    assert first_payload == second_payload
+    assert first_payload["novel"]["title"] == "Series Studio Acceptance - 星轨少年 - dry-run"
