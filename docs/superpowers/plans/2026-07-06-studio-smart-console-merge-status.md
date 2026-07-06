@@ -43,11 +43,13 @@ Note: `next build` failed once when it was run concurrently with Playwright's we
 ## Local Merge Result
 
 - Local `main` has been fast-forwarded to the consolidated implementation branch.
-- `origin/main` has not been pushed from this workspace.
+- `origin/main` has been pushed from this workspace.
+- Old local worktrees and merged/stale local branches have been removed.
+- A pre-cleanup backup of dirty local worktree artifacts was written outside the repo at `/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform-worktree-backups-20260706`.
 - `frontend/tsconfig.tsbuildinfo` remains a local generated artifact and should not be staged.
 
-## Remaining Work
+## Closeout
 
-- Optional manual browser acceptance pass across representative real projects: no-chapter novel, planned novel without workflow, existing workflow with blockers, existing workflow ready for review/export.
-- Optional branch cleanup after the user confirms old worktrees can be removed.
-- Optional push/PR step if the local fast-forwarded `main` should be published to `origin/main`.
+- Manual browser acceptance was recorded in `docs/superpowers/plans/2026-07-06-studio-smart-console-manual-acceptance.md`.
+- The manual pass covered `/novels`, `/studio`, `/studio/continuity-review`, and `/studio/shot-review` from the frontend.
+- A deeper manual pass with a workflow that already contains `novel_id/chapter_id` would provide stronger production-data evidence, but the current seeded local workflow did not contain that context.
