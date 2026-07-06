@@ -73,3 +73,30 @@ NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 npm run build
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 npm run e2e -- studio-smart-console.spec.ts
 # 1 passed
 ```
+
+## Real Novel Context Follow-up
+
+- Date: 2026-07-06
+- Status: Ready, not executed in this run (requires seeded acceptance fixture IDs and token)
+- Default skip command:
+
+```bash
+cd frontend
+npx playwright test e2e/series-studio-real-context.spec.ts --project=chromium
+```
+
+- Default skip result: `1 skipped` with skip gate message `Set REAL_CONTEXT_E2E=1 after seeding the acceptance fixture.`
+- Real run command template:
+
+```bash
+cd frontend
+REAL_CONTEXT_E2E=1 \
+REAL_CONTEXT_E2E_TOKEN=<token> \
+REAL_CONTEXT_WORKFLOW_ID=<workflow_id> \
+REAL_CONTEXT_NOVEL_ID=<novel_id> \
+REAL_CONTEXT_CHAPTER_ID=<chapter_id> \
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 \
+npx playwright test e2e/series-studio-real-context.spec.ts --project=chromium
+```
+
+- Coverage intended: `/studio`, `/studio/cards`, `/studio/shot-review` preserve `workflow_id`/`novel_id`/`chapter_id`.
