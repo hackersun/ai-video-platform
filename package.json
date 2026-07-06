@@ -10,7 +10,8 @@
     "verify:e2e": "npm --prefix frontend run e2e:smoke",
     "verify:e2e:legacy": "npm --prefix e2e test",
     "verify:live:anime": "npm --prefix frontend run e2e -- live-anime-production-seedance.spec.ts --project=chromium --workers=1",
-    "verify:quick": "npm run verify:frontend && npm run verify:e2e"
+    "verify:quick": "npm run verify:frontend && npm run verify:e2e",
+    "audit:artifacts": "cd backend && PYTHONPATH=. python3 scripts/audit_generated_artifacts.py --root .."
   },
   "keywords": [],
   "author": "",
