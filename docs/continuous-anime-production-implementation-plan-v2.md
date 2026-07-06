@@ -320,7 +320,7 @@ extra_data["provider_reference_image_limit"] = model_limits["images"]
 - 参考包 metadata 已落到 `VideoJob.extra_data.reference_package`，审阅/历史页面可展示 `image_count`、`video_count` 与 `dropped`；`/studio` snapshot 已返回精简参考包证据，生产看板展示最近任务的图片/视频/裁剪计数。
 - 成本 API 已新增 Seedance 2.x 计费 token 明细：`backend/app/services/cost_calculator.py` 按 `时长 × 宽 × 高 × 帧率 / 1024` 估算 `billing_units`，`/api/v1/costs/estimate/video` 可透传可选每百万 token 单价；默认不硬编码供应商价格。
 - Agent Plan 通道已用测试锁定为单图兼容路径（`doubao-seedance-2.0-fast` → `images:1`），正式确认支持前不开放多参考。
-- 未完成官方核对项仍是 `role` 取值、@引用语法、正式单价和 Agent Plan 多参考支持；在正式文档确认前不把当前适配视为外部契约已稳定。
+官方契约核对记录统一维护在 `docs/seedance-2-contract-checklist.md`。在该清单满足 `promotion rule` 前，代码层必须继续把 Seedance 2.x 多参考标记为 `experimental`，Agent Plan 通道保持单参考兼容路径。
 
 ### TDD 测试（新增 `backend/tests/test_reference_package.py`）
 
