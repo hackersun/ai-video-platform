@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import ipaddress
+import base64
+import hashlib
+import hmac
+import json
+import mimetypes
+import time
 from typing import Any, Optional
 from urllib.parse import quote, urlparse
 
+import httpx
 from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
-from app.services.media_persistence import is_local_static_url
+from app.services.media_persistence import is_local_static_url, local_static_path_for_url
 
 
 READY_CONFIG_STATUSES = {"success", "configured"}
@@ -38,8 +45,9 @@ def is_cloud_accessible_http_url(url: Optional[str]) -> bool:
 async def _get_default_storage_config(
     db: AsyncSession,
     user_id: str,
+    storage_config_id: Optional[str] = None,
 ) -> Optional[tuple[ExternalAPIConfig, ExternalAPIProvider]]:
-    result = await db.execute(
+    query = (
         select(ExternalAPIConfig, ExternalAPIProvider)
         .join(ExternalAPIProvider, ExternalAPIConfig.provider_id == ExternalAPIProvider.id)
         .where(
@@ -50,13 +58,16 @@ async def _get_default_storage_config(
                 ExternalAPIProvider.api_type == "storage",
             )
         )
-        .order_by(
+    )
+    if storage_config_id:
+        query = query.where(ExternalAPIConfig.id == storage_config_id)
+    else:
+        query = query.order_by(
             desc(ExternalAPIConfig.is_default),
             desc(ExternalAPIConfig.updated_at),
             desc(ExternalAPIConfig.created_at),
         )
-        .limit(1)
-    )
+    result = await db.execute(query.limit(1))
     row = result.first()
     if not row:
         return None
@@ -84,12 +95,118 @@ def _public_static_url(
     return public_url
 
 
+def _static_object_key(
+    local_url: str,
+    *,
+    local_static_prefix: str = "/static/",
+    public_static_prefix: str = "/static/",
+) -> Optional[str]:
+    parsed = urlparse(local_url)
+    path = parsed.path or local_url
+    local_prefix = f"/{local_static_prefix.strip('/')}/"
+    if not path.startswith(local_prefix):
+        return None
+    suffix = path[len(local_prefix) :].lstrip("/")
+    public_prefix = str(public_static_prefix or "").strip("/")
+    return f"{public_prefix}/{suffix}".strip("/")
+
+
+def _qiniu_upload_token(access_key: str, secret_key: str, bucket: str, object_key: str) -> str:
+    deadline = int(time.time()) + 3600
+    policy = {"scope": f"{bucket}:{object_key}", "deadline": deadline}
+    encoded_policy = base64.urlsafe_b64encode(
+        json.dumps(policy, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    digest = hmac.new(secret_key.encode("utf-8"), encoded_policy.encode("ascii"), hashlib.sha1).digest()
+    encoded_sign = base64.urlsafe_b64encode(digest).decode("ascii")
+    return f"{access_key}:{encoded_sign}:{encoded_policy}"
+
+
+def _qiniu_private_download_url(
+    public_url: str,
+    *,
+    access_key: str,
+    secret_key: str,
+    ttl_seconds: int,
+) -> str:
+    separator = "&" if "?" in public_url else "?"
+    # Qiniu private source domains reject large `e` deltas; keep delivery URLs short-lived.
+    safe_ttl_seconds = min(max(ttl_seconds, 60), 300)
+    deadline = int(time.time()) + safe_ttl_seconds
+    url_with_deadline = f"{public_url}{separator}e={deadline}"
+    digest = hmac.new(secret_key.encode("utf-8"), url_with_deadline.encode("utf-8"), hashlib.sha1).digest()
+    encoded_sign = base64.urlsafe_b64encode(digest).decode("ascii")
+    return f"{url_with_deadline}&token={access_key}:{encoded_sign}"
+
+
+async def _upload_local_static_to_qiniu(
+    local_url: str,
+    *,
+    config: ExternalAPIConfig,
+    public_base_url: str,
+    local_static_prefix: str,
+    public_static_prefix: str,
+) -> dict[str, Any]:
+    access_key = (config.get_api_key_decrypted() or "").strip()
+    secret_key = (config.get_api_secret_decrypted() or "").strip()
+    extra = config.extra_config or {}
+    bucket = str(extra.get("bucket") or extra.get("bucket_name") or "").strip()
+    if not access_key or not secret_key or not bucket:
+        return {
+            "provider_url": None,
+            "omitted_reason": "七牛对象存储需要配置 Access Key、Secret Key 和 bucket，不能仅映射公网域名",
+        }
+
+    local_path = local_static_path_for_url(local_url)
+    if not local_path or not local_path.exists() or not local_path.is_file():
+        return {
+            "provider_url": None,
+            "omitted_reason": "本地静态参考图文件不存在，无法上传到七牛对象存储",
+        }
+    object_key = _static_object_key(
+        local_url,
+        local_static_prefix=local_static_prefix,
+        public_static_prefix=public_static_prefix,
+    )
+    if not object_key:
+        return {
+            "provider_url": None,
+            "omitted_reason": "对象存储配置无法映射当前本地静态资源路径",
+        }
+
+    upload_url = str(extra.get("upload_url") or "https://upload.qiniup.com").strip()
+    content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
+    token = _qiniu_upload_token(access_key, secret_key, bucket, object_key)
+    async with httpx.AsyncClient(timeout=float(getattr(config, "timeout", None) or 60), follow_redirects=True) as client:
+        response = await client.post(
+            upload_url,
+            data={"token": token, "key": object_key},
+            files={"file": (local_path.name, local_path.read_bytes(), content_type)},
+        )
+        response.raise_for_status()
+
+    public_url = f"{public_base_url.rstrip('/')}/{quote(object_key, safe='/-._~')}"
+    if extra.get("private_download") or extra.get("private_bucket"):
+        public_url = _qiniu_private_download_url(
+            public_url,
+            access_key=access_key,
+            secret_key=secret_key,
+            ttl_seconds=int(extra.get("download_url_ttl_seconds") or 3600),
+        )
+    return {
+        "provider_url": public_url,
+        "object_key": object_key,
+        "omitted_reason": None,
+    }
+
+
 async def resolve_provider_media_url(
     db: AsyncSession,
     user_id: str,
     media_url: Optional[str],
     *,
     media_type: str = "image",
+    storage_config_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Resolve a media URL into a URL safe to send to cloud providers."""
     if not media_url:
@@ -120,7 +237,10 @@ async def resolve_provider_media_url(
             "omitted_reason": f"参考{media_type}不是公网 http(s) URL，云端模型无法直接访问",
         }
 
-    storage = await _get_default_storage_config(db, user_id)
+    if storage_config_id:
+        storage = await _get_default_storage_config(db, user_id, storage_config_id=storage_config_id)
+    else:
+        storage = await _get_default_storage_config(db, user_id)
     if not storage:
         return {
             "source_url": source_url,
@@ -167,6 +287,45 @@ async def resolve_provider_media_url(
             "delivery_method": None,
             "storage_config_id": config.id,
             "omitted_reason": "对象存储/CDN配置无法映射当前本地静态资源路径",
+        }
+
+    storage_provider = str(extra.get("storage_provider") or extra.get("provider") or "").strip().lower()
+    local_static_prefix = extra.get("local_static_prefix") or "/static/"
+    public_static_prefix = extra.get("public_static_prefix") or "/static/"
+    if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
+        upload_result = await _upload_local_static_to_qiniu(
+            source_url,
+            config=config,
+            public_base_url=public_base_url,
+            local_static_prefix=local_static_prefix,
+            public_static_prefix=public_static_prefix,
+        )
+        provider_url = upload_result.get("provider_url")
+        if not provider_url or not is_cloud_accessible_http_url(provider_url):
+            return {
+                "source_url": source_url,
+                "provider_url": None,
+                "image_url_sent": False,
+                "delivery_method": None,
+                "storage_config_id": config.id,
+                "storage_config_name": config.name,
+                "storage_provider_id": provider.id,
+                "storage_provider_name": provider.name_cn or provider.name,
+                "public_base_url": public_base_url,
+                "omitted_reason": upload_result.get("omitted_reason") or "七牛对象存储上传失败，未生成可用公网 URL",
+            }
+        return {
+            "source_url": source_url,
+            "provider_url": provider_url,
+            "image_url_sent": True,
+            "delivery_method": "qiniu_object_upload",
+            "storage_config_id": config.id,
+            "storage_config_name": config.name,
+            "storage_provider_id": provider.id,
+            "storage_provider_name": provider.name_cn or provider.name,
+            "public_base_url": public_base_url,
+            "object_key": upload_result.get("object_key"),
+            "omitted_reason": None,
         }
 
     return {

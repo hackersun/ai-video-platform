@@ -13,16 +13,19 @@ from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 STRATEGY_VIDEO_MODEL_PREFERENCE: dict[str, list[str]] = {
     "draft_fast": [
         "doubao-seedance-2-0-fast-260128",
+        "doubao-seedance-1-5-pro-251215",
         "doubao-seedance-2.0-fast",
         "Doubao-Seedance-1.0-pro-fast",
     ],
     "final_quality": [
         "doubao-seedance-2-0-260128",
         "doubao-seedance-2.0",
+        "doubao-seedance-1-5-pro-251215",
         "doubao-seedance-2-0-fast-260128",
     ],
     "low_cost": [
         "doubao-seedance-2-0-fast-260128",
+        "doubao-seedance-1-5-pro-251215",
         "Doubao-Seedance-1.0-pro-fast",
     ],
 }

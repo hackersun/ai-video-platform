@@ -73,6 +73,7 @@ interface Storyboard {
   id: string;
   title: string;
   status: string;
+  shot_count?: number;
   shots_count?: number;
   created_at: string;
 }
@@ -101,6 +102,10 @@ export default function ScriptDetailPage() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
+
+  const getStoryboardShotCount = (storyboard: Storyboard) => (
+    storyboard.shot_count ?? storyboard.shots_count ?? 0
+  );
 
   useEffect(() => {
     if (scriptId) {
@@ -239,7 +244,6 @@ export default function ScriptDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script_id: script.id,
-          shot_count: 5,
           style: script.style || 'anime',
         })
       });
@@ -540,7 +544,7 @@ export default function ScriptDetailPage() {
                           <div>
                             <div className="text-white font-medium">{sb.title}</div>
                             <div className="text-white/40 text-sm flex items-center gap-2">
-                              <span>{sb.shots_count || 0} 个镜头</span>
+                              <span>{getStoryboardShotCount(sb)} 个镜头</span>
                               <span>·</span>
                               <span>{new Date(sb.created_at).toLocaleDateString()}</span>
                             </div>

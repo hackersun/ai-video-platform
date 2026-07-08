@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from uuid import uuid4
 
 import pytest
@@ -329,6 +330,97 @@ def test_script_generation_uses_text_extracted_entities_without_story_bible(clie
     assert script["chapter_id"] == chapter_id
 
 
+def test_first_chapter_script_generation_does_not_use_future_chapter_entities(client: TestClient) -> None:
+    user_id = f"script-first-chapter-scope-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "三章前端回归", "genre": "悬疑动漫"},
+        headers=_auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    chapters = [
+        (
+            "第一章 雾中来信",
+            "雨后的雾港像一只沉默的钟。少年林澈在旧邮局门口捡到一封没有邮票的信，信纸上写着铜铃会指向失踪的人。阿岚从巷口追来，提醒他不要碰邮局梁上的铜铃。",
+        ),
+        (
+            "第二章 暗巷回声",
+            "星轨线把林澈和阿岚带进一条没有出口的暗巷。墙面反复回放旧邮局失火的影像。",
+        ),
+        (
+            "第三章 灯塔真相",
+            "铁门后不是出口，而是海边废弃灯塔。灯塔顶部的镜面正在把全城雾气聚成一个巨大的钟面。林澈冲向控制台，阿岚稳住即将断裂的星轨线。",
+        ),
+    ]
+    chapter_ids: list[str] = []
+    for index, (title, content) in enumerate(chapters, start=1):
+        chapter_resp = client.post(
+            "/api/v1/chapters",
+            json={
+                "novel_id": novel_id,
+                "title": title,
+                "chapter_number": index,
+                "content": content,
+            },
+            headers=_auth_headers(user_id),
+        )
+        assert chapter_resp.status_code == 201
+        chapter_ids.append(chapter_resp.json()["id"])
+
+    context_resp = client.get(
+        f"/api/v1/scripts/generate-context/{chapter_ids[0]}",
+        headers=_auth_headers(user_id),
+    )
+    assert context_resp.status_code == 200
+    summary_text = str(context_resp.json()["summary"])
+    assert "废弃灯塔" not in summary_text
+    assert "把全城" not in summary_text
+
+    script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_ids[0], "style": "anime", "genre": "悬疑动漫"},
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    content = script_resp.json()["content"]
+    assert "旧邮局" in content
+    assert "铜铃" in content
+    assert "废弃灯塔" not in content
+    assert "把全城" not in content
+    assert "上一章留下" not in content
+    assert "本章开场" in content
+
+    second_script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_ids[1], "style": "anime", "genre": "悬疑动漫"},
+        headers=_auth_headers(user_id),
+    )
+    assert second_script_resp.status_code == 201
+    second_content = second_script_resp.json()["content"]
+    assert "暗巷" in second_content
+    assert "林澈" in second_content
+    assert "阿岚" in second_content
+    assert not re.search(r"人物：[^。；\n]*两人", second_content)
+    assert "人物：星轨线" not in second_content
+    assert "的人拿走了铜铃" not in second_content
+    assert "废弃灯塔" not in second_content
+
+    third_script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_ids[2], "style": "anime", "genre": "悬疑动漫"},
+        headers=_auth_headers(user_id),
+    )
+    assert third_script_resp.status_code == 201
+    third_content = third_script_resp.json()["content"]
+    assert "废弃灯塔" in third_content
+    assert "林澈" in third_content
+    assert "阿岚" in third_content
+    assert "失踪者所" not in third_content
+    assert "港永远停" not in third_content
+
+
 def test_dev_script_generation_keeps_middle_chapter_continuity_and_metadata(client: TestClient) -> None:
     user_id = f"script-generate-user-{uuid4()}"
     _novel_id, _first_id, second_id = _create_script_context_fixture(client, user_id)
@@ -368,6 +460,45 @@ def test_dev_script_generation_keeps_middle_chapter_continuity_and_metadata(clie
     check = check_resp.json()
     assert check["summary"]["has_generation_context"] is True
     assert not any(issue["code"] == "placeholder_speaker" for issue in check["issues"])
+
+
+def test_dev_script_generation_preserves_explicit_dialogue_speakers(client: TestClient) -> None:
+    user_id = f"script-dialogue-speaker-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "星轨列车", "genre": "科幻", "description": "维修舱里的双人对白同步验收。"},
+        headers=_auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_resp.json()["id"],
+            "title": "第三集 星轨列车维修舱",
+            "chapter_number": 3,
+            "content": (
+                "第一场，林澈单人站在星核计时器前，他低声说：我们只剩四秒。"
+                "第二场，阿岚单人扶住稳定杆，阿岚说：别停，我来稳住轨道。"
+                "第三场，林澈和阿岚同框争执，林澈说：你退后。阿岚说：不，我和你一起。"
+            ),
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+
+    script_resp = client.post(
+        "/api/v1/scripts/generate",
+        json={"chapter_id": chapter_resp.json()["id"], "style": "anime", "genre": "科幻"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert script_resp.status_code == 201
+    content = script_resp.json()["content"]
+    assert "林澈：" in content
+    assert "我们只剩四秒" in content
+    assert "阿岚：" in content
+    assert "别停，我来稳住轨道" in content
+    assert "- 低声：" not in content
 
 
 def test_script_versions_can_snapshot_and_restore(client: TestClient) -> None:

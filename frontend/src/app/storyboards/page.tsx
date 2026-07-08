@@ -246,7 +246,7 @@ export default function StoryboardsPage() {
   const [newStoryboardScriptId, setNewStoryboardScriptId] = useState('');
   const [smartNovelId, setSmartNovelId] = useState('');
   const [smartChapterId, setSmartChapterId] = useState('');
-  const [smartShotCount, setSmartShotCount] = useState(5);
+  const [smartShotCount, setSmartShotCount] = useState<number | ''>('');
   const [matchedTemplate, setMatchedTemplate] = useState<StoryboardTemplateMatch | null>(null);
   const [newStoryboardStyle, setNewStoryboardStyle] = useState('anime');
   const [generatingStoryboard, setGeneratingStoryboard] = useState(false);
@@ -625,7 +625,7 @@ export default function StoryboardsPage() {
         body: JSON.stringify({
           novel_id: novelId,
           chapter_id: chapterId || undefined,
-          shot_count: smartShotCount,
+          ...(typeof smartShotCount === 'number' ? { shot_count: smartShotCount } : {}),
           style: newStoryboardStyle || 'anime',
           use_ai_refine: false,
         }),
@@ -943,7 +943,7 @@ export default function StoryboardsPage() {
           novel_id: smartNovelId,
           chapter_id: smartChapterId || undefined,
           script_id: effectiveScriptId,
-          shot_count: smartShotCount || 5,
+          ...(typeof smartShotCount === 'number' ? { shot_count: smartShotCount } : {}),
           style: newStoryboardStyle || 'anime',
           title: newStoryboardTitle.trim() || undefined,
           template_id: matchedTemplate?.template.id,
@@ -951,7 +951,6 @@ export default function StoryboardsPage() {
           model_config_id: textModelConfigId || undefined,
         } : {
           script_id: effectiveScriptId,
-          shot_count: 5,
           style: newStoryboardStyle || 'anime',
           model_config_id: textModelConfigId || undefined,
         }),
@@ -1006,7 +1005,7 @@ export default function StoryboardsPage() {
           novel_id: smartNovelId,
           chapter_id: smartChapterId || undefined,
           script_id: newStoryboardScriptId || undefined,
-          shot_count: smartShotCount,
+          ...(typeof smartShotCount === 'number' ? { shot_count: smartShotCount } : {}),
           style: newStoryboardStyle || 'anime',
           title: newStoryboardTitle.trim() || undefined,
           template_id: matchedTemplate?.template.id,
@@ -2283,13 +2282,17 @@ export default function StoryboardsPage() {
 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-sm text-white/60 mb-2 block">镜头数</label>
+                    <label className="text-sm text-white/60 mb-2 block">镜头数（留空自动）</label>
                     <Input
                       type="number"
                       min={1}
                       max={50}
                       value={smartShotCount}
-                      onChange={(e) => setSmartShotCount(Math.max(1, Math.min(50, parseInt(e.target.value) || 5)))}
+                      placeholder="自动"
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        setSmartShotCount(value ? Math.max(1, Math.min(50, parseInt(value, 10) || 1)) : '');
+                      }}
                       className="bg-white/5 border-white/10 text-white"
                     />
                   </div>

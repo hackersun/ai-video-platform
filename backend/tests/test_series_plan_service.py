@@ -86,6 +86,28 @@ async def test_build_series_plan_groups_chapters_into_episodes(
 
 
 @pytest.mark.asyncio
+async def test_build_series_plan_defaults_to_one_episode_per_chapter(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    plan = await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+    )
+
+    assert plan["target_episode_count"] == 5
+    assert [episode["chapter_ids"] for episode in plan["episodes"]] == [
+        ["chapter-1"],
+        ["chapter-2"],
+        ["chapter-3"],
+        ["chapter-4"],
+        ["chapter-5"],
+    ]
+    assert plan["episodes"][0]["chapter_range"]["label"] == "第1章"
+
+
+@pytest.mark.asyncio
 async def test_build_series_plan_carries_previous_episode_state(
     db_session: AsyncSession,
     seeded_novel_with_chapters: Novel,

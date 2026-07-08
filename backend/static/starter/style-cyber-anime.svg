@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-label="Cyber neon anime style reference">
+  <defs>
+    <linearGradient id="cyber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#020617"/>
+      <stop offset=".5" stop-color="#312e81"/>
+      <stop offset="1" stop-color="#ec4899"/>
+    </linearGradient>
+    <linearGradient id="road" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#020617"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="540" fill="url(#cyber)"/>
+  <path d="M120 90 H260 V360 H120 Z M680 60 H842 V362 H680 Z M310 132 H438 V360 H310 Z M522 110 H628 V360 H522 Z" fill="#0f172a" opacity=".86"/>
+  <path d="M0 540 L356 340 H604 L960 540 Z" fill="url(#road)"/>
+  <path d="M480 350 V540" stroke="#f472b6" stroke-width="8" stroke-dasharray="28 18"/>
+  <path d="M142 126 H238 M702 108 H820 M332 176 H416 M540 156 H606" stroke="#22d3ee" stroke-width="8" stroke-linecap="round"/>
+  <path d="M166 170 H226 M706 166 H818 M338 220 H410 M544 214 H604" stroke="#f472b6" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="482" cy="252" r="48" fill="#fef2f2" stroke="#22d3ee" stroke-width="6"/>
+  <path d="M420 420 C430 326 452 280 482 280 C514 280 536 326 548 420 Z" fill="#111827" stroke="#f472b6" stroke-width="6"/>
+  <path d="M430 238 C462 198 522 204 550 246" fill="none" stroke="#111827" stroke-width="16" stroke-linecap="round"/>
+  <text x="56" y="80" fill="#f8fafc" font-family="Arial, sans-serif" font-size="34" font-weight="700">Cyber Anime</text>
+  <text x="56" y="122" fill="#c4b5fd" font-family="Arial, sans-serif" font-size="22">neon rain · speed · sci-fi mystery</text>
+</svg>

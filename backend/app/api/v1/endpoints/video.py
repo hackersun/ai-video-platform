@@ -37,6 +37,11 @@ from app.services.media_delivery import resolve_provider_media_url
 from app.services.consistency_context import get_project_for_context, get_story_bible_for_context
 from app.services.consistency_preflight import build_generation_context_package
 from app.services.novel_continuity import build_novel_continuity_package
+from app.services.provider_prompt_safety import (
+    build_provider_video_prompt_fallback,
+    provider_text_safety_error_message,
+    sanitize_provider_video_prompt,
+)
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_entries
 from app.services.reference_package_builder import build_reference_package
@@ -1743,6 +1748,8 @@ async def generate_video(
         image_url_omitted_reason = image_delivery["image_url_omitted_reason"]
         if image_url_omitted_reason:
             final_prompt = _append_provider_image_note(final_prompt, image_url_omitted_reason)
+        provider_prompt = sanitize_provider_video_prompt(final_prompt)
+        provider_final_prompt = provider_prompt["prompt"]
         context_metadata = _build_video_context_metadata(lineage, consistency_metadata, video_seed, shot_context)
         if preflight_package is not None:
             context_metadata["generation_preflight"] = {
@@ -1766,8 +1773,11 @@ async def generate_video(
             else "single_provider_image"
         )
         prompt_parameters["supplemental_reference_image_count"] = len(supplemental_refs)
+        if provider_prompt["sanitized"]:
+            prompt_parameters["provider_prompt_sanitized"] = True
+            prompt_parameters["provider_prompt_replacements"] = provider_prompt["replacements"]
         provider_content = build_video_provider_content(
-            final_prompt=final_prompt,
+            final_prompt=provider_final_prompt,
             duration=request.duration,
             resolution=request.resolution,
             provider_image_url=provider_image_url,
@@ -1812,7 +1822,7 @@ async def generate_video(
         if is_dev_mode() and (not resolved_api_key or not real_adapter_available):
             job_id = str(uuid4())
             task_id = f"dev-video-{job_id}"
-            video_url = dev_video_url(job_id)
+            video_url = dev_video_url(job_id, duration_seconds=request.duration)
             extra_data = _build_video_extra_data(request, lineage)
             extra_data.update(context_metadata)
             extra_data.update(_video_model_metadata(video_model_config))
@@ -1826,7 +1836,7 @@ async def generate_video(
                 workflow_id=request.workflow_id,
                 task_id=task_id,
                 title=request.prompt[:50] if len(request.prompt) > 50 else request.prompt,
-                prompt=final_prompt,
+                prompt=provider_final_prompt,
                 model_id=video_model_config.get("api_model_id") or request.model,
                 model_name=f"{video_model_config.get('model_name') or _get_volcano_model_name(request.model)} (DEV_MODE)",
                 duration=request.duration,
@@ -1894,7 +1904,50 @@ async def generate_video(
             image_error = _provider_image_url_error_message(exc, provider_image_url)
             if image_error:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=image_error) from exc
-            raise
+            text_error = provider_text_safety_error_message(exc)
+            if text_error:
+                fallback_prompt = build_provider_video_prompt_fallback()
+                fallback_content = build_video_provider_content(
+                    final_prompt=fallback_prompt["prompt"],
+                    duration=request.duration,
+                    resolution=request.resolution,
+                    provider_image_url=provider_image_url,
+                    reference_package=reference_package,
+                    model_limits=video_reference_limits,
+                    model_id=selected_video_model_id,
+                    provider=selected_video_provider,
+                    camera_fixed=False,
+                    watermark=True,
+                )
+                retry_kwargs = {**create_kwargs, "content": fallback_content["content"]}
+                try:
+                    create_result = client.content_generation.tasks.create(**retry_kwargs)
+                except Exception as retry_exc:
+                    retry_image_error = _provider_image_url_error_message(retry_exc, provider_image_url)
+                    if retry_image_error:
+                        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=retry_image_error) from retry_exc
+                    retry_text_error = provider_text_safety_error_message(retry_exc)
+                    if retry_text_error:
+                        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=retry_text_error) from retry_exc
+                    raise
+                provider_final_prompt = fallback_prompt["prompt"]
+                provider_content = fallback_content
+                provider_metadata = provider_content["metadata"]
+                prompt_parameters["provider_prompt_safety_retry"] = True
+                prompt_parameters["provider_prompt_safety_retry_reason"] = "InputTextSensitiveContentDetected"
+                prompt_parameters["provider_prompt_fallback_replacements"] = fallback_prompt["replacements"]
+                prompt_parameters = enrich_prompt_parameters_with_reference_contract(
+                    prompt_parameters,
+                    provider_metadata,
+                    video_reference_limits,
+                    model_protocol,
+                )
+                reference_package_metadata = build_reference_package_metadata(
+                    reference_package,
+                    provider_content["metadata"],
+                )
+            else:
+                raise
 
         # 构建关联数据（ID + 标题）
         extra_data = _build_video_extra_data(request, lineage)
@@ -1912,7 +1965,7 @@ async def generate_video(
             workflow_id=request.workflow_id,
             task_id=create_result.id,
             title=request.prompt[:50] if len(request.prompt) > 50 else request.prompt,
-            prompt=final_prompt,
+            prompt=provider_final_prompt,
             model_id=video_model_config.get("api_model_id") or request.model,
             model_name=video_model_config.get("model_name") or _get_volcano_model_name(request.model),
             duration=request.duration,

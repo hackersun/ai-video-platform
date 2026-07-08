@@ -11,7 +11,9 @@ import base64
 import hashlib
 import math
 import os
+import shutil
 import struct
+import subprocess
 import zlib
 from pathlib import Path
 
@@ -67,10 +69,113 @@ TGF2ZjYxLjcuMTAw
 """
 
 
-def _ensure_dev_video_file(filename: str) -> None:
+def _normalise_video_duration(duration_seconds: float | int | str | None) -> float | None:
+    if duration_seconds is None:
+        return None
+    try:
+        duration = float(duration_seconds)
+    except (TypeError, ValueError):
+        return None
+    if duration <= 0:
+        return None
+    return min(duration, 60.0)
+
+
+def _probe_video_duration_seconds(video_path: Path) -> float | None:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe or not video_path.exists():
+        return None
+    try:
+        result = subprocess.run(
+            [
+                ffprobe,
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(video_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _write_dev_video_with_ffmpeg(video_path: Path, duration_seconds: float) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    video_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = video_path.with_suffix(".tmp.mp4")
+    try:
+        subprocess.run(
+            [
+                ffmpeg,
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=1280x720:rate=24",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=channel_layout=stereo:sample_rate=48000",
+                "-t",
+                f"{duration_seconds:.3f}",
+                "-shortest",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "96k",
+                "-movflags",
+                "+faststart",
+                str(tmp_path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=max(30, int(duration_seconds * 4)),
+        )
+        if tmp_path.exists() and tmp_path.stat().st_size >= DEV_VIDEO_MIN_BYTES:
+            tmp_path.replace(video_path)
+            return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+    return False
+
+
+def _ensure_dev_video_file(filename: str, duration_seconds: float | int | str | None = None) -> None:
     DEV_DIR.mkdir(parents=True, exist_ok=True)
     video_path = DEV_DIR / filename
+    target_duration = _normalise_video_duration(duration_seconds)
     if video_path.exists() and video_path.stat().st_size >= DEV_VIDEO_MIN_BYTES:
+        if target_duration is None:
+            return
+        current_duration = _probe_video_duration_seconds(video_path)
+        if current_duration is not None and abs(current_duration - target_duration) <= 0.35:
+            return
+    if target_duration is not None and _write_dev_video_with_ffmpeg(video_path, target_duration):
         return
     if DEV_PREVIEW_VIDEO.exists():
         video_path.write_bytes(DEV_PREVIEW_VIDEO.read_bytes())
@@ -190,13 +295,13 @@ def dev_tts_audio_url(job_id: str) -> str:
     return f"/static/dev/tts-{token}.wav"
 
 
-def dev_video_url(job_id: str) -> str:
-    _ensure_dev_video_file(f"video-{job_id}.mp4")
+def dev_video_url(job_id: str, duration_seconds: float | int | str | None = None) -> str:
+    _ensure_dev_video_file(f"video-{job_id}.mp4", duration_seconds=duration_seconds)
     return f"/static/dev/video-{job_id}.mp4"
 
 
-def dev_synthesis_url(job_id: str) -> str:
-    _ensure_dev_video_file(f"final-{job_id}.mp4")
+def dev_synthesis_url(job_id: str, duration_seconds: float | int | str | None = None) -> str:
+    _ensure_dev_video_file(f"final-{job_id}.mp4", duration_seconds=duration_seconds)
     return f"/static/dev/final-{job_id}.mp4"
 
 

@@ -57,6 +57,12 @@ interface ApiNovel {
   genre?: string;
   status: 'draft' | 'writing' | 'completed';
   word_count?: number;
+  chapter_count?: number;
+  total_chapters?: number;
+  character_count?: number;
+  legacy_character_count?: number;
+  production_character_count?: number;
+  story_entity_counts?: Record<string, number>;
   created_at: string;
   updated_at: string;
 }
@@ -125,8 +131,8 @@ function NovelsContent() {
         description: n.description || n.content?.substring(0, 100) || '',
         genre: n.genre || '其他',
         status: n.status,
-        chapters: 0,
-        characters: n.word_count || 0,
+        chapters: n.chapter_count ?? n.total_chapters ?? 0,
+        characters: n.character_count ?? ((n.legacy_character_count || 0) + (n.production_character_count || 0)),
         createdAt: n.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
         updatedAt: n.updated_at?.split('T')[0] || new Date().toISOString().split('T')[0]
       }));
@@ -241,7 +247,9 @@ function NovelsContent() {
     try {
       const preview = await apiClient.previewNovelImport(file);
       setImportJobId(preview.id);
-      setImportTitle(preview.title || file.name.replace(/\.(txt|md|markdown)$/i, ''));
+      setImportTitle((currentTitle) =>
+        currentTitle.trim() ? currentTitle : preview.title || file.name.replace(/\.(txt|md|markdown)$/i, '')
+      );
       setImportChapters(preview.chapters || []);
       setImportMessage(`已解析 ${preview.chapter_count || 0} 章，请确认后导入`);
     } catch (err: any) {
@@ -318,16 +326,21 @@ function NovelsContent() {
                 placeholder="类型（可选）"
                 className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
               />
-              <label className="inline-flex items-center justify-center rounded-md bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15 cursor-pointer">
+              <label
+                htmlFor="novel-import-file-input"
+                className="inline-flex items-center justify-center rounded-md bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15 cursor-pointer"
+              >
                 <Upload className="w-4 h-4 mr-2" />
                 选择 txt/md
-                <input
-                  type="file"
-                  accept=".txt,.md,text/plain,text/markdown"
-                  className="hidden"
-                  onChange={(event) => handleImportFile(event.target.files?.[0])}
-                />
               </label>
+              <input
+                id="novel-import-file-input"
+                type="file"
+                accept=".txt,.md,text/plain,text/markdown"
+                data-testid="novel-import-file-input"
+                className="sr-only"
+                onChange={(event) => handleImportFile(event.target.files?.[0])}
+              />
             </div>
 
             {importChapters.length > 0 && (
@@ -459,7 +472,7 @@ function NovelsContent() {
                               </span>
                               <span className="flex items-center gap-1">
                                 <Users className="w-4 h-4" />
-                                {novel.characters} 字
+                                {novel.characters} 角色
                               </span>
                               <span className="flex items-center gap-1">
                                 <Clock className="w-4 h-4" />

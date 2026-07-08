@@ -628,7 +628,6 @@ export default function ScriptsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script_id: script.id,
-          shot_count: 5,
           style: script.style || 'anime',
           model_config_id: textModelConfigId || undefined,
         })

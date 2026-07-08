@@ -155,6 +155,102 @@ def test_external_providers_and_config_lifecycle(client: TestClient) -> None:
     assert readiness["render"]["configured_count"] >= 1
 
 
+def test_storage_delivery_self_check_uploads_and_verifies_media_from_frontdoor(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.v1.endpoints import external_api
+
+    user_id = str(uuid4())
+    create_resp = client.post(
+        "/api/v1/external/configs",
+        json={
+            "provider_id": "object_storage",
+            "name": "七牛交付自检",
+            "api_key": "ak-test",
+            "api_secret": "sk-test",
+            "custom_base_url": "https://cdn.example.com",
+            "extra_config": {
+                "storage_provider": "qiniu",
+                "bucket": "ai-video-test",
+                "upload_url": "https://upload-z1.qiniup.com",
+                "public_base_url": "https://cdn.example.com",
+                "local_static_prefix": "/static/",
+                "public_static_prefix": "/static/",
+            },
+            "is_default": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert create_resp.status_code == 201
+    config_id = create_resp.json()["id"]
+
+    async def fake_resolve_provider_media_url(
+        db,
+        current_user_id,
+        media_url,
+        *,
+        media_type="image",
+        storage_config_id=None,
+    ):
+        assert current_user_id == user_id
+        assert media_url.startswith("/static/generated/adapter-self-check/")
+        assert storage_config_id == config_id
+        return {
+            "source_url": media_url,
+            "provider_url": "https://cdn.example.com/static/generated/adapter-self-check/probe.png?e=1700000300&token=secret-token",
+            "image_url_sent": True,
+            "delivery_method": "qiniu_object_upload",
+            "storage_config_id": config_id,
+            "object_key": "static/generated/adapter-self-check/probe.png",
+            "omitted_reason": None,
+        }
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url):
+            assert "secret-token" in url
+            return FakeResponse()
+
+    monkeypatch.setattr(external_api, "resolve_provider_media_url", fake_resolve_provider_media_url, raising=False)
+    monkeypatch.setattr(external_api.httpx, "AsyncClient", FakeAsyncClient)
+
+    response = client.post(
+        f"/api/v1/external/configs/{config_id}/delivery-test",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is True
+    assert payload["status"] == "success"
+    assert payload["delivery_method"] == "qiniu_object_upload"
+    assert payload["download_status"] == 200
+    assert payload["object_key"] == "static/generated/adapter-self-check/probe.png"
+    assert "secret-token" not in payload["provider_url_preview"]
+    assert "真实媒体交付自检通过" in payload["message"]
+
+    configs_resp = client.get("/api/v1/external/configs", headers=_auth_headers(user_id))
+    assert configs_resp.status_code == 200
+    saved = next(item for item in configs_resp.json() if item["id"] == config_id)
+    assert saved["test_status"] == "success"
+    assert "真实媒体交付自检通过" in saved["test_message"]
+
+
 def test_shot_production_context_stores_asset_locks_keyframes_lipsync_and_review(client: TestClient) -> None:
     user_id = f"shot-context-user-{uuid4()}"
     _novel_id, _chapter_id, _script_id, _storyboard_id, shot_id = _create_shot_with_lineage(client, user_id)

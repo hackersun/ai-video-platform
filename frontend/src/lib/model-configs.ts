@@ -81,7 +81,6 @@ export function isInternalTestModelConfig(config: Partial<SavedModelConfig> & Re
     identifiers.includes('-test-') ||
     identifiers.endsWith('-test') ||
     ` ${identifiers} `.includes(' test ') ||
-    displayText.includes('测试') ||
     text.includes('doubao-seedance-test') ||
     text.includes('doubao-seedance-consistency-test') ||
     text.includes('speech-test')

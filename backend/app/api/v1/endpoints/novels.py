@@ -4,13 +4,13 @@
 
 from app.core.time_utils import utc_now
 import json
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, desc
+from sqlalchemy import select, and_, desc, func
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -21,7 +21,7 @@ from app.core.api_key_utils import (
     get_user_text_model_config,
 )
 from app.core.security import get_current_user_id
-from app.models import Novel, Chapter, NovelImportJob
+from app.models import Character, Novel, Chapter, NovelImportJob, StoryEntity
 from app.api.v1.endpoints.dashboard import log_activity
 from app.services.image_generation_pipeline import (
     call_image_generation_provider,
@@ -75,6 +75,12 @@ class NovelResponse(BaseModel):
     tags: List[str]
     cover_url: Optional[str]
     source: str
+    chapter_count: int = 0
+    total_chapters: int = 0
+    legacy_character_count: int = 0
+    production_character_count: int = 0
+    character_count: int = 0
+    story_entity_counts: Dict[str, int] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -219,6 +225,63 @@ async def get_user_text_api_key(
         config_id=model_config_id,
     )
     return api_key or "", provider_name or "", model_id or "", base_url
+
+
+def build_novel_response(
+    novel: Novel,
+    *,
+    chapter_count: int = 0,
+    legacy_character_count: int = 0,
+    story_entity_counts: Optional[Dict[str, int]] = None,
+) -> NovelResponse:
+    counts = story_entity_counts or {}
+    production_character_count = int(counts.get("character") or 0)
+    return NovelResponse(
+        id=novel.id,
+        user_id=novel.user_id,
+        title=novel.title,
+        description=novel.description,
+        genre=novel.genre,
+        status=novel.status or "draft",
+        word_count=novel.word_count or 0,
+        tags=novel.tags or [],
+        cover_url=novel.cover_url,
+        source=novel.source or "manual",
+        chapter_count=chapter_count,
+        total_chapters=chapter_count,
+        legacy_character_count=legacy_character_count,
+        production_character_count=production_character_count,
+        character_count=legacy_character_count + production_character_count,
+        story_entity_counts=counts,
+        created_at=novel.created_at,
+        updated_at=novel.updated_at,
+    )
+
+
+async def load_novel_counts(
+    db: AsyncSession,
+    user_id: str,
+    novel_id: str,
+) -> tuple[int, int, Dict[str, int]]:
+    chapter_result = await db.execute(
+        select(func.count(Chapter.id)).where(Chapter.user_id == user_id, Chapter.novel_id == novel_id)
+    )
+    legacy_result = await db.execute(
+        select(func.count(Character.id)).where(Character.user_id == user_id, Character.novel_id == novel_id)
+    )
+    entity_result = await db.execute(
+        select(
+            StoryEntity.entity_type,
+            func.count(func.distinct(func.coalesce(StoryEntity.canonical_name, StoryEntity.name))),
+        )
+        .where(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
+        .group_by(StoryEntity.entity_type)
+    )
+    return (
+        int(chapter_result.scalar_one() or 0),
+        int(legacy_result.scalar_one() or 0),
+        {str(entity_type): int(count or 0) for entity_type, count in entity_result.all()},
+    )
 
 
 def build_import_job_response(job: NovelImportJob) -> NovelImportJobResponse:
@@ -608,24 +671,47 @@ async def list_novels(
         .where(Novel.user_id == user_id)
         .order_by(desc(Novel.updated_at))
     )
-    novels = result.scalars().all()
+    novels = list(result.scalars().all())
+    novel_ids = [novel.id for novel in novels]
+    chapter_counts: Dict[str, int] = {}
+    legacy_character_counts: Dict[str, int] = {}
+    story_entity_counts: Dict[str, Dict[str, int]] = {}
+
+    if novel_ids:
+        chapter_result = await db.execute(
+            select(Chapter.novel_id, func.count(Chapter.id))
+            .where(Chapter.user_id == user_id, Chapter.novel_id.in_(novel_ids))
+            .group_by(Chapter.novel_id)
+        )
+        chapter_counts = {novel_id: int(count or 0) for novel_id, count in chapter_result.all()}
+
+        legacy_result = await db.execute(
+            select(Character.novel_id, func.count(Character.id))
+            .where(Character.user_id == user_id, Character.novel_id.in_(novel_ids))
+            .group_by(Character.novel_id)
+        )
+        legacy_character_counts = {novel_id: int(count or 0) for novel_id, count in legacy_result.all()}
+
+        entity_result = await db.execute(
+            select(
+                StoryEntity.novel_id,
+                StoryEntity.entity_type,
+                func.count(func.distinct(func.coalesce(StoryEntity.canonical_name, StoryEntity.name))),
+            )
+            .where(StoryEntity.user_id == user_id, StoryEntity.novel_id.in_(novel_ids))
+            .group_by(StoryEntity.novel_id, StoryEntity.entity_type)
+        )
+        for novel_id, entity_type, count in entity_result.all():
+            story_entity_counts.setdefault(str(novel_id), {})[str(entity_type)] = int(count or 0)
 
     return [
-        NovelResponse(
-            id=n.id,
-            user_id=n.user_id,
-            title=n.title,
-            description=n.description,
-            genre=n.genre,
-            status=n.status or "draft",
-            word_count=n.word_count or 0,
-            tags=n.tags or [],
-            cover_url=n.cover_url,
-            source=n.source or "manual",
-            created_at=n.created_at,
-            updated_at=n.updated_at
+        build_novel_response(
+            novel,
+            chapter_count=chapter_counts.get(novel.id, 0),
+            legacy_character_count=legacy_character_counts.get(novel.id, 0),
+            story_entity_counts=story_entity_counts.get(novel.id, {}),
         )
-        for n in novels
+        for novel in novels
     ]
 
 
@@ -663,19 +749,12 @@ async def get_novel(
     if not novel:
         raise HTTPException(status_code=404, detail="小说不存在")
 
-    return NovelResponse(
-        id=novel.id,
-        user_id=novel.user_id,
-        title=novel.title,
-        description=novel.description,
-        genre=novel.genre,
-        status=novel.status or "draft",
-        word_count=novel.word_count or 0,
-        tags=novel.tags or [],
-        cover_url=novel.cover_url,
-        source=novel.source or "manual",
-        created_at=novel.created_at,
-        updated_at=novel.updated_at
+    chapter_count, legacy_character_count, story_entity_counts = await load_novel_counts(db, user_id, novel.id)
+    return build_novel_response(
+        novel,
+        chapter_count=chapter_count,
+        legacy_character_count=legacy_character_count,
+        story_entity_counts=story_entity_counts,
     )
 
 
@@ -741,20 +820,7 @@ async def create_novel(
     )
     await db.commit()
 
-    return NovelResponse(
-        id=db_novel.id,
-        user_id=db_novel.user_id,
-        title=db_novel.title,
-        description=db_novel.description,
-        genre=db_novel.genre,
-        status=db_novel.status or "draft",
-        word_count=db_novel.word_count or 0,
-        tags=db_novel.tags or [],
-        cover_url=db_novel.cover_url,
-        source=db_novel.source or "manual",
-        created_at=db_novel.created_at,
-        updated_at=db_novel.updated_at
-    )
+    return build_novel_response(db_novel)
 
 
 @router.put("/{novel_id}", response_model=NovelResponse)
@@ -781,19 +847,12 @@ async def update_novel(
     await db.commit()
     await db.refresh(db_novel)
 
-    return NovelResponse(
-        id=db_novel.id,
-        user_id=db_novel.user_id,
-        title=db_novel.title,
-        description=db_novel.description,
-        genre=db_novel.genre,
-        status=db_novel.status or "draft",
-        word_count=db_novel.word_count or 0,
-        tags=db_novel.tags or [],
-        cover_url=db_novel.cover_url,
-        source=db_novel.source or "manual",
-        created_at=db_novel.created_at,
-        updated_at=db_novel.updated_at
+    chapter_count, legacy_character_count, story_entity_counts = await load_novel_counts(db, user_id, db_novel.id)
+    return build_novel_response(
+        db_novel,
+        chapter_count=chapter_count,
+        legacy_character_count=legacy_character_count,
+        story_entity_counts=story_entity_counts,
     )
 
 

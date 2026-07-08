@@ -217,7 +217,8 @@ async def load_story_prompt_context(
         getattr(script, "description", None),
         getattr(script, "content", None),
     ]
-    source_text_parts.extend(chapter.content for chapter in chapters if chapter.content)
+    if not chapter_id:
+        source_text_parts.extend(chapter.content for chapter in chapters if chapter.content)
     source_text = "\n".join(part for part in source_text_parts if part)
 
     entity_group = {"characters": [], "scenes": [], "props": [], "events": []}

@@ -280,6 +280,54 @@ def test_publish_rejects_local_review_package_preview_output(client: TestClient)
     assert any(issue["code"] == "preview_package_not_publishable" for issue in detail["issues"])
 
 
+def test_publish_allows_explicit_preview_package_export(client: TestClient) -> None:
+    owner_id = "publish-preview-package-export-owner"
+    synthesis_job_id = f"publish-preview-package-export-{uuid4()}"
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Local Review Package Export",
+            model_id="local-render",
+            model_name="Local Review Package",
+            video_url="https://example.com/source.mp4",
+            audio_url="https://example.com/source.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/render-preview.html",
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "local_artifact_package",
+                "output_kind": "preview_package",
+                "is_publishable": False,
+                "render_artifacts": {
+                    "preview_url": "/static/exports/render-preview.html",
+                    "srt_url": "/static/exports/render.srt",
+                    "timeline_url": "/static/exports/render-timeline.json",
+                    "render_manifest_url": "/static/exports/render-manifest.json",
+                },
+            },
+        )
+    )
+
+    response = client.post(
+        "/api/v1/synthesis/publish",
+        json={
+            "synthesis_job_id": synthesis_job_id,
+            "metadata": {"allow_preview_export": True, "output_kind": "preview_package"},
+        },
+        headers=_auth_headers(owner_id),
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["video_url"] == "/static/exports/render-preview.html"
+    assert payload["format"] == "html"
+    assert payload["metadata"]["is_publishable"] is False
+    assert payload["metadata"]["output_kind"] == "preview_package"
+    assert payload["metadata"]["preview_export"] is True
+
+
 def test_publish_rejects_cloud_render_until_final_video_ready(client: TestClient) -> None:
     owner_id = "publish-cloud-pending-owner"
     synthesis_job_id = f"publish-cloud-pending-{uuid4()}"
@@ -454,6 +502,86 @@ def test_publish_export_preserves_render_artifact_provenance(client: TestClient)
     artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert artifact_payload["render_artifacts"] == render_artifacts
     assert artifact_payload["timeline_url"] == render_artifacts["timeline_url"]
+
+
+def test_publish_export_delivers_local_final_artifacts_to_qiniu(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.api.v1.endpoints import synthesis as synthesis_endpoint
+
+    owner_id = "publish-qiniu-owner"
+    synthesis_job_id = f"publish-qiniu-{uuid4()}"
+    render_artifacts = {
+        "srt_url": "/static/exports/qiniu-final.srt",
+        "timeline_url": "/static/exports/qiniu-timeline.json",
+        "render_manifest_url": "/static/exports/qiniu-render-manifest.json",
+        "source_manifest_url": "/static/exports/qiniu-source-manifest.json",
+    }
+    calls: list[tuple[str, str]] = []
+
+    async def fake_resolve_provider_media_url(db, user_id, media_url, *, media_type="image", storage_config_id=None):
+        calls.append((media_url, media_type))
+        return {
+            "source_url": media_url,
+            "provider_url": f"https://cdn.example.com{media_url}",
+            "image_url_sent": True,
+            "delivery_method": "qiniu_object_upload",
+            "storage_config_id": "storage-qiniu-1",
+            "storage_config_name": "七牛 Kodo",
+            "storage_provider_name": "对象存储 / CDN",
+            "object_key": media_url.lstrip("/"),
+            "omitted_reason": None,
+        }
+
+    monkeypatch.setattr(
+        synthesis_endpoint,
+        "resolve_provider_media_url",
+        fake_resolve_provider_media_url,
+        raising=False,
+    )
+    _insert_synthesis_job(
+        SynthesisJob(
+            id=synthesis_job_id,
+            user_id=owner_id,
+            title="Qiniu Final Episode",
+            model_id="ffmpeg-local",
+            model_name="Local Final Render",
+            video_url="https://example.com/source.mp4",
+            audio_url="https://example.com/source.mp3",
+            status="succeeded",
+            progress=100,
+            output_url="/static/exports/qiniu-final.mp4",
+            duration_seconds=8.0,
+            extra_data={
+                "render_status": "rendered",
+                "render_backend": "ffmpeg_local",
+                "output_kind": "final_video",
+                "is_publishable": True,
+                "render_artifacts": render_artifacts,
+            },
+        )
+    )
+
+    publish_response = client.post(
+        "/api/v1/synthesis/publish",
+        json={"synthesis_job_id": synthesis_job_id, "metadata": {"channel": "qiniu-test"}},
+        headers=_auth_headers(owner_id),
+    )
+
+    assert publish_response.status_code == 201
+    payload = publish_response.json()
+    metadata = payload["metadata"]
+    assert payload["provider"] == "qiniu"
+    assert payload["video_url"] == "https://cdn.example.com/static/exports/qiniu-final.mp4"
+    assert payload["export_url"].startswith("https://cdn.example.com/static/exports/")
+    assert metadata["source_output_url"] == "/static/exports/qiniu-final.mp4"
+    assert metadata["video_url"] == "https://cdn.example.com/static/exports/qiniu-final.mp4"
+    assert metadata["render_artifacts"]["srt_url"] == "https://cdn.example.com/static/exports/qiniu-final.srt"
+    assert metadata["render_artifacts"]["timeline_url"] == "https://cdn.example.com/static/exports/qiniu-timeline.json"
+    assert metadata["storage_delivery"]["video_url"]["delivery_method"] == "qiniu_object_upload"
+    assert metadata["storage_delivery"]["export_url"]["delivery_method"] == "qiniu_object_upload"
+    assert ("/static/exports/qiniu-final.mp4", "video") in calls
 
 
 def test_execute_synthesis_persists_source_and_output_video_urls(client: TestClient) -> None:

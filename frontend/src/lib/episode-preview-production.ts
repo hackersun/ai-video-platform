@@ -49,6 +49,7 @@ export type EpisodePreviewProductionResult = {
   readyForConcatenate?: boolean;
   pendingVideoJobIds?: string[];
   pendingTtsJobIds?: string[];
+  cloudWaitTimedOut?: boolean;
   synthesisJobId?: string;
   outputUrl?: string;
   manifestUrl?: string;
@@ -109,6 +110,27 @@ function getStrategyContractFlags(strategy: ProductionStrategy) {
   };
 }
 
+function shouldRequireProviderMedia(strategy: ProductionStrategy, videoModelConfigId?: string) {
+  return strategy === 'final_quality' || Boolean(videoModelConfigId);
+}
+
+const VIDEO_JOB_DONE_STATUSES = new Set(['succeeded', 'completed']);
+const VIDEO_JOB_FAILED_STATUSES = new Set(['failed', 'cancelled', 'canceled', 'error']);
+const DEFAULT_CLOUD_VIDEO_WAIT_MS = 12 * 60 * 1000;
+const DEFAULT_CLOUD_VIDEO_POLL_MS = 15 * 1000;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeStatus(value: unknown) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function jobErrorMessage(job: any) {
+  return job?.error_message || job?.error || job?.detail || job?.message || job?.status || '未知错误';
+}
+
 async function mark(
   onStage: ((stage: EpisodePreviewStageUpdate) => void) | undefined,
   key: EpisodePreviewStageKey,
@@ -116,6 +138,80 @@ async function mark(
   message: string
 ) {
   onStage?.({ key, status, message });
+}
+
+async function refreshVideoJob(jobId: string) {
+  try {
+    return await apiClient.refreshVideoJob(jobId);
+  } catch (error) {
+    const current = await apiClient.getVideoJobStatus(jobId).catch(() => null);
+    if (current) return current;
+    throw error;
+  }
+}
+
+async function waitForCloudVideoJobs(params: {
+  jobIds: string[];
+  onStage?: (stage: EpisodePreviewStageUpdate) => void;
+  timeoutMs?: number;
+  pollMs?: number;
+}) {
+  const jobIds = Array.from(new Set(params.jobIds.filter(Boolean)));
+  if (jobIds.length === 0) return { completed: true, timedOut: false, pendingJobIds: [] as string[] };
+
+  const timeoutAt = Date.now() + (params.timeoutMs || DEFAULT_CLOUD_VIDEO_WAIT_MS);
+  const pollMs = params.pollMs || DEFAULT_CLOUD_VIDEO_POLL_MS;
+
+  while (true) {
+    const jobs = await Promise.all(jobIds.map((jobId) => refreshVideoJob(jobId)));
+    const failed = jobs.find((job) => VIDEO_JOB_FAILED_STATUSES.has(normalizeStatus(job?.status)));
+    if (failed) {
+      const shortId = String(failed.id || failed.job_id || '').slice(0, 8) || '未知任务';
+      throw new Error(`云端视频任务 ${shortId} 失败：${jobErrorMessage(failed)}`);
+    }
+
+    const pendingJobs = jobs.filter((job) => !VIDEO_JOB_DONE_STATUSES.has(normalizeStatus(job?.status)));
+    if (pendingJobs.length === 0) {
+      await mark(params.onStage, 'concatenate', 'running', '云端视频已完成，正在继续合成');
+      return { completed: true, timedOut: false, pendingJobIds: [] as string[] };
+    }
+
+    const doneCount = jobs.length - pendingJobs.length;
+    const pendingJobIds = pendingJobs.map((job) => String(job.id || job.job_id)).filter(Boolean);
+    await mark(
+      params.onStage,
+      'concatenate',
+      'waiting',
+      `云端视频生成中 ${doneCount}/${jobs.length}，正在自动刷新任务状态`
+    );
+
+    if (Date.now() >= timeoutAt) {
+      return { completed: false, timedOut: true, pendingJobIds };
+    }
+
+    await sleep(pollMs);
+  }
+}
+
+async function waitForTtsJobsIfNeeded(params: {
+  jobIds: string[];
+  onStage?: (stage: EpisodePreviewStageUpdate) => void;
+}) {
+  const jobIds = Array.from(new Set(params.jobIds.filter(Boolean)));
+  if (jobIds.length === 0) return { completed: true, pendingJobIds: [] as string[] };
+
+  const jobs = await Promise.all(jobIds.map((jobId) => apiClient.getTTSJob(jobId)));
+  const failed = jobs.find((job: any) => VIDEO_JOB_FAILED_STATUSES.has(normalizeStatus(job?.status)));
+  if (failed) {
+    const shortId = String(failed.id || '').slice(0, 8) || '未知任务';
+    throw new Error(`TTS 任务 ${shortId} 失败：${jobErrorMessage(failed)}`);
+  }
+  const pendingJobs = jobs.filter((job: any) => !VIDEO_JOB_DONE_STATUSES.has(normalizeStatus(job?.status)));
+  if (pendingJobs.length > 0) {
+    await mark(params.onStage, 'concatenate', 'waiting', `仍有 ${pendingJobs.length} 个声音任务未完成，暂不合成`);
+    return { completed: false, pendingJobIds: pendingJobs.map((job: any) => String(job.id)).filter(Boolean) };
+  }
+  return { completed: true, pendingJobIds: [] as string[] };
 }
 
 export async function resumeEpisodePreviewFromConcatenate(params: {
@@ -190,6 +286,7 @@ export async function runEpisodePreviewProduction(params: {
   chapterId?: string;
   scriptId?: string;
   storyboardId?: string;
+  shotIds?: string[];
   title?: string;
   textModelConfigId?: string;
   videoModelConfigId?: string;
@@ -223,13 +320,7 @@ export async function runEpisodePreviewProduction(params: {
       scriptId = existingScript.id;
       await mark(onStage, 'script', 'done', '已复用当前章节已有剧本');
     } else {
-      const generated = await apiClient.generateScript({
-        chapter_id: chapterId,
-        style: 'anime',
-        model_config_id: params.textModelConfigId || undefined,
-      });
-      scriptId = generated.id;
-      await mark(onStage, 'script', 'done', '已根据章节内容生成动漫剧本');
+      await mark(onStage, 'script', 'done', '暂无现成剧本，将由智能分镜基于章节创建草稿脚本');
     }
   } else {
     await mark(onStage, 'script', 'done', '已绑定工作流剧本');
@@ -254,7 +345,6 @@ export async function runEpisodePreviewProduction(params: {
       const generated = await apiClient.generateSmartStoryboard({
         novel_id: novelId,
         chapter_id: chapterId,
-        shot_count: 8,
         style: 'anime',
         use_ai_refine: true,
         model_config_id: params.textModelConfigId || undefined,
@@ -276,6 +366,25 @@ export async function runEpisodePreviewProduction(params: {
     storyboard_id: storyboardId || '',
   });
 
+  let selectedShotIds = params.shotIds?.map((shotId) => String(shotId || '').trim()).filter(Boolean);
+  if (selectedShotIds?.length) {
+    if (!storyboardId) {
+      await mark(onStage, 'storyboard', 'failed', '所选镜头缺少当前分镜上下文');
+      throw new Error('所选镜头缺少当前分镜上下文，请重新选择工作流和分镜');
+    }
+    const storyboardShots = normalizeList<any>(await apiClient.getShots(storyboardId));
+    const validShotIds = new Set(storyboardShots.map((shot: any) => shot.id).filter(Boolean));
+    const filteredShotIds = selectedShotIds.filter((shotId) => validShotIds.has(shotId));
+    if (filteredShotIds.length === 0) {
+      await mark(onStage, 'storyboard', 'failed', '所选镜头不属于当前分镜');
+      throw new Error('所选镜头不属于当前分镜，请重新加载并选择当前分镜下的关键镜头');
+    }
+    if (filteredShotIds.length !== selectedShotIds.length) {
+      await mark(onStage, 'storyboard', 'done', `已忽略 ${selectedShotIds.length - filteredShotIds.length} 个过期镜头选择`);
+    }
+    selectedShotIds = filteredShotIds;
+  }
+
   await mark(onStage, 'assistant', 'running', '正在执行 AI 制片安全补齐');
   await apiClient.runProducerAssistant(workflowId, { auto_fix: true });
   await mark(onStage, 'assistant', 'done', '制片检查和安全补齐已完成');
@@ -285,6 +394,7 @@ export async function runEpisodePreviewProduction(params: {
   const audioMode = params.audioMode || 'model_audio';
   const strategyCopy = getProductionStrategyCopy(productionStrategy);
   const strategyContract = getStrategyContractFlags(productionStrategy);
+  const requiresProviderMedia = shouldRequireProviderMedia(productionStrategy, params.videoModelConfigId);
 
   await mark(
     onStage,
@@ -311,17 +421,22 @@ export async function runEpisodePreviewProduction(params: {
     audioMode === 'none'
       ? `正在按「${strategyCopy.label}」生成无配音视频和字幕；可稍后补配音`
       : strategy === 'separate_video_tts'
-      ? `正在按「${strategyCopy.label}」分别调用视频模型和声音模型；${strategyCopy.contractHint}`
+      ? requiresProviderMedia
+        ? `正在按「${strategyCopy.label}」分别调用视频模型和声音模型；${strategyCopy.contractHint}`
+        : `正在按「${strategyCopy.label}」生成本地可审阅草片；未选择真实视频配置时允许 DEV_MODE 占位，终稿仍需补齐模型配置。`
       : `正在按「${strategyCopy.label}」调用直生音视频模型；${strategyCopy.contractHint}`
   );
   const mediaBatch = await apiClient.generateWorkflowMediaBatch(workflowId, {
     production_strategy: productionStrategy,
     strategy,
+    shot_ids: selectedShotIds && selectedShotIds.length > 0 ? selectedShotIds : undefined,
     resolution: '720p',
     subtitle_mode: 'shot_dialogue',
     audio_mode: audioMode,
     model_config_id: params.videoModelConfigId || undefined,
     audio_model_config_id: audioMode === 'none' ? undefined : params.audioModelConfigId || undefined,
+    require_real_video: requiresProviderMedia,
+    require_provider_reference_image: requiresProviderMedia,
   });
   const videoJobIds = mediaBatch.video_job_ids || [];
   const ttsJobIds = mediaBatch.tts_job_ids || [];
@@ -330,9 +445,52 @@ export async function runEpisodePreviewProduction(params: {
   const pendingVideoJobIds = mediaBatch.pending_video_job_ids || [];
   const pendingTtsJobIds = mediaBatch.pending_tts_job_ids || [];
   if (mediaBatch.ready_for_concatenate === false) {
-    const message = `已提交 ${videoJobIds.length} 个视频任务、${ttsJobIds.length} 个声音任务；等待云端生成完成后再合成`;
+    const message = `已提交 ${videoJobIds.length} 个视频任务、${ttsJobIds.length} 个声音任务；正在等待云端生成完成`;
     await mark(onStage, 'media', 'done', message);
-    await mark(onStage, 'concatenate', 'waiting', '视频/声音仍在云端生成中；完成后可回到工作台继续合成');
+    const videoWait = await waitForCloudVideoJobs({ jobIds: pendingVideoJobIds, onStage });
+    const ttsWait = await waitForTtsJobsIfNeeded({ jobIds: pendingTtsJobIds, onStage });
+    if (!videoWait.completed || !ttsWait.completed) {
+      const remainingVideoJobIds = videoWait.pendingJobIds;
+      const remainingTtsJobIds = ttsWait.pendingJobIds;
+      await mark(
+        onStage,
+        'concatenate',
+        'waiting',
+        videoWait.timedOut
+          ? '云端视频仍未完成，已保留任务 ID，稍后可回到工作台继续合成'
+          : '视频/声音仍在云端生成中；完成后可回到工作台继续合成'
+      );
+      return {
+        workflowId,
+        novelId,
+        chapterId,
+        productionStrategy,
+        productionStrategyLabel: strategyCopy.label,
+        productionStrategyContract: strategyCopy.contractHint,
+        ...strategyContract,
+        scriptId,
+        storyboardId,
+        videoJobIds,
+        ttsJobIds,
+        mediaJobIds,
+        subtitleTrackIds,
+        readyForConcatenate: false,
+        pendingVideoJobIds: remainingVideoJobIds,
+        pendingTtsJobIds: remainingTtsJobIds,
+        cloudWaitTimedOut: videoWait.timedOut,
+      };
+    }
+
+    await mark(onStage, 'media', 'done', '云端视频和配音任务已完成，可继续合成');
+    const resumed = await resumeEpisodePreviewFromConcatenate({
+      workflowId,
+      videoJobIds,
+      mediaJobIds,
+      ttsJobIds,
+      title: params.title || '本集预览草片',
+      onStage,
+    });
+
     return {
       workflowId,
       novelId,
@@ -347,9 +505,18 @@ export async function runEpisodePreviewProduction(params: {
       ttsJobIds,
       mediaJobIds,
       subtitleTrackIds,
-      readyForConcatenate: false,
-      pendingVideoJobIds,
-      pendingTtsJobIds,
+      readyForConcatenate: true,
+      pendingVideoJobIds: [],
+      pendingTtsJobIds: [],
+      synthesisJobId: resumed.synthesisJobId,
+      outputUrl: resumed.outputUrl,
+      manifestUrl: resumed.manifestUrl,
+      previewUrl: resumed.previewUrl,
+      srtUrl: resumed.srtUrl,
+      timelineUrl: resumed.timelineUrl,
+      renderManifestUrl: resumed.renderManifestUrl,
+      preflight: resumed.preflight,
+      render: resumed.render,
     };
   }
   await mark(

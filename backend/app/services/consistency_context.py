@@ -65,6 +65,85 @@ def _entity_ref(entity: StoryEntity, character: Optional[Character] = None) -> D
     return ref
 
 
+NOISE_CHARACTER_NAME_MARKERS = ("因果", "小说", "对白", "字幕", "标注", "关键", "与", "并", "来的不")
+NOISE_CHARACTER_EXACT_NAMES = {"霓虹", "追来的不"}
+NOISE_CHARACTER_SCENE_SUFFIXES = ("列车", "车站", "站台", "车厢")
+NOISE_CHARACTER_RECIPIENT_PREFIXES = ("对", "向", "给", "把", "将", "被")
+NOISE_PROP_NAMES = {
+    "开场钩",
+    "视觉钩",
+    "本场视觉钩",
+    "成为本场视觉钩",
+    "下一集钩",
+    "形成下一集钩",
+    "最后一句钩",
+    "保留最后一句钩",
+    "拉镜",
+    "推镜",
+    "摇镜",
+    "运镜",
+    "镜",
+    "紧铜铃",
+    "对孙剑",
+    "白色药",
+}
+NOISE_PROP_HOOK_MARKERS = ("开场", "结尾", "视觉", "本场", "下一集", "最后一句", "保留", "形成", "成为")
+NOISE_PROP_CAMERA_MARKERS = ("拉", "推", "摇", "运", "跟", "固定", "全景", "近景", "中景", "远景", "特写")
+NOISE_SCENE_COPY_MARKERS = ("这一刻", "指向", "推向", "注意力", "重新", "保证", "字幕", "对白")
+NOISE_PROP_COPY_MARKERS = ("推向", "指向", "注意到", "注意力", "重新", "刻着", "守住", "吹灭")
+
+
+def _is_noise_character_entity(entity: StoryEntity) -> bool:
+    if entity.entity_type != "character":
+        return False
+    name = (entity.name or "").strip()
+    if not name:
+        return True
+    if name in NOISE_CHARACTER_EXACT_NAMES:
+        return True
+    if len(name) > 2 and name.startswith(NOISE_CHARACTER_RECIPIENT_PREFIXES):
+        return True
+    if name.endswith(NOISE_CHARACTER_SCENE_SUFFIXES):
+        return True
+    return any(marker in name for marker in NOISE_CHARACTER_NAME_MARKERS)
+
+
+def _is_noise_prop_entity(entity: StoryEntity) -> bool:
+    if entity.entity_type != "prop":
+        return False
+    name = (entity.name or "").strip()
+    if not name:
+        return True
+    if name in NOISE_PROP_NAMES:
+        return True
+    if name.endswith("钩") and any(marker in name for marker in NOISE_PROP_HOOK_MARKERS):
+        return True
+    if name.endswith("镜") and any(marker in name for marker in NOISE_PROP_CAMERA_MARKERS):
+        return True
+    if any(marker in name for marker in NOISE_PROP_COPY_MARKERS) and len(name) > 4:
+        return True
+    return False
+
+
+def _is_noise_scene_entity(entity: StoryEntity) -> bool:
+    if entity.entity_type != "scene":
+        return False
+    name = (entity.name or "").strip()
+    if not name:
+        return True
+    if any(marker in name for marker in NOISE_SCENE_COPY_MARKERS):
+        return True
+    return False
+
+
+def _is_noise_story_entity(entity: StoryEntity) -> bool:
+    return (
+        _is_noise_character_entity(entity)
+        or _is_noise_prop_entity(entity)
+        or _is_noise_scene_entity(entity)
+    )
+
+
 def _summarize_refs(refs: List[Dict[str, Any]]) -> str:
     parts = []
     for ref in refs:
@@ -243,6 +322,16 @@ async def build_shot_entity_context(
         text=source_text,
         persist_missing=True,
     )
+    if not entities:
+        return {
+            "character_refs": [],
+            "scene_refs": [],
+            "prop_refs": [],
+            "event_refs": [],
+            "entity_refs": {"characters": [], "scenes": [], "props": [], "events": []},
+            "environment_context": None,
+        }
+    entities = [entity for entity in entities if not _is_noise_story_entity(entity)]
     if not entities:
         return {
             "character_refs": [],

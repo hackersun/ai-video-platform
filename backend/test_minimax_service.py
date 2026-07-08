@@ -34,10 +34,11 @@ class _FakeSession:
     async def __aexit__(self, exc_type, exc, tb) -> None:
         return None
 
-    def post(self, url, headers=None, json=None, timeout=None):
+    def post(self, url, headers=None, json=None, data=None, timeout=None):
         self._captured["url"] = url
         self._captured["headers"] = headers
         self._captured["json"] = json
+        self._captured["data"] = data
         self._captured["timeout"] = timeout
         return _FakeResponse(self._payload)
 
@@ -84,6 +85,97 @@ def test_tts_normalizes_builtin_minimax_tts_model_id(monkeypatch) -> None:
 
     assert captured["json"]["model"] == "speech-2.6-hd"
     assert result["audio_url"] == "https://example.com/voice.mp3"
+
+
+def test_tts_uses_probed_duration_for_remote_audio_url(monkeypatch) -> None:
+    captured: dict = {}
+    probed: dict = {}
+
+    async def _fake_probe_duration(audio_url: str):
+        probed["audio_url"] = audio_url
+        return 8.064
+
+    monkeypatch.setattr(
+        "app.services.minimax_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {"data": {"audio_url": "https://example.com/voice.mp3"}},
+            captured,
+        ),
+    )
+    monkeypatch.setattr(
+        "app.services.minimax_service.probe_audio_duration_seconds",
+        _fake_probe_duration,
+        raising=False,
+    )
+
+    result = asyncio.run(
+        MiniMaxService("api-key").text_to_speech(
+            text="正式生成验证",
+            model="speech-2.6-hd",
+            voice_id="female-shaonv",
+        )
+    )
+
+    assert probed["audio_url"] == "https://example.com/voice.mp3"
+    assert result["duration"] == 8.064
+
+
+def test_upload_voice_clone_audio_uses_minimax_file_upload(monkeypatch, tmp_path) -> None:
+    audio_path = tmp_path / "voice.mp3"
+    audio_path.write_bytes(b"fake-audio")
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.minimax_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {
+                "file": {
+                    "file_id": 123456789,
+                    "filename": "voice.mp3",
+                    "purpose": "voice_clone",
+                },
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+            },
+            captured,
+        ),
+    )
+
+    result = asyncio.run(MiniMaxService("api-key").upload_voice_clone_audio(str(audio_path)))
+
+    assert captured["url"].endswith("/files/upload")
+    assert captured["headers"]["Authorization"] == "Bearer api-key"
+    assert captured["json"] is None
+    assert result["file_id"] == "123456789"
+
+
+def test_clone_voice_posts_file_id_and_voice_id(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.minimax_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {
+                "demo_audio": "https://example.com/demo.mp3",
+                "extra_info": {"audio_length": 8123},
+                "base_resp": {"status_code": 0, "status_msg": "success"},
+            },
+            captured,
+        ),
+    )
+
+    result = asyncio.run(
+        MiniMaxService("api-key").clone_voice(
+            file_id=123456789,
+            voice_id="sunqinyue-default",
+            text="试听文本",
+            model="speech-2.6-hd",
+        )
+    )
+
+    assert captured["url"].endswith("/voice_clone")
+    assert captured["json"]["file_id"] == 123456789
+    assert captured["json"]["voice_id"] == "sunqinyue-default"
+    assert captured["json"]["text"] == "试听文本"
+    assert captured["json"]["model"] == "speech-2.6-hd"
+    assert result["demo_audio"] == "https://example.com/demo.mp3"
 
 
 def test_chat_completion_routes_minimax_m3_to_chatcompletion_v2(monkeypatch) -> None:

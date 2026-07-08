@@ -23,6 +23,7 @@ from app.models.publication import Publication
 from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
+from app.services.media_delivery import resolve_provider_media_url
 from app.services.publication_readiness import evaluate_publication_readiness
 
 router = APIRouter(tags=["音视频合成"])
@@ -358,6 +359,109 @@ def write_local_export_artifact(export_id: str, payload: Dict[str, Any]) -> tupl
     return artifact_path, f"/static/exports/{artifact_path.name}"
 
 
+def _publication_delivery_media_type(key: str) -> str:
+    if key == "video_url":
+        return "video"
+    if key == "srt_url":
+        return "subtitle"
+    return "manifest"
+
+
+def _publication_provider_from_delivery(current_provider: str, delivery: Dict[str, Any]) -> str:
+    if delivery.get("delivery_method") == "qiniu_object_upload":
+        return "qiniu"
+    return current_provider
+
+
+async def _resolve_publication_delivery(
+    db: AsyncSession,
+    user_id: str,
+    media_url: Optional[str],
+    *,
+    media_type: str,
+) -> Dict[str, Any]:
+    if not media_url:
+        return {
+            "source_url": media_url,
+            "provider_url": None,
+            "delivery_method": None,
+            "omitted_reason": None,
+        }
+    try:
+        return await resolve_provider_media_url(db, user_id, media_url, media_type=media_type)
+    except Exception as exc:
+        return {
+            "source_url": media_url,
+            "provider_url": None,
+            "delivery_method": None,
+            "omitted_reason": str(exc) or "对象存储交付失败，保留本地发布产物",
+        }
+
+
+async def _apply_publication_storage_delivery(
+    db: AsyncSession,
+    user_id: str,
+    artifact_payload: Dict[str, Any],
+) -> str:
+    provider = "local"
+    storage_delivery: Dict[str, Any] = {}
+    render_artifacts = (
+        artifact_payload.get("render_artifacts")
+        if isinstance(artifact_payload.get("render_artifacts"), dict)
+        else {}
+    )
+    delivery_targets: Dict[str, Optional[str]] = {
+        "video_url": artifact_payload.get("video_url"),
+        "srt_url": artifact_payload.get("srt_url") or render_artifacts.get("srt_url"),
+        "timeline_url": artifact_payload.get("timeline_url") or render_artifacts.get("timeline_url"),
+        "render_manifest_url": artifact_payload.get("render_manifest_url") or render_artifacts.get("render_manifest_url"),
+        "source_manifest_url": artifact_payload.get("source_manifest_url") or render_artifacts.get("source_manifest_url"),
+    }
+    for key, source_url in delivery_targets.items():
+        delivery = await _resolve_publication_delivery(
+            db,
+            user_id,
+            source_url,
+            media_type=_publication_delivery_media_type(key),
+        )
+        storage_delivery[key] = delivery
+        provider_url = delivery.get("provider_url")
+        if provider_url:
+            if key == "video_url":
+                artifact_payload["video_url"] = provider_url
+            else:
+                artifact_payload[key] = provider_url
+                render_artifacts[key] = provider_url
+            provider = _publication_provider_from_delivery(provider, delivery)
+    if render_artifacts:
+        artifact_payload["render_artifacts"] = render_artifacts
+    artifact_payload["storage_delivery"] = storage_delivery
+    artifact_payload["provider"] = provider
+    return provider
+
+
+async def _apply_export_artifact_storage_delivery(
+    db: AsyncSession,
+    user_id: str,
+    artifact_payload: Dict[str, Any],
+    *,
+    local_export_url: str,
+    current_provider: str,
+) -> tuple[str, str]:
+    delivery = await _resolve_publication_delivery(
+        db,
+        user_id,
+        local_export_url,
+        media_type="manifest",
+    )
+    storage_delivery = artifact_payload.setdefault("storage_delivery", {})
+    storage_delivery["export_url"] = delivery
+    artifact_payload["local_export_url"] = local_export_url
+    provider_url = delivery.get("provider_url")
+    provider = _publication_provider_from_delivery(current_provider, delivery)
+    return provider, provider_url or local_export_url
+
+
 def _raise_publication_not_ready(readiness: Dict[str, Any]) -> None:
     raise HTTPException(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -369,6 +473,17 @@ def _raise_publication_not_ready(readiness: Dict[str, Any]) -> None:
             "issues": readiness.get("publication_blockers") or [],
             "action": readiness.get("action") or "render_final_video",
         },
+    )
+
+
+def _can_export_preview_package(readiness: Dict[str, Any], extra_data: Dict[str, Any], metadata: Dict[str, Any]) -> bool:
+    render_artifacts = extra_data.get("render_artifacts") if isinstance(extra_data.get("render_artifacts"), dict) else {}
+    return (
+        bool(metadata.get("allow_preview_export"))
+        and readiness.get("output_kind") == "preview_package"
+        and extra_data.get("render_backend") == "local_artifact_package"
+        and extra_data.get("render_status") == "rendered"
+        and bool(render_artifacts.get("preview_url"))
     )
 
 
@@ -601,14 +716,17 @@ async def publish_export(
     playback_video_url = synthesis_job.output_url if synthesis_job else metadata.get("source_output_url")
     if synthesis_job and not playback_video_url:
         _raise_publication_not_ready(evaluate_publication_readiness(playback_video_url, job_extra_data))
+    preview_export = False
+    readiness: Optional[Dict[str, Any]] = None
     if synthesis_job:
         readiness = evaluate_publication_readiness(playback_video_url, job_extra_data)
-        if not readiness["is_publishable"]:
+        preview_export = _can_export_preview_package(readiness, job_extra_data, metadata)
+        if not readiness["is_publishable"] and not preview_export:
             _raise_publication_not_ready(readiness)
     else:
-        metadata_readiness = evaluate_publication_readiness(playback_video_url, metadata)
-        if not metadata_readiness["is_publishable"]:
-            _raise_publication_not_ready(metadata_readiness)
+        readiness = evaluate_publication_readiness(playback_video_url, metadata)
+        if not readiness["is_publishable"]:
+            _raise_publication_not_ready(readiness)
     visibility = str(metadata.get("visibility") or "private")
     if visibility not in {"private", "project", "public"}:
         visibility = "private"
@@ -620,7 +738,7 @@ async def publish_export(
         "project_id": project_id,
         "synthesis_job_id": synthesis_job.id if synthesis_job else None,
         "source_output_url": playback_video_url,
-        "video_url": playback_video_url,
+        "video_url": render_artifacts.get("preview_url") if preview_export else playback_video_url,
         "cover_url": synthesis_job.cover_url if synthesis_job else metadata.get("cover_url"),
         "duration_seconds": synthesis_job.duration_seconds if synthesis_job else metadata.get("duration_seconds"),
         "metadata": metadata,
@@ -639,11 +757,24 @@ async def publish_export(
                 "render_backend": job_extra_data.get("render_backend"),
                 "render_source": job_extra_data.get("render_source"),
                 "timeline_id": job_extra_data.get("render_timeline_id") or job_extra_data.get("timeline_id"),
-                "is_publishable": True,
-                "output_kind": "final_video",
+                "is_publishable": False if preview_export else True,
+                "output_kind": "preview_package" if preview_export else "final_video",
+                "preview_export": preview_export,
             }
         )
-    artifact_path, export_url = write_local_export_artifact(export_id, artifact_payload)
+    publication_provider = await _apply_publication_storage_delivery(db, user_id, artifact_payload)
+    publication_video_url = artifact_payload.get("video_url")
+    artifact_path, local_export_url = write_local_export_artifact(export_id, artifact_payload)
+    publication_provider, export_url = await _apply_export_artifact_storage_delivery(
+        db,
+        user_id,
+        artifact_payload,
+        local_export_url=local_export_url,
+        current_provider=publication_provider,
+    )
+    artifact_payload["provider"] = publication_provider
+    artifact_payload["export_url"] = export_url
+    artifact_path.write_text(json.dumps(artifact_payload, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
 
     publication = Publication(
         id=export_id,
@@ -653,14 +784,14 @@ async def publish_export(
         title=title,
         status="succeeded",
         visibility=visibility,
-        video_url=playback_video_url,
+        video_url=publication_video_url,
         cover_url=synthesis_job.cover_url if synthesis_job else metadata.get("cover_url"),
         duration_seconds=synthesis_job.duration_seconds if synthesis_job else metadata.get("duration_seconds"),
-        format=metadata.get("format") or "mp4",
+        format=metadata.get("format") or ("html" if preview_export else "mp4"),
         resolution=metadata.get("resolution") or "1080p",
         export_url=export_url,
         artifact_path=str(artifact_path),
-        provider="local",
+        provider=publication_provider,
         publication_metadata=artifact_payload,
     )
     db.add(publication)

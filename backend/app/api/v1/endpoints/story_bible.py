@@ -729,7 +729,41 @@ async def _extract_and_optionally_persist(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    entities = [
+    if persist:
+        existing_query = select(StoryEntity).where(
+            StoryEntity.user_id == user_id,
+            StoryEntity.novel_id == novel_id if novel_id else StoryEntity.novel_id.is_(None),
+            StoryEntity.chapter_id == chapter_id if chapter_id else StoryEntity.chapter_id.is_(None),
+            StoryEntity.script_id == script_id if script_id else StoryEntity.script_id.is_(None),
+            StoryEntity.entity_type.in_(entity_types),
+        )
+        existing_entities = list((await db.execute(existing_query)).scalars().all())
+        existing_by_key = {
+            _entity_match_key(entity.entity_type, entity.name, entity.canonical_name): entity
+            for entity in existing_entities
+        }
+        entities: list[StoryEntity] = []
+        for item in extracted:
+            key = _entity_match_key(item["entity_type"], item.get("name"))
+            entity = existing_by_key.get(key)
+            if entity:
+                _apply_extracted_entity(entity, item)
+            else:
+                entity = _new_story_entity_from_extracted(
+                    user_id=user_id,
+                    novel_id=novel_id,
+                    chapter_id=chapter_id,
+                    script_id=script_id,
+                    item=item,
+                )
+                db.add(entity)
+            entities.append(entity)
+        await db.commit()
+        for entity in entities:
+            await db.refresh(entity)
+        return entities
+
+    return [
         StoryEntity(
             id=str(uuid4()),
             user_id=user_id,
@@ -747,13 +781,6 @@ async def _extract_and_optionally_persist(
         )
         for item in extracted
     ]
-    if persist:
-        for entity in entities:
-            db.add(entity)
-        await db.commit()
-        for entity in entities:
-            await db.refresh(entity)
-    return entities
 
 
 def _entity_dicts(entities: list[StoryEntity]) -> list[dict[str, Any]]:
@@ -1284,10 +1311,18 @@ def _build_entity_consistency(entities: List[StoryEntity]) -> tuple[List[Dict[st
     for character in by_type.get("character", []):
         attrs = _entity_attr(character)
         asset_pack = attrs.get("asset_pack") or attrs.get("reference_assets") or {}
-        missing = [
-            key for key in ["front", "side", "full_body"]
-            if not (isinstance(asset_pack, dict) and asset_pack.get(key))
-        ]
+        requirements = attrs.get("reference_requirements") if isinstance(attrs.get("reference_requirements"), dict) else {}
+        planned_views = requirements.get("character_multiview") or requirements.get("multiview") or []
+        if not isinstance(planned_views, list):
+            planned_views = []
+        required_views = ["front", "side", "back"]
+        legacy_aliases = {"back": ["back", "full_body"], "front": ["front"], "side": ["side"]}
+        missing = []
+        for key in required_views:
+            has_asset = isinstance(asset_pack, dict) and any(asset_pack.get(alias) for alias in legacy_aliases[key])
+            has_contract = key in planned_views
+            if not has_asset and not has_contract:
+                missing.append(key)
         if missing:
             issues.append({
                 "code": "missing_character_views",
@@ -1296,9 +1331,18 @@ def _build_entity_consistency(entities: List[StoryEntity]) -> tuple[List[Dict[st
                 "entity_name": character.name,
                 "message": f"角色缺少多角度参考：{', '.join(missing)}",
             })
+        if not attrs.get("visual_dna"):
+            issues.append({
+                "code": "missing_character_visual_dna",
+                "severity": "warning",
+                "entity_id": character.id,
+                "entity_name": character.name,
+                "message": "角色缺少视觉 DNA，跨集形象难以锁定",
+            })
 
     for scene in by_type.get("scene", []):
         attrs = _entity_attr(scene)
+        scene_dna = attrs.get("scene_dna") if isinstance(attrs.get("scene_dna"), dict) else {}
         tags = attrs.get("scene_tags") or attrs.get("tags")
         if not tags:
             issues.append({
@@ -1307,6 +1351,14 @@ def _build_entity_consistency(entities: List[StoryEntity]) -> tuple[List[Dict[st
                 "entity_id": scene.id,
                 "entity_name": scene.name,
                 "message": "场景缺少室内/室外/战斗/日常等标签",
+            })
+        if not (attrs.get("weather") or attrs.get("lighting") or scene_dna.get("weather") or scene_dna.get("lighting")):
+            issues.append({
+                "code": "missing_scene_environment_dna",
+                "severity": "warning",
+                "entity_id": scene.id,
+                "entity_name": scene.name,
+                "message": "场景缺少天气或光影标签，跨镜头环境一致性不足",
             })
 
     for prop in by_type.get("prop", []):
@@ -2156,6 +2208,20 @@ async def generate_story_bible_from_novel(
     db.add(story_bible)
     await db.commit()
     await db.refresh(story_bible)
+
+    chapter_count_result = await db.execute(
+        select(func.count(Chapter.id)).where(Chapter.user_id == user_id, Chapter.novel_id == novel.id)
+    )
+    if int(chapter_count_result.scalar_one() or 0) > 0:
+        await build_story_state_machine(
+            db,
+            user_id,
+            story_bible_id=story_bible.id,
+            novel_id=novel.id,
+            persist=True,
+        )
+        await db.refresh(story_bible)
+
     return build_story_bible_response(story_bible)
 
 

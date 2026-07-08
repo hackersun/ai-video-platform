@@ -1038,6 +1038,12 @@ class ApiClient {
     return this.request<any>(`/video/jobs/${jobId}`);
   }
 
+  async refreshVideoJob(jobId: string) {
+    return this.request<any>(`/video/jobs/${jobId}/refresh`, {
+      method: 'POST',
+    });
+  }
+
   async cancelVideoJob(jobId: string) {
     return this.request<any>(`/video/jobs/${jobId}/cancel`, {
       method: 'POST',
@@ -1052,8 +1058,24 @@ class ApiClient {
   
   // ========== TTS 相关 ==========
 
-  async getTTSJobs() {
-    return this.request<TTSJob[]>('/tts/jobs');
+  async getTTSJobs(params: {
+    limit?: number;
+    status_filter?: string;
+    project_id?: string;
+    workflow_id?: string;
+    novel_id?: string;
+    shot_id?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') searchParams.set(key, String(value));
+    });
+    const qs = searchParams.toString();
+    return this.request<TTSJob[]>(`/tts/jobs${qs ? `?${qs}` : ''}`);
+  }
+
+  async getTTSJob(jobId: string) {
+    return this.request<TTSJob>(`/tts/jobs/${jobId}`);
   }
 
   async generateTTS(params: TTSGenerateParams) {
@@ -1134,10 +1156,11 @@ class ApiClient {
     });
   }
 
-  async getPublications(params: { status?: string; include_archived?: boolean } = {}) {
+  async getPublications(params: { status?: string; include_archived?: boolean; synthesis_job_id?: string } = {}) {
     const searchParams = new URLSearchParams();
     if (params.status) searchParams.set('status', params.status);
     if (params.include_archived) searchParams.set('include_archived', 'true');
+    if (params.synthesis_job_id) searchParams.set('synthesis_job_id', params.synthesis_job_id);
     const qs = searchParams.toString();
     return this.request<any[]>(`/synthesis/publications${qs ? `?${qs}` : ''}`);
   }
@@ -1455,6 +1478,8 @@ class ApiClient {
     speed?: number;
     story_bible_id?: string;
     use_story_bible_voice?: boolean;
+    require_real_video?: boolean;
+    require_provider_reference_image?: boolean;
   } = {}) {
     return this.request<any>(`/workflow/${workflowId}/generate-media-batch`, {
       method: 'POST',
@@ -1670,6 +1695,12 @@ class ApiClient {
 
   async testExternalConfig(configId: string) {
     return this.request<any>(`/external/configs/${configId}/test`, {
+      method: 'POST',
+    });
+  }
+
+  async testExternalConfigDelivery(configId: string) {
+    return this.request<any>(`/external/configs/${configId}/delivery-test`, {
       method: 'POST',
     });
   }
@@ -2659,14 +2690,17 @@ class ApiClient {
     style?: string;
     model_config_id?: string;
   }) {
+    const body: Record<string, any> = {
+      script_id: scriptId,
+      style: data.style || 'anime',
+      model_config_id: data.model_config_id,
+    };
+    if (typeof data.shot_count === 'number') {
+      body.shot_count = data.shot_count;
+    }
     return this.request<any>('/storyboards/generate', {
       method: 'POST',
-      body: JSON.stringify({
-        script_id: scriptId,
-        shot_count: data.shot_count || 5,
-        style: data.style || 'anime',
-        model_config_id: data.model_config_id,
-      }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -2735,17 +2769,20 @@ class ApiClient {
     script_content?: string;
     characters?: any[];
   }) {
+    const body: Record<string, any> = {
+      storyboard_id: data.storyboard_id,
+      scene_description: data.scene_description,
+      style: data.style || 'anime',
+      chapter_content: data.chapter_content,
+      script_content: data.script_content,
+      characters: data.characters,
+    };
+    if (typeof data.shot_count === 'number') {
+      body.shot_count = data.shot_count;
+    }
     return this.request<any>('/storyboard-ai/generate-shots', {
       method: 'POST',
-      body: JSON.stringify({
-        storyboard_id: data.storyboard_id,
-        scene_description: data.scene_description,
-        shot_count: data.shot_count || 5,
-        style: data.style || 'anime',
-        chapter_content: data.chapter_content,
-        script_content: data.script_content,
-        characters: data.characters,
-      }),
+      body: JSON.stringify(body),
     });
   }
 

@@ -351,9 +351,82 @@ def _image_generation_is_stale(shot: Shot, timeout_seconds: int = 300) -> bool:
         return False
 
 
+SHOT_NOISE_SCENE_MARKERS = ("这一刻", "指向", "推向", "注意力", "重新", "保证", "字幕", "对白")
+SHOT_NOISE_PROP_MARKERS = ("推向", "指向", "注意到", "注意力", "重新")
+
+
+def _ref_name(ref: object) -> str:
+    if isinstance(ref, dict):
+        return str(ref.get("name") or ref.get("entity_name") or ref.get("title") or "").strip()
+    return str(ref or "").strip()
+
+
+def _is_noise_shot_ref(ref: object, entity_type: str) -> bool:
+    name = _ref_name(ref)
+    if not name:
+        return False
+    if entity_type == "scene":
+        return any(marker in name for marker in SHOT_NOISE_SCENE_MARKERS)
+    if entity_type == "prop":
+        return len(name) > 4 and any(marker in name for marker in SHOT_NOISE_PROP_MARKERS)
+    return False
+
+
+def _sanitize_shot_refs(refs: object, entity_type: str) -> list:
+    if not isinstance(refs, list):
+        return []
+    return [ref for ref in refs if not _is_noise_shot_ref(ref, entity_type)]
+
+
+def _summarize_shot_refs(label: str, refs: list) -> Optional[str]:
+    parts = []
+    for ref in refs:
+        if isinstance(ref, dict):
+            name = ref.get("name") or ref.get("entity_name") or ref.get("title")
+            description = ref.get("description") or ref.get("appearance")
+            if name and description:
+                parts.append(f"{name}: {description}")
+            elif name:
+                parts.append(str(name))
+        elif ref:
+            parts.append(str(ref))
+    return f"{label}: {'；'.join(parts)}" if parts else None
+
+
+def _sanitize_shot_extra_data_for_response(value: object) -> dict:
+    extra_data = dict(_json_dict(value))
+    entity_refs = dict(extra_data.get("entity_refs") or {})
+    characters = _sanitize_shot_refs(entity_refs.get("characters") or [], "character")
+    scenes = _sanitize_shot_refs(extra_data.get("scene_refs") or entity_refs.get("scenes") or [], "scene")
+    props = _sanitize_shot_refs(extra_data.get("prop_refs") or entity_refs.get("props") or [], "prop")
+    events = _sanitize_shot_refs(extra_data.get("event_refs") or entity_refs.get("events") or [], "event")
+
+    entity_refs.update({
+        "characters": characters,
+        "scenes": scenes,
+        "props": props,
+        "events": events,
+    })
+    extra_data["entity_refs"] = entity_refs
+    extra_data["scene_refs"] = scenes
+    extra_data["prop_refs"] = props
+    extra_data["event_refs"] = events
+    environment_parts = [
+        part
+        for part in (
+            _summarize_shot_refs("场景", scenes),
+            _summarize_shot_refs("道具", props),
+            _summarize_shot_refs("事件", events),
+        )
+        if part
+    ]
+    extra_data["environment_context"] = "；".join(environment_parts) or None
+    return extra_data
+
+
 def build_shot_response(shot: Shot, storyboard_title: Optional[str] = None) -> ShotResponse:
     image_status = shot.image_status
-    extra_data = shot.extra_data if isinstance(shot.extra_data, dict) else {}
+    extra_data = _sanitize_shot_extra_data_for_response(shot.extra_data)
     if _image_generation_is_stale(shot):
         image_status = "failed"
         extra_data = {
@@ -953,6 +1026,9 @@ async def generate_shot_image(
                 subdir="images",
                 prefix=f"shot-{shot_id[:8]}",
                 max_bytes=20 * 1024 * 1024,
+                optimize_image=True,
+                image_max_dimension=512,
+                image_quality=76,
             ) or image_url
         except Exception:
             pass

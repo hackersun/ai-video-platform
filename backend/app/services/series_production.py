@@ -361,7 +361,7 @@ async def build_series_plan(
         chunk_size = max(1, min(chapters_per_episode, total_chapters))
         episode_count = math.ceil(total_chapters / chunk_size)
     else:
-        default_count = max(1, min(12, math.ceil(total_chapters / 2)))
+        default_count = max(1, min(100, total_chapters))
         episode_count = max(1, min(target_episode_count or default_count, total_chapters))
         chunk_size = math.ceil(total_chapters / episode_count)
 
@@ -447,7 +447,7 @@ async def build_series_plan(
         select(StoryEntity).where(
             and_(
                 StoryEntity.user_id == user_id,
-                or_(StoryEntity.novel_id == novel_id, StoryEntity.novel_id.is_(None)),
+                StoryEntity.novel_id == novel_id,
             )
         )
     )
@@ -457,7 +457,7 @@ async def build_series_plan(
     for entity in entities:
         if entity.chapter_id in chapter_ids:
             entities_by_chapter[entity.chapter_id].append(entity)
-        elif entity.novel_id == novel_id or entity.novel_id is None:
+        elif entity.novel_id == novel_id:
             global_entities.append(entity)
 
     workflow_result = await db.execute(

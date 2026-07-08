@@ -9,6 +9,7 @@ continuity constraints instead of relying on prose alone.
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException, status
@@ -18,10 +19,12 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.time_utils import utc_now
 from app.models import Chapter, Novel, StoryBible, StoryEntity
+from app.services.consistency_context import _is_noise_story_entity
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
 
 
 STATE_MACHINE_KEY = "state_machine"
+CHARACTER_COSTUME_PLACEHOLDERS = {"默认服装", "依据原文固定服装与标志配饰"}
 
 
 def _json_dict(value: Any) -> Dict[str, Any]:
@@ -94,33 +97,60 @@ def _extracted_payload(item: Dict[str, Any], chapter: Chapter) -> Dict[str, Any]
     }
 
 
+def _payload_quality(payload: Dict[str, Any]) -> int:
+    attrs = _json_dict(payload.get("attributes"))
+    visual_dna = _json_dict(attrs.get("visual_dna"))
+    score = 0
+    if payload.get("source") == "manual":
+        score += 50
+    if attrs.get("state") or attrs.get("status") or attrs.get("owner") or attrs.get("holder"):
+        score += 8
+    if attrs.get("costume") or attrs.get("costume_state"):
+        score += 8
+    if visual_dna.get("costume") and visual_dna.get("costume") not in CHARACTER_COSTUME_PLACEHOLDERS:
+        score += 6
+    if attrs.get("scene_dna") or attrs.get("prop_dna"):
+        score += 5
+    if payload.get("description") and payload.get("description") != payload.get("evidence"):
+        score += 1
+    return score
+
+
+def _append_best_entity_payload(
+    grouped: Dict[str, List[Dict[str, Any]]],
+    index_by_key: Dict[tuple[str, str], int],
+    payload: Dict[str, Any],
+) -> None:
+    entity_type = payload.get("entity_type")
+    name = payload.get("name")
+    if not entity_type or not name:
+        return
+    key = (entity_type, name)
+    current_index = index_by_key.get(key)
+    if current_index is None:
+        grouped.setdefault(entity_type, []).append(payload)
+        index_by_key[key] = len(grouped[entity_type]) - 1
+        return
+    existing = grouped[entity_type][current_index]
+    if _payload_quality(payload) > _payload_quality(existing):
+        grouped[entity_type][current_index] = payload
+
+
 def _group_entities_for_chapter(
     entities: List[StoryEntity],
     extracted_by_chapter: Dict[str, List[Dict[str, Any]]],
     chapter: Chapter,
 ) -> Dict[str, List[Dict[str, Any]]]:
     grouped: Dict[str, List[Dict[str, Any]]] = {entity_type: [] for entity_type in ENTITY_TYPES}
-    seen: set[tuple[str, str]] = set()
+    index_by_key: Dict[tuple[str, str], int] = {}
 
     for entity in entities:
         if entity.chapter_id not in {None, chapter.id}:
             continue
-        key = (entity.entity_type, entity.name)
-        if key in seen:
-            continue
-        grouped.setdefault(entity.entity_type, []).append(_entity_payload(entity))
-        seen.add(key)
+        _append_best_entity_payload(grouped, index_by_key, _entity_payload(entity))
 
     for item in extracted_by_chapter.get(chapter.id, []):
-        entity_type = item.get("entity_type")
-        name = item.get("name")
-        if not entity_type or not name:
-            continue
-        key = (entity_type, name)
-        if key in seen:
-            continue
-        grouped.setdefault(entity_type, []).append(item)
-        seen.add(key)
+        _append_best_entity_payload(grouped, index_by_key, item)
 
     return grouped
 
@@ -198,9 +228,10 @@ def _event_state(entity: Dict[str, Any], chapter: Chapter, sequence_fallback: in
 
 def _merge_character_state(existing: Dict[str, Any], incoming: Dict[str, Any]) -> Dict[str, Any]:
     merged = {**existing, **incoming}
-    for key, placeholder in (("state", "已登场"), ("costume", "默认服装")):
-        if incoming.get(key) == placeholder and existing.get(key):
-            merged[key] = existing[key]
+    if incoming.get("state") == "已登场" and existing.get("state"):
+        merged["state"] = existing["state"]
+    if incoming.get("costume") in CHARACTER_COSTUME_PLACEHOLDERS and existing.get("costume"):
+        merged["costume"] = existing["costume"]
     if not incoming.get("visual_dna") and existing.get("visual_dna"):
         merged["visual_dna"] = existing["visual_dna"]
     if not incoming.get("relationships") and existing.get("relationships"):
@@ -458,11 +489,11 @@ async def build_story_state_machine(
         select(StoryEntity)
         .where(
             StoryEntity.user_id == user_id,
-            or_(StoryEntity.novel_id == novel.id, StoryEntity.novel_id.is_(None)),
+            StoryEntity.novel_id == novel.id,
         )
         .order_by(StoryEntity.chapter_id, StoryEntity.entity_type, StoryEntity.updated_at)
     )
-    entities = list(entity_result.scalars().all())
+    entities = [entity for entity in entity_result.scalars().all() if not _is_noise_story_entity(entity)]
 
     known = {(entity.entity_type, entity.name, entity.chapter_id) for entity in entities}
     extracted_by_chapter: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
@@ -555,10 +586,10 @@ async def build_story_state_machine(
                 "chapter_id": chapter.id,
                 "chapter_number": chapter.chapter_number,
                 "title": chapter.title,
-                "characters": current_characters,
-                "scenes": current_scenes,
-                "props": current_props,
-                "events": chapter_events,
+                "characters": deepcopy(current_characters),
+                "scenes": deepcopy(current_scenes),
+                "props": deepcopy(current_props),
+                "events": deepcopy(chapter_events),
                 "summary": _compact(chapter.content, 220),
             }
         )

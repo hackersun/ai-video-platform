@@ -9,6 +9,7 @@ platform stable history playback and cover display.
 from __future__ import annotations
 
 import base64
+from io import BytesIO
 import mimetypes
 import re
 from pathlib import Path
@@ -17,6 +18,7 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 import httpx
+from PIL import Image
 
 
 STATIC_ROOT = Path(__file__).resolve().parents[2] / "static"
@@ -96,6 +98,47 @@ def _extension_from_content_type(content_type: str, media_type: str) -> str:
     return guessed or DEFAULT_EXTENSIONS[media_type]
 
 
+def _image_extension_from_bytes(data: bytes) -> Optional[str]:
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return ".webp"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    return None
+
+
+def _extension_for_payload(content_type: str, media_type: str, data: bytes) -> str:
+    if media_type == "image":
+        detected = _image_extension_from_bytes(data)
+        if detected:
+            return detected
+    return _extension_from_content_type(content_type, media_type)
+
+
+def _optimize_image_payload(
+    data: bytes,
+    *,
+    max_dimension: int,
+    quality: int,
+) -> tuple[bytes, str]:
+    """Return provider-friendly JPEG bytes for generated reference images."""
+    with Image.open(BytesIO(data)) as image:
+        image.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+        if image.mode in {"RGBA", "LA"}:
+            background = Image.new("RGB", image.size, (255, 255, 255))
+            alpha = image.getchannel("A") if "A" in image.getbands() else None
+            background.paste(image.convert("RGBA"), mask=alpha)
+            image = background
+        elif image.mode != "RGB":
+            image = image.convert("RGB")
+        output = BytesIO()
+        image.save(output, format="JPEG", quality=max(1, min(95, int(quality))), optimize=True)
+        return output.getvalue(), "image/jpeg"
+
+
 def _safe_static_path(subdir: str, filename: str) -> Path:
     target_dir = (STATIC_ROOT / "generated" / subdir).resolve()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -112,6 +155,9 @@ def persist_uploaded_media_bytes(
     subdir: str,
     prefix: str = "upload",
     max_bytes: int = 100 * 1024 * 1024,
+    optimize_image: bool = False,
+    image_max_dimension: int = 512,
+    image_quality: int = 78,
 ) -> str:
     """Save uploaded media bytes into local static storage."""
     if media_type not in ALLOWED_CONTENT_TYPES:
@@ -125,8 +171,17 @@ def persist_uploaded_media_bytes(
     if clean_type and clean_type not in ALLOWED_CONTENT_TYPES[media_type]:
         raise ValueError(f"媒体类型不匹配: {clean_type}")
 
+    if media_type == "image" and optimize_image:
+        data, clean_type = _optimize_image_payload(
+            data,
+            max_dimension=image_max_dimension,
+            quality=image_quality,
+        )
+        if len(data) > max_bytes:
+            raise ValueError("媒体文件超过本地持久化大小限制")
+
     safe_subdir = subdir.strip("/")
-    ext = _extension_from_content_type(clean_type, media_type)
+    ext = _extension_for_payload(clean_type, media_type, data)
     filename = f"{prefix}-{uuid4().hex}{ext}"
     target_path = _safe_static_path(safe_subdir, filename)
     target_path.write_bytes(data)
@@ -140,6 +195,9 @@ def _persist_data_url(
     subdir: str,
     prefix: str,
     max_bytes: int,
+    optimize_image: bool,
+    image_max_dimension: int,
+    image_quality: int,
 ) -> Optional[str]:
     match = re.match(r"^data:([^;,]+);base64,(.+)$", url, flags=re.DOTALL)
     if not match:
@@ -158,6 +216,9 @@ def _persist_data_url(
         subdir=subdir,
         prefix=prefix,
         max_bytes=max_bytes,
+        optimize_image=optimize_image,
+        image_max_dimension=image_max_dimension,
+        image_quality=image_quality,
     )
 
 
@@ -169,6 +230,9 @@ async def persist_remote_media_url(
     prefix: str = "media",
     timeout_seconds: float = 60.0,
     max_bytes: int = 100 * 1024 * 1024,
+    optimize_image: bool = False,
+    image_max_dimension: int = 512,
+    image_quality: int = 78,
 ) -> Optional[str]:
     """Download a remote media URL and return a stable /static/... URL.
 
@@ -187,6 +251,9 @@ async def persist_remote_media_url(
             subdir=subdir,
             prefix=prefix,
             max_bytes=max_bytes,
+            optimize_image=optimize_image,
+            image_max_dimension=image_max_dimension,
+            image_quality=image_quality,
         )
 
     parsed = urlparse(url)
@@ -206,7 +273,16 @@ async def persist_remote_media_url(
     if len(data) > max_bytes:
         raise ValueError("媒体文件超过本地持久化大小限制")
 
-    ext = _extension_from_content_type(content_type, media_type)
+    if media_type == "image" and optimize_image:
+        data, content_type = _optimize_image_payload(
+            data,
+            max_dimension=image_max_dimension,
+            quality=image_quality,
+        )
+        if len(data) > max_bytes:
+            raise ValueError("媒体文件超过本地持久化大小限制")
+
+    ext = _extension_for_payload(content_type, media_type, data)
     filename = f"{prefix}-{uuid4().hex}{ext}"
     target_path = _safe_static_path(subdir, filename)
     target_path.write_bytes(data)

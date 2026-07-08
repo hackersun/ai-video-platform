@@ -199,6 +199,43 @@ def test_story_state_machine_generates_persists_and_checks(client: TestClient) -
     assert check.json()["summary"]["events"] >= 2
 
 
+def test_story_state_machine_filters_stale_noise_entities(client: TestClient) -> None:
+    user_id = f"state-machine-noise-user-{uuid4()}"
+    fixture = _create_story_state_fixture(client, user_id)
+
+    for entity_type, name in [
+        ("character", "霓虹"),
+        ("character", "无人列车"),
+        ("character", "追来的不"),
+        ("prop", "紧铜铃"),
+        ("prop", "对孙剑"),
+        ("prop", "铃舌上刻着孙剑"),
+    ]:
+        response = client.post(
+            "/api/v1/story-bibles/entities",
+            json={
+                "novel_id": fixture["novel_id"],
+                "entity_type": entity_type,
+                "name": name,
+                "description": "旧版本误抽取噪声",
+                "source": "deterministic",
+            },
+            headers=_auth_headers(user_id),
+        )
+        assert response.status_code == 201
+
+    response = client.post(
+        f"/api/v1/story-bibles/{fixture['story_bible_id']}/state-machine",
+        json={"novel_id": fixture["novel_id"], "persist": False},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    state_machine = response.json()["state_machine"]
+    assert {"霓虹", "无人列车", "追来的不"}.isdisjoint(state_machine["current_state"]["characters"])
+    assert {"紧铜铃", "对孙剑", "铃舌上刻着孙剑"}.isdisjoint(state_machine["current_state"]["props"])
+
+
 def test_story_state_machine_is_injected_into_prompt_context(client: TestClient) -> None:
     user_id = f"state-machine-prompt-user-{uuid4()}"
     fixture = _create_story_state_fixture(client, user_id)

@@ -85,6 +85,44 @@ def test_import_preview_confirm_and_job_detail(client: TestClient) -> None:
     assert duplicate_resp.status_code == 409
 
 
+def test_novel_responses_expose_chapter_and_production_character_counts(client: TestClient) -> None:
+    user_id = "novel-counts-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "统计口径测试", "description": "角色：许澜。场景：旧码头。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第一章 雨夜",
+            "chapter_number": 1,
+            "content": "角色：许澜\n场景：雨夜旧码头\n许澜在雨夜旧码头追查海潮钟。",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+
+    detail_resp = client.get(f"/api/v1/novels/{novel_id}", headers=auth_headers(user_id))
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert detail["chapter_count"] == 1
+    assert detail["total_chapters"] == 1
+    assert detail["production_character_count"] >= 1
+    assert detail["character_count"] >= 1
+    assert detail["story_entity_counts"]["character"] >= 1
+
+    list_resp = client.get("/api/v1/novels", headers=auth_headers(user_id))
+    assert list_resp.status_code == 200
+    listed = next(item for item in list_resp.json() if item["id"] == novel_id)
+    assert listed["chapter_count"] == 1
+    assert listed["production_character_count"] >= 1
+
+
 def test_import_job_update_retry_and_archive(client: TestClient) -> None:
     user_id = "novel-import-manage-user"
     content = """# 雾城来信
@@ -152,6 +190,61 @@ def test_entity_extraction_persists_without_cloud_keys(client: TestClient) -> No
     assert by_type["prop"]["name"] == "青铜钥匙"
     assert by_type["event"]["name"] == "林舟发现城门爆发异光"
     assert all(entity["source"] == "deterministic" for entity in payload["entities"])
+
+
+def test_entity_extraction_persists_production_metadata_for_consistency(client: TestClient) -> None:
+    user_id = "entity-production-metadata-user"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "生产元数据测试", "description": "用于验证实体契约。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    response = client.post(
+        "/api/v1/story-bibles/entities/extract",
+        json={
+            "novel_id": novel_id,
+            "text": (
+                "角色：许澜\n"
+                "场景：雨夜旧码头\n"
+                "道具：银色工具包\n"
+                "许澜握紧银色工具包，在雨夜旧码头追查失控的海潮钟。"
+            ),
+            "persist": True,
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    entities = response.json()["entities"]
+    by_type = {entity["entity_type"]: entity for entity in entities}
+
+    character_attrs = by_type["character"]["attributes"]
+    assert character_attrs["visual_dna"]["identity_anchor"] == "许澜"
+    assert character_attrs["reference_requirements"]["character_multiview"] == ["front", "side", "back"]
+
+    scene_attrs = by_type["scene"]["attributes"]
+    assert "室外" in scene_attrs["scene_tags"]
+    assert scene_attrs["scene_dna"]["weather"]
+    assert scene_attrs["scene_dna"]["lighting"]
+
+    prop_entity = next(entity for entity in entities if entity["entity_type"] == "prop" and entity["name"] == "银色工具包")
+    prop_attrs = prop_entity["attributes"]
+    assert prop_attrs["prop_dna"]["identity_anchor"] == "银色工具包"
+    assert prop_attrs["reference_requirements"]["prop_multiview"] == ["main", "detail", "scale"]
+
+    consistency_resp = client.post(
+        "/api/v1/story-bibles/entities/check-consistency",
+        json={"novel_id": novel_id},
+        headers=auth_headers(user_id),
+    )
+    assert consistency_resp.status_code == 200
+    issue_codes = {issue["code"] for issue in consistency_resp.json()["issues"]}
+    assert "missing_character_views" not in issue_codes
+    assert "missing_scene_tags" not in issue_codes
+    assert "missing_prop_dna" not in issue_codes
 
 
 def test_story_entity_crud_management(client: TestClient) -> None:
@@ -254,6 +347,8 @@ def test_story_bible_generate_sync_and_consistency(client: TestClient) -> None:
     assert bible["novel_id"] == novel_id
     assert any(item["name"] == "林舟" for item in bible["character_rules"])
     assert any(item["name"] == "玄都城" for item in bible["scene_rules"])
+    assert bible["extra_data"]["state_machine"]["summary"]["characters"] >= 1
+    assert bible["extra_data"]["state_machine"]["summary"]["scenes"] >= 1
 
     second_chapter = client.post(
         "/api/v1/chapters",

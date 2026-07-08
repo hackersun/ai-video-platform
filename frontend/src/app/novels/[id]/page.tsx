@@ -84,6 +84,12 @@ interface Novel {
   description?: string;
   genre?: string;
   status: string;
+  chapter_count?: number;
+  total_chapters?: number;
+  character_count?: number;
+  legacy_character_count?: number;
+  production_character_count?: number;
+  story_entity_counts?: Record<string, number>;
   cover_url?: string;
   created_at: string;
   updated_at: string;
@@ -102,9 +108,24 @@ interface Chapter {
 
 interface Character {
   id: string;
+  novel_id?: string;
+  chapter_id?: string;
   name: string;
   description?: string;
   avatar_url?: string;
+  source?: 'legacy' | 'story_entity';
+  source_label?: string;
+  read_only?: boolean;
+}
+
+interface StoryEntityCharacter {
+  id: string;
+  novel_id?: string | null;
+  chapter_id?: string | null;
+  name?: string;
+  description?: string | null;
+  appearance?: string | null;
+  attributes?: Record<string, any>;
 }
 
 interface Script {
@@ -334,6 +355,20 @@ const normalizeGenre = (genre?: string | null) => {
 
 const getGenreLabel = (genre?: string | null) => normalizeGenre(genre) || '未设置题材';
 
+const normalizeCharacterName = (name?: string | null) => (name || '').replace(/\s+/g, '').toLowerCase();
+
+const productionCharacterFromEntity = (entity: StoryEntityCharacter): Character => ({
+  id: entity.id,
+  novel_id: entity.novel_id || undefined,
+  chapter_id: entity.chapter_id || undefined,
+  name: entity.name || '未命名生产角色',
+  description: entity.description || entity.appearance || 'StoryEntity 生产角色',
+  avatar_url: entity.attributes?.avatar_url || entity.attributes?.avatar,
+  source: 'story_entity',
+  source_label: 'StoryEntity',
+  read_only: true,
+});
+
 const suggestChapterTitle = (content: string, chapterNumber: number, novelTitle?: string) => {
   const cleaned = content
     .split('\n')
@@ -522,10 +557,11 @@ export default function NovelDetailPage() {
     setLoading(true);
     try {
       // 并行加载小说、章节、角色、剧本
-      const [novelRes, chaptersRes, charactersRes, scriptsRes, storyBibleRes, seriesPlanRes] = await Promise.all([
+      const [novelRes, chaptersRes, charactersRes, storyEntityCharacters, scriptsRes, storyBibleRes, seriesPlanRes] = await Promise.all([
         fetchWithAuth(`${API_BASE}/novels/${novelId}`),
         fetchWithAuth(`${API_BASE}/chapters/novel/${novelId}`),
         fetchWithAuth(`${API_BASE}/characters?novel_id=${novelId}`),
+        apiClient.getStoryEntities({ novel_id: novelId, entity_type: 'character', limit: 200 }).catch(() => []),
         fetchWithAuth(`${API_BASE}/scripts?novel_id=${novelId}`),
         fetchWithAuth(`${API_BASE}/story-bibles?novel_id=${novelId}`),
         fetchWithAuth(`${API_BASE}/novels/${novelId}/series-plan`)
@@ -547,7 +583,25 @@ export default function NovelDetailPage() {
       
       if (charactersRes.ok) {
         const charsData = await charactersRes.json();
-        setCharacters(Array.isArray(charsData) ? charsData : []);
+        const legacyCharacters = Array.isArray(charsData)
+          ? charsData.map((item: Character) => ({ ...item, source: 'legacy' as const, source_label: 'Character' }))
+          : [];
+        const legacyNames = new Set(legacyCharacters.map((item) => normalizeCharacterName(item.name)).filter(Boolean));
+        const productionNames = new Set<string>();
+        const productionCharacters = Array.isArray(storyEntityCharacters)
+          ? storyEntityCharacters
+            .filter((entity: StoryEntityCharacter) => normalizeCharacterName(entity.name))
+            .filter((entity: StoryEntityCharacter) => entity.novel_id === novelId)
+            .filter((entity: StoryEntityCharacter) => !legacyNames.has(normalizeCharacterName(entity.name)))
+            .filter((entity: StoryEntityCharacter) => {
+              const name = normalizeCharacterName(entity.name);
+              if (productionNames.has(name)) return false;
+              productionNames.add(name);
+              return true;
+            })
+            .map(productionCharacterFromEntity)
+          : [];
+        setCharacters([...legacyCharacters, ...productionCharacters]);
       }
       
       if (scriptsRes.ok) {
@@ -927,7 +981,7 @@ export default function NovelDetailPage() {
     setSeriesPlanMessage(null);
     try {
       const plan = await apiClient.generateNovelSeriesPlan(novelId, {
-        target_episode_count: chapters.length > 0 ? Math.min(12, Math.max(1, Math.ceil(chapters.length / 2))) : undefined,
+        target_episode_count: chapters.length > 0 ? Math.min(100, chapters.length) : undefined,
         target_duration_seconds: 60,
         aspect_ratio: '9:16',
         style: novel?.genre || 'anime',
@@ -1796,11 +1850,16 @@ export default function NovelDetailPage() {
                         <div className="w-16 h-16 rounded-full bg-violet-500/20 flex items-center justify-center mx-auto mb-3">
                           <Users className="w-8 h-8 text-violet-400" />
                         </div>
-                        <div className="text-center">
+                          <div className="text-center">
                           <div className="text-white font-medium">{char.name}</div>
                           <div className="text-white/40 text-sm truncate">
                             {char.description || '暂无描述'}
                           </div>
+                          {char.source_label && (
+                            <div className="mt-1 text-[11px] text-cyan-200/70">
+                              {char.source_label}
+                            </div>
+                          )}
                         </div>
                       </div>
                     ))}

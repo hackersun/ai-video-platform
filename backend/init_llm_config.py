@@ -133,6 +133,24 @@ def init_llm_providers_and_models():
             "description": "豆包Seedance 1.0 Pro快速版，图生视频/文生视频，速度快"
         },
         {
+            "id": "volcano-seedance-1-5-pro",
+            "provider_id": "volcano",
+            "model_id": "doubao-seedance-1-5-pro-251215",
+            "model_name": "Doubao-Seedance-1.5-pro",
+            "model_name_cn": "豆包Seedance-1.5 Pro",
+            "model_type": "video",
+            "capabilities": ["text-to-video", "image-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "豆包Seedance 1.5 Pro，支持单张参考图生成视频，适合兼容图生视频链路"
+        },
+        {
             "id": "volcano-seedance-2-0",
             "provider_id": "volcano",
             "model_id": "doubao-seedance-2-0-260128",

@@ -360,6 +360,12 @@ function CardsContent() {
       payload.model_config_id = imageModelConfigId.trim();
     }
     const result = await apiClient.generateEntityViewAssets(payload);
+    const assetIds = Object.values(result?.assets || {})
+      .map((asset: any) => asset?.id)
+      .filter(Boolean);
+    if (assetIds.length > 0) {
+      await apiClient.batchLockAssets(assetIds);
+    }
     return typeof result?.total === 'number' ? result.total : viewKeys.length;
   };
 

@@ -384,7 +384,7 @@ async def generate_media(
         subtitle_text = (shot_extra.get("subtitle_text") if shot else None) or (getattr(shot, "dialogue", None) if shot else None) or ""
 
     job_id = str(uuid4())
-    video_url = dev_video_url(job_id) if is_dev_mode() else None
+    video_url = dev_video_url(job_id, duration_seconds=request.duration) if is_dev_mode() else None
     audio_url = dev_audio_url(job_id) if is_dev_mode() and request.audio_mode != "none" else None
     capabilities = list(model.get("capabilities") or [])
     lineage_payload = {

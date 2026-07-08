@@ -92,11 +92,33 @@ async def _load_entities(db: AsyncSession, user_id: str, novel_id: str) -> List[
         select(StoryEntity)
         .where(
             StoryEntity.user_id == user_id,
-            or_(StoryEntity.novel_id == novel_id, StoryEntity.novel_id.is_(None)),
+            StoryEntity.novel_id == novel_id,
         )
         .order_by(StoryEntity.entity_type, StoryEntity.updated_at)
     )
     return list(result.scalars().all())
+
+
+def _entity_identity(entity: StoryEntity) -> tuple[str, str]:
+    return (entity.entity_type, str(entity.canonical_name or entity.name or "").strip())
+
+
+def _dedupe_entities(entities: List[StoryEntity]) -> List[StoryEntity]:
+    by_key: Dict[tuple[str, str], StoryEntity] = {}
+    for entity in entities:
+        key = _entity_identity(entity)
+        if not key[1]:
+            continue
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = entity
+            continue
+        if existing.chapter_id and not entity.chapter_id:
+            by_key[key] = entity
+            continue
+        if existing.script_id and not entity.script_id:
+            by_key[key] = entity
+    return list(by_key.values())
 
 
 async def _load_assets(db: AsyncSession, user_id: str, novel_id: str) -> List[Asset]:
@@ -124,6 +146,7 @@ def _entity_summary(entity: StoryEntity, assets: List[Asset]) -> Dict[str, Any]:
     attrs = _json_dict(entity.attributes)
     matched_assets = [asset for asset in assets if _asset_matches_entity(asset, entity)]
     visual_dna = _json_dict(attrs.get("visual_dna") or attrs.get("scene_dna") or attrs.get("prop_dna"))
+    reference_requirements = _json_dict(attrs.get("reference_requirements"))
     voice = attrs.get("voice") or attrs.get("voice_profile") or attrs.get("voice_id")
     return {
         "entity_id": entity.id,
@@ -134,6 +157,10 @@ def _entity_summary(entity: StoryEntity, assets: List[Asset]) -> Dict[str, Any]:
         "confidence": entity.confidence or 0,
         "chapter_id": entity.chapter_id,
         "visual_dna": visual_dna,
+        "reference_requirements": reference_requirements,
+        "scene_tags": _json_list(attrs.get("scene_tags") or attrs.get("tags")),
+        "weather": attrs.get("weather") or visual_dna.get("weather"),
+        "lighting": attrs.get("lighting") or visual_dna.get("lighting"),
         "voice": voice,
         "asset_count": len(matched_assets),
         "asset_ids": [asset.id for asset in matched_assets[:6]],
@@ -219,7 +246,7 @@ async def build_production_bible_summary(
     else:
         story_bible = await _load_story_bible(db, user_id, novel_id)
 
-    entities = await _load_entities(db, user_id, novel_id)
+    entities = _dedupe_entities(await _load_entities(db, user_id, novel_id))
     assets = await _load_assets(db, user_id, novel_id)
     by_type: Dict[str, List[StoryEntity]] = {"character": [], "scene": [], "prop": [], "event": []}
     for entity in entities:
@@ -232,6 +259,23 @@ async def build_production_bible_summary(
     missing_assets = [item for item in [*characters, *scenes, *props] if item.get("missing_asset")]
     asset_counts = Counter(asset.category for asset in assets)
     state_machine = _state_machine_summary(story_bible)
+    character_contract_ready = [
+        item for item in characters
+        if item.get("visual_dna") and _json_list(_json_dict(item.get("reference_requirements")).get("character_multiview"))
+    ]
+    scene_contract_ready = [
+        item for item in scenes
+        if item.get("visual_dna") and (item.get("weather") or item.get("lighting") or item.get("scene_tags"))
+    ]
+    prop_contract_ready = [
+        item for item in props
+        if item.get("visual_dna") and _json_list(_json_dict(item.get("reference_requirements")).get("prop_multiview"))
+    ]
+    visual_contract_missing = (
+        len(characters) - len(character_contract_ready)
+        + len(scenes) - len(scene_contract_ready)
+        + len(props) - len(prop_contract_ready)
+    )
 
     missing_requirements: List[Dict[str, Any]] = []
     if story_bible is None:
@@ -240,12 +284,11 @@ async def build_production_bible_summary(
         missing_requirements.append({"code": "style_missing", "message": "Story Bible 缺少统一风格描述"})
     if not characters:
         missing_requirements.append({"code": "characters_missing", "message": "Production Bible 中没有角色实体"})
-    if missing_assets:
+    if visual_contract_missing:
         missing_requirements.append({
-            "code": "asset_references_missing",
-            "message": "部分角色/场景/道具缺少定稿资产",
-            "count": len(missing_assets),
-            "items": [{"entity_id": item["entity_id"], "name": item["name"]} for item in missing_assets[:20]],
+            "code": "visual_contract_missing",
+            "message": "部分角色/场景/道具缺少视觉 DNA、多视图规划或天气光影标签",
+            "count": visual_contract_missing,
         })
     if not state_machine["available"]:
         missing_requirements.append({"code": "state_machine_missing", "message": "Story Bible 状态机尚未生成"})
@@ -270,6 +313,17 @@ async def build_production_bible_summary(
             "required_entity_count": len(characters) + len(scenes) + len(props),
             "missing_asset_count": len(missing_assets),
             "ready": len(missing_assets) == 0,
+            "missing_assets": [{"entity_id": item["entity_id"], "name": item["name"]} for item in missing_assets[:20]],
+        },
+        "visual_contract_readiness": {
+            "character_multiview_contract_count": len(character_contract_ready),
+            "character_count": len(characters),
+            "scene_environment_contract_count": len(scene_contract_ready),
+            "scene_count": len(scenes),
+            "prop_visual_contract_count": len(prop_contract_ready),
+            "prop_count": len(props),
+            "missing_contract_count": visual_contract_missing,
+            "ready": visual_contract_missing == 0,
         },
         "missing_requirements": missing_requirements,
         "counts": {

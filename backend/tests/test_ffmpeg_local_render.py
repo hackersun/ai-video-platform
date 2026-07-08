@@ -99,6 +99,26 @@ def _make_video_only_clip(path: Path, color: str, duration: float = 0.6) -> None
     )
 
 
+def _make_audio_clip(path: Path, duration: float = 1.4) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:duration={duration}:sample_rate=44100",
+            "-c:a",
+            "pcm_s16le",
+            str(path),
+        ],
+        check=True,
+    )
+
+
 def _probe(path: Path) -> dict:
     result = subprocess.run(
         [
@@ -116,6 +136,11 @@ def _probe(path: Path) -> dict:
         text=True,
     )
     return json.loads(result.stdout)
+
+
+def _stream_duration(metadata: dict, codec_type: str) -> float:
+    stream = next(stream for stream in metadata["streams"] if stream["codec_type"] == codec_type)
+    return float(stream["duration"])
 
 
 def _path_from_static_url(static_root: Path, url: str) -> Path:
@@ -154,6 +179,34 @@ def test_remote_video_url_returns_structured_error(monkeypatch: pytest.MonkeyPat
 
     assert exc_info.value.detail["code"] == "remote_url_unsupported"
     assert exc_info.value.detail["url"] == "https://cdn.example.com/video.mp4"
+
+
+def test_remote_video_error_redacts_signed_url_query(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    renderer = _renderer_module()
+    monkeypatch.setattr(renderer.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    with pytest.raises(renderer.FFmpegLocalRenderError) as exc_info:
+        asyncio.run(
+            renderer.render_workflow_package(
+                _manifest(
+                    _segment(
+                        1,
+                        "https://cdn.example.com/video.mp4?Expires=1&Signature=secret&OSSAccessKeyId=key",
+                        0.0,
+                        1.0,
+                    )
+                ),
+                output_dir=tmp_path,
+                burn_subtitles=False,
+            )
+        )
+
+    detail_url = exc_info.value.detail["url"]
+    assert detail_url == "https://cdn.example.com/video.mp4?Expires=<redacted>&Signature=<redacted>&OSSAccessKeyId=<redacted>"
+    assert "secret" not in detail_url
 
 
 def test_missing_static_video_url_returns_structured_error(
@@ -251,6 +304,55 @@ def test_prepare_segments_skips_unsupported_remote_music(monkeypatch: pytest.Mon
     assert prepared[0]["music_path"] is None
 
 
+def test_prepare_segments_keeps_local_music(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    renderer = _renderer_module()
+    static_root = tmp_path / "static"
+    fixture_dir = static_root / "fixtures"
+    fixture_dir.mkdir(parents=True)
+    video_path = fixture_dir / "clip.mp4"
+    music_path = fixture_dir / "bgm.wav"
+    video_path.write_bytes(b"video")
+    music_path.write_bytes(b"music")
+    monkeypatch.setattr(renderer, "STATIC_ROOT", static_root)
+    segment = _segment(1, "/static/fixtures/clip.mp4", 0.0, 1.0)
+    segment["music"] = {"url": "/static/fixtures/bgm.wav", "volume": 0.18}
+
+    prepared = renderer._prepare_segments([segment], "/usr/bin/ffprobe")
+
+    assert prepared[0]["music_path"] == music_path.resolve(strict=False)
+
+
+def test_prepare_segments_downloads_remote_audio_to_work_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    renderer = _renderer_module()
+    static_root = tmp_path / "static"
+    fixture_dir = static_root / "fixtures"
+    fixture_dir.mkdir(parents=True)
+    video_path = fixture_dir / "clip.mp4"
+    video_path.write_bytes(b"video")
+    monkeypatch.setattr(renderer, "STATIC_ROOT", static_root)
+
+    remote_audio_url = "https://minimax.example.com/audio/dialogue.mp3?Expires=1&Signature=secret"
+    downloaded_audio_path = tmp_path / "remote-audio-001.mp3"
+
+    def _fake_download_remote_audio(url: str, work_dir: Path, segment_index: int) -> Path:
+        assert url == remote_audio_url
+        assert work_dir == tmp_path
+        assert segment_index == 1
+        downloaded_audio_path.write_bytes(b"audio")
+        return downloaded_audio_path
+
+    monkeypatch.setattr(renderer, "_download_remote_audio", _fake_download_remote_audio, raising=False)
+    segment = _segment(1, "/static/fixtures/clip.mp4", 0.0, 1.0)
+    segment["audio"] = {"url": remote_audio_url, "duration_seconds": 1.0, "text": "远程配音"}
+
+    prepared = renderer._prepare_segments([segment], "/usr/bin/ffprobe", tmp_path)
+
+    assert prepared[0]["audio_path"] == downloaded_audio_path
+
+
 @requires_ffmpeg
 def test_render_two_segment_manifest_produces_playable_mp4(
     monkeypatch: pytest.MonkeyPatch,
@@ -287,6 +389,43 @@ def test_render_two_segment_manifest_produces_playable_mp4(
     assert result["height"] == 90
     assert result["duration"] == pytest.approx(float(metadata["format"]["duration"]), abs=0.05)
     assert result["log_tail"]
+
+
+@requires_ffmpeg
+def test_render_extends_short_video_to_preserve_longer_dialogue_and_subtitle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    renderer = _renderer_module()
+    static_root = tmp_path / "static"
+    fixture_dir = static_root / "fixtures"
+    fixture_dir.mkdir(parents=True)
+    monkeypatch.setattr(renderer, "STATIC_ROOT", static_root)
+    _make_video_only_clip(fixture_dir / "short.mp4", "purple", duration=0.6)
+    _make_audio_clip(fixture_dir / "dialogue.wav", duration=1.4)
+    segment = _segment(1, "/static/fixtures/short.mp4", 0.0, 1.4, "Long dialogue")
+    segment["audio"] = {
+        "url": "/static/fixtures/dialogue.wav",
+        "duration_seconds": 1.4,
+        "text": "Long dialogue",
+    }
+
+    result = asyncio.run(
+        renderer.render_workflow_package(
+            _manifest(segment),
+            output_dir=static_root / "exports",
+            burn_subtitles=False,
+        )
+    )
+
+    output_path = _path_from_static_url(static_root, result["output_url"])
+    subtitle_path = _path_from_static_url(static_root, result["subtitle_url"])
+    metadata = _probe(output_path)
+
+    assert float(metadata["format"]["duration"]) == pytest.approx(1.4, abs=0.2)
+    assert _stream_duration(metadata, "video") == pytest.approx(1.4, abs=0.2)
+    assert _stream_duration(metadata, "audio") == pytest.approx(1.4, abs=0.2)
+    assert "00:00:00,000 --> 00:00:01,400" in subtitle_path.read_text(encoding="utf-8")
 
 
 @requires_subtitles_filter

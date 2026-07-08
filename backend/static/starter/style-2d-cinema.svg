@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-label="2D cinema anime style reference">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset=".55" stop-color="#334155"/>
+      <stop offset="1" stop-color="#f59e0b"/>
+    </linearGradient>
+    <radialGradient id="light" cx=".72" cy=".32" r=".42">
+      <stop offset="0" stop-color="#fde68a" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#fde68a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="960" height="540" fill="url(#bg)"/>
+  <rect width="960" height="540" fill="url(#light)"/>
+  <rect y="416" width="960" height="124" fill="#111827" opacity=".62"/>
+  <path d="M0 410 C160 330 274 396 410 302 C548 206 700 326 960 240 L960 420 L0 420 Z" fill="#475569" opacity=".5"/>
+  <path d="M280 396 C290 292 338 208 428 190 C522 174 610 240 624 358 C550 408 398 420 280 396 Z" fill="#020617" opacity=".9"/>
+  <circle cx="460" cy="246" r="80" fill="#f8fafc" opacity=".92"/>
+  <path d="M380 242 C414 188 520 176 572 248 C552 154 404 144 380 242 Z" fill="#0f172a"/>
+  <rect x="328" y="314" width="250" height="154" rx="28" fill="#1e293b" stroke="#e2e8f0" stroke-width="6"/>
+  <path d="M250 468 H690" stroke="#fbbf24" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+  <text x="56" y="82" fill="#f8fafc" font-family="Arial, sans-serif" font-size="34" font-weight="700">2D Cinema</text>
+  <text x="56" y="124" fill="#cbd5e1" font-family="Arial, sans-serif" font-size="22">layered lighting · emotion · depth</text>
+</svg>

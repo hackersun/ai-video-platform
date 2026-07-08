@@ -81,8 +81,26 @@ interface VoiceOption {
   is_custom?: boolean;
   sample_audio_url?: string;
   status?: string;
+  provider_ready?: boolean;
+  provider_tts_model?: string;
+  provider_error?: string;
   description?: string;
 }
+
+const READY_CLONE_STATUSES = new Set(['ready', 'provider_ready']);
+
+const getVoiceCloneStatusLabel = (status?: string) => {
+  if (status === 'provider_ready' || status === 'ready') return '云端可用';
+  if (status === 'provider_failed') return '云端激活失败';
+  if (status === 'sample_uploaded') return '样本已上传';
+  if (status === 'provider_pending') return '待云端激活';
+  return status || '未知状态';
+};
+
+const isMinimaxCloneBlocked = (voice: VoiceOption | undefined, provider: string | undefined) => {
+  if (!voice?.is_custom || provider !== 'minimax') return false;
+  return !READY_CLONE_STATUSES.has(voice.status || '');
+};
 
 export default function TTSPage() {
   const { toast } = useToast();
@@ -105,6 +123,7 @@ export default function TTSPage() {
   const [previewingVoice, setPreviewingVoice] = useState(false);
   const [voicePreviewAudio, setVoicePreviewAudio] = useState<string | null>(null);
   const [cloneName, setCloneName] = useState('');
+  const [cloneVoiceId, setCloneVoiceId] = useState('');
   const [cloneDescription, setCloneDescription] = useState('');
   const [cloneSampleUrl, setCloneSampleUrl] = useState('');
   const [cloneSampleFile, setCloneSampleFile] = useState<File | null>(null);
@@ -142,6 +161,9 @@ export default function TTSPage() {
   const voiceList = availableVoices.length > 0 ? availableVoices : fallbackVoices;
   const ttsConfigs = getConfigsByCapability(llmConfigs, 'audio');
   const selectedTTSConfig = ttsConfigs.find(config => config.id === selectedModelConfigId);
+  const activeProvider = selectedTTSConfig?.provider_id || selectedProvider;
+  const selectedVoiceOption = voiceList.find(v => v.id === selectedVoice);
+  const selectedVoiceBlocked = isMinimaxCloneBlocked(selectedVoiceOption, activeProvider);
 
   // 加载小说列表
   useEffect(() => {
@@ -343,6 +365,9 @@ export default function TTSPage() {
           is_custom: Boolean(voice.is_custom),
           sample_audio_url: voice.sample_audio_url,
           status: voice.status,
+          provider_ready: voice.provider_ready,
+          provider_tts_model: voice.provider_tts_model,
+          provider_error: voice.provider_error,
           description: voice.description,
         })).filter((voice: VoiceOption) => Boolean(voice.id)));
         return;
@@ -354,6 +379,11 @@ export default function TTSPage() {
   const handleGenerate = async () => {
     if (!text.trim()) {
       toast({ title: '请输入要转换的文本', type: 'info' });
+      return;
+    }
+    if (selectedVoiceBlocked) {
+      const detail = selectedVoiceOption?.provider_error || getVoiceCloneStatusLabel(selectedVoiceOption?.status);
+      toast({ title: '克隆音色未就绪', description: `当前音色不能直接用于 MiniMax 生成：${detail}`, type: 'error' });
       return;
     }
     setGenerating(true); setError(null); setCurrentAudio(null); setCurrentSegments([]); setGenerationPreflight(null);
@@ -423,6 +453,11 @@ export default function TTSPage() {
   };
 
   const handlePreviewVoice = async () => {
+    if (selectedVoiceBlocked) {
+      const detail = selectedVoiceOption?.provider_error || getVoiceCloneStatusLabel(selectedVoiceOption?.status);
+      toast({ title: '克隆音色未就绪', description: `当前音色不能直接试听：${detail}`, type: 'error' });
+      return;
+    }
     setPreviewingVoice(true);
     setVoicePreviewAudio(null);
     try {
@@ -594,6 +629,7 @@ export default function TTSPage() {
       const form = new FormData();
       form.append('name', cloneName.trim());
       form.append('provider', selectedTTSConfig?.provider_id || selectedProvider || 'minimax');
+      if (cloneVoiceId.trim()) form.append('voice_id', cloneVoiceId.trim());
       if (cloneDescription.trim()) form.append('description', cloneDescription.trim());
       if (cloneSampleUrl.trim()) form.append('sample_audio_url', cloneSampleUrl.trim());
       if (cloneSampleFile) form.append('sample_audio', cloneSampleFile);
@@ -611,6 +647,7 @@ export default function TTSPage() {
       await loadVoiceOptions(selectedTTSConfig?.provider_id || selectedProvider || 'minimax');
       setSelectedVoice(data.voice_id);
       setCloneName('');
+      setCloneVoiceId('');
       setCloneDescription('');
       setCloneSampleUrl('');
       setCloneSampleFile(null);
@@ -618,7 +655,7 @@ export default function TTSPage() {
       setRecordingSeconds(0);
       setCloneSamplePreviewFromFile(null);
       setVoicePreviewAudio(data.sample_audio_url ? getFullAudioUrl(data.sample_audio_url) : null);
-      toast({ title: '克隆音色已创建', description: '已加入音色列表，可直接选择用于 TTS。', type: 'success' });
+      toast({ title: '克隆音色已创建', description: '已加入音色列表；云端克隆状态以服务商验证为准。', type: 'success' });
     } catch (err: any) {
       toast({ title: '创建失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
@@ -839,7 +876,7 @@ export default function TTSPage() {
                   >
                     {voiceList.map(v => (
                       <option key={v.id} value={v.id}>
-                        {v.is_custom ? '克隆' : v.gender} - {v.label}
+                        {v.is_custom ? `克隆/${getVoiceCloneStatusLabel(v.status)}` : v.gender} - {v.label}
                       </option>
                     ))}
                   </select>
@@ -847,16 +884,23 @@ export default function TTSPage() {
                     type="button"
                     variant="outline"
                     onClick={handlePreviewVoice}
-                    disabled={previewingVoice || !selectedVoice}
+                    disabled={previewingVoice || !selectedVoice || selectedVoiceBlocked}
                     className="shrink-0 border-white/20"
                   >
                     {previewingVoice ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Play className="w-4 h-4 mr-1" />}
                     试听
                   </Button>
                 </div>
-                {voiceList.find(v => v.id === selectedVoice)?.is_custom && (
-                  <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-2 text-xs text-cyan-50/80">
-                    当前选择的是克隆音色。平台会把该 voice_id 传给 TTS 服务；如需真实云端克隆效果，请确保对应服务商已完成音色训练或生产适配器已接入。
+                {selectedVoiceOption?.is_custom && (
+                  <div className={`rounded-lg border p-2 text-xs ${
+                    selectedVoiceBlocked
+                      ? 'border-red-500/30 bg-red-500/10 text-red-50/85'
+                      : 'border-cyan-500/20 bg-cyan-500/10 text-cyan-50/80'
+                  }`}>
+                    当前选择的是克隆音色，状态：{getVoiceCloneStatusLabel(selectedVoiceOption.status)}。
+                    {selectedVoiceBlocked
+                      ? ` 该 voice_id 尚未在 MiniMax 云端可用，不能直接试听或生成。${selectedVoiceOption.provider_error ? ` 服务商错误：${selectedVoiceOption.provider_error}` : ''}`
+                      : ' 平台会把该 voice_id 传给 TTS 服务生成真实音频。'}
                   </div>
                 )}
                 {voicePreviewAudio && (
@@ -892,6 +936,12 @@ export default function TTSPage() {
                   value={cloneName}
                   onChange={e => setCloneName(e.target.value)}
                   placeholder="克隆音色名称，例如：主角林舟"
+                  className="bg-white/5 border-white/10 text-white placeholder:text-white/35"
+                />
+                <Input
+                  value={cloneVoiceId}
+                  onChange={e => setCloneVoiceId(e.target.value)}
+                  placeholder="已有/本地声线 ID，可选，例如：sunqinyue-default"
                   className="bg-white/5 border-white/10 text-white placeholder:text-white/35"
                 />
                 <Input

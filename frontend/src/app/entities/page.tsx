@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -182,7 +183,14 @@ const FALLBACK_VIEW_PRESETS: AssetViewPreset[] = [
 
 const SUPPORTED_VIEW_ENTITY_TYPES = new Set(['character', 'scene', 'prop']);
 
-export default function EntitiesPage() {
+function EntitiesPageContent() {
+  const searchParams = useSearchParams();
+  const novelId = searchParams.get('novel_id') || undefined;
+  const chapterId = searchParams.get('chapter_id') || undefined;
+  const scriptId = searchParams.get('script_id') || undefined;
+  const scope = scriptId ? 'script' : chapterId ? 'chapter' : novelId ? 'novel' : undefined;
+  const scopeFilters = { novel_id: novelId, chapter_id: chapterId, script_id: scriptId, scope };
+  const activeScopeFilters = Object.entries(scopeFilters).filter(([, value]) => Boolean(value));
   const [entities, setEntities] = useState<StoryEntity[]>([]);
   const [stats, setStats] = useState<EntityStats>({ total: 0, counts: {} });
   const [viewPresets, setViewPresets] = useState<AssetViewPreset[]>(FALLBACK_VIEW_PRESETS);
@@ -219,7 +227,8 @@ export default function EntitiesPage() {
   useEffect(() => {
     loadEntities();
     loadStats();
-  }, [activeTab]);
+    setSelectedEntities(new Set());
+  }, [activeTab, novelId, chapterId, scriptId]);
 
   useEffect(() => {
     const loadViewPresets = async () => {
@@ -244,6 +253,7 @@ export default function EntitiesPage() {
     try {
       const data = await apiClient.getStoryEntities({
         limit: 100,
+        ...scopeFilters,
         entity_type: activeTab !== 'all' ? activeTab : undefined,
       });
       setEntities(Array.isArray(data) ? data : []);
@@ -257,7 +267,7 @@ export default function EntitiesPage() {
 
   const loadStats = async () => {
     try {
-      const data = await apiClient.getStoryEntityStats();
+      const data = await apiClient.getStoryEntityStats(scopeFilters);
       setStats(data || { total: 0, counts: {} });
     } catch (error) {
       console.error('加载统计失败:', error);
@@ -809,6 +819,15 @@ export default function EntitiesPage() {
           <div>
             <h1 className="text-2xl font-bold text-white">实体审阅台</h1>
             <p className="text-white/60 mt-1">管理角色、场景、道具和事件实体</p>
+            {activeScopeFilters.length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {activeScopeFilters.map(([key, value]) => (
+                  <Badge key={key} variant="outline" className="border-cyan-500/30 text-cyan-200 bg-cyan-500/10">
+                    当前过滤：{key}={value}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <Button
@@ -1333,5 +1352,13 @@ export default function EntitiesPage() {
         </Dialog>
       </div>
     </MainLayout>
+  );
+}
+
+export default function EntitiesPage() {
+  return (
+    <Suspense fallback={<MainLayout><div className="p-6 text-white/60">加载中...</div></MainLayout>}>
+      <EntitiesPageContent />
+    </Suspense>
   );
 }

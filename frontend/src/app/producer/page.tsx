@@ -13,7 +13,7 @@ import { Select } from '@/components/ui/select';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api-client';
-import { getDefaultConfigForCapability, modelStatusLabel, SavedModelConfig } from '@/lib/model-configs';
+import { getConfigsByCapability, getDefaultConfigForCapability, modelStatusLabel, SavedModelConfig } from '@/lib/model-configs';
 import {
   createInitialEpisodePreviewStages,
   EpisodePreviewProductionResult,
@@ -266,6 +266,54 @@ const normalizeReadinessIssue = (issue: unknown, severity: 'blocking' | 'warning
   };
 };
 
+const NARRATOR_NAMES = new Set(['旁白', 'narrator', 'voiceover', '画外音']);
+
+const shotDialogueText = (shot: any): string => {
+  const extraData = shot?.extra_data || {};
+  return [
+    shot?.dialogue,
+    shot?.dialogue_text,
+    shot?.subtitle_text,
+    extraData.dialogue_text,
+    extraData.subtitle_text,
+    extraData.voiceover,
+  ]
+    .filter(Boolean)
+    .join('\n');
+};
+
+const shotSpeakerNames = (shot: any): string[] => {
+  const extraData = shot?.extra_data || {};
+  const explicitSpeakers = Array.isArray(extraData.speakers) ? extraData.speakers : [];
+  const names = new Set<string>();
+  explicitSpeakers.forEach((speaker: unknown) => {
+    const name = String(speaker || '').trim();
+    if (name && !NARRATOR_NAMES.has(name.toLowerCase())) names.add(name);
+  });
+  shotDialogueText(shot).split(/\n+/).forEach((line) => {
+    const match = line.trim().match(/^([^：:\n]{1,16})[：:]/);
+    const name = match?.[1]?.replace(/[（(].*?[）)]/g, '').trim();
+    if (name && !NARRATOR_NAMES.has(name.toLowerCase())) names.add(name);
+  });
+  return Array.from(names);
+};
+
+const isPreferredReferenceImageConfig = (config: SavedModelConfig) => {
+  const text = [
+    config.provider_id,
+    config.provider_name,
+    config.model_id,
+    config.config_model_id,
+    config.api_model_id,
+    config.model_name,
+    config.name,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return /volcano|火山|sd\s*1\.5|sd-?1\.5|stable|seedream/.test(text);
+};
+
 export default function ProducerCenterPage() {
   return (
     <Suspense fallback={
@@ -287,14 +335,17 @@ function ProducerCenterContent() {
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
   const [storyBibles, setStoryBibles] = useState<StoryBibleItem[]>([]);
   const [selectedStoryBibleId, setSelectedStoryBibleId] = useState('');
-  const [selectedNovelId, setSelectedNovelId] = useState('');
-  const [selectedChapterId, setSelectedChapterId] = useState('');
+  const [selectedNovelId, setSelectedNovelId] = useState(searchParams.get('novel_id') || '');
+  const [selectedChapterId, setSelectedChapterId] = useState(searchParams.get('chapter_id') || '');
+  const [preferredWorkflowId, setPreferredWorkflowId] = useState(searchParams.get('workflow_id') || '');
+  const [workflowSelectionTouched, setWorkflowSelectionTouched] = useState(Boolean(searchParams.get('workflow_id')));
   const [workflowStatus, setWorkflowStatus] = useState<any>(null);
   const [storyStateMachine, setStoryStateMachine] = useState<any>(null);
   const [productionPack, setProductionPack] = useState<ProductionPack | null>(null);
   const [producerResult, setProducerResult] = useState<ProducerResult | null>(null);
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
+  const [imageModelConfigId, setImageModelConfigId] = useState('');
   const [videoModelConfigId, setVideoModelConfigId] = useState('');
   const [audioModelConfigId, setAudioModelConfigId] = useState('');
   const [productionStrategy, setProductionStrategy] = useState<ProductionStrategy>(DEFAULT_PRODUCTION_STRATEGY);
@@ -317,6 +368,7 @@ function ProducerCenterContent() {
 
   // Batch operations state
   const [shots, setShots] = useState<any[]>([]);
+  const [loadedShotsStoryboardId, setLoadedShotsStoryboardId] = useState('');
   const [selectedShotIds, setSelectedShotIds] = useState<Set<string>>(new Set());
   const [batchJobs, setBatchJobs] = useState<any[]>([]);
   const [activeBatchJob, setActiveBatchJob] = useState<any>(null);
@@ -328,6 +380,22 @@ function ProducerCenterContent() {
     () => workflows.find((item) => item.workflow_id === workflowId) || null,
     [workflows, workflowId]
   );
+  const currentStoryboardId = useMemo(
+    () => workflowStatus?.storyboard_id || selectedWorkflow?.storyboard_id || productionStatus?.storyboard_id || '',
+    [workflowStatus?.storyboard_id, selectedWorkflow?.storyboard_id, productionStatus?.storyboard_id]
+  );
+  const resetShotSelection = useCallback(() => {
+    setShots([]);
+    setLoadedShotsStoryboardId('');
+    setSelectedShotIds(new Set());
+    setActiveBatchJob(null);
+    setBatchJobItems([]);
+  }, []);
+  const getCurrentSelectedShotIds = useCallback(() => {
+    if (!currentStoryboardId || loadedShotsStoryboardId !== currentStoryboardId) return [];
+    const validShotIds = new Set(shots.map((shot) => shot.id).filter(Boolean));
+    return Array.from(selectedShotIds).filter((shotId) => validShotIds.has(shotId));
+  }, [currentStoryboardId, loadedShotsStoryboardId, selectedShotIds, shots]);
   const productionStrategyCopy = useMemo(() => getProductionStrategyCopy(productionStrategy), [productionStrategy]);
   const selectedStoryBible = useMemo(
     () => storyBibles.find((item) => item.id === selectedStoryBibleId) || null,
@@ -353,10 +421,69 @@ function ProducerCenterContent() {
     () => modelConfigs.find((config) => config.id === textModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'text') || null,
     [modelConfigs, textModelConfigId]
   );
+  const imageModelConfigs = useMemo(() => getConfigsByCapability(modelConfigs, 'image'), [modelConfigs]);
+  const preferredImageModelConfigs = useMemo(
+    () => imageModelConfigs.filter(isPreferredReferenceImageConfig),
+    [imageModelConfigs]
+  );
+  const selectedImageModelConfig = useMemo(
+    () => imageModelConfigs.find((config) => config.id === imageModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'image') || null,
+    [imageModelConfigId, imageModelConfigs, modelConfigs]
+  );
+  const selectedVideoModelConfig = useMemo(
+    () => modelConfigs.find((config) => config.id === videoModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'video') || null,
+    [modelConfigs, videoModelConfigId]
+  );
+  const selectedAudioModelConfig = useMemo(
+    () => modelConfigs.find((config) => config.id === audioModelConfigId) || getDefaultConfigForCapability(modelConfigs, 'audio') || null,
+    [audioModelConfigId, modelConfigs]
+  );
+  const missingPreferredImageModel = imageModelConfigs.length > 0 && preferredImageModelConfigs.length === 0;
 
   const refreshWorkflowStatus = useCallback(async (id: string) => {
     const data = await apiClient.getWorkflowStatus(id);
     setWorkflowStatus(data);
+    const latestSynthesis = Array.isArray(data?.synthesis_jobs) ? data.synthesis_jobs[0] : null;
+    if (latestSynthesis?.preview_url) {
+      const strategy = (latestSynthesis.extra_data?.production_strategy || DEFAULT_PRODUCTION_STRATEGY) as ProductionStrategy;
+      const strategyCopy = getProductionStrategyCopy(strategy);
+      const strategyContract = {
+        requiresFinalLocks: strategy === 'final_quality',
+        allowsDraftGaps: strategy === 'draft_fast' || strategy === 'low_cost',
+      };
+      setPreviewResult({
+        workflowId: id,
+        novelId: data.novel_id,
+        chapterId: data.chapter_id,
+        productionStrategy: strategy,
+        productionStrategyLabel: strategyCopy.label,
+        productionStrategyContract: strategyCopy.contractHint,
+        ...strategyContract,
+        scriptId: data.script_id,
+        storyboardId: data.storyboard_id,
+        videoJobIds: (data.video_jobs || []).map((job: any) => job.id).filter(Boolean),
+        ttsJobIds: (data.tts_jobs || []).map((job: any) => job.id).filter(Boolean),
+        mediaJobIds: (data.media_jobs || []).map((job: any) => job.id).filter(Boolean),
+        subtitleTrackIds: (data.subtitle_tracks || []).map((track: any) => track.id).filter(Boolean),
+        readyForConcatenate: true,
+        synthesisJobId: latestSynthesis.id,
+        outputUrl: latestSynthesis.output_url,
+        manifestUrl: latestSynthesis.manifest_url,
+        previewUrl: latestSynthesis.preview_url,
+        srtUrl: latestSynthesis.srt_url,
+        timelineUrl: latestSynthesis.timeline_url,
+        renderManifestUrl: latestSynthesis.render_manifest_url,
+      });
+      try {
+        const publications = await apiClient.getPublications({ synthesis_job_id: latestSynthesis.id });
+        setPublicationResult(publications[0] || null);
+      } catch {
+        setPublicationResult(null);
+      }
+    } else {
+      setPreviewResult(null);
+      setPublicationResult(null);
+    }
     return data;
   }, []);
 
@@ -401,9 +528,11 @@ function ProducerCenterContent() {
       const list = Array.isArray(data) ? data : [];
       setModelConfigs(list);
       const textDefault = getDefaultConfigForCapability(list, 'text');
+      const imageDefault = getDefaultConfigForCapability(list, 'image');
       const videoDefault = getDefaultConfigForCapability(list, 'video');
       const audioDefault = getDefaultConfigForCapability(list, 'audio');
       if (textDefault) setTextModelConfigId(textDefault.id);
+      if (imageDefault) setImageModelConfigId(imageDefault.id);
       if (videoDefault) setVideoModelConfigId(videoDefault.id);
       if (audioDefault) setAudioModelConfigId(audioDefault.id);
     } catch (err: any) {
@@ -482,12 +611,15 @@ function ProducerCenterContent() {
       toast({ title: '请先选择小说和章节', description: 'AI 制片工程必须绑定到具体小说章节。', type: 'info' });
       return { workflowId: '', reused: false };
     }
-    const reusableWorkflow = workflows.find((item) =>
-      item.workflow_id &&
-      item.novel_id === selectedNovelId &&
-      item.chapter_id === selectedChapterId &&
-      item.status !== 'archived'
-    );
+    const hasGeneratedLinks = Boolean(links.scriptId || links.storyboardId);
+    const reusableWorkflow = workflows.find((item) => {
+      if (!item.workflow_id || item.novel_id !== selectedNovelId || item.chapter_id !== selectedChapterId || item.status === 'archived') {
+        return false;
+      }
+      if (!hasGeneratedLinks) return true;
+      if (links.storyboardId) return item.storyboard_id === links.storyboardId;
+      return Boolean(links.scriptId && item.script_id === links.scriptId);
+    });
     if (reusableWorkflow?.workflow_id) {
       const nextScriptId = links.scriptId || reusableWorkflow.script_id || '';
       const nextStoryboardId = links.storyboardId || reusableWorkflow.storyboard_id || '';
@@ -502,6 +634,8 @@ function ProducerCenterContent() {
         });
       }
       setWorkflowId(reusableWorkflow.workflow_id);
+      setPreferredWorkflowId(reusableWorkflow.workflow_id);
+      setWorkflowSelectionTouched(true);
       await loadWorkflows();
       await refreshWorkflowStatus(reusableWorkflow.workflow_id);
       await loadShortVideoReadiness(reusableWorkflow.workflow_id);
@@ -515,6 +649,8 @@ function ProducerCenterContent() {
       storyboard_id: links.storyboardId,
     });
     setWorkflowId(result.workflow_id);
+    setPreferredWorkflowId(result.workflow_id);
+    setWorkflowSelectionTouched(true);
     await loadWorkflows();
     await refreshWorkflowStatus(result.workflow_id);
     await loadShortVideoReadiness(result.workflow_id);
@@ -562,7 +698,6 @@ function ProducerCenterContent() {
         result = await apiClient.generateChapterStoryboard(selectedChapterId, {
           style: 'anime',
           model_config_id: textModelConfigId || undefined,
-          shot_count: 5,
         });
         completedProgress = '剧本和分镜生成完成';
         setGenerationProgress('剧本和分镜生成完成');
@@ -572,7 +707,6 @@ function ProducerCenterContent() {
         result = await apiClient.generateChapterAll(selectedChapterId, {
           style: 'anime',
           model_config_id: textModelConfigId || undefined,
-          shot_count: 5,
         });
         completedProgress = `生成完成！共 ${result.shot_count} 个镜头`;
         setGenerationProgress(completedProgress);
@@ -581,6 +715,9 @@ function ProducerCenterContent() {
           description: `已生成 ${result.shot_count} 个镜头，脚本：${result.script_title}`,
           type: 'success',
         });
+      }
+      if (result.storyboard_id) {
+        resetShotSelection();
       }
       // 更新生产状态
       await loadChapterProductionStatus(selectedChapterId);
@@ -651,8 +788,43 @@ function ProducerCenterContent() {
     const nextWorkflowId = searchParams.get('workflow_id') || workflowId;
     if (nextWorkflowId && nextWorkflowId !== workflowId) {
       setWorkflowId(nextWorkflowId);
+      setPreferredWorkflowId(nextWorkflowId);
+      setWorkflowSelectionTouched(true);
     }
   }, [searchParams, workflowId]);
+
+  useEffect(() => {
+    const queryNovelId = searchParams.get('novel_id') || '';
+    const queryChapterId = searchParams.get('chapter_id') || '';
+    const queryWorkflowId = searchParams.get('workflow_id') || '';
+    const nextWorkflowId = queryWorkflowId || '';
+
+    if (queryNovelId && queryNovelId !== selectedNovelId) {
+      setSelectedNovelId(queryNovelId);
+      setSelectedChapterId(queryChapterId);
+      setWorkflowId(nextWorkflowId);
+      setPreferredWorkflowId(nextWorkflowId);
+      setWorkflowSelectionTouched(Boolean(nextWorkflowId));
+      setGenerationProgress('');
+      setOneClickEvidence(null);
+      setPreviewResult(null);
+      setPublicationResult(null);
+      resetShotSelection();
+      return;
+    }
+
+    if (queryChapterId && queryChapterId !== selectedChapterId) {
+      setSelectedChapterId(queryChapterId);
+      setWorkflowId(nextWorkflowId);
+      setPreferredWorkflowId(nextWorkflowId);
+      setWorkflowSelectionTouched(Boolean(nextWorkflowId));
+      setGenerationProgress('');
+      setOneClickEvidence(null);
+      setPreviewResult(null);
+      setPublicationResult(null);
+      resetShotSelection();
+    }
+  }, [searchParams, selectedNovelId, selectedChapterId, resetShotSelection]);
 
   useEffect(() => {
     if (selectedNovelId) {
@@ -677,15 +849,35 @@ function ProducerCenterContent() {
   }, [workflowId, refreshWorkflowStatus, loadShortVideoReadiness]);
 
   useEffect(() => {
-    const novelId = workflowStatus?.novel_id || selectedWorkflow?.novel_id || selectedNovelId || '';
-    const chapterId = workflowStatus?.chapter_id || selectedWorkflow?.chapter_id || selectedChapterId || '';
-    if (novelId && novelId !== selectedNovelId) setSelectedNovelId(novelId);
-    if (chapterId && chapterId !== selectedChapterId) setSelectedChapterId(chapterId);
+    if (!currentStoryboardId) {
+      if (loadedShotsStoryboardId || shots.length > 0 || selectedShotIds.size > 0) {
+        resetShotSelection();
+      }
+      return;
+    }
+    if (loadedShotsStoryboardId && loadedShotsStoryboardId !== currentStoryboardId) {
+      resetShotSelection();
+    }
+  }, [
+    currentStoryboardId,
+    loadedShotsStoryboardId,
+    resetShotSelection,
+    selectedShotIds.size,
+    shots.length,
+  ]);
+
+  useEffect(() => {
+    const workflowNovelId = workflowId ? (workflowStatus?.novel_id || selectedWorkflow?.novel_id || '') : '';
+    const workflowChapterId = workflowId ? (workflowStatus?.chapter_id || selectedWorkflow?.chapter_id || '') : '';
+    const novelId = workflowNovelId || selectedNovelId || '';
+    if (workflowNovelId && workflowNovelId !== selectedNovelId) setSelectedNovelId(workflowNovelId);
+    if (workflowChapterId && workflowChapterId !== selectedChapterId) setSelectedChapterId(workflowChapterId);
     loadStoryBibles(novelId || undefined);
     setStoryStateMachine(null);
     setProductionPack(null);
     setProducerResult(null);
   }, [
+    workflowId,
     workflowStatus?.novel_id,
     workflowStatus?.chapter_id,
     selectedWorkflow?.novel_id,
@@ -697,21 +889,42 @@ function ProducerCenterContent() {
 
   useEffect(() => {
     if (!selectedNovelId || !filteredWorkflows.length) {
-      if (!searchParams.get('workflow_id')) setWorkflowId('');
+      if (!searchParams.get('workflow_id') && !preferredWorkflowId && !workflowSelectionTouched) setWorkflowId('');
+      return;
+    }
+    if (preferredWorkflowId && workflowId === preferredWorkflowId) {
+      return;
+    }
+    if (workflowSelectionTouched && !workflowId) {
       return;
     }
     if (!workflowId || !filteredWorkflows.some((item) => item.workflow_id === workflowId)) {
       setWorkflowId(filteredWorkflows[0].workflow_id || '');
     }
-  }, [filteredWorkflows, searchParams, selectedNovelId, workflowId]);
+  }, [filteredWorkflows, preferredWorkflowId, searchParams, selectedNovelId, workflowId, workflowSelectionTouched]);
 
   const workflowMetrics = useMemo(() => {
-    const videoCount = workflowStatus?.video_jobs?.length || selectedWorkflow?.video_job_ids?.length || 0;
-    const ttsCount = workflowStatus?.tts_jobs?.length || selectedWorkflow?.tts_job_ids?.length || 0;
-    const mediaCount = workflowStatus?.media_jobs?.length || 0;
-    const synthesisCount = workflowStatus?.synthesis_jobs?.length || selectedWorkflow?.synthesis_job_ids?.length || 0;
+    const videoCount = Math.max(
+      workflowStatus?.video_jobs?.length || 0,
+      selectedWorkflow?.video_job_ids?.length || 0,
+      previewResult?.videoJobIds?.length || 0
+    );
+    const ttsCount = Math.max(
+      workflowStatus?.tts_jobs?.length || 0,
+      selectedWorkflow?.tts_job_ids?.length || 0,
+      previewResult?.ttsJobIds?.length || 0
+    );
+    const mediaCount = Math.max(
+      workflowStatus?.media_jobs?.length || 0,
+      previewResult?.mediaJobIds?.length || 0
+    );
+    const synthesisCount = Math.max(
+      workflowStatus?.synthesis_jobs?.length || 0,
+      selectedWorkflow?.synthesis_job_ids?.length || 0,
+      previewResult?.synthesisJobId ? 1 : 0
+    );
     return { videoCount, ttsCount, mediaCount, synthesisCount };
-  }, [workflowStatus, selectedWorkflow]);
+  }, [workflowStatus, selectedWorkflow, previewResult]);
 
   const runAction = async (action: string, fn: () => Promise<any>, successMessage: string, options: { requiresWorkflow?: boolean } = {}) => {
     const requiresWorkflow = options.requiresWorkflow !== false;
@@ -774,6 +987,36 @@ function ProducerCenterContent() {
   };
 
   const runPreviewProduction = async () => {
+    const selectedPreviewShotIds = getCurrentSelectedShotIds();
+    if (!currentStoryboardId) {
+      const message = '请先生成剧本、分镜和镜头，再加载并选择 1-2 个关键镜头。';
+      setError(message);
+      toast({ title: '请先生成分镜镜头', description: message, type: 'info' });
+      return;
+    }
+    if (loadedShotsStoryboardId !== currentStoryboardId) {
+      const message = '请先加载镜头并选择关键镜头，避免误提交整集云端视频和配音任务。';
+      setError(message);
+      toast({ title: '请先加载镜头并选择关键镜头', description: '低成本验收必须明确选择要生成的镜头；如需整集，请加载后手动全选。', type: 'info' });
+      return;
+    }
+    if (selectedPreviewShotIds.length === 0) {
+      const message = '请先加载镜头并选择关键镜头，避免误提交整集云端视频和配音任务。';
+      setError(message);
+      toast({ title: '请先加载镜头并选择关键镜头', description: '当前不会默认生成全量镜头；请选择 1-2 个关键镜头后再提交。', type: 'info' });
+      return;
+    }
+    const selectedShotIdSet = new Set(selectedPreviewShotIds);
+    const multiSpeakerShots = shots.filter((shot) => selectedShotIdSet.has(shot.id) && shotSpeakerNames(shot).length > 1);
+    if (multiSpeakerShots.length > 0) {
+      const shotLabels = multiSpeakerShots
+        .map((shot) => `镜头 ${shot.shot_number || shot.id}`)
+        .join('、');
+      const message = `${shotLabels} 包含多说话人对白，当前分步生产需要先拆分镜头或启用分段 TTS，避免声音、字幕和口型错位。`;
+      setError(message);
+      toast({ title: '多说话人镜头需先处理', description: message, type: 'error' });
+      return;
+    }
     setLoadingAction('preview-production');
     setPreviewResult(null);
     setPublicationResult(null);
@@ -788,10 +1031,30 @@ function ProducerCenterContent() {
       });
       const activeWorkflowId = activeWorkflow.workflowId;
       if (!activeWorkflowId) return;
+      if (selectedShotIds.size > 0 && selectedPreviewShotIds.length === 0) {
+        setSelectedShotIds(new Set());
+        toast({
+          title: '镜头选择已过期',
+          description: '当前已选镜头不属于本集最新分镜，请重新加载并选择 1-2 个关键镜头。',
+          type: 'info',
+        });
+        return;
+      }
+      if (selectedPreviewShotIds.length !== selectedShotIds.size) {
+        setSelectedShotIds(new Set(selectedPreviewShotIds));
+      }
+      if (selectedPreviewShotIds.length > 0) {
+        toast({
+          title: '按已选镜头生成',
+          description: `本次只提交 ${selectedPreviewShotIds.length} 个镜头，未选镜头不会产生视频/配音任务。`,
+          type: 'info',
+        });
+      }
       const result = await runEpisodePreviewProduction({
         workflowId: activeWorkflowId,
         novelId: selectedNovelId,
         chapterId: selectedChapterId,
+        shotIds: selectedPreviewShotIds.length > 0 ? selectedPreviewShotIds : undefined,
         title: `${selectedNovel?.title || '本集'} · ${selectedChapter?.title || '预览草片'}`,
         textModelConfigId: textModelConfigId || undefined,
         videoModelConfigId: videoModelConfigId || undefined,
@@ -841,6 +1104,11 @@ function ProducerCenterContent() {
       const publication = await apiClient.publishSynthesis(previewResult.synthesisJobId, {
         title: `${selectedNovel?.title || '本集'} · ${selectedChapter?.title || '草片'}`,
         visibility: 'private',
+        metadata: {
+          allow_preview_export: true,
+          output_kind: 'preview_package',
+          source: 'producer_preview',
+        },
       });
       setPublicationResult(publication);
       toast({ title: '本集草片已生成发布记录', description: '可在合成/发布页继续下载、撤销或归档。', type: 'success' });
@@ -857,20 +1125,27 @@ function ProducerCenterContent() {
 
   const loadShotsForStoryboard = useCallback(async (storyboardId: string) => {
     if (!storyboardId) {
-      setShots([]);
+      resetShotSelection();
       return;
     }
     setLoadingShots(true);
     try {
       const data = await apiClient.getShots(storyboardId);
-      setShots(Array.isArray(data) ? data : []);
+      const list = Array.isArray(data) ? data : [];
+      const validShotIds = new Set(list.map((shot) => shot.id).filter(Boolean));
+      setLoadedShotsStoryboardId(storyboardId);
+      setShots(list);
+      setSelectedShotIds((prev) => {
+        const next = Array.from(prev).filter((shotId) => validShotIds.has(shotId));
+        return next.length === prev.size ? prev : new Set(next);
+      });
     } catch (err: any) {
       console.error('加载镜头失败:', err);
-      setShots([]);
+      resetShotSelection();
     } finally {
       setLoadingShots(false);
     }
-  }, []);
+  }, [resetShotSelection]);
 
   // Load batch jobs on mount
   const loadBatchJobs = useCallback(async () => {
@@ -911,7 +1186,16 @@ function ProducerCenterContent() {
       toast({ title: '请先选择镜头', description: '需要至少选择一个镜头才能创建批量任务。', type: 'info' });
       return;
     }
-    const storyboardId = workflowStatus?.storyboard_id || productionStatus?.storyboard_id;
+    const selectedBatchShotIds = getCurrentSelectedShotIds();
+    if (selectedBatchShotIds.length === 0) {
+      setSelectedShotIds(new Set());
+      toast({ title: '镜头选择已过期', description: '请重新加载当前分镜镜头后再创建批量任务。', type: 'info' });
+      return;
+    }
+    if (selectedBatchShotIds.length !== selectedShotIds.size) {
+      setSelectedShotIds(new Set(selectedBatchShotIds));
+    }
+    const storyboardId = currentStoryboardId;
     if (!storyboardId) {
       toast({ title: '请先选择有分镜的工作流', description: '需要关联分镜才能创建批量任务。', type: 'info' });
       return;
@@ -921,21 +1205,63 @@ function ProducerCenterContent() {
     try {
       const result = await apiClient.createBatchJob({
         job_type: jobType,
-        title: `批量生成${jobType === 'image' ? '参考图' : jobType === 'tts' ? '配音' : '视频'} (${selectedShotIds.size}个)`,
-        shot_ids: Array.from(selectedShotIds),
+        title: `批量生成${jobType === 'image' ? '参考图' : jobType === 'tts' ? '配音' : '视频'} (${selectedBatchShotIds.length}个)`,
+        shot_ids: selectedBatchShotIds,
         storyboard_id: storyboardId,
         workflow_id: workflowId || undefined,
+        extra_data: jobType === 'tts'
+          ? {
+              model_config_id: selectedAudioModelConfig?.id || undefined,
+              api_provider: selectedAudioModelConfig?.provider_id || undefined,
+            }
+          : jobType === 'video'
+            ? {
+                model_config_id: selectedVideoModelConfig?.id || undefined,
+                api_provider: selectedVideoModelConfig?.provider_id || undefined,
+              }
+          : undefined,
       });
       setActiveBatchJob(result);
       if (result?.id) {
+        if (jobType === 'image') {
+          await apiClient.startBatchJob(result.id).catch(() => null);
+          const itemsData = await apiClient.getBatchJobItems(result.id);
+          const items = Array.isArray(itemsData?.items) ? itemsData.items : [];
+          const itemByShotId = new Map<string, any>(items.map((item: any) => [item.shot_id, item]));
+          for (const shotId of selectedBatchShotIds) {
+            const item = itemByShotId.get(shotId);
+            if (!item?.id) continue;
+            try {
+              const imageResult = await apiClient.generateShotImage(shotId, {
+                style: 'anime',
+                model_config_id: imageModelConfigId || undefined,
+              });
+              await apiClient.updateBatchItem(result.id, item.id, {
+                status: imageResult?.status === 'failed' ? 'failed' : 'succeeded',
+                image_url: imageResult?.image_url,
+                image_job_id: imageResult?.task_id,
+                error_message: imageResult?.status === 'failed' ? (imageResult?.message || '参考图生成失败') : undefined,
+              });
+            } catch (imageErr: any) {
+              await apiClient.updateBatchItem(result.id, item.id, {
+                status: 'failed',
+                error_message: imageErr?.message || '参考图生成失败',
+              });
+            }
+          }
+        } else {
+          await apiClient.startBatchJob(result.id);
+        }
         await loadBatchJobProgress(result.id);
       } else {
         setBatchJobItems([]);
       }
       await loadBatchJobs();
       toast({
-        title: '批量任务已创建',
-        description: `已创建 ${selectedShotIds.size} 个${jobType === 'image' ? '参考图' : jobType === 'tts' ? '配音' : '视频'}生成任务`,
+        title: jobType === 'image' ? '批量参考图生成已执行' : '批量任务已创建',
+        description: jobType === 'image'
+          ? `已执行 ${selectedBatchShotIds.length} 个参考图生成任务，请查看任务明细。`
+          : `已启动 ${selectedBatchShotIds.length} 个${jobType === 'tts' ? '配音' : '视频'}生成任务`,
         type: 'success',
       });
     } catch (err: any) {
@@ -995,6 +1321,21 @@ function ProducerCenterContent() {
     }
   };
 
+  const refreshBatchVideoItem = async (videoJobId: string) => {
+    if (!activeBatchJob || !videoJobId) return;
+    const batchJobId = activeBatchJob.job_id || activeBatchJob.id;
+    setLoadingAction(`refresh-video-${videoJobId}`);
+    try {
+      await apiClient.refreshVideoJob(videoJobId);
+      await loadBatchJobProgress(batchJobId);
+      toast({ title: '视频状态已刷新', type: 'success' });
+    } catch (err: any) {
+      toast({ title: '刷新失败', description: err.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setLoadingAction('');
+    }
+  };
+
   const toggleShotSelection = (shotId: string) => {
     setSelectedShotIds((prev) => {
       const newSet = new Set(prev);
@@ -1025,10 +1366,19 @@ function ProducerCenterContent() {
     label: `${item.chapter_number ? `第 ${item.chapter_number} 章 · ` : ''}${item.title || '未命名章节'}`,
   }));
 
-  const workflowOptions = filteredWorkflows.map((item) => ({
+  const workflowOptions = [
+    { value: '', label: '不复用已有工程，生成后自动创建' },
+    ...filteredWorkflows.map((item) => ({
     value: item.workflow_id || '',
     label: `${item.title || '未命名工作流'}${item.chapter_id ? ` · 章节 ${item.chapter_id.slice(0, 6)}` : ''}`,
-  })).filter((item) => item.value);
+    })).filter((item) => item.value),
+  ];
+  if (workflowId && !workflowOptions.some((item) => item.value === workflowId)) {
+    workflowOptions.unshift({
+      value: workflowId,
+      label: `${workflowStatus?.title || selectedWorkflow?.title || '当前制片工程'} · 正在同步`,
+    });
+  }
 
   const storyBibleOptions = storyBibles.map((item) => ({
     value: item.id,
@@ -1206,6 +1556,13 @@ function ProducerCenterContent() {
                       setSelectedNovelId(event.target.value);
                       setSelectedChapterId('');
                       setWorkflowId('');
+                      setPreferredWorkflowId('');
+                      setWorkflowSelectionTouched(false);
+                      setGenerationProgress('');
+                      setOneClickEvidence(null);
+                      setPreviewResult(null);
+                      setPublicationResult(null);
+                      resetShotSelection();
                     }}
                     options={novelOptions}
                     placeholder={loadingNovels ? '正在加载小说…' : '选择小说'}
@@ -1222,6 +1579,13 @@ function ProducerCenterContent() {
                     onChange={(event) => {
                       setSelectedChapterId(event.target.value);
                       setWorkflowId('');
+                      setPreferredWorkflowId('');
+                      setWorkflowSelectionTouched(false);
+                      setGenerationProgress('');
+                      setOneClickEvidence(null);
+                      setPreviewResult(null);
+                      setPublicationResult(null);
+                      resetShotSelection();
                     }}
                     options={chapterOptions}
                     placeholder={loadingChapters ? '正在加载章节…' : '选择章节'}
@@ -1232,9 +1596,14 @@ function ProducerCenterContent() {
                   <div className="mb-2 text-xs text-white/50">制片工程</div>
                   <Select
                     value={workflowId}
-                    onChange={(event) => setWorkflowId(event.target.value)}
+                    onChange={(event) => {
+                      setWorkflowId(event.target.value);
+                      setPreferredWorkflowId(event.target.value);
+                      setWorkflowSelectionTouched(true);
+                      resetShotSelection();
+                    }}
                     options={workflowOptions}
-                    placeholder={loadingWorkflows ? '正在加载工程…' : '选择或创建工程'}
+                    placeholder={loadingWorkflows ? '正在加载工程…' : undefined}
                     disabled={!selectedNovelId || !selectedChapterId || loadingWorkflows || workflowOptions.length === 0 || Boolean(loadingAction)}
                   />
                 </div>
@@ -1343,7 +1712,7 @@ function ProducerCenterContent() {
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 md:grid-cols-4">
                 <ModelCapabilitySelector
                   capability="text"
                   configs={modelConfigs}
@@ -1352,6 +1721,16 @@ function ProducerCenterContent() {
                   disabled={Boolean(loadingAction)}
                   title="剧本/分镜文本模型"
                   description="未手动选择时使用当前用户已配置的文本默认模型。"
+                  compact
+                />
+                <ModelCapabilitySelector
+                  capability="image"
+                  configs={modelConfigs}
+                  value={imageModelConfigId}
+                  onChange={setImageModelConfigId}
+                  disabled={Boolean(loadingAction)}
+                  title="参考图模型"
+                  description="批量生成参考图时使用该图像配置；真实验收建议选择 SD1.5。"
                   compact
                 />
                 <ModelCapabilitySelector
@@ -1375,6 +1754,15 @@ function ProducerCenterContent() {
                   compact
                 />
               </div>
+              {missingPreferredImageModel && selectedImageModelConfig && (
+                <div className="rounded-lg border border-amber-500/25 bg-amber-500/10 p-3 text-sm leading-6 text-amber-50">
+                  <div className="font-medium">未配置火山/SD1.5参考图模型</div>
+                  <div className="text-amber-100/80">
+                    当前参考图会使用 {selectedImageModelConfig.model_name || selectedImageModelConfig.name}。
+                    若要按真实验收要求使用 SD1.5/火山图像模型，请先到 AI 模型配置页新增并验证对应图像生成配置。
+                  </div>
+                </div>
+              )}
 
               <div className="grid gap-3 lg:grid-cols-3">
                 <div className="rounded-lg border border-white/10 bg-black/20 p-4">
@@ -2113,8 +2501,8 @@ function ProducerCenterContent() {
                   <Button size="sm" variant="ghost" className="text-white/60" onClick={deselectAllShots} disabled={selectedShotIds.size === 0}>
                     取消
                   </Button>
-                  {(workflowStatus?.storyboard_id || productionStatus?.storyboard_id) && (
-                    <Button size="sm" variant="outline" className="border-white/20" onClick={() => loadShotsForStoryboard(workflowStatus?.storyboard_id || productionStatus?.storyboard_id)} disabled={loadingShots}>
+                  {currentStoryboardId && (
+                    <Button size="sm" variant="outline" className="border-white/20" onClick={() => loadShotsForStoryboard(currentStoryboardId)} disabled={loadingShots}>
                       {loadingShots ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                       加载镜头
                     </Button>
@@ -2123,32 +2511,50 @@ function ProducerCenterContent() {
               </div>
               {shots.length > 0 ? (
                 <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 max-h-48 overflow-y-auto">
-                  {shots.map((shot) => (
-                    <div
-                      key={shot.id}
-                      className={`relative rounded-lg border p-2 cursor-pointer transition-all ${
-                        selectedShotIds.has(shot.id)
-                          ? 'border-cyan-500 bg-cyan-500/10'
-                          : 'border-white/10 bg-white/5 hover:border-white/30'
-                      }`}
-                      onClick={() => toggleShotSelection(shot.id)}
-                    >
-                      {shot.image_url && (
-                        <img src={toMediaUrl(shot.image_url)} alt={`镜头 ${shot.shot_number}`} className="w-full h-16 object-cover rounded mb-1" />
-                      )}
-                      {!shot.image_url && (
-                        <div className="w-full h-16 bg-white/10 rounded mb-1 flex items-center justify-center">
-                          <Film className="h-6 w-6 text-white/30" />
-                        </div>
-                      )}
-                      <div className="text-xs text-center text-white/70">镜头 {shot.shot_number}</div>
-                      {selectedShotIds.has(shot.id) && (
-                        <div className="absolute top-1 right-1 w-5 h-5 bg-cyan-500 rounded-full flex items-center justify-center">
-                          <Check className="h-3 w-3 text-white" />
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  {shots.map((shot) => {
+                    const speakerNames = shotSpeakerNames(shot);
+                    return (
+                      <button
+                        type="button"
+                        key={shot.id}
+                        data-testid={`producer-shot-card-${shot.id}`}
+                        data-speaker-count={speakerNames.length}
+                        aria-pressed={selectedShotIds.has(shot.id)}
+                        aria-label={`选择镜头 ${shot.shot_number || shot.id}`}
+                        className={`relative rounded-lg border p-2 cursor-pointer transition-all ${
+                          selectedShotIds.has(shot.id)
+                            ? 'border-cyan-500 bg-cyan-500/10'
+                            : speakerNames.length > 1
+                              ? 'border-amber-500/40 bg-amber-500/10 hover:border-amber-300/70'
+                              : 'border-white/10 bg-white/5 hover:border-white/30'
+                        } focus:outline-none focus:ring-2 focus:ring-cyan-400/70 focus:ring-offset-2 focus:ring-offset-black`}
+                        onClick={() => toggleShotSelection(shot.id)}
+                      >
+                        {shot.image_url && (
+                          <img src={toMediaUrl(shot.image_url)} alt={`镜头 ${shot.shot_number}`} className="w-full h-16 object-cover rounded mb-1" />
+                        )}
+                        {!shot.image_url && (
+                          <div className="w-full h-16 bg-white/10 rounded mb-1 flex items-center justify-center">
+                            <Film className="h-6 w-6 text-white/30" />
+                          </div>
+                        )}
+                        <div className="text-xs text-center text-white/70">镜头 {shot.shot_number}</div>
+                        {speakerNames.length > 0 && (
+                          <div className="mt-1 space-y-1 text-[10px] leading-4 text-white/65">
+                            <div className={speakerNames.length > 1 ? 'rounded border border-amber-400/25 bg-amber-500/15 px-1 text-amber-100' : 'truncate'}>
+                              {speakerNames.length > 1 ? '双人对白' : '单人对白'}
+                            </div>
+                            <div className="truncate">{speakerNames.slice(0, 2).join('、')}</div>
+                          </div>
+                        )}
+                        {selectedShotIds.has(shot.id) && (
+                          <div className="absolute top-1 right-1 w-5 h-5 bg-cyan-500 rounded-full flex items-center justify-center">
+                            <Check className="h-3 w-3 text-white" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-sm text-white/50 py-4 text-center">
@@ -2264,6 +2670,7 @@ function ProducerCenterContent() {
                           const shotLabel = shot?.shot_number ? `镜头 ${shot.shot_number}` : `镜头 ${item.shot_id}`;
                           const outputUrl = item.video_url || item.audio_url || item.image_url;
                           const jobId = item.video_job_id || item.tts_job_id || item.image_job_id;
+                          const canRefreshVideo = Boolean(item.video_job_id) && !['succeeded', 'failed', 'skipped'].includes(item.status);
                           const statusText = item.status === 'succeeded' ? '已完成'
                             : item.status === 'failed' ? '失败'
                               : item.status === 'running' ? '生成中'
@@ -2288,6 +2695,18 @@ function ProducerCenterContent() {
                                   {jobId && <div>产物任务：{jobId}</div>}
                                   {outputUrl && <div className="truncate">产物地址：{outputUrl}</div>}
                                   {item.error_message && <div className="text-red-200/80">失败原因：{item.error_message}</div>}
+                                  {canRefreshVideo && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="mt-1 h-7 border-cyan-500/25 px-2 text-xs text-cyan-300"
+                                      onClick={() => refreshBatchVideoItem(item.video_job_id)}
+                                      disabled={loadingAction === `refresh-video-${item.video_job_id}`}
+                                    >
+                                      {loadingAction === `refresh-video-${item.video_job_id}` && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                                      刷新视频状态
+                                    </Button>
+                                  )}
                                 </div>
                               )}
                             </div>

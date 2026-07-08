@@ -657,6 +657,11 @@ async def create_chapter(
     )
 
     db.add(db_chapter)
+    await db.flush()
+    metadata: dict[str, Any] = {"source": "manual_chapter_create"}
+    if db_chapter.content:
+        await persist_story_context_from_chapter(db, user_id, novel, db_chapter, metadata=metadata)
+    await refresh_novel_word_count(db, novel, user_id)
     await db.commit()
     await db.refresh(db_chapter)
 
@@ -1055,32 +1060,7 @@ async def generate_chapter_storyboard(
 
     script = await get_latest_chapter_script(db, user_id, chapter_id)
 
-    if not script:
-        # 先生成剧本
-        from app.api.v1.endpoints.scripts import ScriptGenerateRequest as ScriptRequest
-
-        class FakeScriptRequest:
-            def __init__(self, chapter_id, style, genre, model_config_id):
-                self.chapter_id = chapter_id
-                self.style = style
-                self.genre = genre
-                self.model_config_id = model_config_id
-
-        from app.api.v1.endpoints.scripts import generate_script as generate_script_func
-        fake_request = FakeScriptRequest(
-            chapter_id=chapter_id,
-            style=request.style,
-            genre=request.genre,
-            model_config_id=request.model_config_id,
-        )
-        script_response = await generate_script_func(
-            request=fake_request,
-            db=db,
-            user_id=user_id
-        )
-        script_id = script_response.id
-    else:
-        script_id = script.id
+    script_id = script.id if script else None
 
     # 生成智能分镜
     from app.api.v1.endpoints.storyboards import (
@@ -1119,7 +1099,7 @@ async def generate_chapter_storyboard(
 
     return {
         "message": "剧本和分镜生成完成",
-        "script_id": script_id,
+        "script_id": storyboard_response.script_id,
         "storyboard_id": storyboard_response.id,
         "script_title": storyboard_response.script_title,
         "storyboard_title": storyboard_response.title,
@@ -1147,38 +1127,10 @@ async def generate_chapter_all(
     if not chapter.content:
         raise HTTPException(status_code=400, detail="章节内容为空，无法生成")
 
-    # 第一步：生成剧本（如果不存在）
     script = await get_latest_chapter_script(db, user_id, chapter_id)
+    script_id = script.id if script else None
 
-    if not script:
-        from app.api.v1.endpoints.scripts import ScriptGenerateRequest as ScriptRequest
-        from app.api.v1.endpoints.scripts import generate_script as generate_script_func
-
-        class FakeScriptRequest:
-            def __init__(self, chapter_id, style, genre, model_config_id):
-                self.chapter_id = chapter_id
-                self.style = style
-                self.genre = genre
-                self.model_config_id = model_config_id
-
-        fake_request = FakeScriptRequest(
-            chapter_id=chapter_id,
-            style=request.style,
-            genre=request.genre,
-            model_config_id=request.model_config_id,
-        )
-        script_response = await generate_script_func(
-            request=fake_request,
-            db=db,
-            user_id=user_id
-        )
-        script_id = script_response.id
-        script_title = script_response.title
-    else:
-        script_id = script.id
-        script_title = script.title
-
-    # 第二步：生成智能分镜
+    # 智能分镜会在缺少剧本时基于章节创建可审核草稿脚本。
     from app.api.v1.endpoints.storyboards import (
         StoryboardSmartGenerateRequest,
         generate_smart_storyboard as generate_smart_storyboard_func,
@@ -1212,8 +1164,10 @@ async def generate_chapter_all(
         db=db,
         user_id=user_id,
     )
+    script_id = storyboard_response.script_id
+    script_title = storyboard_response.script_title or (script.title if script else "")
 
-    # 第三步：查询生成的镜头
+    # 查询生成的镜头
     shot_result = await db.execute(
         select(Shot).where(
             and_(

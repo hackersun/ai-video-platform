@@ -12,13 +12,53 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import unquote, unquote_plus, urlparse
 from uuid import uuid4
+
+import httpx
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 STATIC_ROOT = BACKEND_ROOT / "static"
 _FILTER_CACHE: Dict[Tuple[str, str], bool] = {}
+_REMOTE_AUDIO_MAX_BYTES = 50 * 1024 * 1024
+_REMOTE_AUDIO_TIMEOUT_SECONDS = 90.0
+_REMOTE_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus", ".flac", ".mp4"}
+_REMOTE_AUDIO_CONTENT_TYPES = {
+    "audio/aac",
+    "audio/flac",
+    "audio/mp3",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/opus",
+    "audio/wav",
+    "audio/wave",
+    "audio/x-m4a",
+    "audio/x-wav",
+    "application/octet-stream",
+    "binary/octet-stream",
+    "video/mp4",
+}
+_SIGNED_URL_QUERY_KEYS = {
+    "access_key",
+    "accesskeyid",
+    "e",
+    "expires",
+    "ossaccesskeyid",
+    "security-token",
+    "signature",
+    "token",
+    "x-amz-credential",
+    "x-amz-security-token",
+    "x-amz-signature",
+    "x-oss-credential",
+    "x-oss-date",
+    "x-oss-expires",
+    "x-oss-security-token",
+    "x-oss-signature",
+    "x-qiniu-deadline",
+}
 
 
 class FFmpegLocalRenderError(RuntimeError):
@@ -51,7 +91,7 @@ async def render_workflow_package(
     logs: List[str] = []
 
     try:
-        prepared_segments = _prepare_segments(segments, ffprobe_path)
+        prepared_segments = _prepare_segments(segments, ffprobe_path, work_dir)
         srt_path, has_subtitles = _write_srt(segments, output_dir / f"final-{render_id}-{timestamp}.srt")
         subtitle_filter_path = None
         if burn_subtitles and has_subtitles:
@@ -129,7 +169,11 @@ def _ffmpeg_has_filter(ffmpeg_path: str, name: str) -> bool:
     return available
 
 
-def _prepare_segments(segments: List[dict], ffprobe_path: str) -> List[Dict[str, Any]]:
+def _prepare_segments(
+    segments: List[dict],
+    ffprobe_path: str,
+    work_dir: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
     prepared: List[Dict[str, Any]] = []
     for index, segment in enumerate(segments, start=1):
         video_url = _segment_video_url(segment)
@@ -141,7 +185,7 @@ def _prepare_segments(segments: List[dict], ffprobe_path: str) -> List[Dict[str,
             )
         video_path = _resolve_local_media(video_url)
         audio_url = _segment_audio_url(segment)
-        audio_path = _resolve_local_media(audio_url) if audio_url else None
+        audio_path = _resolve_audio_media(audio_url, work_dir, index) if audio_url else None
         music_url = _segment_music_url(segment)
         music_path = _resolve_optional_music(music_url)
         prepared.append(
@@ -164,6 +208,20 @@ def _resolve_optional_music(url: Optional[str]) -> Optional[Path]:
         return _resolve_local_media(url)
     except FFmpegLocalRenderError:
         return None
+
+
+def _resolve_audio_media(url: str, work_dir: Optional[Path], segment_index: int) -> Path:
+    raw_url = str(url)
+    parsed = urlparse(raw_url)
+    if parsed.scheme in {"http", "https"} and not _is_local_static_http_url(parsed):
+        if work_dir is None:
+            raise FFmpegLocalRenderError(
+                "remote_audio_work_dir_missing",
+                "Remote audio requires a renderer work directory",
+                url=_redact_url(raw_url),
+            )
+        return _download_remote_audio(raw_url, work_dir, segment_index)
+    return _resolve_local_media(raw_url)
 
 
 def _segment_video_url(segment: dict) -> Optional[str]:
@@ -210,13 +268,13 @@ def _resolve_local_media(url: str) -> Path:
     raw_url = str(url)
     parsed = urlparse(raw_url)
     if parsed.scheme in {"http", "https"}:
-        if parsed.hostname in {"localhost", "127.0.0.1", "0.0.0.0"} and parsed.path.startswith("/static/"):
+        if _is_local_static_http_url(parsed):
             path = _static_path(parsed.path, raw_url)
         else:
             raise FFmpegLocalRenderError(
                 "remote_url_unsupported",
                 "Remote media URLs are not supported by the local renderer yet",
-                url=raw_url,
+                url=_redact_url(raw_url),
             )
     elif parsed.scheme == "file":
         path = Path(unquote(parsed.path))
@@ -240,6 +298,100 @@ def _resolve_local_media(url: str) -> Path:
             path=str(resolved),
         )
     return resolved
+
+
+def _is_local_static_http_url(parsed: Any) -> bool:
+    return parsed.hostname in {"localhost", "127.0.0.1", "0.0.0.0"} and parsed.path.startswith("/static/")
+
+
+def _download_remote_audio(url: str, work_dir: Path, segment_index: int) -> Path:
+    parsed = urlparse(url)
+    extension = _remote_audio_extension(parsed.path)
+    target_path = work_dir / f"remote-audio-{segment_index:03d}-{uuid4().hex}{extension}"
+
+    try:
+        with httpx.Client(timeout=_REMOTE_AUDIO_TIMEOUT_SECONDS, follow_redirects=True) as client:
+            with client.stream("GET", url, headers={"Accept": "audio/*"}) as response:
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if content_type and content_type not in _REMOTE_AUDIO_CONTENT_TYPES:
+                    raise FFmpegLocalRenderError(
+                        "remote_audio_type_unsupported",
+                        "Remote audio content type is not supported by the local renderer",
+                        content_type=content_type,
+                        url=_redact_url(url),
+                    )
+                total_bytes = 0
+                with target_path.open("wb") as file:
+                    for chunk in response.iter_bytes():
+                        if not chunk:
+                            continue
+                        total_bytes += len(chunk)
+                        if total_bytes > _REMOTE_AUDIO_MAX_BYTES:
+                            target_path.unlink(missing_ok=True)
+                            raise FFmpegLocalRenderError(
+                                "remote_audio_too_large",
+                                "Remote audio exceeds the local renderer size limit",
+                                max_bytes=_REMOTE_AUDIO_MAX_BYTES,
+                                url=_redact_url(url),
+                            )
+                        file.write(chunk)
+    except FFmpegLocalRenderError:
+        raise
+    except httpx.TimeoutException as exc:
+        raise FFmpegLocalRenderError(
+            "remote_audio_download_timeout",
+            "Timed out downloading remote audio for local rendering",
+            url=_redact_url(url),
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        raise FFmpegLocalRenderError(
+            "remote_audio_download_failed",
+            "Failed to download remote audio for local rendering",
+            status_code=exc.response.status_code,
+            url=_redact_url(url),
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise FFmpegLocalRenderError(
+            "remote_audio_download_failed",
+            "Failed to download remote audio for local rendering",
+            url=_redact_url(url),
+        ) from exc
+    except OSError as exc:
+        raise FFmpegLocalRenderError(
+            "remote_audio_write_failed",
+            "Failed to write remote audio for local rendering",
+            url=_redact_url(url),
+        ) from exc
+
+    if not target_path.exists() or target_path.stat().st_size <= 0:
+        raise FFmpegLocalRenderError(
+            "remote_audio_empty",
+            "Remote audio download produced an empty file",
+            url=_redact_url(url),
+        )
+    return target_path
+
+
+def _remote_audio_extension(path: str) -> str:
+    extension = Path(unquote(path)).suffix.lower()
+    if extension in _REMOTE_AUDIO_EXTENSIONS:
+        return extension
+    return ".mp3"
+
+
+def _redact_url(raw_url: str) -> str:
+    parsed = urlparse(str(raw_url))
+    if not parsed.query:
+        return str(raw_url)
+    redacted_parts: List[str] = []
+    for part in parsed.query.split("&"):
+        key = part.split("=", 1)[0]
+        if unquote_plus(key).lower() in _SIGNED_URL_QUERY_KEYS:
+            redacted_parts.append(f"{key}=<redacted>")
+        else:
+            redacted_parts.append(part)
+    return parsed._replace(query="&".join(redacted_parts)).geturl()
 
 
 def _static_path(path_or_url: str, original_url: str) -> Path:
@@ -302,7 +454,7 @@ def _render_segment(
             "-t",
             f"{segment['duration']:.3f}",
             "-vf",
-            "scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,fps=24",
+            f"tpad=stop_mode=clone:stop_duration={segment['duration']:.3f},scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,fps=24",
             "-c:v",
             "mpeg4",
             "-q:v",

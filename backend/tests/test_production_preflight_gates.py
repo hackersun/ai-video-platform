@@ -282,6 +282,24 @@ def test_production_bible_summary_endpoint_exposes_core_sections(monkeypatch: py
     user_id = str(uuid4())
     seeded = asyncio.run(_seed_workflow_with_shot(user_id=user_id, image_url="https://cdn.example.com/shot.png"))
 
+    async def _seed_global_template_entity() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(
+                StoryEntity(
+                    id=f"global-template-{uuid4()}",
+                    user_id=user_id,
+                    novel_id=None,
+                    entity_type="character",
+                    name="全局模板角色",
+                    description="不应计入单部小说 Production Bible",
+                    attributes={},
+                    confidence=90,
+                )
+            )
+            await db.commit()
+
+    asyncio.run(_seed_global_template_entity())
+
     with TestClient(app) as test_client:
         response = test_client.get(
             f"/api/v1/story-bibles/production-bible/{seeded['novel_id']}/summary",
@@ -292,6 +310,8 @@ def test_production_bible_summary_endpoint_exposes_core_sections(monkeypatch: py
     summary = response.json()["summary"]
     assert summary["style"]["style"] == "冷色悬疑动漫风格"
     assert summary["characters"][0]["name"] == "沈砚"
+    assert "全局模板角色" not in {item["name"] for item in summary["characters"]}
+    assert summary["counts"]["characters"] == 1
     assert summary["scenes"][0]["name"] == "旧码头"
     assert summary["props"][0]["name"] == "铜铃"
     assert summary["events"][0]["name"] == "追查铜铃"
