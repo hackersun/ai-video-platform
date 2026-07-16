@@ -30,6 +30,7 @@ from app.models.character import Character
 from app.models.asset import Asset
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.services.minimax_service import MINIMAX_VOICE_CLONE_MODEL
+from app.services.volcano_speech_tts import configure_volcano_speech_endpoint
 
 router = APIRouter(tags=["语音合成"])
 
@@ -440,7 +441,7 @@ async def _resolve_preview_tts_config(
         resolved_provider = provider_row.name or provider_row.id
         api_key = config.get_api_key_decrypted()
         extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-        base_url = extra.get("base_url") or model.base_url or provider_row.base_url
+        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or provider_row.base_url, extra)
         api_model_id = api_model_id or model.model_id
     else:
         if resolved_provider in {"minimax", "volcano"}:
@@ -717,7 +718,7 @@ async def generate_tts(
         request.api_provider = provider.name or provider.id
         api_key = config.get_api_key_decrypted()
         extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-        base_url = extra.get("base_url") or model.base_url or provider.base_url
+        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or provider.base_url, extra)
         tts_model_id = tts_model_id or model.model_id
     elif request.api_provider == "minimax":
         api_key, base_url = await get_user_api_key(
@@ -1131,7 +1132,7 @@ async def preview_tts_voice(
     return TTSPreviewResponse(
         status=result.get("status") or "succeeded",
         audio_url=audio_url,
-        voice=request.voice_model,
+        voice=result.get("voice") or request.voice_model,
         provider=provider,
         duration_seconds=result.get("duration"),
         message=result.get("message") or "音色试听已生成",

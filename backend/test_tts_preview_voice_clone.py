@@ -9,6 +9,8 @@ from fastapi import UploadFile
 from fastapi.testclient import TestClient
 
 from app.api.v1.endpoints import tts as tts_endpoint
+from app.core.database import SyncSessionLocal
+from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from init_db import init_db
 from main import app
 
@@ -109,6 +111,114 @@ def test_tts_voice_preview_dev_mode_falls_back_when_provider_has_no_audio(
     assert payload["status"] == "succeeded"
     assert payload["audio_url"].startswith("/static/dev/")
     assert "云端试听未返回音频" in payload["message"]
+
+
+def test_tts_voice_preview_returns_provider_resolved_voice(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"tts-preview-volcano-user-{uuid4()}"
+
+    async def _fake_resolve_config(*args, **kwargs):
+        return "access-token", "volcano", "seed-tts-2.0", "https://example.com"
+
+    async def _fake_text_to_speech(self, *args, **kwargs):
+        return {
+            "status": "succeeded",
+            "audio_url": "https://example.com/preview.mp3",
+            "voice": "zh_female_vv_uranus_bigtts",
+        }
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.tts._resolve_preview_tts_config",
+        _fake_resolve_config,
+    )
+    monkeypatch.setattr(
+        "app.services.volcano_service.VolcanoService.text_to_speech",
+        _fake_text_to_speech,
+    )
+
+    response = client.post(
+        "/api/v1/tts/preview",
+        json={
+            "text": "这是一段音色试听。",
+            "voice_model": "female_nvsheng",
+            "api_provider": "volcano",
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["voice"] == "zh_female_vv_uranus_bigtts"
+
+
+def test_volcano_speech_config_test_uses_tts_protocol(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id = f"vtts-{uuid4().hex[:20]}"
+    model_id = f"volcano-speech-model-{uuid4()}"
+    config_id = f"volcano-speech-config-{uuid4()}"
+    with SyncSessionLocal() as db:
+        if db.get(LLMProvider, "volcano") is None:
+            db.add(LLMProvider(id="volcano", name="volcano", is_active=True))
+        db.add(LLMModel(
+            id=model_id,
+            provider_id="volcano",
+            model_id="seed-tts-2.0",
+            model_name="Doubao Seed TTS 2.0",
+            model_type="tts",
+            capabilities=["text-to-speech"],
+            base_url="https://openspeech.bytedance.com/api/v3/tts/unidirectional",
+            is_active=True,
+        ))
+        config = LLMConfig(
+            id=config_id,
+            user_id=user_id,
+            model_id=model_id,
+            name="豆包语音测试配置",
+            extra_params={"app_id": "1234567890", "resource_id": "seed-tts-2.0"},
+            is_active=True,
+        )
+        config.set_api_key_encrypted("access-token")
+        db.add(config)
+        db.commit()
+
+    async def _reject_ark_test(*args, **kwargs):
+        return {
+            "success": False,
+            "message": "wrong Ark test path",
+            "response": None,
+            "response_time_ms": 0,
+            "tokens_used": 0,
+        }
+
+    async def _fake_synthesize(**kwargs):
+        return {
+            "status": "succeeded",
+            "audio_url": "/static/audio/previews/test.mp3",
+            "voice": "zh_female_vv_uranus_bigtts",
+        }
+
+    monkeypatch.setattr(
+        "app.api.v1.endpoints.llm_config.test_volcano_api",
+        _reject_ark_test,
+    )
+    monkeypatch.setattr(
+        "app.services.volcano_speech_tts.synthesize_volcano_speech_v3",
+        _fake_synthesize,
+    )
+
+    response = client.post(
+        f"/api/v1/llm/configs/{config_id}/test",
+        json={"message": "测试豆包语音连接"},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["success"] is True
+    with SyncSessionLocal() as db:
+        assert db.get(LLMConfig, config_id).test_status == "success"
 
 
 def test_voice_clone_profile_is_listed_as_custom_voice(client: TestClient) -> None:

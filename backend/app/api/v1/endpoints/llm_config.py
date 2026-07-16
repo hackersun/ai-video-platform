@@ -25,6 +25,7 @@ from app.core.volcano_agent_plan_config import (
     VOLCANO_AGENT_PLAN_PROVIDER_ID,
 )
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog, encrypt_key
+from app.services.volcano_speech_tts import configure_volcano_speech_endpoint, test_volcano_speech_connection
 
 router = APIRouter(tags=["大模型配置"])
 
@@ -2235,7 +2236,11 @@ async def test_config(
         return test_result
 
     # 根据提供商调用测试
-    if provider_id == "volcano":
+    if provider_id == "volcano" and model.model_type in ("tts", "audio", "speech"):
+        extra = config.extra_params if isinstance(config.extra_params, dict) else {}
+        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra)
+        test_result = await test_volcano_speech_connection(api_key, base_url or "", request.message)
+    elif provider_id == "volcano":
         test_result = await test_volcano_api(api_key, model.model_id, request.message)
     elif provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
         test_result = await test_volcano_agent_plan_api(api_key, model.model_id, request.message)

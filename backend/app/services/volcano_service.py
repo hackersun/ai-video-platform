@@ -13,6 +13,8 @@ import ipaddress
 from urllib.parse import urlparse
 import aiohttp
 
+from app.services.volcano_speech_tts import route_volcano_speech_tts
+
 from app.core.volcano_config import (
     VOLCANO_CONFIG,
     ENDPOINT_IDS,
@@ -308,6 +310,7 @@ class VolcanoService:
 
     # ============== TTS语音合成 ==============
 
+    @route_volcano_speech_tts
     async def text_to_speech(
         self,
         text: str,
