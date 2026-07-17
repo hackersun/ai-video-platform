@@ -17,6 +17,7 @@ from app.core.security import get_current_user_id
 from app.features.model_config.recipes import stable_recipe_checksum
 from app.models.model_center import (
     ModelBinding,
+    ModelCertificationRun,
     ModelConfigAuditEvent,
     ModelConnection,
     ModelProfile,
@@ -275,6 +276,156 @@ async def test_missing_service_operation_returns_stable_actionable_error(client)
     assert detail["code"] == "operation_not_implemented"
     assert detail["action_code"] == "contact_operator_or_use_legacy_api"
     assert "provider.create" in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_recipe_management_creates_validates_publishes_and_rolls_back_versions(client):
+    spec = _recipe_spec()
+    created = await client.post(
+        "/api/v1/model-center/recipes",
+        json={"recipe_key": "task16-anime", "name": "Task 16 Anime", "spec": spec},
+    )
+    assert created.status_code == 200
+    first = created.json()
+    assert first["recipe_key"] == "task16-anime"
+    assert first["version"] == 1
+    assert first["status"] == "draft"
+
+    validated = await client.post(
+        f"/api/v1/model-center/recipe-versions/{first['id']}/validate",
+    )
+    assert validated.status_code == 200
+    assert validated.json() == {"valid": True, "errors": []}
+
+    published = await client.post(
+        f"/api/v1/model-center/recipe-versions/{first['id']}/publish",
+        json={"expected_revision": 1, "reason": "首版验收通过"},
+    )
+    assert published.status_code == 200
+
+    second = await client.post(
+        "/api/v1/model-center/recipes",
+        json={"recipe_key": "task16-anime", "name": "Task 16 Anime v2", "spec": spec},
+    )
+    assert second.status_code == 200
+    second_id = second.json()["id"]
+    assert second.json()["version"] == 2
+    assert (await client.post(
+        f"/api/v1/model-center/recipe-versions/{second_id}/publish",
+        json={"expected_revision": 1, "reason": "二版验收通过"},
+    )).status_code == 200
+
+    rollback = await client.post(
+        "/api/v1/model-center/recipes/task16-anime/rollback",
+        json={"expected_revision": 2, "target_version_id": first["id"], "reason": "回退到已验收首版"},
+    )
+    assert rollback.status_code == 200
+    payload = rollback.json()
+    assert payload["previous_version_id"] == second_id
+    assert payload["published_version_id"] not in {first["id"], second_id}
+    assert payload["audit_event_id"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_profiles_use_structured_immutable_versions_and_return_impact_preview(client):
+    created = await client.post(
+        "/api/v1/model-center/prompt-profiles",
+        json={
+            "key": "task16.video", "name": "Task 16 Video", "task": "shot_video",
+            "stage": "video", "system_contract": "Return a safe storyboard plan.",
+            "task_template": "Create {{shot}}.", "input_mapping": {"shot": "shot.description"},
+            "output_schema": {"type": "object"}, "negative_constraints": ["no watermark"],
+            "model_family_overrides": {"ark": {"tone": "cinematic"}},
+            "validation_fixtures": [{"input": {"shot": "rain"}, "expected": "object"}],
+            "release_notes": "initial draft",
+        },
+    )
+    assert created.status_code == 200
+    profile = created.json()
+    assert profile["key"] == "task16.video"
+    assert profile["version"] == 1
+    assert profile["status"] == "draft"
+    assert "task_template" not in profile
+
+    impact = await client.get(
+        "/api/v1/model-center/impact",
+        params={"resource_type": "prompt_profile", "resource_id": profile["id"]},
+    )
+    assert impact.status_code == 200
+    assert set(impact.json()) >= {"affected_bindings", "affected_recipes", "affected_prompts"}
+
+    published = await client.post(
+        f"/api/v1/model-center/prompt-profile-versions/{profile['head_version_id']}/publish",
+        json={"expected_revision": 1, "reason": "提示词样例校验通过"},
+    )
+    assert published.status_code == 200
+    assert published.json()["published_version_id"] == profile["head_version_id"]
+
+    draft = await client.post(
+        f"/api/v1/model-center/prompt-profiles/{profile['id']}/versions",
+        json={
+            "expected_revision": 1,
+            "values": {
+                "task_template": "Create a revised {{shot}}.",
+                "release_notes": "revised draft",
+            },
+        },
+    )
+    assert draft.status_code == 200
+    assert draft.json()["version"] == 2
+    assert draft.json()["id"] != profile["head_version_id"]
+
+    rollback = await client.post(
+        f"/api/v1/model-center/prompt-profiles/{profile['id']}/rollback",
+        json={
+            "expected_revision": 2, "target_version_id": profile["head_version_id"],
+            "reason": "恢复已验收提示词",
+        },
+    )
+    assert rollback.status_code == 200
+    assert rollback.json()["published_version_id"] not in {
+        profile["head_version_id"], draft.json()["id"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_live_certification_persists_safe_intent_without_provider_execution(client):
+    rejected = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-video-v1", "connection_id": "connection-1",
+            "level": "live", "reason": "验收视频和声音同步",
+        },
+    )
+    assert rejected.status_code == 422
+    assert "real_cost_acknowledged" in rejected.text
+
+    response = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-video-v1", "connection_id": "connection-1",
+            "level": "live", "reason": "验收视频和声音同步", "user_scope": "user",
+            "recipe_version_id": "recipe-v1", "chapter_id": "chapter-4", "run_id": "run-4",
+            "selected_shot_ids": ["shot-3", "shot-7"], "budget_ceiling_rmb": "10.00",
+            "retry_policy": "never", "storage_policy": "qiniu_public", "real_cost_acknowledged": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "queued"
+    assert payload["actual_cost_rmb"] == "0.0000"
+    assert payload["sanitized_evidence"]["execution_mode"] == "safe_intent_only"
+    assert payload["sanitized_evidence"]["selected_shot_ids"] == ["shot-3", "shot-7"]
+    assert "api_key" not in json.dumps(payload)
+    assert "prompt" not in json.dumps(payload).lower()
+
+    loaded = await client.get(f"/api/v1/model-center/certifications/{payload['id']}")
+    assert loaded.status_code == 200
+    assert loaded.json()["id"] == payload["id"]
+    async with AsyncSessionLocal() as db:
+        run = await db.get(ModelCertificationRun, payload["id"])
+        assert run.status == "queued"
+        assert run.actual_cost_rmb == 0
 
 
 def test_feature_api_does_not_import_legacy_endpoint_modules():

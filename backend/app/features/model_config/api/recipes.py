@@ -27,9 +27,27 @@ async def list_recipes(
 
 
 @router.post("/recipes")
-async def create_recipe(request: RecipeCreateRequest):
-    del request
-    return unsupported("recipe.create")
+async def create_recipe(
+    request: RecipeCreateRequest,
+    db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
+):
+    try:
+        return await service.create_recipe(
+            db, user_id=user_id, recipe_key=request.recipe_key, name=request.name, spec=request.spec,
+        )
+    except service.ManagementOperationError as error:
+        return raise_http(error)
+
+
+@router.post("/recipe-versions/{recipe_version_id}/validate")
+async def validate_recipe(
+    recipe_version_id: str,
+    db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
+):
+    try:
+        return await service.validate_recipe_version(db, user_id=user_id, recipe_version_id=recipe_version_id)
+    except service.ManagementOperationError as error:
+        return raise_http(error)
 
 
 @router.post("/recipe-versions/{recipe_version_id}/publish", response_model=PublishResponse)
@@ -53,6 +71,14 @@ async def disable_recipe(recipe_version_id: str, request: PublishRequest):
 
 
 @router.post("/recipes/{recipe_key}/rollback")
-async def rollback_recipe(recipe_key: str, request: RollbackRequest):
-    del recipe_key, request
-    return unsupported("recipe.rollback")
+async def rollback_recipe(
+    recipe_key: str, request: RollbackRequest,
+    db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
+):
+    try:
+        return await service.rollback_recipe(
+            db, user_id=user_id, recipe_key=recipe_key, target_version_id=request.target_version_id,
+            expected_revision=request.expected_revision, reason=request.reason,
+        )
+    except service.ManagementOperationError as error:
+        return raise_http(error)

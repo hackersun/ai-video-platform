@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from decimal import Decimal
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -118,6 +119,46 @@ class RecipeCreateRequest(BaseModel):
     spec: dict[str, Any]
 
 
+class PromptProfileCreateRequest(BaseModel):
+    key: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=120)
+    task: str = Field(min_length=1, max_length=80)
+    stage: str | None = Field(default=None, max_length=80)
+    system_contract: str = Field(min_length=1)
+    task_template: str = Field(min_length=1)
+    input_mapping: dict[str, Any] = Field(default_factory=dict)
+    output_schema: dict[str, Any] = Field(default_factory=dict)
+    negative_constraints: list[str] = Field(default_factory=list)
+    model_family_overrides: dict[str, Any] = Field(default_factory=dict)
+    validation_fixtures: list[dict[str, Any]] = Field(default_factory=list)
+    release_notes: str = Field(default="", max_length=2000)
+
+
+class PromptProfileVersionRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+    stage: str | None = Field(default=None, max_length=80)
+    system_contract: str | None = None
+    task_template: str | None = None
+    input_mapping: dict[str, Any] | None = None
+    output_schema: dict[str, Any] | None = None
+    negative_constraints: list[str] | None = None
+    model_family_overrides: dict[str, Any] | None = None
+    validation_fixtures: list[dict[str, Any]] | None = None
+    release_notes: str | None = Field(default=None, max_length=2000)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+    def changes(self) -> dict[str, Any]:
+        values = dict(self.values)
+        for key in (
+            "stage", "system_contract", "task_template", "input_mapping", "output_schema",
+            "negative_constraints", "model_family_overrides", "validation_fixtures", "release_notes",
+        ):
+            value = getattr(self, key)
+            if value is not None:
+                values[key] = value
+        return values
+
+
 class ResourceImpact(BaseModel):
     affected_bindings: int = 0
     affected_profiles: int = 0
@@ -135,4 +176,30 @@ class PublishResponse(BaseModel):
 class CertificationRequest(NonblankReasonRequest):
     profile_version_id: str
     connection_id: str
-    level: str
+    level: Literal["connection", "contract", "live"]
+    user_scope: str | None = Field(default=None, max_length=120)
+    recipe_version_id: str | None = None
+    chapter_id: str | None = Field(default=None, max_length=120)
+    run_id: str | None = Field(default=None, max_length=120)
+    selected_shot_ids: list[str] = Field(default_factory=list, max_length=100)
+    budget_ceiling_rmb: Decimal | None = Field(default=None, ge=0, decimal_places=4)
+    retry_policy: str | None = Field(default=None, max_length=80)
+    storage_policy: str | None = Field(default=None, max_length=120)
+    real_cost_acknowledged: bool = False
+
+    @model_validator(mode="after")
+    def require_live_authorization(self):
+        if self.level != "live":
+            return self
+        required = (
+            "user_scope", "recipe_version_id", "chapter_id", "run_id",
+            "budget_ceiling_rmb", "retry_policy", "storage_policy",
+        )
+        missing = [field for field in required if getattr(self, field) in (None, "")]
+        if not self.selected_shot_ids:
+            missing.append("selected_shot_ids")
+        if not self.real_cost_acknowledged:
+            missing.append("real_cost_acknowledged")
+        if missing:
+            raise ValueError(f"live certification requires: {', '.join(missing)}")
+        return self
