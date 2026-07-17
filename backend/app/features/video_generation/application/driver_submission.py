@@ -7,6 +7,7 @@ from typing import Any
 
 from app.features.model_drivers.public import (
     DriverError,
+    DriverUnavailableError,
     VideoCommand,
     build_builtin_driver_registry,
     execute_generation,
@@ -29,6 +30,16 @@ def _references(content: list[dict[str, Any]]) -> tuple[tuple[str, ...], tuple[s
         if isinstance(url, str) and url:
             values[item_type].append(url)
     return tuple(values["image_url"]), tuple(values["video_url"]), tuple(values["audio_url"])
+
+
+def has_video_generation_driver(generation_context: Any) -> bool:
+    if generation_context is None:
+        return False
+    try:
+        build_builtin_driver_registry().require(generation_context.driver_context.driver_key)
+    except DriverUnavailableError:
+        return False
+    return True
 
 
 async def submit_bound_video_task(
@@ -57,4 +68,4 @@ async def submit_bound_video_task(
     return SubmittedVideoTask(submission.provider_task_id)
 
 
-__all__ = ["SubmittedVideoTask", "submit_bound_video_task"]
+__all__ = ["SubmittedVideoTask", "has_video_generation_driver", "submit_bound_video_task"]

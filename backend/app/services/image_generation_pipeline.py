@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional
 
 from fastapi import HTTPException
 
+from app.core.dev_generation import is_dev_mode
 from app.features.model_config.public import ModelBindingError, resolve_generation_context
 from app.features.model_drivers import public as driver_kernel
 
@@ -133,7 +134,8 @@ async def call_image_generation_provider(
                 db, user_id=user_id, stage="image", explicit_config_id=config_id,
             )
         except ModelBindingError as error:
-            raise HTTPException(status_code=422, detail=str(error)) from error
+            if not is_dev_mode():
+                raise HTTPException(status_code=422, detail=str(error)) from error
     if generation_context is not None:
         driver = generation_context.driver_context
         prepared_prompt = (

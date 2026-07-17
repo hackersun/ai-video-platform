@@ -365,6 +365,44 @@ async def test_workflow_tts_submitter_executes_selected_non_ark_driver_context(
     assert captured["speech"].params == {"speed": 1.2}
 
 
+def test_non_ark_bound_video_driver_is_supported_at_the_endpoint_gate() -> None:
+    from app.features.video_generation.application.driver_submission import has_video_generation_driver
+
+    context = SimpleNamespace(driver_context=SimpleNamespace(driver_key="dashscope_video_v1"))
+
+    assert has_video_generation_driver(context) is True
+    assert has_video_generation_driver(None) is False
+
+
+@pytest.mark.asyncio
+async def test_asset_generation_routes_through_binding_aware_image_submitter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import asset_generation_service
+
+    service = asset_generation_service.AssetGenerationService(db=object(), user_id="asset-user")
+    service.image_service = object()
+    service.provider_name = "minimax"
+    service.model_id = "image-01"
+    captured = {}
+
+    async def submit(_service, **kwargs):
+        captured.update(kwargs)
+        return {"image_urls": ["https://example.test/asset.png"]}
+
+    async def persist(url, **_kwargs):
+        return url
+
+    monkeypatch.setattr(asset_generation_service, "call_image_generation_provider", submit)
+    monkeypatch.setattr(asset_generation_service, "persist_remote_media_url", persist)
+
+    assert await service._generate_asset_image_url(
+        "asset prompt", size="2K", aspect_ratio="1:1", prefix="asset",
+    ) == "https://example.test/asset.png"
+    assert captured["db"] is service.db
+    assert captured["user_id"] == "asset-user"
+
+
 @pytest.mark.asyncio
 async def test_video_production_resolution_does_not_bypass_failed_binding_safety(
     monkeypatch: pytest.MonkeyPatch,

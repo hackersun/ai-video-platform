@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Protocol, TypeAlias
 
-from app.features.model_config.domain import ModelProfileContract
-
 
 @dataclass(frozen=True)
 class TextCommand:
@@ -65,7 +63,7 @@ Command: TypeAlias = TextCommand | ImageCommand | SpeechCommand | VideoCommand |
 
 @dataclass(frozen=True)
 class DriverContext:
-    profile: ModelProfileContract
+    profile: Any
     driver_key: str
     connection_id: str | None
     secrets: Mapping[str, str] = field(default_factory=dict, repr=False)

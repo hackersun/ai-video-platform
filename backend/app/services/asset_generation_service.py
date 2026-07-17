@@ -842,7 +842,7 @@ class AssetGenerationService:
             num=1,
             size=size,
             aspect_ratio=aspect_ratio,
-            openai_size="1024x1024",
+            openai_size="1024x1024", db=self.db, user_id=self.user_id,
         )
         image_urls = extract_image_urls_from_provider_result(result)
         if reservation_id:

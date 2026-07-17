@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 from sqlalchemy import desc, select
 
-from app.features.model_config.domain import ModelProfileContract
 from app.features.model_drivers.domain import DriverContext, DriverTestResult
 from app.features.model_drivers.executor import execute_connection_test
 from app.features.model_drivers.registry import build_builtin_driver_registry
@@ -71,7 +71,7 @@ def build_connection_context(
     connection_params: Mapping[str, Any] | None = None,
 ) -> DriverContext:
     driver = build_builtin_driver_registry().require(driver_key)
-    profile = ModelProfileContract(
+    profile = SimpleNamespace(
         profile_version_id=f"config-test:{provider_id}:{model_id}", provider_id=provider_id,
         api_model_id=model_id, driver_key=driver_key, capabilities=driver.capabilities,
         input_contract={}, output_contract={}, parameter_schema={}, default_params={}, limits={}, pricing={},

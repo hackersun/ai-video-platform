@@ -81,7 +81,7 @@ from app.features.video_generation.public import (
     resolve_video_model_config,
     resolve_video_seed,
     sync_video_job_and_shot,
-    submit_bound_video_task,
+    has_video_generation_driver, submit_bound_video_task,
     video_model_metadata,
     video_prompt_parameters,
 )
@@ -488,7 +488,7 @@ async def generate_video(
             or video_model_config.get("provider_id")
             or video_model_config.get("provider_name")
         )
-        real_adapter_available = video_model_config.get("provider_id") in ARK_VIDEO_PROVIDER_IDS
+        real_adapter_available = video_model_config.get("provider_id") in ARK_VIDEO_PROVIDER_IDS or has_video_generation_driver(video_model_config.get("generation_context"))
         if not real_adapter_available and not is_dev_mode():
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
