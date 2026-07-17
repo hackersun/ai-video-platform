@@ -66,3 +66,19 @@ mode, and a transient test-only Fernet key.
   `recipe_repository.py`; `recipe_versions.py` now consumes repository DTOs only.
 - Follow-up focused isolated gate: `120 passed in 10.86s` across recipe, binding,
   strategy, security, schema, migration, version-guard, and workflow-media tests.
+
+## Final review-fix follow-up
+
+- Recipes now invoke the shared Task 8 scope policy with
+  `allow_unscoped_user=True`; a bridge test locks the compatibility case where a
+  user-owned binding has `scope_id == ""`.
+- `require_recipe_user_id()` is owned by the model-config domain and is called by
+  create, update, and publish before any recipe lookup or binding/connection
+  validation. The direct creation-service test proves a blank user cannot reach
+  the binding loader.
+- Final short isolated gate: `46 passed in 5.83s`. The original 44 assertions
+  became 46 after the two review regressions were added.
+- Final expanded isolated gate: `186 passed` as `164 + 6 + 16` in separate fresh
+  `/tmp` databases. The three processes are required because legacy strategy and
+  security fixtures each seed the same non-idempotent global LLM providers; a
+  combined process deterministically hits that pre-existing unique constraint.

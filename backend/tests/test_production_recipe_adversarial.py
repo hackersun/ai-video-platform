@@ -150,6 +150,20 @@ def test_recipe_scope_safety_is_shared_with_task8_resolution() -> None:
     assert "is_safe_model_binding_scope" in inspect.getsource(binding_module)
 
 
+def test_recipe_accepts_task8_compatible_unscoped_user_binding() -> None:
+    bindings = valid_bindings()
+    bindings["video"] = replace(bindings["video"], scope_id="")
+
+    assert validate_recipe(
+        recipe_spec(
+            audio_mode="video_native_audio",
+            subtitle_source="video_dialogue_timeline",
+        ),
+        bindings,
+        user_id="user-1",
+    ) == []
+
+
 def test_recipe_version_application_does_not_construct_or_return_orm_models() -> None:
     source = Path("app/features/model_config/recipe_versions.py").read_text()
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from app.core.database import Base
 from app.db_migrations.model_center import add_model_center_links_async
+from app.features.model_config import recipe_versions as recipe_version_service
 from app.features.model_config.public import (
     RecipeBindingContract,
     RecipeValidationError,
@@ -288,6 +289,29 @@ async def seed_recipe_bindings(db: AsyncSession, *, separate_tts: bool = False) 
     if separate_tts:
         await seed_binding(db, "audio")
     await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_create_recipe_rejects_blank_user_before_loading_bindings(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def binding_lookup_must_not_run(*args: object, **kwargs: object) -> None:
+        raise AssertionError("blank user must fail before binding lookup")
+
+    monkeypatch.setattr(
+        recipe_version_service,
+        "load_recipe_binding_contracts",
+        binding_lookup_must_not_run,
+    )
+
+    with pytest.raises(ValueError, match="recipe_user_required"):
+        await create_recipe_version(
+            db_session,
+            user_id="",
+            recipe_key="anime.tenant-leak",
+            name="Tenant Leak",
+            spec=recipe_spec(),
+        )
 
 
 @pytest.mark.asyncio

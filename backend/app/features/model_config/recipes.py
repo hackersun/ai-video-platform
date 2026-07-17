@@ -164,6 +164,7 @@ def _binding_errors(
             scope_type=binding.scope_type,
             owner_id=binding.owner_id,
             scope_id=binding.scope_id,
+            allow_unscoped_user=True,
         )
         if not safe_scope:
             errors.append(RecipeError(

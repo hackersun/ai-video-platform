@@ -6,6 +6,7 @@ from typing import Any, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.features.model_config.domain import require_recipe_user_id
 from app.features.model_config.recipes import (
     RecipeValidationError,
     recipe_binding_references,
@@ -41,6 +42,7 @@ async def create_recipe_version(
     name: str,
     spec: Mapping[str, Any],
 ) -> RecipeVersionRecord:
+    user_id = require_recipe_user_id(user_id)
     await _validate_persisted_spec(db, user_id=user_id, spec=spec)
     return await create_recipe_record(
         db,
@@ -60,6 +62,7 @@ async def update_recipe_version(
     name: str | None = None,
     spec: Mapping[str, Any] | None = None,
 ) -> RecipeVersionRecord:
+    user_id = require_recipe_user_id(user_id)
     recipe = await load_recipe_version(db, recipe_version_id)
     if recipe is None or recipe.user_id != user_id:
         raise ValueError("recipe_version_not_found")
@@ -94,6 +97,7 @@ async def update_recipe_version(
 async def publish_recipe_version(
     db: AsyncSession, *, recipe_version_id: str, user_id: str
 ) -> RecipeVersionRecord:
+    user_id = require_recipe_user_id(user_id)
     recipe = await load_recipe_version(db, recipe_version_id)
     if recipe is None or recipe.user_id != user_id:
         raise ValueError("recipe_version_not_found")

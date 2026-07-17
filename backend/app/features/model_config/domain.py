@@ -89,6 +89,12 @@ def is_safe_model_binding_scope(
     return scope_type in {BindingScope.PROJECT.value, BindingScope.SERIES.value} and bool(scope_id)
 
 
+def require_recipe_user_id(user_id: str) -> str:
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise ValueError("recipe_user_required")
+    return user_id
+
+
 CAPABILITY_ALIASES: dict[str, ModelCapability] = {
     "chat": "text_generation",
     "completion": "text_generation",
@@ -166,4 +172,5 @@ __all__ = [
     "is_trusted_system_binding",
     "is_safe_model_binding_scope",
     "normalize_capabilities",
+    "require_recipe_user_id",
 ]
