@@ -91,10 +91,21 @@ class ConnectionMetadataUpdateRequest(RevisionedUpdateRequest):
         unsupported = set(value) - allowed
         if unsupported:
             raise ValueError(f"unsupported connection metadata: {', '.join(sorted(unsupported))}")
-        serialized = str(value).lower()
-        if any(marker in serialized for marker in ("api_key", "api_secret", "authorization", "token")):
+        if _contains_credential_field(value):
             raise ValueError("connection metadata must not contain credentials")
         return value
+
+
+def _contains_credential_field(value: Any) -> bool:
+    credential_markers = ("apikey", "apisecret", "authorization", "token", "password", "secret", "credential", "header")
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            normalized = "".join(character for character in str(key).lower() if character.isalnum())
+            if any(marker in normalized for marker in credential_markers) or _contains_credential_field(nested):
+                return True
+    if isinstance(value, list):
+        return any(_contains_credential_field(item) for item in value)
+    return False
 
 
 class ConnectionSecretReplacementRequest(NonblankReasonRequest):
@@ -247,7 +258,9 @@ class LatestCertificationItem(BaseModel):
 class RecipeStageBindingResolutionItem(BaseModel):
     stage: str
     binding_id: str
-    profile: EffectiveBindingProfileItem
+    resolution_status: Literal["resolved", "unavailable"]
+    error_code: str | None = None
+    profile: EffectiveBindingProfileItem | None = None
     prompt_profile: SelectedPromptProfileItem | None
     latest_certification: LatestCertificationItem
 

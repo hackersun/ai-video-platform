@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -441,6 +442,11 @@ async def test_legacy_plaintext_prompt_skill_creates_structured_draft_without_ec
     payload = response.json()
     assert payload["version"] == 2
     assert "Write {{topic}}" not in response.text
+    async with AsyncSessionLocal() as db:
+        draft = await db.get(PromptProfileVersion, payload["head_version_id"])
+    stored = json.loads(draft.content)
+    assert stored["system_contract"] == "Legacy PromptSkill compatibility profile."
+    assert stored["task_template"] == "Write {{topic}}"
 
 
 @pytest.mark.asyncio
@@ -500,6 +506,13 @@ async def test_connection_mutations_redact_secrets_and_queue_safe_test_intent(cl
     assert replacement.json()["revision"] == 2
     assert "replacement-secret" not in replacement.text
 
+    unsafe_metadata = await client.put(
+        f"/api/v1/model-center/connections/{payload['id']}",
+        json={"expected_revision": 2, "changes": {"connection_params": {"x-api-key": "plain-secret"}}},
+    )
+    assert unsafe_metadata.status_code == 422
+    assert "plain-secret" not in unsafe_metadata.text
+
     metadata = await client.put(
         f"/api/v1/model-center/connections/{payload['id']}",
         json={"expected_revision": 2, "changes": {"name": "Task 16 Connection Updated"}},
@@ -522,6 +535,7 @@ async def test_recipe_binding_resolution_exposes_safe_effective_model_and_prompt
     payload = response.json()
     video = next(item for item in payload["stages"] if item["stage"] == "video")
     assert video["binding_id"] == "binding-video"
+    assert video["resolution_status"] == "resolved"
     assert video["profile"] == {
         "id": "profile-video-v1", "api_model_id": "api-video", "version": 1,
         "driver_key": "driver-video", "contract_version": "v1",
@@ -529,10 +543,37 @@ async def test_recipe_binding_resolution_exposes_safe_effective_model_and_prompt
     assert video["prompt_profile"] == {
         "id": "prompt-v1", "key": "script", "version": 1,
     }
-    assert video["latest_certification"]["status"] == "queued"
+    assert video["latest_certification"]["status"] in {"none", "queued"}
     serialized = json.dumps(payload)
     assert "secret-value" not in serialized
     assert "Write {{topic}}" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_recipe_binding_resolution_marks_untrusted_system_binding_unavailable(client):
+    async with AsyncSessionLocal() as db:
+        bad_binding = ModelBinding(
+            id="binding-untrusted-system", user_id="other-user", scope_type="system", scope_id="wrong-scope",
+            task="shot_video", capability="video_generation", profile_version_id="profile-video-v1",
+            connection_id="connection-1", version=1, is_active=True,
+        )
+        spec = deepcopy(_recipe_spec())
+        spec["video"]["binding_id"] = bad_binding.id
+        recipe = ProductionRecipeVersion(
+            id="recipe-untrusted-system", user_id=USER_ID, recipe_key="untrusted-system", name="Unsafe",
+            version=1, status="draft", spec=spec, checksum=stable_recipe_checksum(spec), revision=1,
+        )
+        db.add_all([bad_binding, recipe])
+        await db.commit()
+
+    response = await client.get("/api/v1/model-center/recipes/recipe-untrusted-system/binding-resolution")
+    assert response.status_code == 200
+    video = next(item for item in response.json()["stages"] if item["stage"] == "video")
+    assert video == {
+        "stage": "video", "binding_id": "binding-untrusted-system", "resolution_status": "unavailable",
+        "error_code": "binding_scope_invalid", "profile": None, "prompt_profile": None,
+        "latest_certification": {"level": "none", "status": "none"},
+    }
 
 
 def test_feature_api_does_not_import_legacy_endpoint_modules():

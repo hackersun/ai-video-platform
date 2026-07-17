@@ -73,11 +73,38 @@ def test_model_center_migration_adds_connection_revision_to_existing_table(tmp_p
     engine = create_engine(f"sqlite:///{database_path}")
     with engine.begin() as connection:
         connection.execute(text("CREATE TABLE model_connections (id VARCHAR(36) PRIMARY KEY)"))
+        connection.execute(text("INSERT INTO model_connections (id) VALUES ('legacy-connection')"))
 
     add_model_center_links(engine)
     add_model_center_links(engine)
 
     assert "revision" in _column_names(engine, "model_connections")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT revision FROM model_connections WHERE id = 'legacy-connection'")).scalar_one() == 1
+    engine.dispose()
+
+
+def test_model_center_async_migration_adds_connection_revision_to_existing_table(tmp_path):
+    from app.db_migrations.model_center import add_model_center_links_async
+
+    database_path = tmp_path / "legacy-connection-async.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE model_connections (id VARCHAR(36) PRIMARY KEY)"))
+        connection.execute(text("INSERT INTO model_connections (id) VALUES ('legacy-connection')"))
+    engine.dispose()
+
+    async def migrate() -> None:
+        async_engine = create_async_engine(f"sqlite+aiosqlite:///{database_path}")
+        try:
+            await add_model_center_links_async(async_engine)
+        finally:
+            await async_engine.dispose()
+
+    asyncio.run(migrate())
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT revision FROM model_connections WHERE id = 'legacy-connection'")).scalar_one() == 1
     engine.dispose()
 
 
