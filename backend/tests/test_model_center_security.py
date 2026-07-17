@@ -149,6 +149,63 @@ def test_validation_errors_preserve_non_secret_input_structure() -> None:
     assert error["input"] == invalid_temperature
 
 
+def test_whole_body_validation_redacts_nested_credentials_by_key() -> None:
+    from main import app
+
+    invalid_body = [
+        {"api_key": {"nested": ["whole-key-marker"]}},
+        {"api_secret": [{"nested": "whole-secret-marker"}]},
+        {"safe": {"nested": ["visible-marker"]}},
+    ]
+    with TestClient(app) as client:
+        response = client.post("/api/v1/llm/configs", json=invalid_body)
+
+    assert response.status_code == 422
+    payload = response.json()
+    serialized = json.dumps(payload, ensure_ascii=False)
+    assert "whole-key-marker" not in serialized
+    assert "whole-secret-marker" not in serialized
+    assert payload["detail"][0]["input"] == [
+        {"api_key": "<redacted>"},
+        {"api_secret": "<redacted>"},
+        {"safe": {"nested": ["visible-marker"]}},
+    ]
+
+
+def test_validation_redaction_recurses_through_ctx_without_sensitive_loc() -> None:
+    from app.core.validation_errors import redact_credential_validation_errors
+
+    errors = [
+        {
+            "type": "value_error",
+            "loc": ("body",),
+            "msg": "invalid body",
+            "input": {"safe": ["visible-input"]},
+            "ctx": {
+                "nested": [
+                    {"api_key": ["ctx-key-marker"]},
+                    {"api_secret": {"deep": "ctx-secret-marker"}},
+                    {"safe": "visible-ctx"},
+                ]
+            },
+        }
+    ]
+
+    sanitized = redact_credential_validation_errors(errors)
+
+    serialized = json.dumps(sanitized, ensure_ascii=False)
+    assert "ctx-key-marker" not in serialized
+    assert "ctx-secret-marker" not in serialized
+    assert sanitized[0]["input"] == {"safe": ["visible-input"]}
+    assert sanitized[0]["ctx"] == {
+        "nested": [
+            {"api_key": "<redacted>"},
+            {"api_secret": "<redacted>"},
+            {"safe": "visible-ctx"},
+        ]
+    }
+
+
 def test_config_routes_encrypt_and_do_not_return_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
     init_db()
