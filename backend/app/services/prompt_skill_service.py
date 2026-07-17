@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
 from app.features.prompt_profiles.public import (
     apply_version_to_legacy_skill,
+    disable_legacy_prompt_profile,
     edit_legacy_prompt_profile,
     effective_legacy_prompt_skill_payloads,
     ensure_legacy_prompt_profile,
@@ -22,6 +23,7 @@ from app.features.prompt_profiles.public import (
     publish_prompt_profile_version,
     render_legacy_prompt_skill as render_prompt_skill,
     rendered_legacy_prompt_skill_entry as rendered_prompt_skill_entry,
+    retire_legacy_prompt_profile,
 )
 from app.models import PromptSkill
 from app.services.default_prompt_skills import ensure_standard_prompt_skills
@@ -182,6 +184,7 @@ async def _deactivate_user_task_skills(
     for skill in result.scalars().all():
         if exclude_skill_id and skill.id == exclude_skill_id:
             continue
+        await disable_legacy_prompt_profile(db, skill)
         skill.is_active = False
 
 
@@ -216,11 +219,18 @@ async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, dat
     if skill.is_builtin:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能不能直接修改，请先克隆")
     was_active = bool(skill.is_active)
+    if was_active and data.get("task", skill.task) != skill.task:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="已发布 Prompt 技能不能修改任务，请先克隆为新任务技能",
+        )
     draft = await edit_legacy_prompt_profile(db, skill, data)
     next_task = data.get("task", skill.task)
     if data.get("is_active") is True:
         await _deactivate_user_task_skills(db, user_id, next_task, exclude_skill_id=skill.id)
     keep_published_state = was_active and data.get("is_active", True) is True
+    if was_active and data.get("is_active") is False:
+        draft = await disable_legacy_prompt_profile(db, skill)
     if not keep_published_state:
         for key in (
             "name", "description", "task", "stage", "content", "variables",
@@ -258,6 +268,7 @@ async def delete_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> 
             detail="当前激活 Prompt 技能正在使用，不能删除。请先激活其它版本后再删除",
         )
     deleted_id = skill.id
+    await retire_legacy_prompt_profile(db, skill)
     await db.delete(skill)
     await db.commit()
     return {"deleted": True, "id": deleted_id}
@@ -296,6 +307,7 @@ async def bulk_prompt_skill_action(db: AsyncSession, user_id: str, data: Dict[st
             if skill.is_active:
                 skipped.append({"id": skill.id, "reason": "激活中的 Prompt 技能正在使用", "repair_action": "先激活同任务下其它版本后再删除"})
                 continue
+            await retire_legacy_prompt_profile(db, skill)
             await db.delete(skill)
             deleted_count += 1
             continue
@@ -321,6 +333,7 @@ async def bulk_prompt_skill_action(db: AsyncSession, user_id: str, data: Dict[st
 
 async def clone_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
     source = await get_prompt_skill(db, user_id, skill_id)
+    version = (await latest_versions_for_skills(db, [source])).get(source.id)
     return await create_prompt_skill(
         db,
         user_id,
@@ -328,9 +341,9 @@ async def clone_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> D
             "name": f"{source.name} 副本",
             "description": source.description,
             "task": source.task,
-            "stage": source.stage,
-            "content": source.content,
-            "variables": source.variables or {},
+            "stage": version.stage if version else source.stage,
+            "content": version.content if version else source.content,
+            "variables": version.variables if version else (source.variables or {}),
             "priority": source.priority,
             "inject_position": source.inject_position,
             "is_active": False,
@@ -560,12 +573,20 @@ async def preview_prompt_skills(
     elif skill_ids:
         skills = await _skills_by_ids(db, user_id, skill_ids)
         selected_skills = [skill for skill in skills if skill.task == task]
-        entries = [rendered_prompt_skill_entry(skill, context) for skill in selected_skills]
+        versions = await latest_versions_for_skills(db, selected_skills)
+        entries = [
+            rendered_prompt_skill_entry(skill, context, versions.get(skill.id))
+            for skill in selected_skills
+        ]
     else:
         skills_result = await list_prompt_skills(db, user_id, task=task, active=True)
         skills = [await get_prompt_skill(db, user_id, item["id"]) for item in skills_result["items"]]
         selected_skills = [skill for skill in skills if skill.task == task and skill.is_active]
-        entries = [rendered_prompt_skill_entry(skill, context) for skill in selected_skills]
+        versions = await latest_versions_for_skills(db, selected_skills)
+        entries = [
+            rendered_prompt_skill_entry(skill, context, versions.get(skill.id))
+            for skill in selected_skills
+        ]
     entries = [entry for entry in entries if entry["content"]]
     blocks = [entry["content"] for entry in entries]
     prompt = compose_generation_prompt(task=task, extra_context=context or {}, skill_blocks=blocks)

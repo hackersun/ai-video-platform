@@ -8,6 +8,7 @@ from sqlalchemy import (
     inspect,
     Integer,
     JSON,
+    select,
     String,
     Text,
     UniqueConstraint,
@@ -35,6 +36,23 @@ def _reject_published_update(_mapper, _connection, target) -> None:
 def _reject_published_delete(_mapper, _connection, target) -> None:
     if _persisted_status(target) == "published":
         raise ValueError("published prompt version is append-only; deletion is not allowed")
+
+
+def _has_published_history(connection, profile_id: str) -> bool:
+    statement = (
+        select(PromptProfileVersion.id)
+        .where(
+            PromptProfileVersion.profile_id == profile_id,
+            PromptProfileVersion.status == "published",
+        )
+        .limit(1)
+    )
+    return connection.execute(statement).first() is not None
+
+
+def _reject_profile_with_published_history(_mapper, connection, target) -> None:
+    if _has_published_history(connection, target.id):
+        raise ValueError("prompt profile with published history is immutable")
 
 
 class PromptProfile(Base):
@@ -76,3 +94,5 @@ class PromptProfileVersion(Base):
 
 event.listen(PromptProfileVersion, "before_update", _reject_published_update)
 event.listen(PromptProfileVersion, "before_delete", _reject_published_delete)
+event.listen(PromptProfile, "before_update", _reject_profile_with_published_history)
+event.listen(PromptProfile, "before_delete", _reject_profile_with_published_history)

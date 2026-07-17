@@ -14,6 +14,10 @@ from app.features.prompt_profiles.repository import get_profile_version
 FORBIDDEN_EVIDENCE_KEYS = frozenset({
     "api_key", "api_secret", "authorization", "credential", "prompt", "text", "output",
 })
+ALLOWED_METRIC_KEYS = frozenset({
+    "score", "parse_ok", "latency_ms", "garbage_rate", "parse_success_rate",
+    "fixture_count", "passed", "failed", "nested",
+})
 _DROP = object()
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 _SAFE_HASH = re.compile(r"^[a-f0-9]{64}$")
@@ -27,7 +31,11 @@ def _sanitize_metric(value: Any) -> Any:
     if isinstance(value, Mapping):
         sanitized = {}
         for key, item in value.items():
-            if str(key).lower() in FORBIDDEN_EVIDENCE_KEYS:
+            normalized_key = str(key).lower()
+            if (
+                normalized_key in FORBIDDEN_EVIDENCE_KEYS
+                or normalized_key not in ALLOWED_METRIC_KEYS
+            ):
                 continue
             safe_item = _sanitize_metric(item)
             if safe_item is not _DROP:
@@ -74,5 +82,8 @@ async def record_prompt_evaluation(
     if version.status != "draft":
         raise ValueError("evaluation evidence can only be recorded on a draft")
     version.evaluation = sanitize_evaluation_evidence(evidence)
+    from app.features.prompt_profiles.versioning import canonical_prompt_version_checksum
+
+    version.checksum = canonical_prompt_version_checksum(version)
     await db.flush()
     return version

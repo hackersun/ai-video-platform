@@ -21,6 +21,8 @@ MODEL_CENTER_TRIGGER_NAMES = {
     "trg_production_recipe_versions_published_delete",
     "trg_prompt_profile_versions_published_update",
     "trg_prompt_profile_versions_published_delete",
+    "trg_prompt_profiles_published_history_update",
+    "trg_prompt_profiles_published_history_delete",
 }
 
 
@@ -135,6 +137,19 @@ def test_postgresql_trigger_ddl_is_idempotent_and_schema_qualified():
     assert "IF NOT EXISTS" in ddl
     assert "BEFORE UPDATE OR DELETE" in ddl
     assert "OLD.status = 'published'" in ddl
+
+
+def test_postgresql_prompt_profile_parent_guard_is_schema_qualified():
+    from app.db_migrations.model_center import _postgresql_prompt_profile_parent_guard_statements
+
+    ddl = "\n".join(str(statement) for statement in (
+        _postgresql_prompt_profile_parent_guard_statements("tenant_schema")
+    ))
+
+    assert 'ON "tenant_schema"."prompt_profiles"' in ddl
+    assert 'FROM "tenant_schema"."prompt_profile_versions"' in ddl
+    assert "version.status = 'published'" in ddl
+    assert "version.profile_id = OLD.id" in ddl
 
 
 def _coordinate_initial_column_reads(monkeypatch, migration) -> None:

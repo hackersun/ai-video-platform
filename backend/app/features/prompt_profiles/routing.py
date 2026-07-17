@@ -20,6 +20,18 @@ ROUTING_PRECEDENCE = {
 }
 
 
+def safe_routing_metadata(
+    routing: dict[str, Any], reason: str, output_contract: str | None,
+) -> dict[str, Any]:
+    return {
+        "selector_kind": reason.removesuffix("_match"),
+        "provider_scoped": bool(_patterns(routing.get("provider_filter"))),
+        "model_scoped": bool(_patterns(routing.get("model_filter"))),
+        "capability_scoped": bool(_patterns(routing.get("capability_filter"))),
+        "output_contract_scoped": bool(output_contract),
+    }
+
+
 def _patterns(value: Any) -> tuple[str, ...]:
     if isinstance(value, str):
         return (value,) if value.strip() else ()
@@ -74,8 +86,13 @@ async def _ranked_candidates(
     for profile, version in await published_prompt_candidates(
         db, user_id=query.user_id, task=query.task, stage=query.stage,
     ):
+        routing = dict(version.routing or {})
+        if version.output_contract:
+            routing["output_contract"] = version.output_contract
+        else:
+            routing.pop("output_contract", None)
         match = routing_specificity(
-            version.routing or {}, provider_id=query.provider_id, model_id=query.model_id,
+            routing, provider_id=query.provider_id, model_id=query.model_id,
             capabilities=set(query.capabilities), output_contract=query.output_contract,
         )
         if match is None:
@@ -112,5 +129,7 @@ async def select_prompt_profile(
         prompt=render_prompt(version.content, version.variables or {}, route.context),
         routing_reason=reason, fallback_reason=fallback,
         output_contract=version.output_contract, checksum=version.checksum,
-        routing=version.routing or {},
+        routing=safe_routing_metadata(
+            version.routing or {}, reason, version.output_contract,
+        ),
     )

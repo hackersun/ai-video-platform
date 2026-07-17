@@ -352,6 +352,29 @@ def test_published_prompt_skill_edit_projects_draft_until_activate(client: TestC
     assert updated_response.json()["version"] == 2
     assert updated_response.json()["content"] == "draft body"
 
+    item_response = client.get(
+        "/api/v1/prompt-skills", params={"task": "script_generation"},
+        headers=_auth_headers(user_id),
+    )
+    assert item_response.status_code == 200
+    item = next(row for row in item_response.json()["items"] if row["id"] == created["id"])
+    assert item["content"] == "draft body"
+
+    preview_response = client.post(
+        "/api/v1/prompt-skills/preview",
+        json={"task": "script_generation", "skill_ids": [created["id"]], "context": {}},
+        headers=_auth_headers(user_id),
+    )
+    assert preview_response.status_code == 200
+    assert "draft body" in preview_response.json()["prompt"]
+
+    clone_response = client.post(
+        f"/api/v1/prompt-skills/{created['id']}/clone", headers=_auth_headers(user_id),
+    )
+    assert clone_response.status_code == 201
+    assert clone_response.json()["content"] == "draft body"
+    assert clone_response.json()["is_active"] is False
+
     async def stored_state():
         from app.models import PromptProfileVersion
 
@@ -375,6 +398,83 @@ def test_published_prompt_skill_edit_projects_draft_until_activate(client: TestC
     assert activated.status_code == 200
     assert activated.json()["version"] == 2
     assert activated.json()["content"] == "draft body"
+
+
+def test_active_prompt_skill_task_change_requires_clone(client: TestClient) -> None:
+    user_id = f"prompt-skill-task-user-{uuid4()}"
+    created = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "不可改任务", "task": "script_generation", "stage": "analysis",
+            "content": "published body", "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    ).json()
+
+    response = client.put(
+        f"/api/v1/prompt-skills/{created['id']}",
+        json={
+            "name": "不可改任务", "task": "shot_video", "stage": "analysis",
+            "content": "published body", "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    assert "克隆" in response.json()["detail"]
+
+
+def test_replaced_and_deleted_legacy_skill_cannot_remain_canonical_candidate(
+    client: TestClient,
+) -> None:
+    user_id = f"prompt-skill-retire-user-{uuid4()}"
+    first = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "旧精确模板", "task": "script_generation", "stage": "analysis",
+            "content": "old exact", "variables": {
+                "routing": {"model_filter": ["MiniMax-M3"]},
+            }, "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    ).json()
+    second = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "新通用模板", "task": "script_generation", "stage": "analysis",
+            "content": "new generic", "variables": {}, "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    ).json()
+
+    async def route_and_state():
+        from app.models import PromptProfileVersion
+        from app.services.prompt_template_router import select_prompt_skill_for_model
+
+        async with AsyncSessionLocal() as db:
+            route = await select_prompt_skill_for_model(
+                db, user_id=user_id, task="script_generation", provider_name="minimax",
+                model_id="MiniMax-M3", model_capabilities=["text_generation"],
+            )
+            first_skill = await db.get(PromptSkill, first["id"])
+            versions = list((await db.execute(
+                select(PromptProfileVersion)
+                .where(PromptProfileVersion.profile_id == first["id"])
+                .order_by(PromptProfileVersion.version)
+            )).scalars())
+            return route, getattr(first_skill, "prompt_profile_version_id", None), versions[-1]
+
+    route, linked_version_id, latest = asyncio.run(route_and_state())
+    assert route["prompt_skill_name"] == second["name"]
+    assert latest.status == "disabled"
+    assert linked_version_id == latest.id
+
+    deleted = client.delete(
+        f"/api/v1/prompt-skills/{first['id']}", headers=_auth_headers(user_id),
+    )
+    assert deleted.status_code == 200
+    route_after, _, _ = asyncio.run(route_and_state())
+    assert route_after["prompt_skill_name"] == second["name"]
 
 
 def test_prompt_skill_delete_only_allows_inactive_user_skill(client: TestClient) -> None:

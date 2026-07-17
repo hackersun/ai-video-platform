@@ -44,13 +44,26 @@ async def published_prompt_candidates(
         .join(PromptProfileVersion, PromptProfileVersion.profile_id == PromptProfile.id)
         .where(
             PromptProfile.task == task,
-            PromptProfileVersion.status == "published",
             or_(PromptProfile.user_id == user_id, PromptProfile.user_id == "system"),
         )
+        .order_by(PromptProfile.id, PromptProfileVersion.version.desc())
     )
-    if stage:
-        query = query.where(or_(PromptProfileVersion.stage == stage, PromptProfileVersion.stage.is_(None)))
-    return list((await db.execute(query)).all())
+    grouped: dict[str, list[tuple[PromptProfile, PromptProfileVersion]]] = {}
+    for profile, version in (await db.execute(query)).all():
+        grouped.setdefault(profile.id, []).append((profile, version))
+    candidates = []
+    for rows in grouped.values():
+        effective_head = next((row for row in rows if row[1].status != "draft"), None)
+        if effective_head and effective_head[1].status == "disabled":
+            continue
+        published = next((
+            row for row in rows
+            if row[1].status == "published"
+            and (not stage or row[1].stage in {stage, None})
+        ), None)
+        if published:
+            candidates.append(published)
+    return candidates
 
 
 def legacy_prompt_skill_payload(
@@ -66,6 +79,7 @@ def legacy_prompt_skill_payload(
         "version": version.version if version else skill.version,
         "is_active": bool(skill.is_active), "is_builtin": bool(skill.is_builtin),
         "tags": skill.tags or [],
+        "prompt_profile_version_id": version.id if version else skill.prompt_profile_version_id,
         "created_at": skill.created_at.isoformat() if skill.created_at else None,
         "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
     }
@@ -90,18 +104,27 @@ def effective_legacy_prompt_skill_payloads(
 async def latest_versions_for_skills(
     db: AsyncSession, skills: Iterable[PromptSkill],
 ) -> dict[str, PromptProfileVersion]:
-    profile_ids = [skill.id for skill in skills]
+    skill_rows = list(skills)
+    profile_ids = [skill.id for skill in skill_rows]
     if not profile_ids:
         return {}
+    linked_ids = [skill.prompt_profile_version_id for skill in skill_rows if skill.prompt_profile_version_id]
     rows = list((await db.execute(
         select(PromptProfileVersion)
-        .where(PromptProfileVersion.profile_id.in_(profile_ids))
+        .where(or_(
+            PromptProfileVersion.profile_id.in_(profile_ids),
+            PromptProfileVersion.id.in_(linked_ids) if linked_ids else False,
+        ))
         .order_by(PromptProfileVersion.profile_id, PromptProfileVersion.version.desc())
     )).scalars())
-    latest: dict[str, PromptProfileVersion] = {}
+    by_id = {row.id: row for row in rows}
+    latest_by_profile: dict[str, PromptProfileVersion] = {}
     for row in rows:
-        latest.setdefault(row.profile_id, row)
-    return latest
+        latest_by_profile.setdefault(row.profile_id, row)
+    return {
+        skill.id: by_id.get(skill.prompt_profile_version_id) or latest_by_profile[skill.id]
+        for skill in skill_rows if skill.id in latest_by_profile
+    }
 
 
 def render_legacy_prompt_skill(skill: PromptSkill, context: dict[str, Any] | None = None) -> str:
@@ -110,8 +133,14 @@ def render_legacy_prompt_skill(skill: PromptSkill, context: dict[str, Any] | Non
 
 def rendered_legacy_prompt_skill_entry(
     skill: PromptSkill, context: dict[str, Any] | None = None,
+    version: PromptProfileVersion | None = None,
 ) -> dict[str, Any]:
     return {
-        "id": skill.id, "name": skill.name, "task": skill.task, "stage": skill.stage,
-        "version": skill.version or 1, "content": render_legacy_prompt_skill(skill, context),
+        "id": skill.id, "name": skill.name, "task": skill.task,
+        "stage": version.stage if version else skill.stage,
+        "version": version.version if version else (skill.version or 1),
+        "content": render_prompt(
+            version.content if version else (skill.content or ""),
+            version.variables if version else (skill.variables or {}), context or {},
+        ),
     }

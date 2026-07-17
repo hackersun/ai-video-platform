@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.features.prompt_profiles.public import (
     PromptSelection,
     render_legacy_prompt_skill,
+    safe_routing_metadata,
     select_prompt_profile,
 )
 from app.models import PromptSkill
@@ -178,15 +179,18 @@ def _legacy_route_payload(
 ) -> dict[str, Any]:
     _, _, skill, reason, fallback = best
     block = render_legacy_prompt_skill(skill, context)
+    routing = _routing(skill)
     return {
-        **base, "output_contract": base["output_contract"] or _routing(skill).get("output_contract"),
+        **base, "output_contract": base["output_contract"] or routing.get("output_contract"),
         "used_prompt_skill": bool(block),
         "prompt": _compose_prompt(block, internal_prompt.strip(), titles).strip(),
         "skill_blocks": [block] if block else [],
         "prompt_skills": [{
             "id": skill.id, "name": skill.name, "task": skill.task,
             "stage": skill.stage, "version": skill.version or 1,
-            "routing": _routing(skill),
+            "routing": safe_routing_metadata(
+                routing, reason, routing.get("output_contract"),
+            ),
         }],
         "prompt_skill_count": 1 if block else 0, "prompt_skill_id": skill.id,
         "prompt_skill_name": skill.name, "prompt_skill_version": skill.version or 1,

@@ -14,25 +14,31 @@ from app.features.prompt_profiles.repository import (
 )
 from app.features.prompt_profiles.routing import (
     routing_specificity,
+    safe_routing_metadata,
     select_prompt_profile,
     select_prompt_profile_version,
 )
 from app.features.prompt_profiles.versioning import (
     apply_version_to_legacy_skill,
+    canonical_prompt_version_checksum,
+    disable_legacy_prompt_profile,
     edit_legacy_prompt_profile,
     edit_prompt_profile,
     ensure_legacy_prompt_profile,
     publish_prompt_profile_version,
+    retire_legacy_prompt_profile,
 )
 
 __all__ = [
     "PromptRouteQuery", "PromptSelection", "apply_version_to_legacy_skill",
     "build_evaluation_evidence",
+    "canonical_prompt_version_checksum", "disable_legacy_prompt_profile",
     "edit_legacy_prompt_profile", "edit_prompt_profile",
     "effective_legacy_prompt_skill_payloads", "ensure_legacy_prompt_profile",
     "latest_versions_for_skills", "legacy_prompt_skill_payload",
     "publish_prompt_profile_version", "record_prompt_evaluation",
+    "retire_legacy_prompt_profile",
     "render_legacy_prompt_skill", "rendered_legacy_prompt_skill_entry",
     "render_prompt", "routing_specificity", "select_prompt_profile",
-    "select_prompt_profile_version",
+    "safe_routing_metadata", "select_prompt_profile_version",
 ]

@@ -41,12 +41,15 @@ def _profile(*, user_id: str, key: str, task: str):
     )
 
 
-def _version(profile_id: str, *, version: int, content: str, routing: dict, status: str):
+def _version(
+    profile_id: str, *, version: int, content: str, routing: dict, status: str,
+    output_contract: str = "json_array",
+):
     from app.models import PromptProfileVersion
 
     return PromptProfileVersion(
         id=str(uuid4()), profile_id=profile_id, version=version, stage="analysis",
-        content=content, variables={}, routing=routing, output_contract="json_array",
+        content=content, variables={}, routing=routing, output_contract=output_contract,
         evaluation={}, status=status, checksum=_checksum(content),
     )
 
@@ -54,10 +57,12 @@ def _version(profile_id: str, *, version: int, content: str, routing: dict, stat
 async def _seed_version(
     db: AsyncSession, *, user_id: str, key: str, task: str, routing: dict,
     content: str | None = None, version: int = 1, status: str = "published",
+    output_contract: str = "json_array",
 ):
     profile = _profile(user_id=user_id, key=key, task=task)
     row = _version(
         profile.id, version=version, content=content or key, routing=routing, status=status,
+        output_contract=output_contract,
     )
     db.add_all((profile, row))
     await db.commit()
@@ -117,6 +122,40 @@ async def test_published_prompt_rows_reject_update_and_delete(tmp_path) -> None:
             await db.commit()
 
 
+@pytest.mark.asyncio
+async def test_profile_identity_with_published_history_is_immutable_but_draft_only_is_editable(
+    tmp_path,
+) -> None:
+    async with _isolated_session(tmp_path) as db:
+        published_profile, _ = await _seed_version(
+            db, user_id="user-1", key="published", task="script_generation", routing={},
+        )
+        draft_profile, _ = await _seed_version(
+            db, user_id="user-1", key="draft", task="script_generation", routing={},
+            status="draft",
+        )
+        profile_type = type(published_profile)
+        published_profile_id = published_profile.id
+        draft_profile_id = draft_profile.id
+
+        published_profile.task = "shot_video"
+        with pytest.raises(ValueError, match="published history"):
+            await db.commit()
+        await db.rollback()
+
+        published_profile = await db.get(profile_type, published_profile_id)
+        await db.delete(published_profile)
+        with pytest.raises(ValueError, match="published history"):
+            await db.commit()
+        await db.rollback()
+
+        draft_profile = await db.get(profile_type, draft_profile_id)
+        draft_profile.name = "Draft renamed"
+        await db.commit()
+        await db.delete(draft_profile)
+        await db.commit()
+
+
 @pytest.mark.parametrize("operation", ["update", "delete"])
 def test_published_prompt_rows_reject_direct_database_mutation(tmp_path, operation) -> None:
     from app.db_migrations.model_center import add_model_center_links
@@ -144,6 +183,40 @@ def test_published_prompt_rows_reject_direct_database_mutation(tmp_path, operati
     )
 
     with pytest.raises(DBAPIError, match="append-only"):
+        with engine.begin() as connection:
+            connection.execute(statement)
+    engine.dispose()
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_profile_parent_rejects_direct_mutation_when_published_history_exists(
+    tmp_path, operation,
+) -> None:
+    from app.db_migrations.model_center import add_model_center_links
+    from app.db_migrations.runner import register_production_models
+    from app.models import PromptProfile, PromptProfileVersion
+
+    engine = create_engine(f"sqlite:///{tmp_path / f'parent-guard-{operation}.db'}")
+    register_production_models()
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(PromptProfile(
+            id="profile-1", user_id="user-1", key="guard", name="Guard",
+            task="script_generation",
+        ))
+        db.add(PromptProfileVersion(
+            id="version-1", profile_id="profile-1", version=1, content="immutable",
+            variables={}, routing={}, evaluation={}, status="published", checksum="a" * 64,
+        ))
+        db.commit()
+    add_model_center_links(engine)
+    statement = (
+        text("UPDATE prompt_profiles SET task = 'shot_video' WHERE id = 'profile-1'")
+        if operation == "update"
+        else text("DELETE FROM prompt_profiles WHERE id = 'profile-1'")
+    )
+
+    with pytest.raises(DBAPIError, match="published history"):
         with engine.begin() as connection:
             connection.execute(statement)
     engine.dispose()
@@ -205,6 +278,30 @@ async def test_prompt_routing_uses_explicit_specificity_precedence(tmp_path) -> 
 
 
 @pytest.mark.asyncio
+async def test_prompt_routing_uses_canonical_output_contract_column(tmp_path) -> None:
+    from app.features.prompt_profiles.public import select_prompt_profile_version
+
+    async with _isolated_session(tmp_path) as db:
+        await _seed_version(
+            db, user_id="user-1", key="exact.plain", task="script_generation",
+            routing={"model_filter": ["MiniMax-M3"], "output_contract": "json_array"},
+            output_contract="plain_text",
+        )
+        _, generic_json = await _seed_version(
+            db, user_id="user-1", key="generic.json", task="script_generation",
+            routing={}, output_contract="json_array",
+        )
+
+        selected = await select_prompt_profile_version(
+            db, user_id="user-1", task="script_generation", provider_id="minimax",
+            model_id="MiniMax-M3", capabilities={"text_generation"},
+            output_contract="json_array",
+        )
+
+        assert selected.id == generic_json.id
+
+
+@pytest.mark.asyncio
 async def test_prompt_routing_tie_break_is_deterministic(tmp_path) -> None:
     from app.features.prompt_profiles.public import select_prompt_profile_version
 
@@ -244,6 +341,7 @@ async def test_evaluation_evidence_persists_hashes_without_prompts_or_secrets(tm
             output="private model output", metrics={
                 "score": 0.95, "api_key": "secret-key",
                 "model_note": "private prompt body",
+                "private prompt body": 1,
                 "nested": {"authorization": "Bearer secret", "parse_ok": True},
             },
         )
@@ -257,4 +355,32 @@ async def test_evaluation_evidence_persists_hashes_without_prompts_or_secrets(tm
         assert "secret-key" not in serialized
         assert "Bearer secret" not in serialized
         assert "model_note" not in recorded.evaluation["metrics"]
+        assert "private prompt body" not in recorded.evaluation["metrics"]
         assert recorded.evaluation["metrics"]["nested"] == {"parse_ok": True}
+
+
+@pytest.mark.asyncio
+async def test_publish_rejects_stale_checksum_and_accepts_recomputed_checksum(tmp_path) -> None:
+    from app.features.prompt_profiles.public import (
+        canonical_prompt_version_checksum,
+        publish_prompt_profile_version,
+    )
+
+    async with _isolated_session(tmp_path) as db:
+        _, draft = await _seed_version(
+            db, user_id="user-1", key="script.checksum", task="script_generation",
+            routing={}, status="draft",
+        )
+        draft_type = type(draft)
+        draft_id = draft.id
+        draft.checksum = "0" * 64
+        await db.flush()
+
+        with pytest.raises(ValueError, match="checksum"):
+            await publish_prompt_profile_version(db, draft.id)
+        await db.rollback()
+
+        draft = await db.get(draft_type, draft_id)
+        draft.checksum = canonical_prompt_version_checksum(draft)
+        published = await publish_prompt_profile_version(db, draft.id)
+        assert published.status == "published"

@@ -44,6 +44,23 @@ def _sqlite_trigger_statements(tables: tuple[str, ...]):
     return tuple(statements)
 
 
+def _sqlite_prompt_profile_parent_guard_statements():
+    return tuple(
+        text(
+            f"""CREATE TRIGGER IF NOT EXISTS trg_prompt_profiles_published_history_{operation}
+            BEFORE {operation.upper()} ON prompt_profiles
+            FOR EACH ROW WHEN EXISTS (
+                SELECT 1 FROM prompt_profile_versions AS version
+                WHERE version.profile_id = OLD.id AND version.status = 'published'
+            )
+            BEGIN
+                SELECT RAISE(ABORT, 'prompt profile has published history');
+            END"""
+        )
+        for operation in ("update", "delete")
+    )
+
+
 def _postgresql_trigger_statements(schema_name: str, tables: tuple[str, ...]):
     schema = _quote_postgresql_identifier(schema_name)
     function_name = f'{schema}."model_center_reject_published_mutation"'
@@ -88,18 +105,70 @@ def _postgresql_trigger_statements(schema_name: str, tables: tuple[str, ...]):
     return tuple(statements)
 
 
+def _postgresql_prompt_profile_parent_guard_statements(schema_name: str):
+    schema = _quote_postgresql_identifier(schema_name)
+    function_name = f'{schema}."model_center_reject_prompt_profile_history_mutation"'
+    profile_table = f'{schema}."prompt_profiles"'
+    version_table = f'{schema}."prompt_profile_versions"'
+    trigger_name = "trg_prompt_profiles_published_history_guard"
+    return (
+        text(
+            f"""CREATE OR REPLACE FUNCTION {function_name}()
+            RETURNS trigger LANGUAGE plpgsql AS $model_center$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM {version_table} AS version
+                    WHERE version.profile_id = OLD.id AND version.status = 'published'
+                ) THEN
+                    RAISE EXCEPTION 'prompt profile has published history' USING ERRCODE = '55000';
+                END IF;
+                IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+                RETURN NEW;
+            END;
+            $model_center$"""
+        ),
+        text(
+            f"""DO $model_center$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger AS trigger
+                    JOIN pg_class AS target ON target.oid = trigger.tgrelid
+                    JOIN pg_namespace AS namespace ON namespace.oid = target.relnamespace
+                    WHERE trigger.tgname = {_postgresql_literal(trigger_name)}
+                      AND target.relname = 'prompt_profiles'
+                      AND namespace.nspname = {_postgresql_literal(schema_name)}
+                ) THEN
+                    CREATE TRIGGER {_quote_postgresql_identifier(trigger_name)}
+                    BEFORE UPDATE OR DELETE ON {profile_table}
+                    FOR EACH ROW EXECUTE FUNCTION {function_name}();
+                END IF;
+            END;
+            $model_center$"""
+        ),
+    )
+
+
 def _version_guard_statements(bind):
     dialect_name = bind.dialect.name
     inspector = inspect(bind)
     if dialect_name == "sqlite":
         tables = tuple(table for table in _VERSION_TABLES if inspector.has_table(table))
-        return _sqlite_trigger_statements(tables)
+        statements = list(_sqlite_trigger_statements(tables))
+        if inspector.has_table("prompt_profiles") and inspector.has_table("prompt_profile_versions"):
+            statements.extend(_sqlite_prompt_profile_parent_guard_statements())
+        return tuple(statements)
     if dialect_name == "postgresql":
         schema_name = inspector.default_schema_name or "public"
         tables = tuple(
             table for table in _VERSION_TABLES if inspector.has_table(table, schema=schema_name)
         )
-        return _postgresql_trigger_statements(schema_name, tables) if tables else ()
+        statements = list(_postgresql_trigger_statements(schema_name, tables)) if tables else []
+        if (
+            inspector.has_table("prompt_profiles", schema=schema_name)
+            and inspector.has_table("prompt_profile_versions", schema=schema_name)
+        ):
+            statements.extend(_postgresql_prompt_profile_parent_guard_statements(schema_name))
+        return tuple(statements)
     return ()
 
 

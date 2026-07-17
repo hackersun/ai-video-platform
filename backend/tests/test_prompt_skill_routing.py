@@ -220,7 +220,10 @@ def test_prompt_router_prefers_published_canonical_profile_for_exact_model() -> 
             db.add(PromptProfileVersion(
                 id=str(uuid4()), profile_id=profile_id, version=1, stage="analysis",
                 content="canonical-{entity_types}", variables={},
-                routing={"model_filter": ["MiniMax-M3"]},
+                routing={
+                    "model_filter": ["MiniMax-M3"], "api_key": "secret-value",
+                    "private prompt body": 1,
+                },
                 output_contract="json_array", evaluation={}, status="published",
                 checksum="a" * 64,
             ))
@@ -238,5 +241,13 @@ def test_prompt_router_prefers_published_canonical_profile_for_exact_model() -> 
     assert result["prompt"].startswith("【模型适配提示词模板】\ncanonical-character")
     assert result["prompt_profile_version_id"]
     assert result["routing_reason"] == "exact_model_match"
+    assert result["prompt_skills"][0]["routing"] == {
+        "selector_kind": "exact_model",
+        "provider_scoped": False,
+        "model_scoped": True,
+        "capability_scoped": False,
+        "output_contract_scoped": True,
+    }
     evidence = {key: value for key, value in result.items() if key != "prompt"}
     assert "private source body" not in str(evidence)
+    assert "secret-value" not in str(evidence)
