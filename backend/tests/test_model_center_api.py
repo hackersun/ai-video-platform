@@ -576,6 +576,31 @@ async def test_recipe_binding_resolution_marks_untrusted_system_binding_unavaila
     }
 
 
+@pytest.mark.asyncio
+async def test_recipe_binding_resolution_marks_stage_mismatch_unavailable(client):
+    async with AsyncSessionLocal() as db:
+        bad_binding = ModelBinding(
+            id="binding-stage-mismatch", user_id=USER_ID, scope_type="user", scope_id=USER_ID,
+            task="shot_image", capability="image_generation", profile_version_id="profile-video-v1",
+            connection_id="connection-1", version=1, is_active=True,
+        )
+        spec = deepcopy(_recipe_spec())
+        spec["video"]["binding_id"] = bad_binding.id
+        recipe = ProductionRecipeVersion(
+            id="recipe-stage-mismatch", user_id=USER_ID, recipe_key="stage-mismatch", name="Unsafe",
+            version=1, status="draft", spec=spec, checksum=stable_recipe_checksum(spec), revision=1,
+        )
+        db.add_all([bad_binding, recipe])
+        await db.commit()
+
+    response = await client.get("/api/v1/model-center/recipes/recipe-stage-mismatch/binding-resolution")
+    assert response.status_code == 200
+    video = next(item for item in response.json()["stages"] if item["stage"] == "video")
+    assert video["resolution_status"] == "unavailable"
+    assert video["error_code"] == "binding_task_mismatch"
+    assert video["profile"] is None
+
+
 def test_feature_api_does_not_import_legacy_endpoint_modules():
     api_root = Path(__file__).parents[1] / "app/features/model_config/api"
     violations = []

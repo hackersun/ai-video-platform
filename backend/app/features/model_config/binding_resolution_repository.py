@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.model_config.recipes import recipe_binding_references
+from app.features.model_config.recipes import STAGE_REQUIREMENTS, recipe_binding_references
 from app.features.model_config.domain import (
     VERIFIED_CONNECTION_STATUSES,
     is_safe_model_binding_scope,
@@ -56,7 +56,7 @@ async def _stage_resolution(
     binding, profile, connection, model, provider = pair
     error = _binding_safety_error(
         binding=binding, profile=profile, connection=connection, model=model,
-        provider=provider, user_id=user_id,
+        provider=provider, user_id=user_id, stage=stage,
     )
     if error:
         return _unavailable(stage, binding_id, error)
@@ -83,7 +83,12 @@ def _unavailable(stage: str, binding_id: str, error_code: str) -> dict:
     }
 
 
-def _binding_safety_error(*, binding, profile, connection, model, provider, user_id: str) -> str | None:
+def _binding_safety_error(*, binding, profile, connection, model, provider, user_id: str, stage: str) -> str | None:
+    expected_task, expected_capability = STAGE_REQUIREMENTS[stage]
+    if binding.task != expected_task:
+        return "binding_task_mismatch"
+    if binding.capability != expected_capability:
+        return "binding_capability_mismatch"
     trusted_system = is_trusted_system_binding(
         scope_type=binding.scope_type, owner_id=binding.user_id, scope_id=binding.scope_id,
     )
