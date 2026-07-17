@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from fastapi import HTTPException
 
@@ -117,8 +117,32 @@ async def call_image_generation_provider(
     aspect_ratio: str = "1:1",
     openai_size: str = "1024x1024",
     minimax_response_format: str = "base64",
+    generation_context: Any = None,
+    generation_params: Mapping[str, Any] | None = None,
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
+    if generation_context is not None:
+        from app.features.model_drivers.public import (
+            ImageCommand,
+            build_builtin_driver_registry,
+            execute_generation,
+        )
+
+        driver = generation_context.driver_context
+        prepared_prompt = (
+            _compact_minimax_image_prompt(prompt)
+            if driver.driver_key == "minimax_image_v1" else prompt
+        )
+        params = {**dict(generation_context.profile.default_params), **dict(generation_params or {})}
+        submission = await execute_generation(
+            build_builtin_driver_registry(),
+            ImageCommand(prompt=prepared_prompt, params=params),
+            driver,
+        )
+        output = dict(submission.output)
+        if submission.provider_task_id and not output.get("task_id"):
+            output["task_id"] = submission.provider_task_id
+        return output
     provider = (provider_name or "").lower()
     prepared_prompt = _prepare_image_prompt_for_provider(provider, prompt)
     if provider in ("volcano", "volcano_agent_plan"):

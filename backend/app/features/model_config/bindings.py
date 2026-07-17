@@ -182,6 +182,7 @@ async def hydrate_resolved_binding(
     return ResolvedModelBinding(
         task=task, capability=capability, profile=profile, connection_id=connection.id,
         binding_version=binding.version, source_scope=binding.scope_type,
+        route_policy=binding.route_policy,
     )
 
 def _select_legacy_row(

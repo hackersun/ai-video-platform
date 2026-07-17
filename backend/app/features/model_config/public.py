@@ -40,6 +40,11 @@ from app.features.model_config.bindings import (
 from app.features.model_config.legacy_strategy_projection import (
     resolve_legacy_strategy_config_id,
 )
+from app.features.model_config.generation_context import (
+    GenerationContext,
+    resolve_generation_context,
+    resolve_legacy_model_projection,
+)
 from app.features.model_config.recipes import (
     ProductionRecipeSpec,
     RecipeError,
@@ -58,6 +63,7 @@ __all__ = [
     "BindingScope",
     "CatalogComparison",
     "CertificationLevel",
+    "GenerationContext",
     "ModelBindingError",
     "ModelConfigurationError",
     "ModelCapability",
@@ -84,6 +90,8 @@ __all__ = [
     "project_legacy_llm_models",
     "publish_recipe_version",
     "resolve_profile_version",
+    "resolve_generation_context",
+    "resolve_legacy_model_projection",
     "resolve_model_binding",
     "resolve_legacy_strategy_config_id",
     "resolve_retry_binding",

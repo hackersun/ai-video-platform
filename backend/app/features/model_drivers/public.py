@@ -42,6 +42,9 @@ from app.features.model_drivers.adapters.legacy_volcano_config import (
     test_volcano_agent_plan_api,
     test_volcano_api,
 )
+from app.features.model_drivers.text_execution import (
+    create_text_generation_service_from_context,
+)
 
 __all__ = [
     "CapabilityDriver", "Command", "DriverCapabilityError", "DriverContext", "DriverContextError", "DriverError",
@@ -51,6 +54,7 @@ __all__ = [
     "DriverUnavailableError", "ImageCommand", "MediaRenderCommand", "ObjectStorageCommand",
     "SpeechCommand", "TextCommand", "VideoCommand",
     "build_builtin_driver_registry", "describe_installed_drivers", "execute_connection_test", "execute_external_connection_test",
+    "create_text_generation_service_from_context",
     "execute_generation", "execute_llm_connection_test", "execute_poll",
     "resolve_published_driver_key", "select_llm_connection_driver_key",
     "test_minimax_api", "test_volcano_agent_plan_api", "test_volcano_api",

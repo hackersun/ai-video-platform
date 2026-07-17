@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import get_type_hints
 
@@ -11,7 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time_utils import utc_now
 from app.features.model_config import bindings as binding_module
 from app.features.model_config.public import (
+    GenerationContext,
     ModelBindingError,
+    resolve_generation_context,
     resolve_legacy_strategy_config_id,
     resolve_model_binding,
     resolve_retry_binding,
@@ -24,6 +27,30 @@ from tests.model_binding_test_support import (
     make_binding as _binding,
     seed_profile as _seed_profile,
 )
+
+
+def test_workflow_media_resolves_driver_from_binding_not_provider_name() -> None:
+    source = Path(
+        "app/features/workflow_media/application/prepare_separate_media.py"
+    ).read_text(encoding="utf-8")
+
+    assert 'provider_id == "volcano"' not in source
+    assert 'provider_id == "minimax"' not in source
+    assert "resolve_generation_context" in source
+
+
+def test_production_adapters_expose_binding_context_paths_and_keep_legacy_builders() -> None:
+    video_source = Path(
+        "app/features/video_generation/application/model_config.py"
+    ).read_text(encoding="utf-8")
+    image_source = Path("app/services/image_generation_pipeline.py").read_text(encoding="utf-8")
+    text_source = Path("app/features/model_drivers/text_execution.py").read_text(encoding="utf-8")
+
+    assert "resolve_generation_context" in video_source
+    assert "generation_context" in image_source
+    assert "execute_generation" in image_source
+    assert "resolve_generation_context" in text_source
+    assert "create_text_generation_service" in text_source
 
 
 @pytest.mark.asyncio
@@ -97,6 +124,131 @@ async def _seed_legacy_config(db: AsyncSession, *, config_id: str = "legacy-conf
     db.add_all([provider, model, config])
     await db.commit()
     return config
+
+
+@pytest.mark.asyncio
+async def test_generation_context_explicit_config_overrides_scoped_binding(
+    db_session: AsyncSession,
+) -> None:
+    profile, connection = await _seed_profile(db_session, "scoped-context")
+    db_session.add(_binding(
+        "scoped-context", profile, connection, scope_type="user", scope_id="user-1",
+    ))
+    provider = LLMProvider(id="legacy-volcano-provider", name="volcano", is_active=True)
+    model = LLMModel(
+        id="legacy-volcano-video", provider_id=provider.id, model_id="legacy-video-api",
+        model_name="Legacy Video", model_type="video", capabilities=["text-to-video"],
+        is_active=True,
+    )
+    config = LLMConfig(
+        id="explicit-video-config", user_id="user-1", model_id=model.id,
+        name="Explicit verified video", is_active=True, is_default=False,
+        test_status="success", tested_at=utc_now(),
+    )
+    config.set_api_key_encrypted("explicit-video-key")
+    db_session.add_all([provider, model, config])
+    await db_session.commit()
+
+    context = await resolve_generation_context(
+        db_session, user_id="user-1", stage="video", explicit_config_id=config.id,
+    )
+
+    assert isinstance(context, GenerationContext)
+    assert context.binding.source_scope == "request"
+    assert context.binding.binding_version == 0
+    assert context.driver_context.driver_key == "volcano_ark_video_v3"
+    assert context.driver_context.api_key == "explicit-video-key"
+    assert context.profile.api_model_id == "legacy-video-api"
+
+
+@pytest.mark.asyncio
+async def test_generation_context_uses_binding_driver_and_route_policy(
+    db_session: AsyncSession,
+) -> None:
+    profile, connection = await _seed_profile(db_session, "bound-context")
+    connection.set_api_key_encrypted("bound-video-key")
+    binding = _binding(
+        "bound-context", profile, connection, scope_type="user", scope_id="user-1",
+        route_policy="pre_submit_fallback",
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    context = await resolve_generation_context(
+        db_session, user_id="user-1", stage="video",
+    )
+
+    assert context.binding.profile.driver_key == "driver-bound-context"
+    assert context.driver_context.driver_key == "driver-bound-context"
+    assert context.driver_context.api_key == "bound-video-key"
+    assert context.route_policy == route_policy_for("pre_submit_fallback")
+
+
+@pytest.mark.asyncio
+async def test_recipe_stage_binding_preflight_rejects_wrong_task(
+    db_session: AsyncSession,
+) -> None:
+    profile, connection = await _seed_profile(db_session, "recipe-video")
+    binding = _binding(
+        "recipe-video", profile, connection, scope_type="user", scope_id="user-1",
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    with pytest.raises(ModelBindingError, match="binding_task_mismatch"):
+        await resolve_generation_context(
+            db_session,
+            user_id="user-1",
+            stage="audio",
+            recipe_spec={"audio": {"binding_id": binding.id}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_binding_driven_minimax_image_keeps_legacy_prompt_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.image_generation_pipeline import call_image_generation_provider
+
+    captured = {}
+
+    async def execute(_registry, command, _context):
+        captured["prompt"] = command.prompt
+        return SimpleNamespace(output={"image_urls": ["https://example.test/image.png"]}, provider_task_id=None)
+
+    monkeypatch.setattr("app.features.model_drivers.public.execute_generation", execute)
+    context = SimpleNamespace(
+        profile=SimpleNamespace(default_params={}),
+        driver_context=SimpleNamespace(driver_key="minimax_image_v1"),
+    )
+    prompt = "角色姓名：林青岚\n" + "剧情上下文：" + ("连续章节状态。" * 500)
+
+    await call_image_generation_provider(
+        object(), provider_name="volcano", model_id="ignored-by-binding",
+        prompt=prompt, generation_context=context,
+    )
+
+    assert len(captured["prompt"]) < 1500
+    assert "角色姓名：林青岚" in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_video_production_resolution_does_not_bypass_failed_binding_safety(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.video_generation.application import model_config
+
+    async def fail_closed(*_args, **_kwargs):
+        raise ModelBindingError("connection_not_verified")
+
+    async def forbidden_legacy_fallback(*_args, **_kwargs):
+        raise AssertionError("unsafe binding errors must not enter legacy fallback")
+
+    monkeypatch.setattr(model_config, "resolve_generation_context", fail_closed)
+    monkeypatch.setattr(model_config, "_legacy_video_model_config", forbidden_legacy_fallback)
+
+    with pytest.raises(model_config.VideoGenerationError, match="connection_not_verified"):
+        await model_config.resolve_video_model_config(object(), "user-1", None)
 
 
 @pytest.mark.asyncio

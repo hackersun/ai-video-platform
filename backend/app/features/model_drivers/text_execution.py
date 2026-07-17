@@ -5,12 +5,15 @@ from typing import Any, Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.features.model_config.public import ModelBindingError, resolve_generation_context
 from app.features.model_drivers.text_response import (
     extract_chat_content,
     normalize_provider_base_url,
     sanitize_chat_response,
     strip_thinking_blocks,
 )
+
+_LEGACY_BINDING_FALLBACK_ERRORS = {"legacy_config_not_verified", "model_binding_not_found"}
 
 class TextGenerationServiceAdapter:
     """Small compatibility layer for text-generation services.
@@ -257,11 +260,45 @@ def create_text_generation_service(
     )
 
 
+def create_text_generation_service_from_context(context: Any) -> Any:
+    """Build the existing text client from a binding-selected driver."""
+    driver = context.driver_context
+    if driver.driver_key == "minimax_text_v2":
+        provider_name = "minimax"
+    elif driver.driver_key == "legacy_text_v1":
+        provider_name = str(driver.connection_params.get("provider_name") or context.profile.provider_id)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"不支持的文本模型驱动: {driver.driver_key}",
+        )
+    return create_text_generation_service(driver.api_key, provider_name, driver.base_url)
+
+
 async def get_user_text_generation_service(
     db: AsyncSession,
     user_id: str,
 ) -> Tuple[Any, str, str, Optional[str]]:
     """Return (service, provider_name, model_id, base_url) for the default text config."""
+    context = None
+    if isinstance(db, AsyncSession):
+        try:
+            context = await resolve_generation_context(db, user_id=user_id, stage="text")
+        except ModelBindingError as error:
+            if str(error) not in _LEGACY_BINDING_FALLBACK_ERRORS:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    if context is not None:
+        provider_name = str(
+            context.driver_context.connection_params.get("provider_name")
+            or context.profile.provider_id
+        )
+        return (
+            create_text_generation_service_from_context(context),
+            provider_name,
+            context.profile.api_model_id,
+            context.base_url,
+        )
+
     from app.core.api_key_utils import get_user_text_model_config
 
     api_key, provider_name, model_id, base_url = await get_user_text_model_config(db, user_id)
