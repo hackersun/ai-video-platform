@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 import json
+import math
 from typing import Any, Mapping
 
 from app.features.model_drivers.domain import (
@@ -223,6 +224,8 @@ def _sanitize_evidence(value: Any, secrets: Mapping[str, str]) -> Any:
         return sorted(items, key=_json_sort_key)
     if isinstance(value, str):
         return _sanitize_text(value, secrets)
+    if isinstance(value, float) and not math.isfinite(value):
+        return _nonfinite_marker(value)
     if value is None or isinstance(value, (bool, int, float)):
         return value
     return _sanitize_unknown(value, secrets)
@@ -234,19 +237,24 @@ def _sanitize_key(value: Any, secrets: Mapping[str, str]) -> str:
     elif value is None or isinstance(value, (bool, int, float)):
         rendered = str(value)
     else:
-        rendered = _safe_repr(value)
+        return _unsupported_marker(value, secrets)
     return _sanitize_text(rendered, secrets)
 
 
 def _sanitize_unknown(value: Any, secrets: Mapping[str, str]) -> str:
-    return _sanitize_text(_safe_repr(value), secrets)
+    return _unsupported_marker(value, secrets)
 
 
-def _safe_repr(value: Any) -> str:
-    try:
-        return repr(value)
-    except Exception:
-        return f"<{type(value).__name__}>"
+def _unsupported_marker(value: Any, secrets: Mapping[str, str]) -> str:
+    value_type = type(value)
+    qualified_type = f"{value_type.__module__}.{value_type.__qualname__}"
+    return f"<unsupported:{_sanitize_text(qualified_type, secrets)}>"
+
+
+def _nonfinite_marker(value: float) -> str:
+    if math.isnan(value):
+        return "<non-finite:nan>"
+    return "<non-finite:+inf>" if value > 0 else "<non-finite:-inf>"
 
 
 def _json_sort_key(value: Any) -> str:

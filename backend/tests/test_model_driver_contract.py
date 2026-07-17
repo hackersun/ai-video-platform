@@ -88,6 +88,23 @@ class SecretBearingObject:
         return "SecretBearingObject(top-secret)"
 
 
+class ChangingReprObject:
+    def __init__(self):
+        self.calls = 0
+
+    def __repr__(self):
+        self.calls += 1
+        return f"ChangingReprObject({self.calls}:top-secret)"
+
+
+SecretNamedObject = type("top-secret", (), {"__module__": __name__})
+
+
+def unsupported_marker(value):
+    qualified_type = f"{type(value).__module__}.{type(value).__qualname__}"
+    return f"<unsupported:{qualified_type.replace('top-secret', '***')}>"
+
+
 @pytest.mark.asyncio
 async def test_same_registry_executes_connection_test_and_completed_generation():
     registry = DriverRegistry([EchoTextDriver()])
@@ -163,12 +180,43 @@ async def test_connection_evidence_is_recursively_sanitized_and_json_safe():
         DriverRegistry([ComplexEvidenceDriver()]), "echo_text_v1", context()
     )
     evidence = result.sanitized_evidence
-    encoded = json.dumps(evidence, sort_keys=True)
+    encoded = json.dumps(evidence, sort_keys=True, allow_nan=False)
 
     assert "top-secret" not in encoded
     assert evidence["***-key"]["set"] == ["***", "safe"]
-    assert evidence["***-key"]["tuple"] == ["***", "SecretBearingObject(***)"]
-    assert evidence["***-key"]["custom"] == "SecretBearingObject(***)"
+    assert evidence["***-key"]["tuple"] == ["***", unsupported_marker(SecretBearingObject())]
+    assert evidence["***-key"]["custom"] == unsupported_marker(SecretBearingObject())
+
+
+@pytest.mark.asyncio
+async def test_unknown_objects_and_nonfinite_numbers_have_deterministic_strict_json_markers():
+    changing = ChangingReprObject()
+    default_object = object()
+    secret_named = SecretNamedObject()
+    raw_evidence = {
+        "changing": changing,
+        "default": default_object,
+        "typed_object": secret_named,
+        "nonfinite": [float("nan"), float("inf"), float("-inf")],
+        "finite": [0, -3, 1.5, True, None],
+    }
+
+    class DeterministicEvidenceDriver(EchoTextDriver):
+        async def test_connection(self, driver_context):
+            return DriverTestResult("connection_verified", "ok", raw_evidence)
+
+    registry = DriverRegistry([DeterministicEvidenceDriver()])
+    first = (await execute_connection_test(registry, "echo_text_v1", context())).sanitized_evidence
+    second = (await execute_connection_test(registry, "echo_text_v1", context())).sanitized_evidence
+
+    assert first == second
+    assert changing.calls == 0
+    assert first["changing"] == unsupported_marker(changing)
+    assert first["default"] == "<unsupported:builtins.object>"
+    assert first["typed_object"] == unsupported_marker(secret_named)
+    assert first["nonfinite"] == ["<non-finite:nan>", "<non-finite:+inf>", "<non-finite:-inf>"]
+    assert first["finite"] == [0, -3, 1.5, True, None]
+    json.dumps(first, sort_keys=True, allow_nan=False)
 
 
 @pytest.mark.asyncio
@@ -295,7 +343,7 @@ async def test_driver_exceptions_are_secret_safe_without_raw_cause(operation):
 
     error = raised.value
     formatted = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-    encoded_evidence = json.dumps(error.sanitized_evidence, sort_keys=True)
+    encoded_evidence = json.dumps(error.sanitized_evidence, sort_keys=True, allow_nan=False)
 
     assert "top-secret" not in str(error)
     assert "top-secret" not in repr(error)
@@ -304,5 +352,5 @@ async def test_driver_exceptions_are_secret_safe_without_raw_cause(operation):
     assert error.__cause__ is None
     provider_evidence = error.sanitized_evidence["provider_evidence"]["***-key"]
     assert provider_evidence["set"] == ["***", "safe"]
-    assert provider_evidence["tuple"] == ["***", "SecretBearingObject(***)"]
-    assert provider_evidence["custom"] == "SecretBearingObject(***)"
+    assert provider_evidence["tuple"] == ["***", unsupported_marker(SecretBearingObject())]
+    assert provider_evidence["custom"] == unsupported_marker(SecretBearingObject())
