@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
+import json
 from typing import Any, Mapping
 
 from app.features.model_drivers.domain import (
@@ -190,31 +191,66 @@ def _require_driver(registry: DriverRegistry, selected_key: str, context: Driver
 async def _execute_driver_operation(
     operation: str, call: Callable[[], Awaitable[Any]], context: DriverContext
 ) -> Any:
+    wrapped_error = None
     try:
         return await call()
     except Exception as error:
         evidence = _sanitize_evidence(
             {
                 "operation": operation,
-                "provider_error": str(error),
+                "provider_error_type": type(error).__name__,
                 "provider_evidence": getattr(error, "evidence", {}),
             },
             context.secrets,
         )
-        raise DriverExecutionError(operation, evidence) from error
+        wrapped_error = DriverExecutionError(operation, evidence)
+    raise wrapped_error from None
 
 
 def _sanitize_evidence(value: Any, secrets: Mapping[str, str]) -> Any:
     if isinstance(value, Mapping):
-        return {
-            str(key): "***" if _is_sensitive_key(key) else _sanitize_evidence(item, secrets)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
+        sanitized = {}
+        for key, item in value.items():
+            sanitized_key = _sanitize_key(key, secrets)
+            sanitized[sanitized_key] = (
+                "***" if _is_sensitive_key(sanitized_key) else _sanitize_evidence(item, secrets)
+            )
+        return sanitized
+    if isinstance(value, (list, tuple)):
         return [_sanitize_evidence(item, secrets) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_sanitize_evidence(item, secrets) for item in value)
-    return _sanitize_text(value, secrets) if isinstance(value, str) else value
+    if isinstance(value, (set, frozenset)):
+        items = [_sanitize_evidence(item, secrets) for item in value]
+        return sorted(items, key=_json_sort_key)
+    if isinstance(value, str):
+        return _sanitize_text(value, secrets)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _sanitize_unknown(value, secrets)
+
+
+def _sanitize_key(value: Any, secrets: Mapping[str, str]) -> str:
+    if isinstance(value, str):
+        rendered = value
+    elif value is None or isinstance(value, (bool, int, float)):
+        rendered = str(value)
+    else:
+        rendered = _safe_repr(value)
+    return _sanitize_text(rendered, secrets)
+
+
+def _sanitize_unknown(value: Any, secrets: Mapping[str, str]) -> str:
+    return _sanitize_text(_safe_repr(value), secrets)
+
+
+def _safe_repr(value: Any) -> str:
+    try:
+        return repr(value)
+    except Exception:
+        return f"<{type(value).__name__}>"
+
+
+def _json_sort_key(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _sanitize_text(value: str, secrets: Mapping[str, str]) -> str:
@@ -224,8 +260,8 @@ def _sanitize_text(value: str, secrets: Mapping[str, str]) -> str:
     return sanitized
 
 
-def _is_sensitive_key(key: object) -> bool:
-    normalized = str(key).lower().replace("-", "_")
+def _is_sensitive_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
     return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
 
 

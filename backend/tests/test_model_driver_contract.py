@@ -1,3 +1,6 @@
+import json
+import traceback
+
 import pytest
 
 from app.features.model_config import ModelProfileContract
@@ -80,6 +83,11 @@ class QueuedTextDriver(EchoTextDriver):
         return DriverSubmission(status="submitted", provider_task_id="provider-job-1", output={})
 
 
+class SecretBearingObject:
+    def __repr__(self):
+        return "SecretBearingObject(top-secret)"
+
+
 @pytest.mark.asyncio
 async def test_same_registry_executes_connection_test_and_completed_generation():
     registry = DriverRegistry([EchoTextDriver()])
@@ -133,6 +141,34 @@ async def test_connection_evidence_and_message_do_not_expose_decrypted_secret():
     assert "top-secret" not in result.message
     assert "top-secret" not in str(result.sanitized_evidence)
     assert result.sanitized_evidence == {"authorization": "***", "nested": {"token": "***"}}
+
+
+@pytest.mark.asyncio
+async def test_connection_evidence_is_recursively_sanitized_and_json_safe():
+    class ComplexEvidenceDriver(EchoTextDriver):
+        async def test_connection(self, driver_context):
+            return DriverTestResult(
+                status="connection_verified",
+                message="ok",
+                sanitized_evidence={
+                    "top-secret-key": {
+                        "set": {"safe", "top-secret"},
+                        "tuple": ("top-secret", SecretBearingObject()),
+                        "custom": SecretBearingObject(),
+                    },
+                },
+            )
+
+    result = await execute_connection_test(
+        DriverRegistry([ComplexEvidenceDriver()]), "echo_text_v1", context()
+    )
+    evidence = result.sanitized_evidence
+    encoded = json.dumps(evidence, sort_keys=True)
+
+    assert "top-secret" not in encoded
+    assert evidence["***-key"]["set"] == ["***", "safe"]
+    assert evidence["***-key"]["tuple"] == ["***", "SecretBearingObject(***)"]
+    assert evidence["***-key"]["custom"] == "SecretBearingObject(***)"
 
 
 @pytest.mark.asyncio
@@ -226,11 +262,17 @@ async def test_numeric_bounds_on_string_parameter_schema_fail_closed():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["connection", "generation", "poll"])
-async def test_driver_exceptions_are_secret_safe_and_preserve_cause(operation):
+async def test_driver_exceptions_are_secret_safe_without_raw_cause(operation):
     class ProviderError(RuntimeError):
         def __init__(self):
             super().__init__("provider returned top-secret")
-            self.evidence = {"nested": {"token": "top-secret"}}
+            self.evidence = {
+                "top-secret-key": {
+                    "set": {"safe", "top-secret"},
+                    "tuple": ("top-secret", SecretBearingObject()),
+                    "custom": SecretBearingObject(),
+                }
+            }
 
     class ExplodingDriver(EchoTextDriver):
         async def test_connection(self, driver_context):
@@ -252,8 +294,15 @@ async def test_driver_exceptions_are_secret_safe_and_preserve_cause(operation):
             await execute_poll(registry, "provider-job-1", context())
 
     error = raised.value
+    formatted = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+    encoded_evidence = json.dumps(error.sanitized_evidence, sort_keys=True)
+
     assert "top-secret" not in str(error)
     assert "top-secret" not in repr(error)
-    assert "top-secret" not in str(error.sanitized_evidence)
-    assert error.sanitized_evidence["provider_evidence"] == {"nested": {"token": "***"}}
-    assert isinstance(error.__cause__, ProviderError)
+    assert "top-secret" not in formatted
+    assert "top-secret" not in encoded_evidence
+    assert error.__cause__ is None
+    provider_evidence = error.sanitized_evidence["provider_evidence"]["***-key"]
+    assert provider_evidence["set"] == ["***", "safe"]
+    assert provider_evidence["tuple"] == ["***", "SecretBearingObject(***)"]
+    assert provider_evidence["custom"] == "SecretBearingObject(***)"
