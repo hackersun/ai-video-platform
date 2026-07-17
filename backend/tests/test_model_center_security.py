@@ -15,12 +15,16 @@ from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from sqlalchemy.engine import make_url
 
-_TEST_DATABASE_DIR = Path(tempfile.mkdtemp(prefix="model-center-security-", dir="/tmp")).resolve()
-_TEST_DATABASE_PATH = _TEST_DATABASE_DIR / "security.db"
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_TEST_DATABASE_PATH}"
-os.environ["E2E_REQUIRE_ISOLATED_DB"] = "true"
-os.environ["DEV_MODE"] = "true"
-os.environ["FERNET_KEY"] = Fernet.generate_key().decode()
+if "DATABASE_URL" not in os.environ:
+    test_database_dir = Path(
+        tempfile.mkdtemp(prefix="model-center-security-", dir="/tmp")
+    ).resolve()
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{test_database_dir / 'security.db'}"
+os.environ.setdefault("E2E_REQUIRE_ISOLATED_DB", "true")
+os.environ.setdefault("DEV_MODE", "true")
+os.environ.setdefault("FERNET_KEY", Fernet.generate_key().decode())
+
+_TEST_DATABASE_PATH = Path(make_url(os.environ["DATABASE_URL"]).database or "").resolve()
 
 from app.core import credential_encryption
 from app.core.database import AsyncSessionLocal, DATABASE_DIAGNOSTIC
