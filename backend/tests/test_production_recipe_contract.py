@@ -46,7 +46,7 @@ def recipe_spec(
     *,
     audio_mode: str = "video_native_audio",
     tts_binding_id: str | None = None,
-    subtitle_source: str | None = "script_dialogue",
+    subtitle_source: str | None = "video_dialogue_timeline",
     render_binding_id: str | None = "binding-render",
     storage_binding_id: str | None = "binding-storage",
 ) -> dict[str, Any]:
@@ -146,7 +146,11 @@ def test_separate_tts_recipe_requires_tts_subtitles_render_and_storage() -> None
 
 
 def test_every_referenced_binding_must_exist_and_match_stage_contract() -> None:
-    spec = recipe_spec(audio_mode="separate_tts", tts_binding_id="binding-audio")
+    spec = recipe_spec(
+        audio_mode="separate_tts",
+        tts_binding_id="binding-audio",
+        subtitle_source="tts_timeline",
+    )
     bindings = valid_bindings(native_audio=False, separate_tts=True)
     bindings.pop("binding-image")
     bindings["binding-video"] = replace(bindings["binding-video"], task="wrong_task")
@@ -306,7 +310,10 @@ async def test_draft_update_publish_and_next_version_are_deterministic(
         stable_recipe_checksum(spec),
     )
 
-    changed = {**spec, "subtitle": {"source": "script_dialogue", "language": "zh-CN"}}
+    changed = {
+        **spec,
+        "subtitle": {"source": "video_dialogue_timeline", "language": "zh-CN"},
+    }
     updated = await update_recipe_version(
         db_session, recipe_version_id=draft.id, user_id="user-1", spec=changed
     )
@@ -325,8 +332,8 @@ async def test_draft_update_publish_and_next_version_are_deterministic(
         spec=spec,
     )
 
-    await db_session.refresh(published)
-    assert (published.status, published.checksum) == ("published", original_checksum)
+    persisted = await db_session.get(ProductionRecipeVersion, published.id)
+    assert (persisted.status, persisted.checksum) == ("published", original_checksum)
     assert (next_draft.version, next_draft.status, next_draft.name) == (
         2,
         "draft",
@@ -381,7 +388,8 @@ async def test_published_recipe_rejects_orm_and_direct_sql_mutation(
     await db_session.commit()
     published_id = published.id
 
-    published.name = "mutated through ORM"
+    persisted = await db_session.get(ProductionRecipeVersion, published_id)
+    persisted.name = "mutated through ORM"
     with pytest.raises(ValueError, match="published version is append-only"):
         await db_session.commit()
     await db_session.rollback()

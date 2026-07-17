@@ -12,6 +12,7 @@ from app.features.model_config.domain import (
     ModelProfileContract,
     ResolvedModelBinding,
     SYSTEM_MODEL_BINDING_OWNER_ID,
+    is_safe_model_binding_scope,
     is_trusted_system_binding,
 )
 from app.features.model_config.repository import (
@@ -76,8 +77,13 @@ def _scope_matches(
     if scope in {"series", "project"}:
         return bool(expected) and binding.scope_id == expected
     if scope == "user":
-        return binding.scope_id in {"", user_id}
-    return scope == BindingScope.SYSTEM.value and is_trusted_system_binding(
+        return binding.user_id == user_id and is_safe_model_binding_scope(
+            scope_type=binding.scope_type,
+            owner_id=binding.user_id,
+            scope_id=binding.scope_id,
+            allow_unscoped_user=True,
+        )
+    return scope == BindingScope.SYSTEM.value and is_safe_model_binding_scope(
         scope_type=binding.scope_type,
         owner_id=binding.user_id,
         scope_id=binding.scope_id,

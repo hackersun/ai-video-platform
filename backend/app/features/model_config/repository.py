@@ -32,7 +32,6 @@ from app.models.model_center import (
     ModelProfile,
     ModelProfileVersion,
     ModelProvider,
-    ProductionRecipeVersion,
 )
 
 
@@ -411,55 +410,6 @@ async def list_product_catalog(db: AsyncSession, user_id: str) -> ProductCatalog
     return ProductCatalog(models=tuple(sorted(items.values(), key=lambda item: (item.provider_id, item.api_model_id))))
 
 
-async def load_recipe_binding_rows(
-    db: AsyncSession, binding_ids: set[str]
-) -> tuple[tuple, ...]:
-    if not binding_ids:
-        return ()
-    rows = await db.execute(
-        select(
-            ModelBinding, ModelProfileVersion, ModelConnection, ModelProfile, ModelProvider,
-        )
-        .outerjoin(
-            ModelProfileVersion,
-            ModelProfileVersion.id == ModelBinding.profile_version_id,
-        )
-        .outerjoin(ModelConnection, ModelConnection.id == ModelBinding.connection_id)
-        .outerjoin(ModelProfile, ModelProfile.id == ModelProfileVersion.model_id)
-        .outerjoin(ModelProvider, ModelProvider.id == ModelProfile.provider_id)
-        .where(ModelBinding.id.in_(binding_ids))
-    )
-    return tuple(rows.all())
-
-
-async def load_recipe_version(
-    db: AsyncSession, recipe_version_id: str
-) -> ProductionRecipeVersion | None:
-    return await db.get(ProductionRecipeVersion, recipe_version_id)
-
-
-async def load_latest_recipe_version(
-    db: AsyncSession, *, user_id: str, recipe_key: str
-) -> ProductionRecipeVersion | None:
-    return await db.scalar(
-        select(ProductionRecipeVersion)
-        .where(
-            ProductionRecipeVersion.user_id == user_id,
-            ProductionRecipeVersion.recipe_key == recipe_key,
-        )
-        .order_by(desc(ProductionRecipeVersion.version), desc(ProductionRecipeVersion.id))
-        .limit(1)
-    )
-
-
-async def persist_recipe_version(
-    db: AsyncSession, recipe_version: ProductionRecipeVersion
-) -> ProductionRecipeVersion:
-    db.add(recipe_version)
-    await db.flush()
-    return recipe_version
-
-
 __all__ = [
     "BindingCandidate",
     "ConnectionRecord",
@@ -472,12 +422,8 @@ __all__ = [
     "load_connection",
     "load_legacy_config_rows",
     "load_profile_owner_state",
-    "load_latest_recipe_version",
-    "load_recipe_binding_rows",
-    "load_recipe_version",
     "load_verified_connections",
     "list_product_catalog",
     "load_published_profile",
-    "persist_recipe_version",
     "resolve_profile_version",
 ]

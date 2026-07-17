@@ -9,7 +9,8 @@ from typing import Any, Mapping, TypedDict
 
 from app.features.model_config.domain import (
     VERIFIED_CONNECTION_STATUSES,
-    is_trusted_system_binding,
+    RecipeBindingContract,
+    is_safe_model_binding_scope,
 )
 
 
@@ -38,24 +39,6 @@ class RecipeError:
     binding_id: str | None = None
 
 
-@dataclass(frozen=True)
-class RecipeBindingContract:
-    binding_id: str
-    owner_id: str
-    scope_type: str
-    scope_id: str
-    task: str
-    capability: str
-    is_active: bool
-    profile_status: str
-    profile_capabilities: frozenset[str]
-    model_enabled: bool
-    provider_enabled: bool
-    connection_status: str
-    connection_owner_id: str
-    connection_matches_profile: bool
-
-
 class RecipeValidationError(ValueError):
     def __init__(self, errors: list[RecipeError]):
         self.errors = tuple(errors)
@@ -71,6 +54,10 @@ STAGE_REQUIREMENTS = {
     "subtitle": ("shot_subtitle", "subtitle_generation"),
     "render": ("workflow_render", "media_render"),
     "storage": ("workflow_storage", "object_storage"),
+}
+SUBTITLE_SOURCE_BY_AUDIO_MODE = {
+    "video_native_audio": "video_dialogue_timeline",
+    "separate_tts": "tts_timeline",
 }
 
 
@@ -124,9 +111,14 @@ def _basic_errors(spec: Mapping[str, Any]) -> list[RecipeError]:
         errors.append(RecipeError(
             "audio_mode_invalid", "声音方案必须选择原生音频或独立 TTS", "audio",
         ))
-    if not _stage(spec, "subtitle").get("source"):
+    subtitle_source = _stage(spec, "subtitle").get("source")
+    if not subtitle_source:
         errors.append(RecipeError(
             "subtitle_source_required", "生产方案必须声明字幕来源", "subtitle",
+        ))
+    elif mode in SUBTITLE_SOURCE_BY_AUDIO_MODE and subtitle_source != SUBTITLE_SOURCE_BY_AUDIO_MODE[mode]:
+        errors.append(RecipeError(
+            "subtitle_source_invalid_for_audio_mode", "字幕来源与声音方案不匹配", "subtitle",
         ))
     return errors
 
@@ -168,12 +160,18 @@ def _binding_errors(
             errors.append(RecipeError(
                 "binding_connection_not_verified", "绑定连接未验证", stage, binding_id,
             ))
-        trusted_system = is_trusted_system_binding(
+        safe_scope = is_safe_model_binding_scope(
             scope_type=binding.scope_type,
             owner_id=binding.owner_id,
             scope_id=binding.scope_id,
         )
-        if user_id and binding.owner_id != user_id and not trusted_system:
+        if not safe_scope:
+            errors.append(RecipeError(
+                "binding_scope_invalid", "绑定作用域不安全或不属于其所有者", stage, binding_id,
+            ))
+        is_system_scope = binding.scope_type == "system"
+        trusted_system = is_system_scope and safe_scope
+        if user_id and binding.owner_id != user_id and not trusted_system and not is_system_scope:
             errors.append(RecipeError(
                 "binding_owner_mismatch", "绑定不属于当前用户", stage, binding_id,
             ))

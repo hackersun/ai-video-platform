@@ -40,6 +40,24 @@ class BindingScope(str, Enum):
     SYSTEM = "system"
 
 
+@dataclass(frozen=True)
+class RecipeBindingContract:
+    binding_id: str
+    owner_id: str
+    scope_type: str
+    scope_id: str
+    task: str
+    capability: str
+    is_active: bool
+    profile_status: str
+    profile_capabilities: frozenset[str]
+    model_enabled: bool
+    provider_enabled: bool
+    connection_status: str
+    connection_owner_id: str
+    connection_matches_profile: bool
+
+
 SYSTEM_MODEL_BINDING_OWNER_ID = "system"
 SYSTEM_MODEL_BINDING_SCOPE_ID = ""
 VERIFIED_CONNECTION_STATUSES = frozenset({"connection_verified", "verified"})
@@ -53,6 +71,22 @@ def is_trusted_system_binding(
         and owner_id == SYSTEM_MODEL_BINDING_OWNER_ID
         and scope_id == SYSTEM_MODEL_BINDING_SCOPE_ID
     )
+
+
+def is_safe_model_binding_scope(
+    *,
+    scope_type: str,
+    owner_id: str,
+    scope_id: str,
+    allow_unscoped_user: bool = False,
+) -> bool:
+    if scope_type == BindingScope.SYSTEM.value:
+        return is_trusted_system_binding(
+            scope_type=scope_type, owner_id=owner_id, scope_id=scope_id,
+        )
+    if scope_type == BindingScope.USER.value:
+        return scope_id == owner_id or (allow_unscoped_user and scope_id == "")
+    return scope_type in {BindingScope.PROJECT.value, BindingScope.SERIES.value} and bool(scope_id)
 
 
 CAPABILITY_ALIASES: dict[str, ModelCapability] = {
@@ -124,10 +158,12 @@ __all__ = [
     "ModelCapability",
     "ModelProfileContract",
     "ProfileStatus",
+    "RecipeBindingContract",
     "ResolvedModelBinding",
     "SYSTEM_MODEL_BINDING_OWNER_ID",
     "SYSTEM_MODEL_BINDING_SCOPE_ID",
     "VERIFIED_CONNECTION_STATUSES",
     "is_trusted_system_binding",
+    "is_safe_model_binding_scope",
     "normalize_capabilities",
 ]

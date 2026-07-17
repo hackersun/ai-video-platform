@@ -6,6 +6,7 @@ from app.features.model_config.domain import (
     ModelCapability,
     ModelProfileContract,
     ProfileStatus,
+    RecipeBindingContract,
     ResolvedModelBinding,
     normalize_capabilities,
 )
@@ -41,7 +42,6 @@ from app.features.model_config.legacy_strategy_projection import (
 )
 from app.features.model_config.recipes import (
     ProductionRecipeSpec,
-    RecipeBindingContract,
     RecipeError,
     RecipeStage,
     RecipeValidationError,
