@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.model_config.repository import load_legacy_config_rows
+from app.features.model_config.repository import LegacyConfigCandidate, load_legacy_config_rows
 
 
 _LEGACY_VIDEO_PROVIDERS = frozenset({"volcano", "volcano_agent_plan"})
@@ -29,6 +29,13 @@ _LEGACY_STRATEGY_MODELS: dict[str, tuple[str, ...]] = {
         "Doubao-Seedance-1.0-pro-fast",
     ),
 }
+
+
+def _is_legacy_video_model(candidate: LegacyConfigCandidate) -> bool:
+    model_type = (candidate.model_type or "").lower()
+    return model_type in {"video", "video-generation", "video_generation"} or any(
+        "video" in item.lower() for item in candidate.raw_capabilities
+    )
 
 
 def _strategy_result(
@@ -62,7 +69,7 @@ async def resolve_legacy_strategy_config_id(
         row
         for row in rows
         if row.api_model_id in candidates
-        and "video_generation" in row.capabilities
+        and _is_legacy_video_model(row)
         and ({row.provider_id, row.provider_name} & _LEGACY_VIDEO_PROVIDERS)
     ]
     for model_id in candidates:

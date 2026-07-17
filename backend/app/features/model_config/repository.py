@@ -69,6 +69,8 @@ class LegacyConfigCandidate:
     provider_id: str
     provider_name: str
     capabilities: frozenset[ModelCapability]
+    model_type: str | None
+    raw_capabilities: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -290,6 +292,8 @@ async def load_legacy_config_rows(
             capabilities=frozenset(
                 normalize_capabilities(model.model_type, model.capabilities or [])
             ),
+            model_type=model.model_type,
+            raw_capabilities=tuple(str(item) for item in (model.capabilities or [])),
         )
         for config, model, provider in result.all()
     )
