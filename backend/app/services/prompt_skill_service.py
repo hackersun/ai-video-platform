@@ -20,7 +20,7 @@ from app.features.prompt_profiles.public import (
     ensure_legacy_prompt_profile,
     latest_versions_for_skills,
     legacy_prompt_skill_payload as prompt_skill_payload,
-    publish_prompt_profile_version,
+    publish_legacy_prompt_profile,
     render_legacy_prompt_skill as render_prompt_skill,
     rendered_legacy_prompt_skill_entry as rendered_prompt_skill_entry,
     retire_legacy_prompt_profile,
@@ -214,6 +214,25 @@ async def create_prompt_skill(db: AsyncSession, user_id: str, data: Dict[str, An
     return prompt_skill_payload(skill, version)
 
 
+async def _activate_prompt_skill_state(
+    db: AsyncSession, user_id: str, skill: PromptSkill,
+):
+    version = await publish_legacy_prompt_profile(db, skill)
+    await _deactivate_user_task_skills(
+        db, user_id, skill.task, exclude_skill_id=skill.id,
+    )
+    apply_version_to_legacy_skill(skill, version)
+    skill.is_active = True
+    return version
+
+
+async def _raise_prompt_validation_error(db: AsyncSession, error: ValueError) -> None:
+    await db.rollback()
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error),
+    ) from error
+
+
 async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     skill = await get_prompt_skill(db, user_id, skill_id)
     if skill.is_builtin:
@@ -224,21 +243,26 @@ async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, dat
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="已发布 Prompt 技能不能修改任务，请先克隆为新任务技能",
         )
-    draft = await edit_legacy_prompt_profile(db, skill, data)
-    next_task = data.get("task", skill.task)
-    if data.get("is_active") is True:
-        await _deactivate_user_task_skills(db, user_id, next_task, exclude_skill_id=skill.id)
+    try:
+        draft = await edit_legacy_prompt_profile(db, skill, data)
+    except ValueError as error:
+        await _raise_prompt_validation_error(db, error)
     keep_published_state = was_active and data.get("is_active", True) is True
-    if was_active and data.get("is_active") is False:
-        draft = await disable_legacy_prompt_profile(db, skill)
+    for key in ("name", "description", "priority", "inject_position", "tags"):
+        if key in data:
+            setattr(skill, key, data[key])
     if not keep_published_state:
-        for key in (
-            "name", "description", "task", "stage", "content", "variables",
-            "priority", "inject_position", "is_active", "tags",
-        ):
+        for key in ("task", "stage", "content", "variables", "is_active"):
             if key in data:
                 setattr(skill, key, data[key])
         skill.version = draft.version
+    try:
+        if was_active and data.get("is_active") is False:
+            draft = await disable_legacy_prompt_profile(db, skill)
+        elif not was_active and data.get("is_active") is True:
+            draft = await _activate_prompt_skill_state(db, user_id, skill)
+    except ValueError as error:
+        await _raise_prompt_validation_error(db, error)
     await db.commit()
     await db.refresh(skill)
     return prompt_skill_payload(skill, draft)
@@ -248,11 +272,10 @@ async def activate_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -
     skill = await get_prompt_skill(db, user_id, skill_id)
     if skill.is_builtin:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能请先克隆后激活")
-    version = await ensure_legacy_prompt_profile(db, skill)
-    version = await publish_prompt_profile_version(db, version.id)
-    await _deactivate_user_task_skills(db, user_id, skill.task, exclude_skill_id=skill.id)
-    apply_version_to_legacy_skill(skill, version)
-    skill.is_active = True
+    try:
+        version = await _activate_prompt_skill_state(db, user_id, skill)
+    except ValueError as error:
+        await _raise_prompt_validation_error(db, error)
     await db.commit()
     await db.refresh(skill)
     return prompt_skill_payload(skill, version)

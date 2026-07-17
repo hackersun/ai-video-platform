@@ -81,6 +81,16 @@ async def publish_prompt_profile_version(
     return version
 
 
+async def publish_legacy_prompt_profile(
+    db: AsyncSession, skill: PromptSkill,
+) -> PromptProfileVersion:
+    version = await ensure_legacy_prompt_profile(db, skill)
+    if version.status == "disabled":
+        version = await edit_prompt_profile(db, version.id, {})
+        skill.prompt_profile_version_id = version.id
+    return await publish_prompt_profile_version(db, version.id)
+
+
 def _legacy_version_values(skill: PromptSkill) -> dict[str, Any]:
     variables = deepcopy(skill.variables or {})
     routing = deepcopy(variables.get("routing") if isinstance(variables.get("routing"), dict) else {})
