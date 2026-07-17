@@ -84,6 +84,19 @@ def test_execution_snapshot_rejects_secrets_and_prompt_content() -> None:
         sanitize_snapshot_params({"prompt": "private full prompt"})
 
 
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"duration": {"prompt": "private full prompt"}},
+        {"output_contract": {"Authorization": "Bearer opaque-secret"}},
+        {"voice_id": "sk-sensitive-credential"},
+    ],
+)
+def test_execution_snapshot_rejects_nested_or_credential_like_allowlisted_values(params) -> None:
+    with pytest.raises(UnsafeSnapshotError):
+        sanitize_snapshot_params(params)
+
+
 @pytest.mark.asyncio
 async def test_workflow_video_driver_receives_persisted_snapshot_id(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
@@ -96,13 +109,15 @@ async def test_workflow_video_driver_receives_persisted_snapshot_id(
     generation = SimpleNamespace(
         binding=binding,
         profile=binding.profile,
+        recipe_version_id="recipe-v1",
+        prompt_profile_version_id="prompt-v1",
         driver_context=DriverContext(
             profile=binding.profile, driver_key=binding.profile.driver_key,
             connection_id=binding.connection_id,
         ),
     )
     command = SimpleNamespace(
-        runtime=SimpleNamespace(selected_model={"generation_context": generation}),
+        runtime=SimpleNamespace(api_key="test-key", selected_model={"generation_context": generation}),
         prepared=SimpleNamespace(
             video_request=SimpleNamespace(duration=8), video_seed=42,
             final_video_prompt="private prompt must not be saved", dialogue_sync_contract=None,
@@ -135,6 +150,172 @@ async def test_workflow_video_driver_receives_persisted_snapshot_id(
 
 
 @pytest.mark.asyncio
+async def test_workflow_default_ark_video_uses_snapshot_bound_driver(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.features.workflow_media.adapters import video_submission
+
+    binding = _binding()
+    generation = SimpleNamespace(
+        binding=binding, profile=binding.profile,
+        driver_context=DriverContext(
+            profile=binding.profile, driver_key="volcano_ark_video_v3",
+            connection_id=binding.connection_id,
+        ),
+    )
+    command = SimpleNamespace(
+        runtime=SimpleNamespace(api_key="test-key", selected_model={"generation_context": generation}),
+        prepared=SimpleNamespace(
+            video_request=SimpleNamespace(duration=8), video_seed=None,
+            final_video_prompt="private prompt", dialogue_sync_contract=None,
+        ),
+        request=SimpleNamespace(resolution="720p", native_audio=False),
+        context=SimpleNamespace(db=db_session, user_id="user-1", series_run=None),
+    )
+    captured = {}
+
+    async def reserve(*_args, **_kwargs):
+        return None
+
+    async def execute(_registry, _driver_command, driver_context):
+        captured["snapshot_id"] = driver_context.execution_snapshot_id
+        captured["prompt"] = _driver_command.prompt
+        return SimpleNamespace(provider_task_id="ark-task")
+
+    monkeypatch.setattr(video_submission, "_reserve", reserve)
+    monkeypatch.setattr(video_submission, "execute_generation", execute)
+    snapshot_id = await video_submission._create_execution_snapshot(
+        command, {"content": [], "metadata": {}}, "job-ark",
+    )
+    task_id, _reservation, _content = await video_submission._submit_live(
+        command, {"provider_prompt": "provider-safe prompt"}, {"content": []}, "job-ark", snapshot_id,
+    )
+
+    assert task_id == "ark-task"
+    assert captured["snapshot_id"] == snapshot_id
+    assert captured["prompt"] == "provider-safe prompt"
+
+
+@pytest.mark.asyncio
+async def test_workflow_ark_prompt_retry_keeps_execution_snapshot_context(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.features.model_drivers.public import DriverExecutionError
+    from app.features.workflow_media.adapters import video_submission
+
+    binding = _binding()
+    generation = SimpleNamespace(
+        binding=binding, profile=binding.profile,
+        driver_context=DriverContext(
+            profile=binding.profile, driver_key="volcano_ark_video_v3",
+            connection_id=binding.connection_id,
+        ),
+    )
+    command = SimpleNamespace(
+        runtime=SimpleNamespace(api_key="test-key", selected_model={"generation_context": generation}),
+        prepared=SimpleNamespace(
+            video_request=SimpleNamespace(duration=8), video_seed=None,
+            final_video_prompt="private prompt", dialogue_sync_contract=None,
+            reference_package=None,
+        ),
+        request=SimpleNamespace(resolution="720p", native_audio=False),
+        context=SimpleNamespace(db=db_session, user_id="user-1", series_run=None),
+    )
+    captured = []
+
+    async def reserve(*_args, **_kwargs):
+        return None
+
+    async def execute(_registry, _driver_command, driver_context):
+        captured.append(driver_context.execution_snapshot_id)
+        if len(captured) == 1:
+            raise DriverExecutionError(
+                "generation", {}, cause=RuntimeError("InputTextSensitiveContentDetected"),
+            )
+        return SimpleNamespace(provider_task_id="ark-retry-task")
+
+    monkeypatch.setattr(video_submission, "_reserve", reserve)
+    monkeypatch.setattr(video_submission, "execute_generation", execute)
+    monkeypatch.setattr(video_submission.video_kernel, "create_ark_client", lambda *_args: object())
+    monkeypatch.setattr(
+        video_submission, "_build_provider_content",
+        lambda *_args: {"content": [], "metadata": {}},
+    )
+    monkeypatch.setattr(video_submission, "_record_reference_metadata", lambda *_args: None)
+    snapshot_id = await video_submission._create_execution_snapshot(
+        command, {"content": [], "metadata": {}}, "job-ark-retry",
+    )
+
+    task_id, _reservation, _content = await video_submission._submit_live(
+        command,
+        {"provider_image_url": None, "provider_prompt": "private prompt", "prompt_parameters": {}, "extra_data": {}},
+        {"content": []}, "job-ark-retry", snapshot_id,
+    )
+
+    assert task_id == "ark-retry-task"
+    assert captured == [snapshot_id, snapshot_id]
+
+
+@pytest.mark.asyncio
+async def test_workflow_ark_prompt_retry_maps_wrapped_provider_safety_error(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.features.model_drivers.public import DriverExecutionError
+    from app.features.workflow_media.adapters import video_submission
+    from app.features.workflow_media.errors import WorkflowMediaError
+
+    binding = _binding()
+    generation = SimpleNamespace(
+        binding=binding, profile=binding.profile,
+        driver_context=DriverContext(
+            profile=binding.profile, driver_key="volcano_ark_video_v3",
+            connection_id=binding.connection_id,
+        ),
+    )
+    command = SimpleNamespace(
+        runtime=SimpleNamespace(api_key="test-key", selected_model={"generation_context": generation}),
+        prepared=SimpleNamespace(
+            video_request=SimpleNamespace(duration=8), video_seed=None,
+            final_video_prompt="private prompt", dialogue_sync_contract=None,
+            reference_package=None,
+        ),
+        request=SimpleNamespace(resolution="720p", native_audio=False),
+        context=SimpleNamespace(db=db_session, user_id="user-1", series_run=None),
+    )
+
+    async def reserve(*_args, **_kwargs):
+        return None
+
+    async def execute(*_args, **_kwargs):
+        raise DriverExecutionError(
+            "generation", {}, cause=RuntimeError("InputTextSensitiveContentDetected"),
+        )
+
+    monkeypatch.setattr(video_submission, "_reserve", reserve)
+    monkeypatch.setattr(video_submission, "execute_generation", execute)
+    monkeypatch.setattr(video_submission.video_kernel, "create_ark_client", lambda *_args: object())
+    monkeypatch.setattr(
+        video_submission, "_build_provider_content",
+        lambda *_args: {"content": [], "metadata": {}},
+    )
+
+    with pytest.raises(WorkflowMediaError) as error:
+        await video_submission._submit_live(
+            command,
+            {"provider_image_url": None, "provider_prompt": "private prompt", "prompt_parameters": {}, "extra_data": {}},
+            {"content": []}, "job-ark-retry", "snapshot-ark-retry",
+        )
+
+    assert error.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_direct_video_driver_receives_persisted_snapshot_id(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -146,6 +327,8 @@ async def test_direct_video_driver_receives_persisted_snapshot_id(
     generation = SimpleNamespace(
         binding=binding,
         profile=binding.profile,
+        recipe_version_id="recipe-v1",
+        prompt_profile_version_id="prompt-v1",
         driver_context=DriverContext(
             profile=binding.profile, driver_key=binding.profile.driver_key,
             connection_id=binding.connection_id,
@@ -169,6 +352,98 @@ async def test_direct_video_driver_receives_persisted_snapshot_id(
 
     assert result.id == "provider-task"
     assert captured["snapshot_id"] == snapshot_id
+    snapshot = await load_execution_snapshot(db_session, snapshot_id, user_id="user-1")
+    assert snapshot.recipe_version_id == "recipe-v1"
+    assert snapshot.prompt_profile_version_id == "prompt-v1"
+
+
+@pytest.mark.asyncio
+async def test_image_driver_receives_snapshot_and_returns_safe_trace_id(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.services import image_generation_pipeline
+
+    binding = replace(_binding(), profile=replace(_binding().profile, driver_key="test_image_driver"))
+    generation = SimpleNamespace(
+        binding=binding, profile=binding.profile,
+        recipe_version_id="recipe-v1", prompt_profile_version_id="prompt-v1",
+        driver_context=DriverContext(
+            profile=binding.profile, driver_key=binding.profile.driver_key,
+            connection_id=binding.connection_id,
+        ),
+    )
+    captured = {}
+
+    async def execute(_registry, _command, driver_context):
+        captured["snapshot_id"] = driver_context.execution_snapshot_id
+        return SimpleNamespace(output={"image_urls": ["https://example.test/image.png"]}, provider_task_id=None)
+
+    monkeypatch.setattr(image_generation_pipeline.driver_kernel, "execute_generation", execute)
+    result = await image_generation_pipeline.call_image_generation_provider(
+        object(), provider_name="ignored", model_id="ignored", prompt="private prompt",
+        generation_context=generation, db=db_session, user_id="user-1", job_id="image-job-1",
+    )
+
+    assert result["execution_snapshot_id"] == captured["snapshot_id"]
+    snapshot = await load_execution_snapshot(db_session, captured["snapshot_id"], user_id="user-1")
+    assert snapshot is not None and snapshot.job_id == "image-job-1"
+
+
+@pytest.mark.asyncio
+async def test_text_adapter_returns_execution_snapshot_trace_id() -> None:
+    from app.features.model_drivers.text_execution import TextGenerationServiceAdapter
+
+    class Service:
+        async def chat_completion(self, **_kwargs):
+            return {"choices": [{"message": {"content": "safe output"}}]}
+
+    response = await TextGenerationServiceAdapter(
+        Service(), execution_snapshot_id="snapshot-text-1",
+    ).safe_chat_completion(
+        model="text-model", messages=[{"role": "user", "content": "private prompt"}],
+    )
+
+    assert response["execution_snapshot_id"] == "snapshot-text-1"
+
+
+@pytest.mark.asyncio
+async def test_bound_text_service_creates_snapshot_before_returning_adapter(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.features.model_drivers import text_execution
+
+    binding = replace(_binding(), capability="text_generation", task="story_generation")
+    context = SimpleNamespace(
+        binding=binding, recipe_version_id="recipe-v1", prompt_profile_version_id="prompt-v1", base_url=None,
+        driver_context=DriverContext(
+            profile=binding.profile, driver_key="legacy_text_v1", connection_id=binding.connection_id,
+            connection_params={"provider_name": "volcano"},
+        ),
+        profile=binding.profile,
+    )
+    captured = {}
+
+    async def resolve(*_args, **_kwargs):
+        return context
+
+    def create(_context, snapshot_id):
+        captured["snapshot_id"] = snapshot_id
+        return object()
+
+    monkeypatch.setattr(text_execution, "resolve_generation_context", resolve)
+    monkeypatch.setattr(text_execution, "create_text_generation_service_from_context", create)
+    service, _provider, _model, _base_url = await text_execution.get_user_text_generation_service(
+        db_session, "user-1",
+    )
+
+    assert service is not None
+    snapshot = await load_execution_snapshot(db_session, captured["snapshot_id"], user_id="user-1")
+    assert snapshot.recipe_version_id == "recipe-v1"
+    assert snapshot.prompt_profile_version_id == "prompt-v1"
 
 
 @pytest.mark.asyncio

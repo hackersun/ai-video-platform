@@ -138,9 +138,10 @@ class DriverContextError(DriverError):
 
 
 class DriverExecutionError(DriverError):
-    def __init__(self, operation: str, sanitized_evidence: Mapping[str, Any]):
+    def __init__(self, operation: str, sanitized_evidence: Mapping[str, Any], cause: Exception | None = None):
         super().__init__(f"driver {operation} failed")
         self.sanitized_evidence = sanitized_evidence
+        self.cause = cause
 
 
 class DriverParameterError(DriverError):

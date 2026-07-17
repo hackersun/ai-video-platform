@@ -209,11 +209,12 @@ async def _execute_driver_operation(
             {
                 "operation": operation,
                 "provider_error_type": type(error).__name__,
+                "provider_error_message": str(error),
                 "provider_evidence": getattr(error, "evidence", {}),
             },
             context.secrets,
         )
-        wrapped_error = DriverExecutionError(operation, evidence)
+        wrapped_error = DriverExecutionError(operation, evidence, cause=error)
     raise wrapped_error from None
 
 

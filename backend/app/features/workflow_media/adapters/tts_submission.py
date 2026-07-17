@@ -362,6 +362,8 @@ async def _create_execution_snapshot(
             task=generation.binding.task,
             capability=generation.binding.capability,
             binding=generation.binding,
+            recipe_version_id=getattr(generation, "recipe_version_id", None),
+            prompt_profile_version_id=getattr(generation, "prompt_profile_version_id", None),
             sanitized_params={"voice_id": voice, "speed": speed},
         ),
     )

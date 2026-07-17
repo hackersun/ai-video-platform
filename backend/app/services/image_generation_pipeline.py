@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Mapping, Optional
 
 from fastapi import HTTPException
 
 from app.core.dev_generation import is_dev_mode
-from app.features.model_config.public import ModelBindingError, resolve_generation_context
+from app.features.model_config.public import (
+    ExecutionSnapshotCommand,
+    ModelBindingError,
+    create_execution_snapshot,
+    resolve_generation_context,
+)
 from app.features.model_drivers import public as driver_kernel
 
 MINIMAX_IMAGE_PROMPT_MAX_CHARS = 1450
@@ -110,6 +116,31 @@ def _prepare_image_prompt_for_provider(provider_name: str, prompt: str) -> str:
     return prompt
 
 
+async def _create_image_execution_snapshot(
+    generation_context: Any, *, db: Any, user_id: str | None, run_id: str | None,
+    job_id: str | None, aspect_ratio: str, image_count: int, image_size: str,
+    prompt_compacted: bool,
+) -> str | None:
+    if db is None or not user_id or getattr(generation_context, "binding", None) is None:
+        return None
+    snapshot = await create_execution_snapshot(
+        db,
+        ExecutionSnapshotCommand(
+            user_id=user_id, run_id=run_id, job_id=job_id,
+            task=generation_context.binding.task,
+            capability=generation_context.binding.capability,
+            binding=generation_context.binding,
+            recipe_version_id=getattr(generation_context, "recipe_version_id", None),
+            prompt_profile_version_id=getattr(generation_context, "prompt_profile_version_id", None),
+            sanitized_params={
+                "aspect_ratio": aspect_ratio, "image_count": image_count, "image_size": image_size,
+                "parameter_normalization": {"prompt_compacted": prompt_compacted},
+            },
+        ),
+    )
+    return snapshot.id
+
+
 async def call_image_generation_provider(
     service: Any,
     *,
@@ -126,6 +157,8 @@ async def call_image_generation_provider(
     db: Any = None,
     user_id: str | None = None,
     config_id: str | None = None,
+    job_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
     if generation_context is None and db is not None and user_id:
@@ -147,14 +180,21 @@ async def call_image_generation_provider(
             **_driver_image_params(driver.driver_key, num, size, aspect_ratio, minimax_response_format),
             **dict(generation_params or {}),
         }
+        snapshot_id = await _create_image_execution_snapshot(
+            generation_context, db=db, user_id=user_id, run_id=run_id, job_id=job_id,
+            aspect_ratio=aspect_ratio, image_count=num, image_size=size,
+            prompt_compacted=prepared_prompt != prompt,
+        )
         submission = await driver_kernel.execute_generation(
             driver_kernel.build_builtin_driver_registry(),
             driver_kernel.ImageCommand(prompt=prepared_prompt, params=params),
-            driver,
+            replace(driver, execution_snapshot_id=snapshot_id) if snapshot_id else driver,
         )
         output = dict(submission.output)
         if submission.provider_task_id and not output.get("task_id"):
             output["task_id"] = submission.provider_task_id
+        if snapshot_id:
+            output["execution_snapshot_id"] = snapshot_id
         return output
     provider = (provider_name or "").lower()
     prepared_prompt = _prepare_image_prompt_for_provider(provider, prompt)

@@ -53,6 +53,7 @@ class VolcanoArkVideoDriver:
         )
         result = video_kernel.submit_ark_video_task(
             api_key=context.api_key, base_url=context.base_url, create_kwargs=create_kwargs,
+            client=context.connection_params.get("_ark_client"),
         )
         task_id = getattr(result, "id", None) or (result.get("id") if isinstance(result, dict) else None)
         return completed_output({

@@ -227,7 +227,9 @@ def _create_kwargs(command: VideoSubmissionCommand, content: dict) -> dict[str, 
     )
 
 
-def _driver_video_command(command: VideoSubmissionCommand, content: dict) -> VideoCommand:
+def _driver_video_command(
+    command: VideoSubmissionCommand, content: dict, prompt: str | None = None,
+) -> VideoCommand:
     references = {"image_url": [], "video_url": [], "audio_url": []}
     for item in content.get("content") or []:
         if not isinstance(item, dict) or item.get("type") not in references:
@@ -246,7 +248,7 @@ def _driver_video_command(command: VideoSubmissionCommand, content: dict) -> Vid
     if command.prepared.video_seed is not None:
         params["seed"] = command.prepared.video_seed
     return VideoCommand(
-        prompt=command.prepared.final_video_prompt,
+        prompt=prompt or command.prepared.final_video_prompt,
         reference_images=tuple(references["image_url"]),
         reference_videos=tuple(references["video_url"]),
         reference_audios=tuple(references["audio_url"]),
@@ -267,24 +269,38 @@ async def _reserve(command: VideoSubmissionCommand, job_id: str, retry: bool) ->
 
 async def _retry_sensitive_prompt(
     command: VideoSubmissionCommand, data: dict, job_id: str, client: Any,
+    generation: Any = None, driver_context: Any = None,
 ) -> tuple[Any, Optional[str], dict]:
     fallback = build_provider_video_prompt_fallback()
     data["provider_prompt"] = fallback["prompt"]
     content = _build_provider_content(command, data)
     reservation = await _reserve(command, job_id, True)
     try:
-        result = video_kernel.submit_ark_video_task(
-            create_kwargs={**_create_kwargs(command, content), "content": content["content"]}, client=client,
-        )
+        if generation is not None and driver_context is not None:
+            submission = await execute_generation(
+                build_builtin_driver_registry(),
+                _driver_video_command(command, content, data["provider_prompt"]),
+                driver_context,
+            )
+            if not submission.provider_task_id:
+                raise WorkflowMediaError(422, "视频驱动未返回可轮询的任务标识")
+            result = type("SubmittedTask", (), {"id": submission.provider_task_id})()
+        else:
+            result = video_kernel.submit_ark_video_task(
+                create_kwargs={**_create_kwargs(command, content), "content": content["content"]}, client=client,
+            )
     except Exception as error:
-        image_error = video_kernel.provider_image_url_error_message(error, data["provider_image_url"])
-        text_error = provider_text_safety_error_message(error)
+        cause = getattr(error, "cause", None) or error
+        image_error = video_kernel.provider_image_url_error_message(cause, data["provider_image_url"])
+        text_error = provider_text_safety_error_message(cause)
         if image_error or text_error:
             await finish_live_provider_attempt(
                 command.context.db, command.context.series_run, reservation, submission_failed=True,
             )
         if image_error or text_error:
             raise WorkflowMediaError(422, image_error or text_error) from error
+        if cause is not error:
+            raise cause
         raise
     parameters = data["prompt_parameters"]
     parameters.update({
@@ -296,33 +312,87 @@ async def _retry_sensitive_prompt(
     return result, reservation, content
 
 
+def _driver_context_for_submission(
+    command: VideoSubmissionCommand, generation: Any, execution_snapshot_id: str | None, client: Any,
+) -> Any:
+    driver = generation.driver_context
+    if client is not None:
+        driver = replace(
+            driver,
+            connection_params={**dict(driver.connection_params), "_ark_client": client},
+        )
+    return replace(driver, execution_snapshot_id=execution_snapshot_id) if execution_snapshot_id else driver
+
+
+async def _recover_bound_driver_error(
+    command: VideoSubmissionCommand, data: dict, job_id: str, reservation: Optional[str],
+    error: DriverError, client: Any, generation: Any, driver: Any,
+) -> tuple[str, Optional[str], dict]:
+    cause = getattr(error, "cause", None) or error
+    image_error = video_kernel.provider_image_url_error_message(cause, data.get("provider_image_url"))
+    text_error = provider_text_safety_error_message(cause)
+    if image_error or text_error:
+        await finish_live_provider_attempt(
+            command.context.db, command.context.series_run, reservation, submission_failed=True,
+        )
+    if text_error and client is not None and os.getenv("LIVE_CANARY_PROVIDER_RETRIES", "1") != "0":
+        result, retry_reservation, retry_content = await _retry_sensitive_prompt(
+            command, data, job_id, client, generation, driver,
+        )
+        task_id = result.id
+        if retry_reservation:
+            await bind_provider_operation_for_reservation(
+                command.context.db, command.context.series_run,
+                reservation_id=retry_reservation, provider_task_id=task_id,
+            )
+        return task_id, retry_reservation, retry_content
+    if image_error or text_error:
+        raise WorkflowMediaError(422, image_error or text_error) from error
+    if getattr(error, "cause", None) is not None:
+        raise error.cause
+    raise WorkflowMediaError(422, str(error)) from error
+
+
+async def _submit_bound_driver(
+    command: VideoSubmissionCommand, data: dict, content: dict, job_id: str,
+    execution_snapshot_id: str | None, generation: Any,
+) -> tuple[str, Optional[str], dict]:
+    reservation = await _reserve(command, job_id, False)
+    client = None
+    if generation.driver_context.driver_key == "volcano_ark_video_v3":
+        client = video_kernel.create_ark_client(
+            getattr(command.runtime, "api_key", None), command.runtime.selected_model.get("base_url"),
+        )
+    driver = _driver_context_for_submission(command, generation, execution_snapshot_id, client)
+    try:
+        submission = await execute_generation(
+            build_builtin_driver_registry(),
+            _driver_video_command(command, content, data.get("provider_prompt")), driver,
+        )
+    except DriverError as error:
+        return await _recover_bound_driver_error(
+            command, data, job_id, reservation, error, client, generation, driver,
+        )
+    task_id = submission.provider_task_id
+    if not task_id:
+        raise WorkflowMediaError(422, "视频驱动未返回可轮询的任务标识")
+    if reservation:
+        await bind_provider_operation_for_reservation(
+            command.context.db, command.context.series_run,
+            reservation_id=reservation, provider_task_id=task_id,
+        )
+    return task_id, reservation, content
+
+
 async def _submit_live(
     command: VideoSubmissionCommand, data: dict, content: dict, job_id: str,
     execution_snapshot_id: str | None = None,
 ) -> tuple[str, Optional[str], dict]:
     generation = command.runtime.selected_model.get("generation_context")
-    if generation is not None and generation.driver_context.driver_key != "volcano_ark_video_v3":
-        reservation = await _reserve(command, job_id, False)
-        try:
-            submission = await execute_generation(
-                build_builtin_driver_registry(), _driver_video_command(command, content),
-                replace(generation.driver_context, execution_snapshot_id=execution_snapshot_id)
-                if execution_snapshot_id else generation.driver_context,
-            )
-        except DriverError as error:
-            await finish_live_provider_attempt(
-                command.context.db, command.context.series_run, reservation, submission_failed=True,
-            )
-            raise WorkflowMediaError(422, str(error)) from error
-        task_id = submission.provider_task_id
-        if not task_id:
-            raise WorkflowMediaError(422, "视频驱动未返回可轮询的任务标识")
-        if reservation:
-            await bind_provider_operation_for_reservation(
-                command.context.db, command.context.series_run,
-                reservation_id=reservation, provider_task_id=task_id,
-            )
-        return task_id, reservation, content
+    if generation is not None:
+        return await _submit_bound_driver(
+            command, data, content, job_id, execution_snapshot_id, generation,
+        )
     client = video_kernel.create_ark_client(
         command.runtime.api_key, command.runtime.selected_model.get("base_url"),
     )
@@ -372,6 +442,8 @@ async def _create_execution_snapshot(
             task=generation.binding.task,
             capability=generation.binding.capability,
             binding=generation.binding,
+            recipe_version_id=getattr(generation, "recipe_version_id", None),
+            prompt_profile_version_id=getattr(generation, "prompt_profile_version_id", None),
             sanitized_params={
                 "duration": command.prepared.video_request.duration,
                 "resolution": command.request.resolution,

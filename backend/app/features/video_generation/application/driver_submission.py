@@ -85,6 +85,8 @@ async def create_bound_video_execution_snapshot(
             task=generation_context.binding.task,
             capability=generation_context.binding.capability,
             binding=generation_context.binding,
+            recipe_version_id=getattr(generation_context, "recipe_version_id", None),
+            prompt_profile_version_id=getattr(generation_context, "prompt_profile_version_id", None),
             sanitized_params={
                 "duration": create_kwargs.get("duration"),
                 "resolution": create_kwargs.get("resolution"),
