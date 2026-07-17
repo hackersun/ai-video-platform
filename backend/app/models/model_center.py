@@ -4,7 +4,6 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
-from cryptography.fernet import InvalidToken
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -22,8 +21,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import validates
 
 from app.core.database import Base
+from app.core.credential_encryption import decrypt_key, encrypt_key, validate_fernet_ciphertext
 from app.core.time_utils import utc_now
-from app.models.llm_config import _get_fernet, decrypt_key, encrypt_key
 
 
 def _next_version_values(
@@ -137,8 +136,8 @@ class ModelConnection(Base):
         if value in {None, ""}:
             return value
         try:
-            _get_fernet().decrypt(value.encode())
-        except (AttributeError, InvalidToken, TypeError, ValueError) as error:
+            validate_fernet_ciphertext(value)
+        except ValueError as error:
             raise ValueError(f"{field_name} must be Fernet ciphertext") from error
         return value
 

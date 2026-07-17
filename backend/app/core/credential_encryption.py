@@ -84,6 +84,17 @@ def encrypt_key(api_key: str) -> str:
     return _get_fernet().encrypt(api_key.encode()).decode()
 
 
+def validate_fernet_ciphertext(ciphertext: str) -> str:
+    """Require a credential to be decryptable Fernet ciphertext for the current key."""
+    if not isinstance(ciphertext, str) or not ciphertext:
+        raise ValueError("credential must be Fernet ciphertext")
+    try:
+        _get_fernet().decrypt(ciphertext.encode())
+    except Exception as error:
+        raise ValueError("credential must be Fernet ciphertext") from error
+    return ciphertext
+
+
 def decrypt_key(encrypted_key: str) -> str:
     """Decrypt a token while retaining legacy plaintext read compatibility."""
     if not encrypted_key:

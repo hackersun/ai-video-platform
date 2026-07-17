@@ -6,6 +6,8 @@ from sqlalchemy import insert, inspect, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core import credential_encryption
+from app.core.credential_encryption import validate_fernet_ciphertext
 from app.models.model_center import ModelConnection
 from tests.model_center_helpers import create_model_center_engine
 
@@ -127,10 +129,8 @@ def test_model_center_schema_matches_required_columns_nullability_and_uniques(tm
 
 
 def test_model_connection_encrypts_credentials_before_persistence(tmp_path, monkeypatch):
-    from app.models import llm_config as crypto
-
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
+    monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
     engine = create_model_center_engine(tmp_path, "encrypted-connection.db")
     model_connection = ModelConnection(
         id="connection-1", user_id="user-1", provider_id="provider-1", name="primary",
@@ -158,10 +158,8 @@ def test_model_connection_encrypts_credentials_before_persistence(tmp_path, monk
 
 @pytest.mark.parametrize("field_name", ["api_key", "api_secret"])
 def test_model_connection_rejects_direct_plaintext_credentials(field_name, monkeypatch):
-    from app.models import llm_config as crypto
-
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
+    monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
     base_values = {
         "id": "connection-plain", "user_id": "user-1",
         "provider_id": "provider-1", "name": "primary",
@@ -170,23 +168,48 @@ def test_model_connection_rejects_direct_plaintext_credentials(field_name, monke
     with pytest.raises(ValueError, match="Fernet ciphertext"):
         ModelConnection(**base_values, **{field_name: "plaintext-secret"})
     model_connection = ModelConnection(**base_values)
-    encrypted = crypto.encrypt_key("backfilled-secret")
+    encrypted = credential_encryption.encrypt_key("backfilled-secret")
     setattr(model_connection, field_name, encrypted)
     assert getattr(model_connection, field_name) == encrypted
     with pytest.raises(ValueError, match="Fernet ciphertext"):
         setattr(model_connection, field_name, "updated-plaintext")
 
 
+def test_model_connection_rejects_malformed_fernet_looking_ciphertext(monkeypatch):
+    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
+    malformed = "gAAAAA" + "x" * 94
+
+    with pytest.raises(ValueError, match="Fernet ciphertext"):
+        ModelConnection(
+            id="connection-malformed", user_id="user-1", provider_id="provider-1",
+            name="primary", api_key=malformed,
+        )
+
+
+def test_validate_fernet_ciphertext_rebinds_cache_after_key_rotation(monkeypatch):
+    first_key = Fernet.generate_key()
+    second_key = Fernet.generate_key()
+    monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
+    monkeypatch.setenv("FERNET_KEY", first_key.decode())
+    first_token = credential_encryption.encrypt_key("first-secret")
+    assert validate_fernet_ciphertext(first_token) == first_token
+
+    monkeypatch.setenv("FERNET_KEY", second_key.decode())
+    second_token = credential_encryption.encrypt_key("second-secret")
+    assert validate_fernet_ciphertext(second_token) == second_token
+    with pytest.raises(ValueError, match="Fernet ciphertext"):
+        validate_fernet_ciphertext(first_token)
+
+
 @pytest.mark.parametrize("operation", ["insert", "update"])
 def test_model_connection_check_constraints_reject_bulk_plaintext(
     tmp_path, monkeypatch, operation,
 ):
-    from app.models import llm_config as crypto
-
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
+    monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
     engine = create_model_center_engine(tmp_path, f"connection-check-{operation}.db")
-    encrypted = crypto.encrypt_key("valid-key")
+    encrypted = credential_encryption.encrypt_key("valid-key")
 
     with Session(engine) as session:
         if operation == "insert":
@@ -214,13 +237,11 @@ def test_model_connection_check_constraints_reject_bulk_plaintext(
 
 
 def test_model_connection_check_constraints_accept_bulk_encrypted_tokens(tmp_path, monkeypatch):
-    from app.models import llm_config as crypto
-
     monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
+    monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
     engine = create_model_center_engine(tmp_path, "connection-check-encrypted.db")
-    first_token = crypto.encrypt_key("first-secret")
-    second_token = crypto.encrypt_key("second-secret")
+    first_token = credential_encryption.encrypt_key("first-secret")
+    second_token = credential_encryption.encrypt_key("second-secret")
 
     with Session(engine) as session:
         session.execute(
