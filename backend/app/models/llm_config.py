@@ -8,13 +8,29 @@ from typing import Optional, Dict, Any, List
 from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON, Float
 from sqlalchemy.sql import func
 
+from app.core import credential_encryption
 from app.core.database import Base
-from app.core.credential_encryption import (
-    decrypt_key,
-    encrypt_key,
-    get_encryption_key,
-    require_stable_encryption_key,
-)
+from app.core.credential_encryption import get_encryption_key, require_stable_encryption_key
+
+
+# Compatibility for callers that reset the historical model-module cache.
+_fernet_cache = None
+
+
+def _sync_fernet_cache():
+    global _fernet_cache
+    credential_encryption._fernet_cache = _fernet_cache
+    fernet = credential_encryption._get_fernet()
+    _fernet_cache = credential_encryption._fernet_cache
+    return fernet
+
+
+def encrypt_key(api_key: str) -> str:
+    return _sync_fernet_cache().encrypt(api_key.encode()).decode() if api_key else ""
+
+
+def decrypt_key(encrypted_key: str) -> str:
+    return credential_encryption.decrypt_key(encrypted_key) if encrypted_key else ""
 
 
 class LLMProvider(Base):
