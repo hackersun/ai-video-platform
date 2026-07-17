@@ -40,8 +40,7 @@ import {
   getDefaultConfigForCapability,
   getModelCapabilities,
   getModelCapability,
-  isInternalProviderConfig,
-  isInternalTestModelConfig,
+  isInternalProviderConfig, isInternalTestModelConfig,
   modelStatusClass,
   modelStatusLabel,
   type ModelCapability,
@@ -318,8 +317,7 @@ export default function LLMConfigPage() {
     try {
       const res = await fetchWithAuth(`${API_BASE_URL}/llm/providers`);
       if (res.ok) {
-        const data = await res.json();
-        const visibleProviders = data.filter((provider: Provider) => !isInternalProviderConfig(provider));
+        const visibleProviders = (await res.json()).filter((provider: Provider) => !isInternalProviderConfig(provider));
         setProviders(visibleProviders);
         if (visibleProviders.length > 0 && !selectedProvider) {
           setSelectedProvider(visibleProviders[0].id);
@@ -1497,8 +1495,8 @@ export default function LLMConfigPage() {
 
                 {/* 提供商 */}
                 <div>
-                  <label className="block text-sm text-white/80 mb-2">服务商</label>
-                  <Select
+                  <label htmlFor="model-provider" className="block text-sm text-white/80 mb-2">服务商</label>
+                  <Select id="model-provider"
                     value={selectedProvider}
 	                    onChange={(e) => {
 	                      setSelectedProvider(e.target.value);

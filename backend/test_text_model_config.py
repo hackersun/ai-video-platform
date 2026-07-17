@@ -4,10 +4,12 @@ Tests for default text model resolution.
 
 from __future__ import annotations
 
+from pathlib import Path
 import pytest
 from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.api_key_utils import (
     create_image_generation_service,
@@ -19,7 +21,7 @@ from app.core.api_key_utils import (
     sanitize_chat_response,
     strip_thinking_blocks,
 )
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, get_db
 from app.api.v1.endpoints.coding_plan import resolve_text_service
 from app.services.ai_service_base import truncate_context
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
@@ -109,10 +111,14 @@ async def test_llm_catalog_hides_preflight_test_provider_data() -> None:
 
 
 @pytest.mark.asyncio
-async def test_llm_catalog_hides_contract_and_deterministic_providers() -> None:
+async def test_llm_catalog_hides_contract_and_deterministic_providers(tmp_path: Path) -> None:
     provider_ids = {"deterministic-acceptance", "contract-text"}
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'llm-catalog.db'}")
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    async with AsyncSessionLocal() as db:
+    async with engine.begin() as connection:
+        await connection.run_sync(LLMProvider.__table__.create)
+    async with session_factory() as db:
         for provider_id in provider_ids:
             db.add(
                 LLMProvider(
@@ -125,17 +131,18 @@ async def test_llm_catalog_hides_contract_and_deterministic_providers() -> None:
             )
         await db.commit()
 
+    async def override_get_db():
+        async with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
     try:
         response = TestClient(app).get("/api/v1/llm/providers")
         assert response.status_code == 200
         assert {item["id"] for item in response.json()}.isdisjoint(provider_ids)
     finally:
-        async with AsyncSessionLocal() as db:
-            for provider_id in provider_ids:
-                provider = await db.get(LLMProvider, provider_id)
-                if provider is not None:
-                    await db.delete(provider)
-            await db.commit()
+        app.dependency_overrides.pop(get_db, None)
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
