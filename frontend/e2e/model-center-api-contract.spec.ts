@@ -148,6 +148,38 @@ test('redacts an unexpected raw secret at the Model Center response boundary', a
   }
 });
 
+test('redacts raw secrets from overview and connection write responses', async () => {
+  const rawConnection = {
+    ...connectionPage.items[0],
+    api_key: 'raw-secret-value',
+    encrypted_secret: 'ciphertext',
+  };
+  const requests = recordFetch((url) => {
+    if (url.endsWith('/overview')) {
+      return jsonResponse({ blocking_issues: [], connections: [rawConnection], recipes: [] });
+    }
+    return jsonResponse(rawConnection);
+  });
+  try {
+    const overview = await modelCenterApi.getOverview();
+    const created = await modelCenterApi.createConnection({
+      provider_id: 'volcengine', name: '主连接', api_key: 'replacement-key',
+    });
+    const updated = await modelCenterApi.updateConnection('connection-1', {
+      name: '主连接', expected_revision: 3,
+    });
+    const values = [overview.connections[0], created, updated];
+
+    values.forEach((connection) => {
+      expect(connection).toEqual(connectionPage.items[0]);
+      expect(JSON.stringify(connection)).not.toContain('raw-secret-value');
+      expect(JSON.stringify(connection)).not.toContain('ciphertext');
+    });
+  } finally {
+    requests.restore();
+  }
+});
+
 test('preserves the shared transport error mapping', async () => {
   const requests = recordFetch(() => jsonResponse({
     detail: { code: 'revision_conflict', message: '配置已被其他操作更新，请刷新后重新提交。' },

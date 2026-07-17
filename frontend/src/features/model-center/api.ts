@@ -3,6 +3,8 @@ import { apiClient } from '@/lib/api-client';
 import type {
   CertificationRun,
   CertificationRunInput,
+  ConfigurationState,
+  ModelCapability,
   ModelBindingInput,
   ModelBindingUpdateInput,
   ModelBindingView,
@@ -59,6 +61,35 @@ function nullableStringValue(value: Record<string, unknown>, key: string, label:
   return stringValue(value, key, label);
 }
 
+function arrayValue(value: Record<string, unknown>, key: string, label: string) {
+  if (!Array.isArray(value[key])) throw new Error(`无效的模型中心${label}响应`);
+  return value[key];
+}
+
+function numberValue(value: Record<string, unknown>, key: string, label: string) {
+  if (typeof value[key] !== 'number') throw new Error(`无效的模型中心${label}响应`);
+  return value[key];
+}
+
+function configurationState(value: unknown, label: string): ConfigurationState {
+  if (value === 'draft' || value === 'published' || value === 'disabled') return value;
+  throw new Error(`无效的模型中心${label}响应`);
+}
+
+const modelCapabilities = new Set([
+  'text_generation', 'vision_analysis', 'image_generation', 'speech_generation',
+  'video_generation', 'subtitle_generation', 'media_render', 'object_storage',
+]);
+
+function isModelCapability(value: unknown): value is ModelCapability {
+  return typeof value === 'string' && modelCapabilities.has(value);
+}
+
+function modelCapability(value: unknown, label: string): ModelCapability {
+  if (isModelCapability(value)) return value;
+  throw new Error(`无效的模型中心${label}响应`);
+}
+
 function connectionView(value: unknown): ModelConnectionView {
   const input = record(value, '连接');
   if (typeof input.has_secret !== 'boolean' || typeof input.enabled !== 'boolean' || typeof input.revision !== 'number') {
@@ -90,8 +121,34 @@ function connectionPage(value: unknown): PageResponse<ModelConnectionView> {
   };
 }
 
+function productionRecipeView(value: unknown): ProductionRecipeView {
+  const input = record(value, '生产方案');
+  return {
+    id: stringValue(input, 'id', '生产方案'),
+    recipe_key: stringValue(input, 'recipe_key', '生产方案'),
+    name: stringValue(input, 'name', '生产方案'),
+    version: numberValue(input, 'version', '生产方案'),
+    status: configurationState(input.status, '生产方案'),
+    spec: record(input.spec, '生产方案'),
+    revision: numberValue(input, 'revision', '生产方案'),
+  };
+}
+
+function modelCenterOverview(value: unknown): ModelCenterOverview {
+  const input = record(value, '概览');
+  return {
+    blocking_issues: arrayValue(input, 'blocking_issues', '概览').map((issue) => {
+      const item = record(issue, '概览问题');
+      const capability = item.capability === undefined ? undefined : modelCapability(item.capability, '概览问题');
+      return { code: stringValue(item, 'code', '概览问题'), message: stringValue(item, 'message', '概览问题'), capability };
+    }),
+    connections: arrayValue(input, 'connections', '概览').map(connectionView),
+    recipes: arrayValue(input, 'recipes', '概览').map(productionRecipeView),
+  };
+}
+
 export const modelCenterApi = {
-  getOverview: () => apiClient.request<ModelCenterOverview>('/model-center/overview'),
+  getOverview: async () => modelCenterOverview(await apiClient.request<unknown>('/model-center/overview')),
   listDrivers: (page = 1, pageSize = 20) =>
     apiClient.request<PageResponse<ModelDriverView>>(pagePath('/model-center/drivers', page, pageSize)),
   createProvider: (input: ModelProviderInput) =>
@@ -102,9 +159,9 @@ export const modelCenterApi = {
   listConnections: async (page = 1, pageSize = 20) =>
     connectionPage(await apiClient.request<unknown>(pagePath('/model-center/connections', page, pageSize))),
   createConnection: (input: ModelConnectionInput) =>
-    apiClient.request<ModelConnectionView>('/model-center/connections', { method: 'POST', body: jsonBody(input) }),
+    apiClient.request<unknown>('/model-center/connections', { method: 'POST', body: jsonBody(input) }).then(connectionView),
   updateConnection: (connectionId: string, input: ModelConnectionUpdateInput) =>
-    apiClient.request<ModelConnectionView>(`/model-center/connections/${connectionId}`, { method: 'PUT', body: jsonBody(input) }),
+    apiClient.request<unknown>(`/model-center/connections/${connectionId}`, { method: 'PUT', body: jsonBody(input) }).then(connectionView),
   testConnection: (connectionId: string) =>
     apiClient.request<CertificationRun>(`/model-center/connections/${connectionId}/test`, { method: 'POST' }),
 
