@@ -1,9 +1,56 @@
 """Persisted, versioned model-center configuration records."""
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, Numeric, String, Text, UniqueConstraint
+from copy import deepcopy
+from typing import Any
+from uuid import uuid4
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    event,
+    inspect,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 
 from app.core.database import Base
 from app.core.time_utils import utc_now
+from app.models.llm_config import decrypt_key, encrypt_key
+
+
+def _next_version_values(
+    source,
+    *,
+    copy_fields: tuple[str, ...],
+    mutable_fields: frozenset[str],
+    checksum: str,
+    changes: dict[str, Any],
+) -> dict[str, Any]:
+    if source.status != "published":
+        raise ValueError("only a published version can create its next version")
+    if not checksum or checksum == source.checksum:
+        raise ValueError("next version requires a fresh checksum")
+    unsupported = set(changes) - mutable_fields
+    if unsupported:
+        raise ValueError(f"unsupported next-version changes: {', '.join(sorted(unsupported))}")
+    values = {field: deepcopy(getattr(source, field)) for field in copy_fields}
+    values.update(deepcopy(changes))
+    values.update(id=str(uuid4()), version=source.version + 1, status="draft", checksum=checksum)
+    return values
+
+
+def _reject_published_update(_mapper, _connection, target) -> None:
+    state = inspect(target)
+    status_history = state.attrs.status.history
+    persisted_status = status_history.deleted[0] if status_history.deleted else target.status
+    changed = any(state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs)
+    if persisted_status == "published" and changed:
+        raise ValueError("published version is append-only; create the next version instead")
 
 
 class ModelProvider(Base):
@@ -42,14 +89,26 @@ class ModelConnection(Base):
     user_id = Column(String(36), nullable=False, index=True)
     provider_id = Column(String(36), nullable=False, index=True)
     name = Column(String(120), nullable=False)
-    api_key = Column(Text)
-    api_secret = Column(Text)
+    api_key = Column(Text)  # Fernet ciphertext only; write through set_api_key_encrypted().
+    api_secret = Column(Text)  # Fernet ciphertext only; write through set_api_secret_encrypted().
     endpoint_overrides = Column(JSON, nullable=False, default=dict)
     connection_params = Column(JSON, nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="draft", index=True)
     tested_at = Column(DateTime)
     created_at = Column(DateTime, nullable=False, default=utc_now)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)
+
+    def get_api_key_decrypted(self) -> str:
+        return decrypt_key(self.api_key or "")
+
+    def set_api_key_encrypted(self, plain_key: str) -> None:
+        self.api_key = encrypt_key(plain_key) if plain_key else ""
+
+    def get_api_secret_decrypted(self) -> str:
+        return decrypt_key(self.api_secret or "")
+
+    def set_api_secret_encrypted(self, plain_secret: str | None) -> None:
+        self.api_secret = encrypt_key(plain_secret) if plain_secret else None
 
 
 class ModelProfileVersion(Base):
@@ -73,6 +132,23 @@ class ModelProfileVersion(Base):
     status = Column(String(30), nullable=False, default="draft", index=True)
     checksum = Column(String(64), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, default=utc_now)
+
+    def create_next_version(self, *, checksum: str, **changes: Any) -> "ModelProfileVersion":
+        copy_fields = (
+            "model_id", "api_model_id", "driver_key", "capabilities", "input_contract",
+            "output_contract", "parameter_schema", "default_params", "limits", "pricing",
+            "prompt_profile_key", "contract_version",
+        )
+        mutable_fields = frozenset(copy_fields) - {"model_id"}
+        return ModelProfileVersion(
+            **_next_version_values(
+                self,
+                copy_fields=copy_fields,
+                mutable_fields=mutable_fields,
+                checksum=checksum,
+                changes=changes,
+            )
+        )
 
 
 class ModelBinding(Base):
@@ -119,6 +195,18 @@ class ProductionRecipeVersion(Base):
     revision = Column(Integer, nullable=False, default=1)
     created_at = Column(DateTime, nullable=False, default=utc_now)
     published_at = Column(DateTime)
+
+    def create_next_version(self, *, checksum: str, **changes: Any) -> "ProductionRecipeVersion":
+        copy_fields = ("user_id", "recipe_key", "name", "spec")
+        return ProductionRecipeVersion(
+            **_next_version_values(
+                self,
+                copy_fields=copy_fields,
+                mutable_fields=frozenset({"name", "spec"}),
+                checksum=checksum,
+                changes=changes,
+            )
+        )
 
 
 class ModelCertificationRun(Base):
@@ -172,3 +260,7 @@ class ModelConfigAuditEvent(Base):
     reason = Column(String(200), nullable=False)
     sanitized_change_summary = Column(JSON, nullable=False, default=dict)
     created_at = Column(DateTime, nullable=False, default=utc_now, index=True)
+
+
+event.listen(ModelProfileVersion, "before_update", _reject_published_update)
+event.listen(ProductionRecipeVersion, "before_update", _reject_published_update)
