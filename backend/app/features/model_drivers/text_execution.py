@@ -1,5 +1,6 @@
 """Legacy text execution compatibility over current provider services."""
 
+from collections.abc import Awaitable, Callable
 from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException, status
@@ -29,20 +30,37 @@ class TextGenerationServiceAdapter:
     convenience methods.
     """
 
-    def __init__(self, service: Any, execution_snapshot_id: str | None = None):
+    def __init__(
+        self, service: Any, execution_snapshot_id: str | None = None,
+        snapshot_factory: Callable[[], Awaitable[str | None]] | None = None,
+    ):
         self._service = service
         self._execution_snapshot_id = execution_snapshot_id
+        self._snapshot_factory = snapshot_factory
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._service, name)
 
     async def chat_completion(self, *args: Any, **kwargs: Any) -> dict:
-        return self._with_trace(sanitize_chat_response(await self._service.chat_completion(*args, **kwargs)))
+        snapshot_id = await self._snapshot_id()
+        return self._with_trace(
+            sanitize_chat_response(await self._service.chat_completion(*args, **kwargs)), snapshot_id,
+        )
 
-    def _with_trace(self, response: dict) -> dict:
-        if self._execution_snapshot_id:
-            return {**response, "execution_snapshot_id": self._execution_snapshot_id}
+    async def _snapshot_id(self) -> str | None:
+        if self._snapshot_factory is not None:
+            return await self._snapshot_factory()
+        return self._execution_snapshot_id
+
+    def _with_trace(self, response: dict, snapshot_id: str | None) -> dict:
+        if snapshot_id:
+            return {**response, "execution_snapshot_id": snapshot_id}
         return response
+
+    async def _provider_call_with_trace(self, call: Callable[[], Awaitable[Any]]) -> Any:
+        snapshot_id = await self._snapshot_id()
+        response = await call()
+        return self._with_trace(response, snapshot_id) if isinstance(response, dict) else response
 
     async def safe_chat_completion(
         self,
@@ -53,6 +71,7 @@ class TextGenerationServiceAdapter:
         max_context_tokens: Optional[int] = None,
         **kwargs: Any,
     ) -> dict:
+        snapshot_id = await self._snapshot_id()
         provider_safe = getattr(self._service, "safe_chat_completion", None)
         if callable(provider_safe):
             return self._with_trace(sanitize_chat_response(
@@ -64,7 +83,7 @@ class TextGenerationServiceAdapter:
                     max_context_tokens=max_context_tokens,
                     **kwargs,
                 )
-            ))
+            ), snapshot_id)
 
         from app.services.ai_service_base import parse_api_error, truncate_context
 
@@ -99,7 +118,7 @@ class TextGenerationServiceAdapter:
                     max_tokens=output_tokens,
                     **kwargs,
                 )
-            ))
+            ), snapshot_id)
         except HTTPException:
             raise
         except Exception as exc:
@@ -122,7 +141,9 @@ class TextGenerationServiceAdapter:
     ) -> dict:
         provider_method = getattr(self._service, "understand_dialogue", None)
         if callable(provider_method):
-            return await provider_method(user_input=user_input, context=context, model=model)
+            return await self._provider_call_with_trace(
+                lambda: provider_method(user_input=user_input, context=context, model=model),
+            )
 
         messages = [
             {
@@ -147,7 +168,9 @@ class TextGenerationServiceAdapter:
     ) -> dict:
         provider_method = getattr(self._service, "generate_coding_plan", None)
         if callable(provider_method):
-            return await provider_method(requirement=requirement, model=model, context=context, language=language)
+            return await self._provider_call_with_trace(
+                lambda: provider_method(requirement=requirement, model=model, context=context, language=language),
+            )
 
         prompt = f"需求描述：\n{requirement}\n\n"
         if language:
@@ -168,7 +191,9 @@ class TextGenerationServiceAdapter:
     async def generate_novel_with_plan(self, prompt: str, model: str, max_tokens: int = 8000) -> dict:
         provider_method = getattr(self._service, "generate_novel_with_plan", None)
         if callable(provider_method):
-            return await provider_method(prompt=prompt, model=model, max_tokens=max_tokens)
+            return await self._provider_call_with_trace(
+                lambda: provider_method(prompt=prompt, model=model, max_tokens=max_tokens),
+            )
 
         plan_response = await self.safe_chat_completion(
             model=model,
@@ -209,10 +234,12 @@ class TextGenerationServiceAdapter:
     ) -> dict:
         provider_method = getattr(self._service, "generate_technical_storyboard", None)
         if callable(provider_method):
-            return await provider_method(
-                scene_description=scene_description,
-                technical_requirements=technical_requirements,
-                model=model,
+            return await self._provider_call_with_trace(
+                lambda: provider_method(
+                    scene_description=scene_description,
+                    technical_requirements=technical_requirements,
+                    model=model,
+                ),
             )
 
         prompt = f"场景描述：\n{scene_description}\n\n"
@@ -235,37 +262,38 @@ def create_text_generation_service(
     provider_name: str,
     base_url: Optional[str],
     execution_snapshot_id: str | None = None,
+    snapshot_factory: Callable[[], Awaitable[str | None]] | None = None,
 ) -> Any:
     """Create the correct text-generation service for a saved provider config."""
     base_url = normalize_provider_base_url(provider_name, base_url)
     if provider_name == "qianlian":
         from app.services.qianlian_service import QianlianService
 
-        return TextGenerationServiceAdapter(QianlianService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(QianlianService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name in ("dashscope", "qwen"):
         from app.services.dashscope_service import DashScopeService
 
-        return TextGenerationServiceAdapter(DashScopeService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(DashScopeService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name == "minimax":
         from app.services.minimax_service import MiniMaxService
 
-        return TextGenerationServiceAdapter(MiniMaxService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(MiniMaxService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name == "volcano":
         from app.services.volcano_service import VolcanoService
 
-        return TextGenerationServiceAdapter(VolcanoService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(VolcanoService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name == "volcano_agent_plan":
         from app.services.volcano_service import VolcanoService
 
-        return TextGenerationServiceAdapter(VolcanoService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(VolcanoService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name == "openai":
         from app.services.openai_service import OpenAIService
 
-        return TextGenerationServiceAdapter(OpenAIService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(OpenAIService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name == "baidu":
         from app.services.openai_service import OpenAIService
 
-        return TextGenerationServiceAdapter(OpenAIService(api_key, base_url), execution_snapshot_id)
+        return TextGenerationServiceAdapter(OpenAIService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"不支持的文本模型服务商: {provider_name}",
@@ -274,6 +302,7 @@ def create_text_generation_service(
 
 def create_text_generation_service_from_context(
     context: Any, execution_snapshot_id: str | None = None,
+    snapshot_factory: Callable[[], Awaitable[str | None]] | None = None,
 ) -> Any:
     """Build the existing text client from a binding-selected driver."""
     driver = context.driver_context
@@ -287,27 +316,14 @@ def create_text_generation_service_from_context(
             detail=f"不支持的文本模型驱动: {driver.driver_key}",
         )
     return create_text_generation_service(
-        driver.api_key, provider_name, driver.base_url, execution_snapshot_id,
+        driver.api_key, provider_name, driver.base_url, execution_snapshot_id, snapshot_factory,
     )
 
 
-async def get_user_text_generation_service(
-    db: AsyncSession,
-    user_id: str,
-) -> Tuple[Any, str, str, Optional[str]]:
-    """Return (service, provider_name, model_id, base_url) for the default text config."""
-    context = None
-    if isinstance(db, AsyncSession):
-        try:
-            context = await resolve_generation_context(db, user_id=user_id, stage="text")
-        except ModelBindingError as error:
-            if str(error) not in _LEGACY_BINDING_FALLBACK_ERRORS:
-                raise HTTPException(status_code=422, detail=str(error)) from error
-    if context is not None:
-        provider_name = str(
-            context.driver_context.connection_params.get("provider_name")
-            or context.profile.provider_id
-        )
+def _text_snapshot_factory(
+    db: AsyncSession, user_id: str, context: Any,
+) -> Callable[[], Awaitable[str | None]]:
+    async def create_snapshot() -> str:
         snapshot = await create_execution_snapshot(
             db,
             ExecutionSnapshotCommand(
@@ -319,8 +335,38 @@ async def get_user_text_generation_service(
                 sanitized_params={"output_contract": "chat_completion"},
             ),
         )
+        return snapshot.id
+
+    return create_snapshot
+
+
+async def get_user_text_generation_service(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    recipe_version_id: str | None = None,
+    prompt_profile_version_id: str | None = None,
+) -> Tuple[Any, str, str, Optional[str]]:
+    """Return (service, provider_name, model_id, base_url) for the default text config."""
+    context = None
+    if isinstance(db, AsyncSession):
+        try:
+            context = await resolve_generation_context(
+                db, user_id=user_id, stage="text", recipe_version_id=recipe_version_id,
+                prompt_profile_version_id=prompt_profile_version_id,
+            )
+        except ModelBindingError as error:
+            if str(error) not in _LEGACY_BINDING_FALLBACK_ERRORS:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    if context is not None:
+        provider_name = str(
+            context.driver_context.connection_params.get("provider_name")
+            or context.profile.provider_id
+        )
         return (
-            create_text_generation_service_from_context(context, snapshot.id),
+            create_text_generation_service_from_context(
+                context, snapshot_factory=_text_snapshot_factory(db, user_id, context),
+            ),
             provider_name,
             context.profile.api_model_id,
             context.base_url,

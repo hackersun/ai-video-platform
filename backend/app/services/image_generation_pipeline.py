@@ -159,12 +159,16 @@ async def call_image_generation_provider(
     config_id: str | None = None,
     job_id: str | None = None,
     run_id: str | None = None,
+    recipe_version_id: str | None = None,
+    prompt_profile_version_id: str | None = None,
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
     if generation_context is None and db is not None and user_id:
         try:
             generation_context = await resolve_generation_context(
                 db, user_id=user_id, stage="image", explicit_config_id=config_id,
+                recipe_version_id=recipe_version_id,
+                prompt_profile_version_id=prompt_profile_version_id,
             )
         except ModelBindingError as error:
             if not is_dev_mode():

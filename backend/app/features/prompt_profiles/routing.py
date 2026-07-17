@@ -114,14 +114,6 @@ async def select_prompt_profile_version(
     return ranked[0][7] if ranked else None
 
 
-async def select_bound_prompt_profile_version(
-    db: AsyncSession, query: PromptRouteQuery, *, profile_key: str,
-):
-    ranked = await _ranked_candidates(db, query)
-    match = next((item for item in ranked if item[6].key == profile_key), None)
-    return match[7] if match is not None else None
-
-
 async def select_prompt_profile(
     db: AsyncSession, query: PromptRouteQuery | None = None, **kwargs,
 ) -> PromptSelection | None:

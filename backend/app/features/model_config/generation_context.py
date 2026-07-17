@@ -145,6 +145,7 @@ async def resolve_generation_context(
     series_id: str | None = None,
     recipe_spec: Mapping[str, Any] | None = None,
     recipe_version_id: str | None = None,
+    prompt_profile_version_id: str | None = None,
 ) -> GenerationContext:
     if stage not in STAGE_REQUIREMENTS:
         raise ModelBindingError("recipe_stage_invalid")
@@ -175,9 +176,6 @@ async def resolve_generation_context(
         raise ModelBindingError("connection_missing")
     binding = _legacy_driver(binding, connection)
     params = {**dict(connection.connection_params), "provider_name": connection.provider_name}
-    prompt_profile_version_id = await _resolve_prompt_profile_version_id(
-        db, user_id=user_id, task=task, stage=stage, binding=binding,
-    )
     return GenerationContext(
         binding=binding, route_policy=route_policy_for(binding.route_policy),
         api_key=connection.api_key, api_secret=connection.api_secret,
@@ -185,26 +183,6 @@ async def resolve_generation_context(
         recipe_version_id=recipe_version_id or _legacy_provenance(binding),
         prompt_profile_version_id=prompt_profile_version_id or _legacy_provenance(binding),
     )
-
-
-async def _resolve_prompt_profile_version_id(
-    db: AsyncSession, *, user_id: str, task: str, stage: str, binding: ResolvedModelBinding,
-) -> str | None:
-    key = binding.profile.prompt_profile_key
-    if not key:
-        return None
-    from app.features.prompt_profiles.public import PromptRouteQuery, select_bound_prompt_profile_version
-
-    version = await select_bound_prompt_profile_version(
-        db,
-        PromptRouteQuery(
-            user_id=user_id, task=task, provider_id=binding.profile.provider_id,
-            model_id=binding.profile.api_model_id,
-            capabilities=binding.profile.capabilities, stage=stage,
-        ),
-        profile_key=key,
-    )
-    return version.id if version is not None else None
 
 
 def _legacy_provenance(binding: ResolvedModelBinding) -> str | None:

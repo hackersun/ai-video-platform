@@ -273,7 +273,8 @@ async def _shadow_resolution(
         "provider_id": identity.get("provider_id", binding.profile.provider_id),
         "api_model_id": binding.profile.api_model_id,
         "connection_id": identity.get("connection_id", binding.connection_id),
-        "prompt_profile_version_id": binding.profile.prompt_profile_key,
+        "prompt_profile_key": binding.profile.prompt_profile_key,
+        "prompt_profile_version_id": None,
         "native_audio": bool(binding.profile.default_params.get("native_audio")),
         "output_contract": dict(binding.profile.output_contract),
     }

@@ -208,9 +208,8 @@ async def _execute_driver_operation(
         evidence = _sanitize_evidence(
             {
                 "operation": operation,
-                "provider_error_type": type(error).__name__,
-                "provider_error_message": str(error),
-                "provider_evidence": getattr(error, "evidence", {}),
+                "provider_error_class": type(error).__name__,
+                "provider_error_summary": f"provider_{operation}_failed",
             },
             context.secrets,
         )

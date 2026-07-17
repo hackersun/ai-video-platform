@@ -53,8 +53,11 @@ async def test_minimax_reference_adapter_requests_url_then_reuploads_qiniu(
     async def call_provider(received_service, **kwargs):
         assert received_service is service
         assert kwargs["minimax_response_format"] == "url"
+        assert kwargs["job_id"] == "operation-1"
+        assert kwargs["run_id"] == "run-1"
         return {
             "id": "image-task-1",
+            "execution_snapshot_id": "snapshot-image-1",
             "data": {"image_urls": [provider_url]},
             "metadata": {"success_count": "1", "failed_count": "0"},
             "base_resp": {"status_code": 0, "status_msg": "success"},
@@ -94,7 +97,7 @@ async def test_minimax_reference_adapter_requests_url_then_reuploads_qiniu(
     )
 
     db = _FakeDB()
-    run = SimpleNamespace(user_id="user-1", run_metadata={})
+    run = SimpleNamespace(id="run-1", user_id="user-1", run_metadata={})
     result = await ConfiguredReferenceAdapter().generate(
         db=db,
         run=run,
@@ -115,6 +118,7 @@ async def test_minimax_reference_adapter_requests_url_then_reuploads_qiniu(
     assert db.commits == 1
     evidence = run.run_metadata["provider_response_evidence"]["operation-1"]
     assert evidence["payload_counts"] == {"base64": 0, "url": 1}
+    assert evidence["execution_snapshot_id"] == "snapshot-image-1"
     assert provider_url not in repr(evidence)
 
 

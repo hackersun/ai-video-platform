@@ -1020,6 +1020,7 @@ async def generate_shot_image(
             size="2K",
             aspect_ratio="1:1",
             openai_size="1024x1024", db=db, user_id=user_id, config_id=request.model_config_id if request else None,
+            job_id=shot.id, run_id=getattr(live_run, "id", None),
         )
         task_id = provider_task_id(result, provider_name=provider_name)
         returned_image_urls = extract_image_urls_from_provider_result(result)
@@ -1033,6 +1034,7 @@ async def generate_shot_image(
         if live_reservation:
             shot.extra_data = {
                 **(shot.extra_data or {}),
+                "image_execution_snapshot_id": result.get("execution_snapshot_id"),
                 "live_canary_image_accounting": {
                     "series_run_id": live_run.id, "reservation_id": live_reservation,
                     "provider_task_id": task_id, "capability": "image",
@@ -1066,6 +1068,11 @@ async def generate_shot_image(
         raise HTTPException(status_code=500, detail=f"参考图生成失败: {str(exc)}")
 
     image_urls = returned_image_urls or extract_image_urls_from_provider_result(result)
+    if result.get("execution_snapshot_id"):
+        shot.extra_data = {
+            **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+            "image_execution_snapshot_id": result["execution_snapshot_id"],
+        }
     if image_operation and image_urls:
         await settle_synchronous_provider_operation(
             db, image_operation,
@@ -1107,6 +1114,7 @@ async def generate_shot_image(
                 "consistency": context["metadata"],
                 "provider": provider_name,
                 "model": model_id,
+                "execution_snapshot_id": result.get("execution_snapshot_id"),
             },
         )
         db.add(asset)
@@ -1156,6 +1164,7 @@ async def generate_shot_image(
         "image_generation_provider": provider_name,
         "image_generation_model": model_id,
         "image_generation_task_id": task_id,
+        "image_execution_snapshot_id": result.get("execution_snapshot_id"),
     }
     shot.image_status = "generating"
     shot.updated_at = utc_now()

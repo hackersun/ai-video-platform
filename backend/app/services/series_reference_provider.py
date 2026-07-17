@@ -128,6 +128,7 @@ class ConfiguredReferenceAdapter:
                 service, provider_name=provider_name or "", model_id=model_id or "", prompt=prompt,
                 num=1, size="2K", aspect_ratio="3:2", openai_size="1536x1024", minimax_response_format="url",
                 db=db, user_id=run.user_id, config_id=image_config_id,
+                job_id=operation.id, run_id=getattr(run, "id", None),
             )
         except MiniMaxProviderRejected as error:
             if error.provider_task_id or error.artifact_returned:
@@ -147,7 +148,8 @@ class ConfiguredReferenceAdapter:
                     db, operation, provider_task_id=task_id,
                 )
             await persist_image_response_evidence(
-                db, run, operation_id=operation.id, evidence=classified["evidence"],
+                db, run, operation_id=operation.id,
+                evidence={**classified["evidence"], "execution_snapshot_id": result.get("execution_snapshot_id")},
             )
         except Exception as error:
             if isinstance(error, ReferenceAdapterStageError):

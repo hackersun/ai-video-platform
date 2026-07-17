@@ -84,6 +84,27 @@ def test_execution_snapshot_rejects_secrets_and_prompt_content() -> None:
         sanitize_snapshot_params({"prompt": "private full prompt"})
 
 
+@pytest.mark.asyncio
+async def test_driver_evidence_never_keeps_raw_provider_exception_text() -> None:
+    from app.features.model_drivers.domain import DriverExecutionError
+    from app.features.model_drivers.executor import _execute_driver_operation
+
+    async def reject():
+        raise RuntimeError("provider rejected private prompt: chapter ending secret")
+
+    with pytest.raises(DriverExecutionError) as error:
+        await _execute_driver_operation(
+            "generation", reject,
+            DriverContext(profile=_binding().profile, driver_key="volcano_ark_video_v3", connection_id="conn"),
+        )
+
+    assert error.value.sanitized_evidence == {
+        "operation": "generation",
+        "provider_error_class": "RuntimeError",
+        "provider_error_summary": "provider_generation_failed",
+    }
+
+
 @pytest.mark.parametrize(
     "params",
     [
@@ -409,7 +430,7 @@ async def test_text_adapter_returns_execution_snapshot_trace_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bound_text_service_creates_snapshot_before_returning_adapter(
+async def test_bound_text_service_creates_distinct_snapshot_for_each_chat_call(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -425,14 +446,15 @@ async def test_bound_text_service_creates_snapshot_before_returning_adapter(
         ),
         profile=binding.profile,
     )
-    captured = {}
-
     async def resolve(*_args, **_kwargs):
         return context
 
-    def create(_context, snapshot_id):
-        captured["snapshot_id"] = snapshot_id
-        return object()
+    class Service:
+        async def safe_chat_completion(self, **_kwargs):
+            return {"choices": [{"message": {"content": "safe output"}}]}
+
+    def create(_context, *, snapshot_factory):
+        return text_execution.TextGenerationServiceAdapter(Service(), snapshot_factory=snapshot_factory)
 
     monkeypatch.setattr(text_execution, "resolve_generation_context", resolve)
     monkeypatch.setattr(text_execution, "create_text_generation_service_from_context", create)
@@ -440,10 +462,14 @@ async def test_bound_text_service_creates_snapshot_before_returning_adapter(
         db_session, "user-1",
     )
 
-    assert service is not None
-    snapshot = await load_execution_snapshot(db_session, captured["snapshot_id"], user_id="user-1")
-    assert snapshot.recipe_version_id == "recipe-v1"
-    assert snapshot.prompt_profile_version_id == "prompt-v1"
+    first = await service.safe_chat_completion(model="model", messages=[])
+    second = await service.safe_chat_completion(model="model", messages=[])
+    first_snapshot = await load_execution_snapshot(db_session, first["execution_snapshot_id"], user_id="user-1")
+    second_snapshot = await load_execution_snapshot(db_session, second["execution_snapshot_id"], user_id="user-1")
+
+    assert first["execution_snapshot_id"] != second["execution_snapshot_id"]
+    assert first_snapshot.recipe_version_id == second_snapshot.recipe_version_id == "recipe-v1"
+    assert first_snapshot.prompt_profile_version_id == second_snapshot.prompt_profile_version_id == "prompt-v1"
 
 
 @pytest.mark.asyncio

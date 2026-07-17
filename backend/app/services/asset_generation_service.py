@@ -746,6 +746,7 @@ class AssetGenerationService:
         self.last_generation_failures: List[Asset] = []
         self.live_novel_id: Optional[str] = None
         self.last_live_accounting: Optional[Dict[str, Any]] = None
+        self.last_execution_snapshot_id: Optional[str] = None
     @staticmethod
     def _prompt_skill_task_for_entity(entity_type: str) -> str:
         return {
@@ -843,8 +844,12 @@ class AssetGenerationService:
             size=size,
             aspect_ratio=aspect_ratio,
             openai_size="1024x1024", db=self.db, user_id=self.user_id, config_id=self.image_model_config_id,
+            job_id=f"asset:{prefix}", run_id=live_run.id if live_run else None,
+            recipe_version_id=(live_run.run_metadata or {}).get("recipe_version_id") if live_run else None,
+            prompt_profile_version_id=self.last_prompt_routing.get("prompt_profile_version_id"),
         )
         image_urls = extract_image_urls_from_provider_result(result)
+        self.last_execution_snapshot_id = result.get("execution_snapshot_id")
         if reservation_id:
             task_id = provider_task_id(result, provider_name=self.provider_name)
             if not task_id and image_urls:
@@ -859,7 +864,7 @@ class AssetGenerationService:
             self.last_live_accounting = {
                 "series_run_id": live_run.id, "reservation_id": reservation_id,
                 "operation_id": reservation.get("operation_id"), "provider_task_id": task_id,
-                "capability": "image",
+                "capability": "image", "execution_snapshot_id": result.get("execution_snapshot_id"),
             }
         image_url = image_urls[0] if image_urls else None
         if not image_url:
@@ -1569,6 +1574,8 @@ class AssetGenerationService:
     ) -> Asset:
         """创建资产记录"""
         params = dict(generation_params or {})
+        if self.last_execution_snapshot_id:
+            params["execution_snapshot_id"] = self.last_execution_snapshot_id
         if self.last_live_accounting:
             params["live_canary_accounting"] = dict(self.last_live_accounting)
         asset = Asset(
@@ -1601,6 +1608,7 @@ class AssetGenerationService:
         await self.db.commit()
         await self.db.refresh(asset)
         self.last_live_accounting = None
+        self.last_execution_snapshot_id = None
         return asset
 
     def _build_avatar_prompt(self, name: str, description: str, style: str) -> str:
