@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any
 from uuid import uuid4
 
+from cryptography.fernet import InvalidToken
 from sqlalchemy import (
     Boolean,
     Column,
@@ -17,10 +18,14 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.orm import Session, validates
 
 from app.core.database import Base
 from app.core.time_utils import utc_now
-from app.models.llm_config import decrypt_key, encrypt_key
+from app.models.llm_config import _get_fernet, decrypt_key, encrypt_key
+
+
+_VERSION_TABLE_NAMES = frozenset({"model_profile_versions", "production_recipe_versions"})
 
 
 def _next_version_values(
@@ -44,13 +49,30 @@ def _next_version_values(
     return values
 
 
-def _reject_published_update(_mapper, _connection, target) -> None:
+def _persisted_status(target) -> str:
     state = inspect(target)
     status_history = state.attrs.status.history
-    persisted_status = status_history.deleted[0] if status_history.deleted else target.status
+    return status_history.deleted[0] if status_history.deleted else target.status
+
+
+def _reject_published_update(_mapper, _connection, target) -> None:
+    state = inspect(target)
     changed = any(state.attrs[column.key].history.has_changes() for column in state.mapper.column_attrs)
-    if persisted_status == "published" and changed:
+    if _persisted_status(target) == "published" and changed:
         raise ValueError("published version is append-only; create the next version instead")
+
+
+def _reject_published_delete(_mapper, _connection, target) -> None:
+    if _persisted_status(target) == "published":
+        raise ValueError("published version is append-only; deletion is not allowed")
+
+
+def _reject_bulk_version_dml(orm_execute_state) -> None:
+    if not (orm_execute_state.is_update or orm_execute_state.is_delete):
+        return
+    table = getattr(orm_execute_state.statement, "table", None)
+    if getattr(table, "name", None) in _VERSION_TABLE_NAMES:
+        raise ValueError("bulk UPDATE/DELETE is disabled for version tables")
 
 
 class ModelProvider(Base):
@@ -109,6 +131,16 @@ class ModelConnection(Base):
 
     def set_api_secret_encrypted(self, plain_secret: str | None) -> None:
         self.api_secret = encrypt_key(plain_secret) if plain_secret else None
+
+    @validates("api_key", "api_secret")
+    def _validate_fernet_ciphertext(self, field_name: str, value: str | None) -> str | None:
+        if value in {None, ""}:
+            return value
+        try:
+            _get_fernet().decrypt(value.encode())
+        except (AttributeError, InvalidToken, TypeError, ValueError) as error:
+            raise ValueError(f"{field_name} must be Fernet ciphertext") from error
+        return value
 
 
 class ModelProfileVersion(Base):
@@ -264,3 +296,6 @@ class ModelConfigAuditEvent(Base):
 
 event.listen(ModelProfileVersion, "before_update", _reject_published_update)
 event.listen(ProductionRecipeVersion, "before_update", _reject_published_update)
+event.listen(ModelProfileVersion, "before_delete", _reject_published_delete)
+event.listen(ProductionRecipeVersion, "before_delete", _reject_published_delete)
+event.listen(Session, "do_orm_execute", _reject_bulk_version_dml)

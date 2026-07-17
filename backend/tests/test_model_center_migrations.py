@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import create_engine, delete, event, inspect, text, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import Session
 
@@ -210,6 +210,28 @@ def test_model_connection_encrypts_credentials_before_persistence(tmp_path, monk
     engine.dispose()
 
 
+@pytest.mark.parametrize("field_name", ["api_key", "api_secret"])
+def test_model_connection_rejects_direct_plaintext_credentials(field_name, monkeypatch):
+    from app.models import llm_config as crypto
+
+    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
+    monkeypatch.setattr(crypto, "_fernet_cache", None)
+    base_values = {
+        "id": "connection-plain", "user_id": "user-1",
+        "provider_id": "provider-1", "name": "primary",
+    }
+
+    with pytest.raises(ValueError, match="Fernet ciphertext"):
+        ModelConnection(**base_values, **{field_name: "plaintext-secret"})
+
+    model_connection = ModelConnection(**base_values)
+    encrypted = crypto.encrypt_key("backfilled-secret")
+    setattr(model_connection, field_name, encrypted)
+    assert getattr(model_connection, field_name) == encrypted
+    with pytest.raises(ValueError, match="Fernet ciphertext"):
+        setattr(model_connection, field_name, "updated-plaintext")
+
+
 @pytest.mark.parametrize(
     ("row_factory", "edit"),
     [
@@ -232,6 +254,61 @@ def test_published_versions_allow_publish_transition_but_reject_later_edits(
         with pytest.raises(ValueError, match="published version is append-only"):
             session.commit()
         session.rollback()
+
+    engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("row_factory", "edit"),
+    [
+        (_profile_version, lambda row: setattr(row, "api_model_id", "draft-model")),
+        (_recipe_version, lambda row: setattr(row, "spec", {"stages": ["draft-edit"]})),
+    ],
+)
+def test_draft_versions_allow_instance_edits_and_deletes(tmp_path, row_factory, edit):
+    engine = _create_model_center_engine(tmp_path, f"draft-delete-{row_factory.__name__}.db")
+
+    with Session(engine, expire_on_commit=False) as session:
+        row = row_factory()
+        session.add(row)
+        session.commit()
+        edit(row)
+        session.commit()
+        session.delete(row)
+        session.commit()
+        assert session.get(type(row), row.id) is None
+
+    engine.dispose()
+
+
+@pytest.mark.parametrize("row_factory", [_profile_version, _recipe_version])
+def test_published_versions_reject_instance_delete(tmp_path, row_factory):
+    engine = _create_model_center_engine(tmp_path, f"published-delete-{row_factory.__name__}.db")
+
+    with Session(engine, expire_on_commit=False) as session:
+        row = row_factory(status="published")
+        session.add(row)
+        session.commit()
+        session.delete(row)
+        with pytest.raises(ValueError, match="published version is append-only"):
+            session.commit()
+        session.rollback()
+        assert session.get(type(row), row.id) is not None
+
+    engine.dispose()
+
+
+@pytest.mark.parametrize("model", [ModelProfileVersion, ProductionRecipeVersion])
+@pytest.mark.parametrize(
+    "statement_factory",
+    [lambda model: update(model).values(status="disabled"), lambda model: delete(model)],
+)
+def test_version_tables_reject_bulk_orm_dml(tmp_path, model, statement_factory):
+    engine = _create_model_center_engine(tmp_path, "bulk-version-dml.db")
+
+    with Session(engine) as session:
+        with pytest.raises(ValueError, match="bulk UPDATE/DELETE is disabled"):
+            session.execute(statement_factory(model))
 
     engine.dispose()
 
@@ -389,9 +466,13 @@ def test_model_center_migration_propagates_non_duplicate_ddl_errors(tmp_path):
     @event.listens_for(engine, "before_cursor_execute")
     def fail_alter(_connection, _cursor, statement, _parameters, _context, _executemany):
         if statement.startswith("ALTER TABLE llm_configs"):
-            raise sqlite3.OperationalError("simulated disk I/O error")
+            raise OperationalError(
+                statement,
+                None,
+                sqlite3.OperationalError("simulated disk I/O error"),
+            )
 
-    with pytest.raises(sqlite3.OperationalError, match="simulated disk I/O error"):
+    with pytest.raises(OperationalError, match="simulated disk I/O error"):
         add_model_center_links(engine)
     engine.dispose()
 
