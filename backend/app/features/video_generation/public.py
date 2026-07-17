@@ -12,6 +12,7 @@ from app.features.video_generation.application.consistency_package import (
 )
 from app.features.video_generation.application.job_sync import VideoJobSyncCommand, sync_video_job_and_shot
 from app.features.video_generation.application.driver_submission import (
+    create_bound_video_execution_snapshot,
     has_video_generation_driver,
     submit_bound_video_task,
 )
@@ -79,6 +80,7 @@ __all__ = [
     "resolve_video_seed",
     "sync_video_job_and_shot",
     "submit_ark_video_task",
+    "create_bound_video_execution_snapshot",
     "has_video_generation_driver",
     "submit_bound_video_task",
     "video_model_metadata",

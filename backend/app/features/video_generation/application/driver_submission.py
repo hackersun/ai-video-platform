@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from app.features.model_drivers.public import (
@@ -12,6 +12,7 @@ from app.features.model_drivers.public import (
     build_builtin_driver_registry,
     execute_generation,
 )
+from app.features.model_config.public import ExecutionSnapshotCommand, create_execution_snapshot
 from app.features.video_generation.adapters.ark import submit_ark_video_task
 from app.features.video_generation.errors import VideoGenerationError
 
@@ -44,6 +45,7 @@ def has_video_generation_driver(generation_context: Any) -> bool:
 
 async def submit_bound_video_task(
     generation_context: Any, prompt: str, create_kwargs: dict[str, Any], client: Any,
+    execution_snapshot_id: str | None = None,
 ) -> Any:
     if generation_context is None:
         return submit_ark_video_task(create_kwargs=create_kwargs, client=client)
@@ -59,7 +61,8 @@ async def submit_bound_video_task(
                 prompt=prompt, reference_images=images, reference_videos=videos, reference_audios=audios,
                 native_audio=bool(create_kwargs.get("generate_audio")), params=params,
             ),
-            generation_context.driver_context,
+            replace(generation_context.driver_context, execution_snapshot_id=execution_snapshot_id)
+            if execution_snapshot_id else generation_context.driver_context,
         )
     except DriverError as error:
         raise VideoGenerationError(422, str(error)) from error
@@ -68,4 +71,35 @@ async def submit_bound_video_task(
     return SubmittedVideoTask(submission.provider_task_id)
 
 
-__all__ = ["SubmittedVideoTask", "has_video_generation_driver", "submit_bound_video_task"]
+async def create_bound_video_execution_snapshot(
+    db: Any, *, user_id: str, generation_context: Any, job_id: str,
+    create_kwargs: dict[str, Any],
+) -> str | None:
+    if generation_context is None:
+        return None
+    images, videos, audios = _references(create_kwargs.get("content") or [])
+    snapshot = await create_execution_snapshot(
+        db,
+        ExecutionSnapshotCommand(
+            user_id=user_id, run_id=None, job_id=job_id,
+            task=generation_context.binding.task,
+            capability=generation_context.binding.capability,
+            binding=generation_context.binding,
+            sanitized_params={
+                "duration": create_kwargs.get("duration"),
+                "resolution": create_kwargs.get("resolution"),
+                "native_audio": bool(create_kwargs.get("generate_audio")),
+                "reference_image_count": len(images),
+                "reference_video_count": len(videos),
+                "reference_audio_count": len(audios),
+                "seed": create_kwargs.get("seed"),
+            },
+        ),
+    )
+    return snapshot.id
+
+
+__all__ = [
+    "SubmittedVideoTask", "create_bound_video_execution_snapshot",
+    "has_video_generation_driver", "submit_bound_video_task",
+]

@@ -67,6 +67,7 @@ from app.features.video_generation.public import (
     build_video_context_metadata,
     build_ark_video_create_kwargs,
     build_video_extra_data,
+    create_bound_video_execution_snapshot,
     build_video_consistency_package,
     collect_character_multiview_refs,
     create_ark_client,
@@ -241,9 +242,6 @@ def _provider_safe_image_url(image_url: Optional[str]) -> tuple[Optional[str], O
 
 
 
-
-
-
 def _extract_video_result(get_result):
     """Extract output fields from the different ARK response shapes in use."""
     video_url = None
@@ -254,20 +252,6 @@ def _extract_video_result(get_result):
             video_url = video_url or getattr(payload, "video_url", None)
             cover_url = cover_url or getattr(payload, "last_frame_url", None)
     return video_url, cover_url
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def _build_video_job_response(job: VideoJob) -> VideoJobResponse:
     extra = json_dict(job.extra_data)
     consistency = json_dict(extra.get("consistency"))
@@ -723,8 +707,16 @@ async def generate_video(
             resolution=request.resolution, camera_fixed=False,
             watermark=PROVIDER_VIDEO_WATERMARK_ENABLED, seed=video_seed,
         )
+        job_id = str(uuid4())
+        execution_snapshot_id = await create_bound_video_execution_snapshot(
+            db, user_id=user_id, generation_context=video_model_config.get("generation_context"),
+            job_id=job_id, create_kwargs=create_kwargs,
+        )
         try:
-            create_result = await submit_bound_video_task(video_model_config.get("generation_context"), provider_final_prompt, create_kwargs, client)
+            create_result = await submit_bound_video_task(
+                video_model_config.get("generation_context"), provider_final_prompt, create_kwargs, client,
+                execution_snapshot_id,
+            )
         except Exception as exc:
             image_error = provider_image_url_error_message(exc, provider_image_url)
             if image_error:
@@ -746,7 +738,10 @@ async def generate_video(
                 )
                 retry_kwargs = {**create_kwargs, "content": fallback_content["content"]}
                 try:
-                    create_result = await submit_bound_video_task(video_model_config.get("generation_context"), fallback_prompt["prompt"], retry_kwargs, client)
+                    create_result = await submit_bound_video_task(
+                        video_model_config.get("generation_context"), fallback_prompt["prompt"], retry_kwargs,
+                        client, execution_snapshot_id,
+                    )
                 except Exception as retry_exc:
                     retry_image_error = provider_image_url_error_message(retry_exc, provider_image_url)
                     if retry_image_error:
@@ -781,10 +776,12 @@ async def generate_video(
         extra_data["prompt_parameters"] = prompt_parameters
         extra_data["reference_package"] = reference_package_metadata
         extra_data["source_prompt"] = request.prompt
+        if execution_snapshot_id:
+            extra_data["execution_snapshot_id"] = execution_snapshot_id
 
         # 创建数据库记录
         job = VideoJob(
-            id=str(uuid4()),
+            id=job_id,
             user_id=user_id,
             project_id=request.project_id,
             workflow_id=request.workflow_id,

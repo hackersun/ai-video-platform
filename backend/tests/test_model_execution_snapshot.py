@@ -135,6 +135,43 @@ async def test_workflow_video_driver_receives_persisted_snapshot_id(
 
 
 @pytest.mark.asyncio
+async def test_direct_video_driver_receives_persisted_snapshot_id(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from app.features.video_generation.application import driver_submission
+
+    binding = replace(_binding(), profile=replace(_binding().profile, driver_key="test_video_driver"))
+    generation = SimpleNamespace(
+        binding=binding,
+        profile=binding.profile,
+        driver_context=DriverContext(
+            profile=binding.profile, driver_key=binding.profile.driver_key,
+            connection_id=binding.connection_id,
+        ),
+    )
+    captured = {}
+
+    async def execute(_registry, _command, driver_context):
+        captured["snapshot_id"] = driver_context.execution_snapshot_id
+        return SimpleNamespace(provider_task_id="provider-task")
+
+    monkeypatch.setattr(driver_submission, "execute_generation", execute)
+    create_kwargs = {"content": [], "duration": 8, "resolution": "720p", "seed": 42}
+    snapshot_id = await driver_submission.create_bound_video_execution_snapshot(
+        db_session, user_id="user-1", generation_context=generation,
+        job_id="job-1", create_kwargs=create_kwargs,
+    )
+    result = await driver_submission.submit_bound_video_task(
+        generation, "private prompt must not be saved", create_kwargs, object(), snapshot_id,
+    )
+
+    assert result.id == "provider-task"
+    assert captured["snapshot_id"] == snapshot_id
+
+
+@pytest.mark.asyncio
 async def test_execution_snapshot_rows_are_append_only(db_session: AsyncSession) -> None:
     snapshot = await create_execution_snapshot(
         db_session,
