@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
 from init_db import init_db
+from app.core.database import AsyncSessionLocal
 from app.core.security import get_current_user_id
+from app.models import StoryEntity
 from main import app
 
 
@@ -92,6 +95,22 @@ def _create_story_entity(
         headers=_auth_headers(user_id),
     )
     assert response.status_code == 201
+    return response.json()
+
+
+def _mark_story_entity_candidate(client: TestClient, user_id: str, entity_id: str) -> dict:
+    async def mark() -> None:
+        from app.services.story_entity_lifecycle import CANDIDATE, set_entity_review_status
+
+        async with AsyncSessionLocal() as db:
+            entity = await db.get(StoryEntity, entity_id)
+            assert entity is not None
+            set_entity_review_status(entity, CANDIDATE, changed_by="test", reason="asset safety test")
+            await db.commit()
+
+    asyncio.run(mark())
+    response = client.get(f"/api/v1/story-bibles/entities/{entity_id}", headers=_auth_headers(user_id))
+    assert response.status_code == 200
     return response.json()
 
 
@@ -213,6 +232,63 @@ def test_asset_reextract_by_novel_generates_entity_view_assets(client: TestClien
     assert payload["updated_count"] == 1
     assert {asset["entity_id"] for asset in payload["assets"]} == {entity["id"]}
     assert {asset["generation_params"]["view_key"] for asset in payload["assets"]} == {"front", "side", "back"}
+
+
+def test_asset_reextract_skips_candidate_story_entities(client: TestClient) -> None:
+    user_id = f"asset-reextract-candidate-{uuid4()}"
+    novel_id, chapter_id = _create_novel_and_chapter(client, user_id, "林澈握着玉符走进青石大殿。")
+    _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="character",
+        name="林澈",
+    )
+    candidate = _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="character",
+        name="候选林澈",
+    )
+    _mark_story_entity_candidate(client, user_id, candidate["id"])
+
+    response = client.post(
+        "/api/v1/assets/reextract",
+        json={"novel_id": novel_id, "entity_types": ["character"], "mode": "append", "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["created_count"] == 3
+    assert {asset["entity_id"] for asset in payload["assets"]} != {candidate["id"]}
+    assert all(asset["entity_id"] != candidate["id"] for asset in payload["assets"])
+
+
+def test_generate_entity_views_blocks_candidate_story_entity(client: TestClient) -> None:
+    user_id = f"entity-view-candidate-{uuid4()}"
+    novel_id, chapter_id = _create_novel_and_chapter(client, user_id, "林澈握着玉符走进青石大殿。")
+    candidate = _create_story_entity(
+        client,
+        user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        entity_type="character",
+        name="候选林澈",
+    )
+    _mark_story_entity_candidate(client, user_id, candidate["id"])
+
+    response = client.post(
+        "/api/v1/assets/generate-entity-views",
+        json={"entity_id": candidate["id"], "novel_id": novel_id, "style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    assert "候选" in response.json()["detail"]
 
 
 def test_asset_reextract_delete_then_extract_archives_unlocked_and_skips_locked_assets(client: TestClient) -> None:
@@ -354,7 +430,11 @@ def test_entity_reextract_overwrite_preserves_entity_id_and_updates_content(clie
     entities = list_resp.json()
     updated = next(item for item in entities if item["name"] == "沈月璃")
     assert updated["id"] == original["id"]
-    assert updated["description"] != "旧描述"
+    assert updated["description"] == "旧描述"
+    assert updated["is_approved"] is True
+    assert updated["extra_data"]["lifecycle"]["status"] == "approved"
+    assert updated["extra_data"]["extraction_run_id"]
+    assert updated["extra_data"]["quality"]
     assert any(item["name"] == "旧铜钩" and item["entity_type"] == "prop" for item in entities)
 
 
@@ -416,10 +496,13 @@ def test_entity_reextract_overwrite_refreshes_visual_fields(
     payload = response.json()
     updated = next(item for item in payload["entities"] if item["name"] == "陆衡")
     assert updated["id"] == original["id"]
-    assert updated["appearance"]
-    assert updated["appearance"] != "旧外观"
-    assert updated["visual_prompt"]
-    assert updated["visual_prompt"] != "旧提示"
+    assert updated["appearance"] is None
+    assert updated["visual_prompt"] is None
+    assert updated["attributes"]["appearance"] == "旧外观"
+    assert updated["attributes"]["visual_prompt"] == "旧提示"
+    assert updated["is_approved"] is True
+    assert updated["extra_data"]["lifecycle"]["status"] == "approved"
+    assert updated["extra_data"]["extraction_run_id"]
 
 
 def test_entity_bulk_delete_archives_unlocked_assets_and_skips_locked_assets(client: TestClient) -> None:

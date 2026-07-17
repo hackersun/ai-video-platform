@@ -83,7 +83,7 @@ def _issue_by_code(issues: List[Dict[str, Any]], code: str) -> Optional[Dict[str
     return next((issue for issue in issues if issue.get("code") == code), None)
 
 
-def build_studio_guidance(
+def _build_legacy_studio_guidance(
     *,
     workflow: Dict[str, Any],
     story_context: Dict[str, Any],
@@ -251,4 +251,202 @@ def build_studio_guidance(
             "workflow_id": workflow.get("id"),
         },
         "secondary_actions": actions[:6],
+    }
+
+
+PRODUCTION_STAGE_ORDER = [
+    "facts", "assets", "episode_contract", "draft", "review", "final", "render", "publish"
+]
+
+QUALITY_DIMENSIONS = {
+    "narrative_truth", "character_visual", "scene_prop_state",
+    "motion_camera", "voice_lipsync", "delivery_integrity",
+}
+
+
+def build_studio_guidance(
+    *,
+    workflow: Dict[str, Any],
+    story_context: Dict[str, Any],
+    story_bible: Dict[str, Any],
+    production_bible_summary: Dict[str, Any],
+    production: Dict[str, Any],
+    timeline: Dict[str, Any],
+    issues: List[Dict[str, Any]],
+    actions: List[Dict[str, Any]],
+    mode_policy: Dict[str, Any],
+    episode_contract: Optional[Dict[str, Any]] = None,
+    production_graph: Optional[Dict[str, Any]] = None,
+    assets: Optional[Dict[str, Any]] = None,
+    jobs: Optional[Dict[str, Any]] = None,
+    consistency_ledger: Optional[Dict[str, Any]] = None,
+    orchestration: Optional[Dict[str, Any]] = None,
+    quality_evaluation: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    workflow = workflow or {}
+    story_context = story_context or {}
+    production_bible_summary = production_bible_summary or {}
+    production = production or {}
+    assets = assets or {}
+    jobs = jobs or {}
+    consistency_ledger = consistency_ledger or {}
+    orchestration = orchestration or {}
+    quality_evaluation = quality_evaluation or {}
+    issues = issues or []
+    actions = actions or []
+    mode_policy = mode_policy or {}
+    job_summary = jobs.get("summary") or {}
+    blocking_issues = [item for item in issues if item.get("severity") in {"blocking", "error"}]
+    warnings = [item for item in issues if item.get("severity") in {"warning", "confirmable"}]
+
+    successful_drafts = [
+        {"job_id": item.get("id"), "artifact_id": item.get("video_url")}
+        for item in jobs.get("video_jobs") or []
+        if item.get("status") in {"succeeded", "completed"} and item.get("video_url")
+    ] + [
+        {
+            "job_id": item.get("id"),
+            "artifact_id": item.get("output_manifest_url") or item.get("output_video_url") or item.get("output_audio_url"),
+        }
+        for item in jobs.get("media_jobs") or []
+        if item.get("status") in {"succeeded", "completed"}
+        and (item.get("output_manifest_url") or item.get("output_video_url") or item.get("output_audio_url"))
+    ]
+    successful_renders = [
+        item for item in jobs.get("synthesis_jobs") or []
+        if item.get("status") in {"succeeded", "completed"}
+        and item.get("output_url")
+        and item.get("is_publishable") is True
+    ]
+    evaluated_dimensions = {str(item) for item in quality_evaluation.get("dimensions") or []}
+    quality_complete = (
+        evaluated_dimensions == QUALITY_DIMENSIONS
+        and len(quality_evaluation.get("evaluation_ids") or []) == len(QUALITY_DIMENSIONS)
+        and quality_evaluation.get("blocking") is False
+        and bool(quality_evaluation.get("artifact_id"))
+    )
+    successful_draft_ids = {str(item["job_id"]) for item in successful_drafts if item.get("job_id")}
+    quality_deliverable = quality_complete and str(quality_evaluation.get("artifact_id")) in successful_draft_ids
+    asset_ids = [
+        str(item.get("id")) for item in assets.get("items") or []
+        if item.get("id") and item.get("is_locked") and item.get("is_final")
+    ]
+    completed: Dict[str, bool] = {}
+    completed["facts"] = bool(workflow.get("novel_id") and workflow.get("chapter_id") and (production_graph or {}).get("hash"))
+    completed["assets"] = bool(
+        completed["facts"]
+        and asset_ids
+        and float(production.get("asset_lock_coverage") or 0) >= 1
+        and (production_bible_summary.get("asset_readiness") or {}).get("ready")
+    )
+    completed["episode_contract"] = bool(completed["assets"] and episode_contract and episode_contract.get("contract_id"))
+    completed["draft"] = bool(completed["episode_contract"] and successful_drafts)
+    completed["review"] = bool(completed["draft"] and quality_deliverable and not blocking_issues)
+    completed["final"] = bool(
+        completed["review"]
+        and float(quality_evaluation.get("score") or 0) >= 90
+        and int(consistency_ledger.get("overall_score") or 0) >= 90
+    )
+    completed["render"] = bool(completed["final"] and successful_renders)
+    completed["publish"] = bool(
+        completed["render"]
+        and ((workflow.get("metadata") or {}).get("publication_id") or workflow.get("status") == "published")
+    )
+    first_incomplete = next((stage for stage in PRODUCTION_STAGE_ORDER if not completed[stage]), "publish")
+    failed = orchestration.get("status") == "failed" and orchestration.get("task_id")
+    current_stage = str(orchestration.get("failed_stage") or first_incomplete) if failed else first_incomplete
+
+    action_specs = {
+        "facts": ("open_novel_context", "补齐生产事实", "/workflow"),
+        "assets": ("apply_asset_locks", "锁定标准资产", None),
+        "episode_contract": ("lock_episode_contract", "锁定剧集合约", None),
+        "draft": ("open_producer", "生成本集草片", _href("/producer", _context_params(workflow))),
+        "review": ("quality_check", "运行六维质量检查", None),
+        "final": ("repair_quality_blockers", "修复终稿阻断项", "/studio/shot-review"),
+        "render": ("render_episode", "渲染本集终稿", "/synthesis"),
+        "publish": ("publish_episode", "发布本集", "/synthesis"),
+    }
+    code, label, href = action_specs.get(current_stage, action_specs["publish"])
+    recommended_action = _guided_action(
+        code,
+        label,
+        reason=f"当前唯一推进阶段：{current_stage}",
+        risk="navigation" if href else "safe",
+        href=href,
+        scope=[str((story_context.get("chapter") or {}).get("title") or "当前集")],
+        expected_outputs=[current_stage],
+    )
+    orchestration_resume: Dict[str, Any] = {}
+    if failed:
+        orchestration_resume = {
+            "task_id": orchestration["task_id"],
+            "status": "failed",
+            "failed_stage": current_stage,
+            "completed_stages": orchestration.get("completed_stages") or [],
+            "error_message": orchestration.get("error_message"),
+            "safe_retry": True,
+        }
+        recommended_action = _guided_action(
+            "retry_orchestration",
+            "安全重试失败阶段",
+            reason=str(orchestration.get("error_message") or "上次编排失败，可从持久化阶段继续。"),
+            risk="safe",
+            params={"task_id": orchestration["task_id"], "stage": current_stage},
+            expected_outputs=[current_stage],
+        )
+
+    labels = {
+        "facts": "事实锁定", "assets": "资产锁定", "episode_contract": "剧集合约", "draft": "草片",
+        "review": "复审", "final": "终稿", "render": "渲染", "publish": "发布",
+    }
+    stages = [
+        _stage(
+            stage,
+            labels[stage],
+            "ready" if completed[stage] else "working" if stage == current_stage else "blocked",
+            "已提供完成证据" if completed[stage] else "等待前序阶段或当前动作",
+        )
+        for stage in PRODUCTION_STAGE_ORDER
+    ]
+    evidence_by_stage = {
+        "facts": {"hash": (production_graph or {}).get("hash")},
+        "assets": {"evidence_ids": asset_ids},
+        "episode_contract": {
+            "evidence_id": (episode_contract or {}).get("contract_id"),
+            "hash": (episode_contract or {}).get("production_bible_hash"),
+        },
+        "draft": successful_drafts[0] if successful_drafts else {},
+        "review": {
+            "artifact_id": quality_evaluation.get("artifact_id"),
+            "evaluation_ids": quality_evaluation.get("evaluation_ids") or [],
+            "score": quality_evaluation.get("score"),
+        },
+        "final": {
+            "artifact_id": quality_evaluation.get("artifact_id"),
+            "score": quality_evaluation.get("score"),
+        },
+        "render": {
+            "job_id": successful_renders[0].get("id") if successful_renders else None,
+            "artifact_id": successful_renders[0].get("output_url") if successful_renders else None,
+        },
+        "publish": {"evidence_id": (workflow.get("metadata") or {}).get("publication_id")},
+    }
+    completed_evidence = [
+        {"stage": stage, **evidence_by_stage[stage]}
+        for stage in PRODUCTION_STAGE_ORDER if completed[stage]
+    ]
+    return {
+        "readiness_score": int(production_bible_summary.get("readiness_score") or 0),
+        "current_stage": current_stage,
+        "stages": stages,
+        "blockers": blocking_issues,
+        "confirmable_warnings": warnings,
+        "completed_evidence": completed_evidence,
+        "recommended_action": recommended_action,
+        "next_action": recommended_action,
+        "blocker_count": len(blocking_issues),
+        "mode": mode_policy.get("mode") or "production",
+        "breadcrumbs": _context_params(workflow),
+        "secondary_actions": [item for item in actions if item.get("code") != recommended_action.get("code")][:6],
+        "orchestration_resume": orchestration_resume,
     }

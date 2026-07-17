@@ -19,6 +19,7 @@ from app.services.shot_quality_service import build_shot_quality_report, estimat
 from app.core.security import get_current_user_id
 from app.models import Asset, Chapter, Script, Shot, StoryEntity, Storyboard
 from app.services.consistency_context import auto_fill_shot_entity_refs, build_consistency_prompt, build_shot_entity_context
+from app.services.story_entity_lifecycle import is_entity_production_visible
 from app.services.chapter_naming import normalize_duplicate_chapter_label_text
 from app.services.image_generation_pipeline import (
     call_image_generation_provider,
@@ -29,6 +30,11 @@ from app.services.image_prompt_policy import append_global_image_constraints
 from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
 from app.services.asset_generation_service import style_keywords_for
+from app.features.workflow_media.public import finish_live_provider_attempt, prepare_live_provider_attempt, resolve_live_series_run_for_shot
+from app.api.v1.workflow_media_transport import workflow_media_result
+from app.services.live_canary_budget import link_provider_attempt
+from app.services.live_canary_budget import bind_provider_operation_for_reservation
+from app.services.live_canary_budget import settle_synchronous_provider_operation
 
 router = APIRouter(tags=["镜头管理"])
 
@@ -319,6 +325,12 @@ async def _resolve_entity_reference_bindings(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"实体不存在或无权限: {', '.join(missing)}",
         )
+    blocked = [entity.name or entity.id for entity in entities.values() if not is_entity_production_visible(entity)]
+    if blocked:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"实体尚未审核通过，不能绑定到生产镜头: {', '.join(blocked)}",
+        )
 
     resolved = []
     for binding in bindings:
@@ -351,9 +363,82 @@ def _image_generation_is_stale(shot: Shot, timeout_seconds: int = 300) -> bool:
         return False
 
 
+SHOT_NOISE_SCENE_MARKERS = ("这一刻", "指向", "推向", "注意力", "重新", "保证", "字幕", "对白")
+SHOT_NOISE_PROP_MARKERS = ("推向", "指向", "注意到", "注意力", "重新")
+
+
+def _ref_name(ref: object) -> str:
+    if isinstance(ref, dict):
+        return str(ref.get("name") or ref.get("entity_name") or ref.get("title") or "").strip()
+    return str(ref or "").strip()
+
+
+def _is_noise_shot_ref(ref: object, entity_type: str) -> bool:
+    name = _ref_name(ref)
+    if not name:
+        return False
+    if entity_type == "scene":
+        return any(marker in name for marker in SHOT_NOISE_SCENE_MARKERS)
+    if entity_type == "prop":
+        return len(name) > 4 and any(marker in name for marker in SHOT_NOISE_PROP_MARKERS)
+    return False
+
+
+def _sanitize_shot_refs(refs: object, entity_type: str) -> list:
+    if not isinstance(refs, list):
+        return []
+    return [ref for ref in refs if not _is_noise_shot_ref(ref, entity_type)]
+
+
+def _summarize_shot_refs(label: str, refs: list) -> Optional[str]:
+    parts = []
+    for ref in refs:
+        if isinstance(ref, dict):
+            name = ref.get("name") or ref.get("entity_name") or ref.get("title")
+            description = ref.get("description") or ref.get("appearance")
+            if name and description:
+                parts.append(f"{name}: {description}")
+            elif name:
+                parts.append(str(name))
+        elif ref:
+            parts.append(str(ref))
+    return f"{label}: {'；'.join(parts)}" if parts else None
+
+
+def _sanitize_shot_extra_data_for_response(value: object) -> dict:
+    extra_data = dict(_json_dict(value))
+    entity_refs = dict(extra_data.get("entity_refs") or {})
+    characters = _sanitize_shot_refs(entity_refs.get("characters") or [], "character")
+    scenes = _sanitize_shot_refs(extra_data.get("scene_refs") or entity_refs.get("scenes") or [], "scene")
+    props = _sanitize_shot_refs(extra_data.get("prop_refs") or entity_refs.get("props") or [], "prop")
+    events = _sanitize_shot_refs(extra_data.get("event_refs") or entity_refs.get("events") or [], "event")
+
+    entity_refs.update({
+        "characters": characters,
+        "scenes": scenes,
+        "props": props,
+        "events": events,
+    })
+    extra_data["entity_refs"] = entity_refs
+    extra_data["scene_refs"] = scenes
+    extra_data["prop_refs"] = props
+    extra_data["event_refs"] = events
+    environment_parts = [
+        part
+        for part in (
+            _summarize_shot_refs("场景", scenes),
+            _summarize_shot_refs("道具", props),
+            _summarize_shot_refs("事件", events),
+        )
+        if part
+    ]
+    extra_data["environment_context"] = "；".join(environment_parts) or None
+    return extra_data
+
+
 def build_shot_response(shot: Shot, storyboard_title: Optional[str] = None) -> ShotResponse:
     image_status = shot.image_status
-    extra_data = shot.extra_data if isinstance(shot.extra_data, dict) else {}
+    extra_data = _sanitize_shot_extra_data_for_response(shot.extra_data)
     if _image_generation_is_stale(shot):
         image_status = "failed"
         extra_data = {
@@ -906,6 +991,10 @@ async def generate_shot_image(
     model_id = ""
     task_id = None
     result = {}
+    image_operation = None
+    returned_image_urls = []
+    live_reservation = None
+    live_run = None
 
     try:
         api_key, provider_name, model_id, base_url = await get_user_image_model_config(
@@ -914,6 +1003,14 @@ async def generate_shot_image(
             config_id=request.model_config_id if request else None,
         )
         service = create_image_generation_service(api_key or "", provider_name or "", base_url)
+        live_run = await workflow_media_result(
+            resolve_live_series_run_for_shot(db, user_id=user_id, shot=shot)
+        )
+        live_reservation = await workflow_media_result(prepare_live_provider_attempt(
+            db, live_run, capability="image",
+            reservation_id=f"{shot.id}:shot-image:{uuid.uuid4()}",
+            job_type="shot_image", job_id=shot.id,
+        ))
         result = await call_image_generation_provider(
             service,
             provider_name=provider_name or "",
@@ -925,7 +1022,33 @@ async def generate_shot_image(
             openai_size="1024x1024",
         )
         task_id = provider_task_id(result, provider_name=provider_name)
+        returned_image_urls = extract_image_urls_from_provider_result(result)
+        if live_reservation and not task_id and returned_image_urls:
+            operation_id = live_run.cost_summary["reservations"][live_reservation].get("operation_id")
+            task_id = f"sync:{operation_id}"
+        if live_reservation and task_id:
+            image_operation = await bind_provider_operation_for_reservation(
+                db, live_run, reservation_id=live_reservation, provider_task_id=task_id
+            )
+        if live_reservation:
+            shot.extra_data = {
+                **(shot.extra_data or {}),
+                "live_canary_image_accounting": {
+                    "series_run_id": live_run.id, "reservation_id": live_reservation,
+                    "provider_task_id": task_id, "capability": "image",
+                    "operation_id": (live_run.cost_summary["reservations"][live_reservation]).get("operation_id"),
+                },
+            }
+            await link_provider_attempt(
+                db, live_run, reservation_id=live_reservation,
+                provider_task_id=task_id, job_id=shot.id, capability="image",
+            )
     except HTTPException:
+        if live_reservation and live_run:
+            await finish_live_provider_attempt(
+                db, live_run, live_reservation, submission_failed=True
+            )
+            raise
         if not is_dev_mode():
             raise
         task_id = f"dev-shot-image-{shot_id}"
@@ -942,7 +1065,12 @@ async def generate_shot_image(
         await db.commit()
         raise HTTPException(status_code=500, detail=f"参考图生成失败: {str(exc)}")
 
-    image_urls = extract_image_urls_from_provider_result(result)
+    image_urls = returned_image_urls or extract_image_urls_from_provider_result(result)
+    if image_operation and image_urls:
+        await settle_synchronous_provider_operation(
+            db, image_operation,
+            provider_actual_rmb=result.get("actual_cost_rmb", result.get("cost_rmb")) if isinstance(result, dict) else None,
+        )
     image_url = image_urls[0] if image_urls else None
 
     if image_url:
@@ -953,6 +1081,9 @@ async def generate_shot_image(
                 subdir="images",
                 prefix=f"shot-{shot_id[:8]}",
                 max_bytes=20 * 1024 * 1024,
+                optimize_image=True,
+                image_max_dimension=512,
+                image_quality=76,
             ) or image_url
         except Exception:
             pass
@@ -1133,7 +1264,8 @@ async def retry_shot_video(
     最多重试3次（可配置），通过 VideoGenerateRequest 提交新任务
     """
     from app.services.shot_quality_service import ShotQualityService
-    from app.api.v1.endpoints.video import VideoGenerateRequest, generate_video
+    from app.features.video_generation.public import VideoGenerateRequest
+    from app.api.v1.endpoints.video import generate_video
 
     result = await db.execute(
         select(Shot).where(and_(Shot.id == shot_id, Shot.user_id == user_id))

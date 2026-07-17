@@ -4,6 +4,8 @@ const e2ePort = process.env.PLAYWRIGHT_PORT || '3100';
 const baseURL = `http://localhost:${e2ePort}`;
 const chromeExecutablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE_PATH;
 const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || '/tmp/ai-video-platform-series-studio-e2e/test-results';
+const playwrightDistDir = process.env.PLAYWRIGHT_DIST_DIR || '.next-playwright';
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER !== '0';
 
 export default defineConfig({
   testDir: './e2e',
@@ -29,9 +31,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `npm run dev -- -p ${e2ePort}`,
+    command: `NEXT_DIST_DIR=${playwrightDistDir} npx next dev -p ${e2ePort}`,
     url: `${baseURL}/workflow`,
-    reuseExistingServer: true,
+    reuseExistingServer,
     timeout: 120 * 1000,
   },
 });

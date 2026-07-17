@@ -9,7 +9,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.database import SyncSessionLocal
 from app.core.dev_generation import dev_video_url
+from app.models import StoryEntity
+from app.services.storyboard_template_service import STORYBOARD_TEMPLATES, build_template_shots, extract_raw_story_beats
 from app.services.chapter_naming import normalize_duplicate_chapter_label_text
 from init_db import init_db
 from main import app
@@ -58,6 +61,318 @@ def test_storyboard_templates_are_exposed(client: TestClient) -> None:
     assert "urban-night-chase" in ids
     assert all(template["shot_count"] >= 1 for template in templates)
     assert all(template["shot_template"]["shots"] for template in templates)
+
+
+def test_script_storyboard_generation_uses_template_fallback_without_text_api_key(
+    client: TestClient,
+) -> None:
+    user_id = f"script-storyboard-dev-fallback-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "第三集前端验收", "genre": "科幻", "description": "星轨列车维修舱对白同步验收。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第三集 星轨列车维修舱",
+            "chapter_number": 3,
+            "content": "林澈说：我们只剩四秒。阿岚说：别停，我来稳住轨道。两人同框争执。",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+    chapter_id = chapter_resp.json()["id"]
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "第三集脚本",
+            "genre": "科幻",
+            "style": "anime",
+            "content": (
+                "【第1场】林澈检查星核计时器\n"
+                "林澈：我们只剩四秒。\n"
+                "【第2场】阿岚稳住轨道\n"
+                "阿岚：别停，我来稳住轨道。\n"
+                "【第3场】两人同框\n"
+                "林澈：你退后。\n"
+                "阿岚：不，我和你一起。"
+            ),
+        },
+        headers=auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    with SyncSessionLocal() as session:
+        session.add(
+            StoryEntity(
+                id=str(uuid4()),
+                user_id=user_id,
+                novel_id=novel_id,
+                chapter_id=chapter_resp.json()["id"],
+                entity_type="character",
+                name="因果与小",
+                description="旧版本误识别出的假角色",
+                aliases=[],
+                confidence=100,
+                source="deterministic",
+            )
+        )
+        session.commit()
+
+    response = client.post(
+        "/api/v1/storyboards/generate",
+        json={"script_id": script_resp.json()["id"], "style": "anime", "shot_count": 3},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["shot_count"] == 3
+    assert payload["content"]["source"] == "script_storyboard_template_fallback"
+    assert payload["content"]["ai_refined"] is False
+    assert payload["shots"][0]["extra_data"]["automation_level"] == "template_draft"
+
+
+def test_script_storyboard_template_fallback_uses_scene_beats_not_format_lines(
+    client: TestClient,
+) -> None:
+    user_id = f"script-scene-beats-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "星轨列车", "genre": "科幻", "description": "维修舱对白同步验收。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "第三集 星轨列车维修舱",
+            "chapter_number": 3,
+            "content": "林澈和阿岚在星轨列车维修舱抢修星核。",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_resp.json()["id"],
+            "title": "第三集脚本",
+            "genre": "科幻",
+            "style": "anime",
+            "content": (
+                "【第1场】开场钩子\n"
+                "- 人物：林澈\n"
+                "【画面描述】林澈站在星核计时器前，红灯闪烁。\n"
+                "【对话/旁白】\n"
+                "- 林澈：\"我们只剩四秒。\"\n"
+                "【镜头序列】\n"
+                "1. 全景 - 固定 - 展示维修舱。\n"
+                "【第2场】冲突推进\n"
+                "- 人物：阿岚\n"
+                "【画面描述】阿岚扶住稳定杆，轨道剧烈震动。\n"
+                "【对话/旁白】\n"
+                "- 阿岚：\"别停，我来稳住轨道。\"\n"
+                "【镜头序列】\n"
+                "1. 中景 - 跟拍 - 阿岚动作。\n"
+                "【第3场】结尾承接\n"
+                "- 人物：林澈、阿岚\n"
+                "【画面描述】两人同框站在裂开的能量桥边。\n"
+                "【对话/旁白】\n"
+                "- 林澈：\"你退后。\"\n"
+                "- 阿岚：\"不，我和你一起。\"\n"
+                "【镜头序列】\n"
+                "1. 近景 - 推镜 - 两人争执。"
+            ),
+        },
+        headers=auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    extracted_entities = client.post(
+        "/api/v1/story-bibles/entities/analyze",
+        json={
+            "script_id": script_resp.json()["id"],
+            "entity_types": ["character", "scene", "prop", "event"],
+            "persist": True,
+        },
+        headers=auth_headers(user_id),
+    )
+    assert extracted_entities.status_code == 200
+    production_entity_ids = [
+        item["id"] for item in extracted_entities.json()["entities"]
+        if item["name"] in {"林澈", "阿岚", "红灯"}
+    ]
+    assert {item["name"] for item in extracted_entities.json()["entities"] if item["id"] in production_entity_ids} >= {"林澈", "阿岚"}
+    approve_resp = client.post(
+        "/api/v1/story-bibles/entities/bulk-approve",
+        json={"entity_ids": production_entity_ids, "approved": True},
+        headers=auth_headers(user_id),
+    )
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["updated_count"] == len(production_entity_ids)
+    with SyncSessionLocal() as session:
+        for name in ("保留最后一句钩", "成为本场视觉钩", "形成下一集钩", "开场钩", "拉镜", "推镜", "镜"):
+            session.add(
+                StoryEntity(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    novel_id=novel_id,
+                    chapter_id=chapter_resp.json()["id"],
+                    entity_type="prop",
+                    name=name,
+                    description="旧版本误识别出的生产说明伪道具",
+                    aliases=[],
+                    confidence=100,
+                    source="deterministic",
+                )
+            )
+        session.commit()
+
+    response = client.post(
+        "/api/v1/storyboards/generate",
+        json={"script_id": script_resp.json()["id"], "style": "anime"},
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201, response.text
+    payload = response.json()
+    assert payload["shot_count"] == 3
+    dialogues = "\n".join((shot.get("dialogue") or "") for shot in payload["shots"])
+    assert "林澈：\"我们只剩四秒。\"" in dialogues
+    assert "阿岚：\"别停，我来稳住轨道。\"" in dialogues
+    assert "林澈：\"你退后。\"" in dialogues
+    assert "阿岚：\"不，我和你一起。\"" in dialogues
+    assert "因果与小" not in dialogues
+    assert "白并标注" not in dialogues
+    character_names = {
+        ref.get("name")
+        for shot in payload["shots"]
+        for ref in (shot.get("character_refs") or [])
+    }
+    assert {"林澈", "阿岚"}.issubset(character_names)
+    assert "因果与小" not in character_names
+    assert "白并标注" not in character_names
+    prop_names = {
+        ref.get("name")
+        for shot in payload["shots"]
+        for ref in (shot.get("prop_refs") or [])
+    } | {
+        ref.get("name")
+        for shot in payload["shots"]
+        for ref in (((shot.get("extra_data") or {}).get("entity_refs") or {}).get("props") or [])
+    }
+    assert "红灯" in prop_names
+    assert "保留最后一句钩" not in prop_names
+    assert "成为本场视觉钩" not in prop_names
+    assert "形成下一集钩" not in prop_names
+    assert "开场钩" not in prop_names
+    assert "拉镜" not in prop_names
+    assert "推镜" not in prop_names
+    assert "镜" not in prop_names
+
+
+def test_template_dialogue_uses_trusted_story_roles_without_fake_continuity_lines() -> None:
+    template = next(item for item in STORYBOARD_TEMPLATES if item["id"] == "anime-dialogue")
+    source_content = (
+        "她低声说：“江屿，罗盘指向灯塔，不是指向海。”"
+        "许澜说：“如果灯塔醒来，雾港会被星潮吞掉。”"
+        "江屿回答：“那我更要知道父亲为什么把钥匙留给我。”"
+    )
+    story_context = {
+        "characters": [{"name": "江屿"}, {"name": "许澜"}],
+        "scenes": [{"name": "钟楼机房"}],
+        "props": [{"name": "星锚罗盘"}, {"name": "铜钥匙"}],
+        "events": [{"name": "每一只钟面都映着江屿父亲失踪前的背影"}],
+    }
+
+    shots = build_template_shots(
+        template=template,
+        source_title="雾港星锚",
+        source_content=source_content,
+        shot_count=3,
+        story_context=story_context,
+    )
+
+    dialogues = "\n".join(shot.get("dialogue") or "" for shot in shots)
+    assert "许澜：如果灯塔醒来，雾港会被星潮吞掉。" in dialogues
+    assert "江屿：那我更要知道父亲为什么把钥匙留给我。" in dialogues
+    assert "不是指：" not in dialogues
+    assert "她低声说：" not in dialogues
+    assert "别让" not in dialogues
+    assert "断掉" not in dialogues
+
+
+def test_template_dialogue_keeps_chinese_quotes_and_speaker_hints() -> None:
+    template = next(item for item in STORYBOARD_TEMPLATES if item["id"] == "world-establishing")
+    source_content = (
+        "巡港员许澜戴着红围巾赶来。"
+        "她低声说：“江屿，罗盘指向灯塔，不是指向海。”"
+        "钥匙柄上刻着“不要让灯塔醒来。”"
+        "许澜说：“如果灯塔醒来，雾港会被星潮吞掉。”"
+        "江屿回答：“那我更要知道父亲为什么把钥匙留给我。”"
+        "许澜握紧红围巾说：“如果拔出它，大家会忘记这座港。”"
+        "他们用铜钥匙启动主齿轮。"
+    )
+    story_context = {
+        "characters": [{"name": "江屿"}, {"name": "许澜"}],
+        "scenes": [{"name": "钟楼机房"}],
+        "props": [{"name": "星锚罗盘"}, {"name": "铜钥匙"}],
+        "events": [{"name": "钟楼机房启动"}],
+    }
+
+    raw_beats = extract_raw_story_beats(source_content)
+    assert "她低声说：“江屿，罗盘指向灯塔，不是指向海。”" in raw_beats
+    assert not any(beat.startswith("”") for beat in raw_beats)
+
+    shots = build_template_shots(
+        template=template,
+        source_title="雾港星锚",
+        source_content=source_content,
+        shot_count=6,
+        story_context=story_context,
+    )
+
+    dialogues = "\n".join(shot.get("dialogue") or "" for shot in shots)
+    assert "许澜：江屿，罗盘指向灯塔，不是指向海。" in dialogues
+    assert "刻着“不要让灯塔醒来。”" in dialogues
+    assert "许澜：如果灯塔醒来，雾港会被星潮吞掉。" in dialogues
+    assert "江屿：那我更要知道父亲为什么把钥匙留给我。" in dialogues
+    assert "许澜：如果拔出它，大家会忘记这座港。" in dialogues
+    assert "江屿：如果拔出它" not in dialogues
+    assert "（旁白）许澜说" not in dialogues
+
+
+def test_auto_template_shots_do_not_duplicate_last_story_beat_for_dialogue_hints() -> None:
+    template = next(item for item in STORYBOARD_TEMPLATES if item["id"] == "world-establishing")
+    source_content = (
+        "钟楼机房里挂满停摆的海潮钟，每一只钟面都映着江屿父亲失踪前的背影。"
+        "江屿仍穿深蓝夹克，银色工具包没有离身，许澜的红围巾被机房风扇吹得像警示旗。"
+        "星锚罗盘开始逆转，蓝焰灯芯照出一枚铜钥匙，钥匙柄上刻着“不要让灯塔醒来”。"
+        "许澜说：“如果灯塔醒来，雾港会被星潮吞掉。”"
+        "江屿回答：“那我更要知道父亲为什么把钥匙留给我。”"
+        "他们用铜钥匙启动主齿轮，钟楼外的海面升起一条通往灯塔的蓝色轨道。"
+    )
+    raw_beats = extract_raw_story_beats(source_content)
+
+    shots = build_template_shots(
+        template=template,
+        source_title="雾港星锚",
+        source_content=source_content,
+        story_context={"characters": [{"name": "江屿"}, {"name": "许澜"}]},
+    )
+    source_beats = [shot["extra_data"]["source_beat"] for shot in shots]
+
+    assert len(shots) == len(raw_beats)
+    assert len(source_beats) == len(set(source_beats))
+    assert source_beats[-1] != source_beats[-2]
 
 
 def test_system_template_override_is_listed_matched_and_used_for_generation(client: TestClient) -> None:
@@ -136,7 +451,6 @@ def test_system_template_override_is_listed_matched_and_used_for_generation(clie
     )
     assert chapter_resp.status_code == 201
     chapter_id = chapter_resp.json()["id"]
-
     match_resp = client.post(
         "/api/v1/storyboards/templates/match",
         json={"novel_id": novel_id, "chapter_id": chapter_id, "template_id": "opening-hook"},
@@ -411,7 +725,10 @@ def test_storyboard_merge_videos_can_select_subset_real_merge_and_list_versions(
         update_resp = client.put(
             f"/api/v1/shots/{shot['id']}",
             json={
-                "video_url": dev_video_url(f"storyboard-real-merge-{uuid4()}-{index}"),
+                "video_url": dev_video_url(
+                    f"storyboard-real-merge-{uuid4()}-{index}",
+                    duration_seconds=shot["duration"],
+                ),
                 "video_status": "completed",
             },
             headers=headers,
@@ -439,8 +756,8 @@ def test_storyboard_merge_videos_can_select_subset_real_merge_and_list_versions(
     assert payload["render_backend"] == "ffmpeg"
     assert payload["output_url"].startswith("/static/exports/")
     assert payload["output_url"].endswith(".mp4")
-    assert payload["duration_seconds"] < 6
-    assert payload["segments"][0]["duration_seconds"] < 3
+    assert payload["duration_seconds"] >= 8
+    assert payload["segments"][0]["duration_seconds"] >= 3.8
 
     video_resp = client.get(payload["output_url"])
     assert video_resp.status_code == 200
@@ -553,6 +870,133 @@ def test_smart_generation_creates_reviewable_storyboard_and_precise_shots(client
     assert first["sfx_cue"]
     assert first["keyframes"]
     assert first["extra_data"]["review_status"] == "pending_review"
+
+
+def test_smart_generation_auto_plans_few_shots_for_short_chapter(client: TestClient) -> None:
+    user_id = f"smart-storyboard-auto-short-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "星钥短验收", "genre": "悬疑", "description": "用于低成本前端闭环验收。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "雨夜星钥",
+            "chapter_number": 1,
+            "content": "林澈在雨夜发现星钥。墙面裂开，追兵逼近。",
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+
+    response = client.post(
+        "/api/v1/storyboards/generate-smart",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_resp.json()["id"],
+            "style": "anime",
+            "use_ai_refine": False,
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201
+    storyboard = response.json()
+    assert 2 <= storyboard["shot_count"] <= 3
+    assert len(storyboard["shots"]) == storyboard["shot_count"]
+    assert storyboard["content"]["shot_count_plan"]["source"] == "auto"
+    assert storyboard["content"]["shot_count_plan"]["requested_shot_count"] is None
+
+
+def test_smart_generation_compresses_compact_four_beat_chapter(client: TestClient) -> None:
+    user_id = f"smart-storyboard-auto-compact-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "星轨三段式", "genre": "科幻", "description": "用于验证短章节压缩拆镜。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "旧钟星门",
+            "chapter_number": 1,
+            "content": (
+                "雨城连续下了七天雨。林澈在旧钟楼发现星盘逆转。"
+                "阿岚带着半枚铜钥匙闯进钟楼。全城街灯熄灭，星门即将打开。"
+            ),
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+
+    response = client.post(
+        "/api/v1/storyboards/generate-smart",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_resp.json()["id"],
+            "style": "anime",
+            "use_ai_refine": False,
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201
+    storyboard = response.json()
+    assert storyboard["content"]["shot_count_plan"]["story_beat_count"] == 4
+    assert storyboard["shot_count"] == 3
+    assert [shot["duration"] for shot in storyboard["shots"]] == [4, 4, 4]
+
+
+def test_smart_generation_auto_plans_more_shots_for_multi_beat_chapter(client: TestClient) -> None:
+    user_id = f"smart-storyboard-auto-long-user-{uuid4()}"
+    novel_resp = client.post(
+        "/api/v1/novels",
+        json={"title": "星钥多情节点", "genre": "冒险", "description": "用于验证镜头数按剧情复杂度变化。"},
+        headers=auth_headers(user_id),
+    )
+    assert novel_resp.status_code == 201
+    novel_id = novel_resp.json()["id"]
+
+    chapter_resp = client.post(
+        "/api/v1/chapters",
+        json={
+            "novel_id": novel_id,
+            "title": "钟楼追击",
+            "chapter_number": 2,
+            "content": (
+                "林澈冲进旧钟楼。守夜人关上铁门。星钥在掌心发烫。"
+                "追兵从楼梯逼近。钟摆突然停住。墙后的暗门露出地下轨道。"
+            ),
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_resp.status_code == 201
+
+    response = client.post(
+        "/api/v1/storyboards/generate-smart",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_resp.json()["id"],
+            "style": "anime",
+            "use_ai_refine": False,
+        },
+        headers=auth_headers(user_id),
+    )
+
+    assert response.status_code == 201
+    storyboard = response.json()
+    assert storyboard["shot_count"] >= 4
+    assert storyboard["content"]["shot_count_plan"]["source"] == "auto"
+    assert storyboard["content"]["shot_count_plan"]["story_beat_count"] >= 5
 
 
 def test_smart_generation_prefers_selected_chapter_title_over_stale_script_title(client: TestClient) -> None:
@@ -842,6 +1286,28 @@ def test_smart_storyboard_binds_entities_and_video_keeps_context(client: TestCli
     )
     assert chapter_resp.status_code == 201
     chapter_id = chapter_resp.json()["id"]
+    chapter_entities = client.post(
+        "/api/v1/story-bibles/entities/analyze",
+        json={
+            "chapter_id": chapter_id,
+            "entity_types": ["character", "scene", "prop", "event"],
+            "persist": True,
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_entities.status_code == 200
+    event_candidate = next(
+        item for item in chapter_entities.json()["entities"]
+        if item["entity_type"] == "event" and item["name"] == "失踪记忆重现"
+    )
+    assert event_candidate["is_approved"] is False
+    assert event_candidate["extra_data"]["lifecycle"]["status"] == "candidate"
+    approve_event = client.post(
+        f"/api/v1/story-bibles/entities/{event_candidate['id']}/promote",
+        json={"reason": "smart storyboard production reference"},
+        headers=auth_headers(user_id),
+    )
+    assert approve_event.status_code == 200
 
     storyboard_resp = client.post(
         "/api/v1/storyboards/generate-smart",

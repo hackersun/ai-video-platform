@@ -9,10 +9,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { 
-  FileText, 
-  Plus, 
-  Edit2, 
+import {
+  FileText,
+  Plus,
+  Edit2,
   Trash2,
   Search,
   Video,
@@ -36,6 +36,7 @@ import {
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
+import { StoryWorkbenchPanel, getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import {
   getDefaultConfigForCapability,
@@ -155,13 +156,14 @@ export default function ScriptsPage() {
   const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [aiChapters, setAiChapters] = useState<Chapter[]>([]);
   const [activeTab, setActiveTab] = useState('all');
+  const [selectedScriptId, setSelectedScriptId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editingScript, setEditingScript] = useState<Script | null>(null);
   const [modelConfigs, setModelConfigs] = useState<SavedModelConfig[]>([]);
   const [textModelConfigId, setTextModelConfigId] = useState('');
   const [scriptAssistLoading, setScriptAssistLoading] = useState<'polish_description' | 'polish_content' | 'short_drama' | null>(null);
-  
+
   // AI生成相关状态
   const [showAIGenerateModal, setShowAIGenerateModal] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -200,7 +202,7 @@ export default function ScriptsPage() {
     }
     return [];
   };
-  
+
   // 表单数据
   const [formData, setFormData] = useState({
     title: '',
@@ -288,6 +290,7 @@ export default function ScriptsPage() {
     const matchesStatus = activeTab === 'all' || script.status === activeTab;
     return matchesSearch && matchesNovel && matchesChapter && matchesStatus;
   });
+  const selectedScript = filteredScripts.find((script) => script.id === selectedScriptId) || filteredScripts[0] || null;
 
   // 打开创建弹窗
   const handleCreate = () => {
@@ -580,7 +583,7 @@ export default function ScriptsPage() {
       const response = await fetchWithAuth(`${API_BASE}/scripts/${id}`, {
         method: 'DELETE'
       });
-      
+
       if (response.ok) {
         setScripts(scripts.filter(s => s.id !== id));
         toast({ title: '剧本已删除', description: '列表已更新。', type: 'success' });
@@ -607,7 +610,7 @@ export default function ScriptsPage() {
           style: script.style
         })
       });
-      
+
       if (response.ok) {
         await loadScripts();
         toast({ title: '剧本已复制', description: `${script.title} (副本)`, type: 'success' });
@@ -628,7 +631,6 @@ export default function ScriptsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script_id: script.id,
-          shot_count: 5,
           style: script.style || 'anime',
           model_config_id: textModelConfigId || undefined,
         })
@@ -674,7 +676,7 @@ export default function ScriptsPage() {
             <p className="text-white/60 mt-1">管理视频剧本和分镜脚本</p>
           </div>
           <div className="flex flex-wrap gap-3 sm:justify-end">
-            <Button 
+            <Button
               variant="outline"
               className="border-violet-500/50 text-violet-400 hover:bg-violet-600/20"
               onClick={handleOpenAIGenerate}
@@ -774,9 +776,9 @@ export default function ScriptsPage() {
             <CardContent className="p-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-red-400" />
               <span className="text-red-300">{error}</span>
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={loadScripts}
                 className="ml-auto border-red-500/50 text-red-400"
               >
@@ -798,116 +800,152 @@ export default function ScriptsPage() {
 
             <TabsContent value={activeTab} className="mt-4">
               {filteredScripts.length > 0 ? (
-                <div className="grid gap-4">
-                  {filteredScripts.map((script) => (
-                    <Card key={script.id} className="bg-white/5 border-white/10 hover:border-blue-500/30 transition-colors">
-                      <CardContent className="p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <Link href={`/scripts/${script.id}`} className="min-w-0 flex-1 block">
-                            <div className="flex flex-wrap items-center gap-3">
-                              <FileText className="h-5 w-5 shrink-0 text-blue-400" />
-                              <h3 className="min-w-0 break-words text-lg font-semibold text-white transition-colors hover:text-blue-400">{script.title}</h3>
-                              <span className={`px-2 py-0.5 rounded text-xs ${STATUS_COLORS[script.status]}`}>
-                                {STATUS_LABELS[script.status]}
-                              </span>
-                            </div>
-                            {script.description && (
-                              <p className="mt-1 break-words text-sm text-white/40">{script.description}</p>
-                            )}
-                            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-white/40">
-                              {script.genre && <span>题材：{optionLabel(GENRE_OPTIONS, script.genre)}</span>}
-                              {script.style && <span>风格：{optionLabel(STYLE_OPTIONS, script.style)}</span>}
-                              {script.novel_id && (
-                                <span>{novels.find((novel) => novel.id === script.novel_id)?.title || '已绑定小说'}</span>
-                              )}
-                              {script.chapter_id && (
-                                <span>
-                                  {chapters.find((chapter) => chapter.id === script.chapter_id)?.title || '已绑定章节'}
-                                </span>
-                              )}
-                              {script.chapter_id && (
-                                <Link
-                                  href={`/storyboards?script_id=${script.id}&novel_id=${script.novel_id || ''}&chapter_id=${script.chapter_id}`}
-                                  className="text-blue-300 hover:text-blue-200"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  生成分镜
-                                </Link>
-                              )}
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-4 h-4" />
-                                {formatDuration(script.duration)}
-                              </span>
-                              <span>更新于 {new Date(script.updated_at).toLocaleDateString()}</span>
-                            </div>
-                          </Link>
-                          <div className="flex flex-wrap items-center gap-2 sm:justify-end" onClick={(e) => e.stopPropagation()}>
-                            {script.status === 'completed' && (
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                className="text-violet-400 hover:text-violet-300"
-                                onClick={() => setStoryboardTarget(script)}
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <div className="grid gap-3">
+                    {filteredScripts.map((script) => {
+                      const isSelected = selectedScript?.id === script.id;
+                      return (
+                        <Card key={script.id} className={`bg-white/5 border-white/10 transition-colors ${isSelected ? 'border-blue-400/50 bg-blue-500/10' : 'hover:border-blue-500/30'}`}>
+                          <CardContent className="p-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedScriptId(script.id)}
+                                className="min-w-0 flex-1 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                                aria-label={`预览《${script.title}》`}
                               >
-                                <LayoutGrid className="w-4 h-4 mr-1" />
-                                生成分镜
-                              </Button>
-                            )}
-                            {script.status === 'completed' && (
-                              <Button asChild variant="ghost" size="sm" className="text-violet-400 hover:text-violet-300">
-                                <Link href={`/video-generation?script_id=${script.id}`}>
-                                  <Play className="w-4 h-4 mr-1" />
-                                  生成视频
-                                </Link>
-                              </Button>
-                            )}
-                            <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`查看《${script.title}》`} title="查看">
-                              <Link href={`/scripts/${script.id}`}>
-                                <Eye className="w-4 h-4" />
-                              </Link>
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              aria-label={`编辑《${script.title}》`}
-                              title="编辑"
-                              className="text-white/60 hover:text-white"
-                              onClick={() => handleEdit(script)}
-                            >
-                              <Edit2 className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              aria-label={`复制《${script.title}》`}
-                              title="复制"
-                              className="text-white/60 hover:text-white"
-                              onClick={() => handleDuplicate(script)}
-                            >
-                              <Copy className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              aria-label={`删除《${script.title}》`}
-                              title="删除"
-                              className="text-white/60 hover:text-red-400"
-                              onClick={() => setDeleteTarget(script)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <FileText className="h-5 w-5 shrink-0 text-blue-400" />
+                                  <h3 className="min-w-0 break-words text-lg font-semibold text-white">{script.title}</h3>
+                                  <span className={`px-2 py-0.5 rounded text-xs ${STATUS_COLORS[script.status]}`}>
+                                    {STATUS_LABELS[script.status]}
+                                  </span>
+                                </div>
+                                {script.description && (
+                                  <p className="mt-1 break-words text-sm text-white/45">{script.description}</p>
+                                )}
+                                <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-white/62">
+                                  {getStoryExcerpt(script.content, '暂无剧本正文', 160)}
+                                </p>
+                                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-white/40">
+                                  {script.genre && <span>题材：{optionLabel(GENRE_OPTIONS, script.genre)}</span>}
+                                  {script.style && <span>风格：{optionLabel(STYLE_OPTIONS, script.style)}</span>}
+                                  {script.novel_id && (
+                                    <span>{novels.find((novel) => novel.id === script.novel_id)?.title || '已绑定小说'}</span>
+                                  )}
+                                  {script.chapter_id && (
+                                    <span>{chapters.find((chapter) => chapter.id === script.chapter_id)?.title || '已绑定章节'}</span>
+                                  )}
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="w-4 h-4" />
+                                    {formatDuration(script.duration)}
+                                  </span>
+                                  <span>更新于 {new Date(script.updated_at).toLocaleDateString()}</span>
+                                </div>
+                              </button>
+                              <div className="flex flex-wrap items-center gap-2 sm:justify-end" onClick={(e) => e.stopPropagation()}>
+                                {script.status === 'completed' && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="text-violet-400 hover:text-violet-300"
+                                    onClick={() => setStoryboardTarget(script)}
+                                  >
+                                    <LayoutGrid className="w-4 h-4 mr-1" />
+                                    生成分镜
+                                  </Button>
+                                )}
+                                {script.status === 'completed' && (
+                                  <Button asChild variant="ghost" size="sm" className="text-violet-400 hover:text-violet-300">
+                                    <Link href={`/video-generation?script_id=${script.id}`}>
+                                      <Play className="w-4 h-4 mr-1" />
+                                      生成视频
+                                    </Link>
+                                  </Button>
+                                )}
+                                <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`查看《${script.title}》`} title="查看">
+                                  <Link href={`/scripts/${script.id}`}>
+                                    <Eye className="w-4 h-4" />
+                                  </Link>
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`编辑《${script.title}》`}
+                                  title="编辑"
+                                  className="text-white/60 hover:text-white"
+                                  onClick={() => handleEdit(script)}
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`复制《${script.title}》`}
+                                  title="复制"
+                                  className="text-white/60 hover:text-white"
+                                  onClick={() => handleDuplicate(script)}
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`删除《${script.title}》`}
+                                  title="删除"
+                                  className="text-white/60 hover:text-red-400"
+                                  onClick={() => setDeleteTarget(script)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+
+                  {selectedScript && (
+                    <StoryWorkbenchPanel
+                      heading="剧本预览"
+                      title={selectedScript.title}
+                      subtitle={`${optionLabel(GENRE_OPTIONS, selectedScript.genre) || '未设置题材'} · ${optionLabel(STYLE_OPTIONS, selectedScript.style) || '未设置风格'}`}
+                      excerptLabel="剧本正文"
+                      excerpt={getStoryExcerpt(selectedScript.content || selectedScript.description, '暂无剧本正文，建议先用 AI 生成或补充内容。', 240)}
+                      metrics={[
+                        { label: '状态', value: STATUS_LABELS[selectedScript.status] || selectedScript.status },
+                        { label: '时长', value: formatDuration(selectedScript.duration) },
+                        { label: '小说', value: novels.find((novel) => novel.id === selectedScript.novel_id)?.title || '未绑定' },
+                        { label: '章节', value: chapters.find((chapter) => chapter.id === selectedScript.chapter_id)?.title || '未绑定' },
+                      ]}
+                      actions={(
+                        <>
+                          <Button size="sm" className="justify-start bg-violet-600 hover:bg-violet-700" onClick={() => setStoryboardTarget(selectedScript)}>
+                            <LayoutGrid className="mr-2 h-4 w-4" />
+                            生成分镜
+                          </Button>
+                          <Button asChild size="sm" variant="outline" className="justify-start border-white/20 text-white">
+                            <Link href={`/scripts/${selectedScript.id}`}>
+                              <Eye className="mr-2 h-4 w-4" />
+                              打开剧本编辑
+                            </Link>
+                          </Button>
+                          <Button size="sm" variant="outline" className="justify-start border-blue-500/40 text-blue-100" onClick={handleOpenAIGenerate}>
+                            <Sparkles className="mr-2 h-4 w-4" />
+                            重新 AI 生成
+                          </Button>
+                        </>
+                      )}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-12">
                   <FileText className="w-12 h-12 mx-auto text-white/20" />
                   <p className="text-white/40 mt-4">没有找到剧本</p>
                   <div className="flex gap-2 justify-center mt-4">
-                    <Button 
+                    <Button
                       variant="outline"
                       className="border-violet-500/50 text-violet-400"
                       onClick={handleOpenAIGenerate}
@@ -1239,11 +1277,9 @@ export default function ScriptsPage() {
                         </div>
                         <div>前情：{generationContext.previous_chapter?.title || '无'}；后续约束：{generationContext.next_chapter?.title || '无'}</div>
                         <div className="line-clamp-2">人物：{(generationContext.summary?.characters || []).join('、') || '未提取'}</div>
-                        <div className="line-clamp-2">场景/道具/事件：{[
-                          ...(generationContext.summary?.scenes || []),
-                          ...(generationContext.summary?.props || []),
-                          ...(generationContext.summary?.events || []),
-                        ].slice(0, 8).join('、') || '未提取'}</div>
+                        <div className="line-clamp-2">场景：{(generationContext.summary?.scenes || []).slice(0, 3).join('、') || '未提取'}</div>
+                        <div className="line-clamp-2">道具：{(generationContext.summary?.props || []).slice(0, 3).join('、') || '未提取'}</div>
+                        <div className="line-clamp-2">事件：{(generationContext.summary?.events || []).slice(0, 3).join('、') || '未提取'}</div>
                         {generationContext.latest_check && (
                           <div className={generationContext.latest_check.issue_count ? 'text-yellow-200' : 'text-green-300'}>
                             生成后一致性检查：{generationContext.latest_check.issue_count || 0} 个提示
@@ -1310,7 +1346,7 @@ export default function ScriptsPage() {
                       {generationResult}
                     </pre>
                   </div>
-                  
+
                   <div className="flex gap-3 mt-4">
                     <Button
                       onClick={handleAIGenerate}

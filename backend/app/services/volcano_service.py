@@ -13,6 +13,9 @@ import ipaddress
 from urllib.parse import urlparse
 import aiohttp
 
+from app.features.video_generation.constants import PROVIDER_VIDEO_WATERMARK_ARG
+from app.services.volcano_speech_tts import route_volcano_speech_tts
+
 from app.core.volcano_config import (
     VOLCANO_CONFIG,
     ENDPOINT_IDS,
@@ -104,7 +107,7 @@ class VolcanoService:
         """
         图像生成（同步模式 - 等待完成返回URL）
         端点: POST /images/generations
-        模型: Doubao-Seedream-4.5, Doubao-Seedream-5.0-lite
+        模型: Doubao-Seedream-4.5, Doubao-Seedream-5.0-lite, doubao-seedream-5-0-260128
         """
         endpoint_id = ENDPOINT_IDS.get(model, model)
 
@@ -157,10 +160,11 @@ class VolcanoService:
         payload.update(kwargs)
 
         url = f"{self.base_url}/images/generations"
+        request_timeout = 600 if endpoint_id == "doubao-seedream-5-0-260128" else 180
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url, headers=self.headers, json=payload,
-                timeout=aiohttp.ClientTimeout(total=180)
+                timeout=aiohttp.ClientTimeout(total=request_timeout)
             ) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -214,7 +218,7 @@ class VolcanoService:
         duration: int = 4,
         resolution: str = "720p",
         camerafixed: str = "false",
-        watermark: str = "true",
+        watermark: str = PROVIDER_VIDEO_WATERMARK_ARG,
         seed: Optional[int] = None,
         **kwargs
     ) -> Dict[str, Any]:
@@ -308,6 +312,7 @@ class VolcanoService:
 
     # ============== TTS语音合成 ==============
 
+    @route_volcano_speech_tts
     async def text_to_speech(
         self,
         text: str,

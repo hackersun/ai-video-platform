@@ -7,7 +7,7 @@ import { getStudioGuidance } from '@/lib/studio-guidance';
 import { cn } from '@/lib/utils';
 import type { StudioGuidanceStage, StudioSnapshot } from '@/lib/studio-types';
 
-const stageOrder = ['content', 'bible', 'episode', 'draft', 'review'];
+const stageOrder = ['facts', 'assets', 'episode_contract', 'draft', 'review', 'final', 'render', 'publish'];
 
 function stageTone(status?: string) {
   if (status === 'ready') return 'border-emerald-400/25 bg-emerald-500/10 text-emerald-50';
@@ -30,7 +30,8 @@ function sortStages(stages: StudioGuidanceStage[]) {
 }
 
 export function StudioStageFlow({ snapshot }: { snapshot: StudioSnapshot | null }) {
-  const stages = sortStages(getStudioGuidance(snapshot).stages || []);
+  const guidance = getStudioGuidance(snapshot);
+  const stages = sortStages(guidance.stages || []);
 
   if (!stages.length) {
     return (
@@ -63,7 +64,7 @@ export function StudioStageFlow({ snapshot }: { snapshot: StudioSnapshot | null 
             {stages.length}阶段
           </Badge>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
           {stages.map((stage) => (
             <div key={stage.id} className={cn('min-w-0 rounded-lg border px-3 py-2', stageTone(stage.status))}>
               <div className="flex min-w-0 items-center gap-2">
@@ -75,6 +76,29 @@ export function StudioStageFlow({ snapshot }: { snapshot: StudioSnapshot | null 
               ) : null}
             </div>
           ))}
+        </div>
+        <div className="grid gap-2 border-t border-white/10 pt-2 lg:grid-cols-3" data-testid="studio-stage-audit">
+          <div className="min-w-0 rounded-lg border border-red-400/15 bg-red-500/5 px-3 py-2">
+            <div className="text-xs font-medium text-red-200">阻断证据</div>
+            <div className="mt-1 break-words text-xs text-white/50">
+              {(guidance.blockers || []).map((item) => item.code || item.message).join(' · ') || '无'}
+            </div>
+          </div>
+          <div className="min-w-0 rounded-lg border border-amber-400/15 bg-amber-500/5 px-3 py-2">
+            <div className="text-xs font-medium text-amber-100">确认警告</div>
+            <div className="mt-1 break-words text-xs text-white/50">
+              {(guidance.confirmable_warnings || []).map((item) => item.code || item.message).join(' · ') || '无'}
+            </div>
+          </div>
+          <div className="min-w-0 rounded-lg border border-emerald-400/15 bg-emerald-500/5 px-3 py-2">
+            <div className="text-xs font-medium text-emerald-100">完成证据</div>
+            <div className="mt-1 break-words text-xs text-white/50">
+              {(guidance.completed_evidence || []).map((item) => {
+                const auditId = item.evidence_id || item.job_id || item.artifact_id || item.hash || item.evidence_ids?.join(',') || item.evaluation_ids?.join(',');
+                return `${item.stage}:${auditId || item.score || '缺证据'}`;
+              }).join(' · ') || '无'}
+            </div>
+          </div>
         </div>
       </CardContent>
     </Card>

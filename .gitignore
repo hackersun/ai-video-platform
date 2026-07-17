@@ -39,3 +39,21 @@ npm-debug.log*
 
 # Local Netlify folder
 .netlify
+
+# Local generated media and automation outputs
+/backend/static/dev/
+/backend/static/generated/
+/backend/static/exports/
+/output/playwright/
+/output/live-anime/
+/frontend/test-results/
+/frontend/.next-playwright*/
+/frontend/.next-verify/
+/test-results/
+*.tsbuildinfo
+
+# Local tool caches
+/.codegraph/
+/.logs/
+/.playwright-cli/
+/.superpowers/

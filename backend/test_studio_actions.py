@@ -88,7 +88,7 @@ def test_studio_review_creates_and_lists_review_runs(client: TestClient) -> None
     assert payload["status"] == "blocked"
     assert payload["summary"]["blocking_issue_count"] >= 1
     assert any(issue["code"] == "missing_asset_locks" for issue in payload["issues"])
-    assert any(action["code"] == "apply_asset_locks" for action in payload["actions"])
+    assert not any(action["code"] == "apply_asset_locks" for action in payload["actions"])
 
     history_response = client.get(
         f"/api/v1/studio/workflows/{workflow_id}/review-runs",

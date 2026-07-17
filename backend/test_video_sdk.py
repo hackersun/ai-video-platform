@@ -26,7 +26,7 @@ def test_video_generation():
         content=[
             {
                 "type": "text",
-                "text": "无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验 --duration 5 --camerafixed false --watermark true"
+                "text": "无人机以极快速度穿越复杂障碍或自然奇观，带来沉浸式飞行体验 --duration 5 --camerafixed false --watermark false"
             },
         ]
     )

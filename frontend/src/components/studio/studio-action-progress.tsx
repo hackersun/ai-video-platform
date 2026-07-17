@@ -3,6 +3,7 @@
 import { AlertCircle, CheckCircle2, Clock3, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import type { StudioActionResult } from '@/lib/studio-types';
+import type { StudioGuidance } from '@/lib/studio-types';
 
 function statusCopy(status?: string) {
   if (status === 'succeeded') return '执行完成';
@@ -23,12 +24,14 @@ export function StudioActionProgress({
   action,
   loading,
   retryMessage,
+  resume,
 }: {
   action: StudioActionResult | null;
   loading?: boolean;
   retryMessage?: string;
+  resume?: StudioGuidance['orchestration_resume'];
 }) {
-  if (!action && !loading && !retryMessage) return null;
+  if (!action && !loading && !retryMessage && !resume?.task_id) return null;
 
   return (
     <Card className="border-white/10 bg-white/[0.04]">
@@ -42,6 +45,11 @@ export function StudioActionProgress({
                 {action.label || action.code}
                 {action.source_issue_code ? ` · 来源 ${action.source_issue_code}` : ''}
                 {action.error_message ? ` · ${action.error_message}` : ''}
+              </div>
+            ) : resume?.task_id ? (
+              <div className="mt-0.5 min-w-0 break-words text-xs leading-5 text-white/55">
+                任务 {resume.task_id} · 已完成 {(resume.completed_stages || []).join('、') || '无'}
+                {resume.safe_retry ? ' · 可安全重试当前阶段' : ''}
               </div>
             ) : (
               <div className="mt-0.5 text-xs text-white/45">正在刷新工作台状态</div>

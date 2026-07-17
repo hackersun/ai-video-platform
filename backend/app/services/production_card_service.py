@@ -20,6 +20,7 @@ from app.services.production_bible import (
     _load_novel,
     _load_story_bible,
 )
+from app.services.story_entity_lifecycle import query_story_entity_for_production
 from app.services.voice_service import get_character_voice_from_story_bible
 
 
@@ -363,9 +364,15 @@ async def build_production_cards_for_novel(db: AsyncSession, user_id: str, novel
 
 
 async def build_production_card_for_entity(db: AsyncSession, user_id: str, entity_id: str) -> Dict[str, Any]:
-    result = await db.execute(select(StoryEntity).where(StoryEntity.id == entity_id, StoryEntity.user_id == user_id))
-    entity = result.scalar_one_or_none()
-    if entity is None or entity.entity_type not in PRODUCTION_CARD_ENTITY_TYPES:
+    entity = await query_story_entity_for_production(
+        db,
+        user_id=user_id,
+        entity_id=entity_id,
+    )
+    if (
+        entity is None
+        or entity.entity_type not in PRODUCTION_CARD_ENTITY_TYPES
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="定稿卡实体不存在")
     if not entity.novel_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="实体未绑定小说")

@@ -98,10 +98,32 @@ type AnalyticsData = {
   daily_series: DailyStats[];
   model_usage: ModelUsage[];
   recent_activities: RecentActivity[];
+  production_metrics?: {
+    counts?: { planned_shots?: number; accepted_final_shots?: number; failed_attempts?: number; abandoned_attempts?: number };
+    first_pass_shot_acceptance_rate?: number;
+    main_character_hard_failure_rate?: number;
+    state_continuity_conflict_rate?: number;
+    voice_lipsync_hard_failure_rate?: number;
+    regenerated_shots_per_accepted_shot?: number | null;
+    rmb_per_accepted_final_minute?: number | null;
+    wall_clock_minutes_per_accepted_final_minute?: number | null;
+    human_review_repair_minutes_per_accepted_final_minute?: number | null;
+    failed_abandoned?: { attempt_count?: number; cost_rmb?: number };
+    readiness?: { current_tier?: string; tiers?: Record<string, boolean> };
+    attribution?: Array<Record<string, any>>;
+  };
 };
 
 const formatNumber = (value: number) => new Intl.NumberFormat('zh-CN').format(value || 0);
 const formatCost = (value: number) => `¥${Number(value || 0).toFixed(4)}`;
+const formatRate = (value?: number | null) => value == null ? '不可用' : `${(value * 100).toFixed(1)}%`;
+const readinessLabels: Record<string, string> = {
+  not_ready: '尚未就绪',
+  deterministic_ready: '确定性验证就绪',
+  internal_trial_ready: '内部试制就绪',
+  series_production_candidate: '系列生产候选',
+  commercial_series_ready: '商业系列就绪',
+};
 
 const formatShortDate = (date: string) => {
   const parsed = new Date(date);
@@ -290,6 +312,33 @@ export default function AnalyticsPage() {
                 );
               })}
             </div>
+
+            <Card className="border-cyan-300/20 bg-cyan-400/[0.04]" data-testid="production-metrics">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-white">
+                  <BarChart3 className="h-5 w-5 text-cyan-300" />
+                  连续动漫生产指标
+                </CardTitle>
+                <Badge variant="outline" className="border-cyan-300/40 text-cyan-100">
+                  {readinessLabels[analytics.production_metrics?.readiness?.current_tier || 'not_ready'] || analytics.production_metrics?.readiness?.current_tier}
+                </Badge>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MetricBox label="首轮镜头接收率" value={formatRate(analytics.production_metrics?.first_pass_shot_acceptance_rate)} />
+                  <MetricBox label="主角硬失败率" value={formatRate(analytics.production_metrics?.main_character_hard_failure_rate)} />
+                  <MetricBox label="状态连续性冲突率" value={formatRate(analytics.production_metrics?.state_continuity_conflict_rate)} />
+                  <MetricBox label="声音/口型硬失败率" value={formatRate(analytics.production_metrics?.voice_lipsync_hard_failure_rate)} />
+                  <MetricBox label="每接收镜头返修数" value={analytics.production_metrics?.regenerated_shots_per_accepted_shot?.toFixed(2) || '不可用'} />
+                  <MetricBox label="每终稿分钟成本" value={analytics.production_metrics?.rmb_per_accepted_final_minute == null ? '不可用' : formatCost(analytics.production_metrics.rmb_per_accepted_final_minute)} />
+                  <MetricBox label="每终稿分钟墙钟耗时" value={analytics.production_metrics?.wall_clock_minutes_per_accepted_final_minute == null ? '不可用' : `${analytics.production_metrics.wall_clock_minutes_per_accepted_final_minute.toFixed(1)} 分钟`} />
+                  <MetricBox label="每终稿分钟人工审修" value={analytics.production_metrics?.human_review_repair_minutes_per_accepted_final_minute == null ? '不可用' : `${analytics.production_metrics.human_review_repair_minutes_per_accepted_final_minute.toFixed(1)} 分钟`} />
+                </div>
+                <div className="rounded-xl border border-red-300/15 bg-red-400/5 px-4 py-3 text-sm text-red-100">
+                  失败/放弃尝试保持可见：{formatNumber(analytics.production_metrics?.failed_abandoned?.attempt_count || 0)} 次，成本 {formatCost(analytics.production_metrics?.failed_abandoned?.cost_rmb || 0)}。
+                </div>
+              </CardContent>
+            </Card>
 
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_1fr]">
               <Card className="border-white/10 bg-white/5">

@@ -48,6 +48,7 @@ function SeriesStage({
   tone,
   href,
   actionLabel,
+  hideAction = false,
 }: {
   icon: any;
   title: string;
@@ -55,8 +56,9 @@ function SeriesStage({
   detail: string;
   requirements?: Requirement[];
   tone: StageTone;
-  href: string;
-  actionLabel: string;
+  href?: string;
+  actionLabel?: string;
+  hideAction?: boolean;
 }) {
   return (
     <div className={`rounded-xl border p-4 ${toneClass(tone)}`}>
@@ -84,9 +86,11 @@ function SeriesStage({
             ) : null}
           </div>
         </div>
-        <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
-          <Link href={href}>{actionLabel}</Link>
-        </Button>
+        {!hideAction && href && actionLabel ? (
+          <Button asChild size="sm" variant="outline" className="shrink-0 border-white/20 text-white">
+            <Link href={href}>{actionLabel}</Link>
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -178,6 +182,7 @@ export function StudioSeriesBoard({
   const shotReviewHref = workflowId ? `/studio/shot-review?workflow_id=${workflowId}` : '/studio/shot-review';
   const quickStartHref = '/quick-start';
   const productionCardsHref = withStudioContext('/studio/cards', snapshot, { source: 'studio' });
+  const recommendedCode = snapshot?.guidance?.recommended_action?.code || snapshot?.guidance?.next_action?.code;
 
   return (
     <Card className="border-cyan-400/15 bg-cyan-500/[0.06]">
@@ -193,9 +198,11 @@ export function StudioSeriesBoard({
             </div>
           </div>
           <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
-            <Button asChild size="sm" className="bg-cyan-600 hover:bg-cyan-700">
-              <Link href={producerHref}>生成本集草片</Link>
-            </Button>
+            {recommendedCode !== 'open_producer' ? (
+              <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
+                <Link href={producerHref}>生成本集草片</Link>
+              </Button>
+            ) : null}
             <Button asChild size="sm" variant="outline" className="border-white/20 text-white">
               <Link href={shotReviewHref}>
                 <Film className="mr-1.5 h-3.5 w-3.5" />
@@ -226,6 +233,7 @@ export function StudioSeriesBoard({
           tone={draftReady ? 'ready' : hasShots || mediaCount > 0 ? 'working' : 'blocked'}
           href={producerHref}
           actionLabel="去制片"
+          hideAction={recommendedCode === 'open_producer'}
         />
         <SeriesStage
           icon={Lock}

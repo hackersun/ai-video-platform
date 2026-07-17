@@ -19,9 +19,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import { Select } from '@/components/ui/select';
 import { useToast } from '@/components/ui/toast';
-import { getStudioSnapshot, getStudioWorkflows, runStudioAction } from '@/lib/studio-api';
+import { getStudioSnapshot, getStudioWorkflows, resumeStudioOrchestration, runStudioAction } from '@/lib/studio-api';
 import apiClient, { type ProductionCardsResponse } from '@/lib/api-client';
 import { withStudioContext } from '@/lib/studio-context-links';
 import { requiresConfirmation } from '@/lib/studio-guidance';
@@ -36,20 +35,17 @@ import type {
 } from '@/lib/studio-types';
 import { StudioAgentPanel } from './studio-agent-panel';
 import { StudioContextPanel } from './studio-context-panel';
-import { StudioModeBanner } from './studio-mode-banner';
 import { StudioProductionBoard } from './studio-production-board';
 import { StudioSeriesBoard } from './studio-series-board';
 import { PromptSkillPanel } from './prompt-skill-panel';
-import { SeriesOverviewPanel } from './series-overview-panel';
 import { ProductionBiblePanel } from './production-bible-panel';
 import { EpisodePlanPanel } from './episode-plan-panel';
 import { EpisodeContractPanel } from './episode-contract-panel';
 import { ConsistencyLedgerPanel } from './consistency-ledger-panel';
 import { StudioActionConfirmationDialog } from './studio-action-confirmation-dialog';
-import { StudioActionProgress } from './studio-action-progress';
-import { StudioCommandBar } from './studio-command-bar';
 import { StudioExpertSections } from './studio-expert-sections';
-import { StudioStageFlow } from './studio-stage-flow';
+import { ProductionGraphPanel } from './production-graph-panel';
+import { StudioEpisodeWorkspace } from './studio-episode-workspace';
 
 function workflowIdOf(item: StudioWorkflowOption) {
   return item.workflow_id || item.id || '';
@@ -311,10 +307,6 @@ export function StudioShell() {
   const [snapshotRetryMessage, setSnapshotRetryMessage] = useState('');
   const snapshotRequestIdRef = useRef(0);
 
-  const workflowOptions = useMemo(
-    () => workflows.map((item) => ({ value: workflowIdOf(item), label: item.title || workflowIdOf(item) })),
-    [workflows]
-  );
   const activeSnapshot = useMemo(() => {
     if (!snapshot) return null;
     const loadedWorkflowId = snapshotWorkflowId(snapshot);
@@ -490,6 +482,48 @@ export function StudioShell() {
       return;
     }
 
+    if (action?.code === 'lock_episode_contract' && workflowId) {
+      setLoading(true);
+      try {
+        await apiClient.lockEpisodeContract(workflowId);
+        await loadSnapshot(workflowId, mode);
+      } catch (err: any) {
+        setError(err.message || '锁定剧集合约失败');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (action?.code === 'retry_orchestration') {
+      const taskId = (action as StudioGuidedAction).params?.task_id;
+      if (!workflowId || !taskId) {
+        setError('缺少持久化编排任务 ID，无法安全重试');
+        return;
+      }
+      setLoading(true);
+      try {
+        const result = await resumeStudioOrchestration(workflowId, String(taskId));
+        setLastAction({
+          code: 'retry_orchestration',
+          label: result.safe_next_action?.label || '恢复编排',
+          status: result.status,
+          workflow_id: workflowId,
+          result: { task_id: result.task_id, completed_stages: result.completed_stages },
+        });
+        if (result.safe_next_action?.href) {
+          router.push(withStudioContext(result.safe_next_action.href, activeSnapshot));
+          return;
+        }
+        await loadSnapshot(workflowId, mode);
+      } catch (err: any) {
+        setError(err.message || '恢复编排失败');
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (action?.code && workflowId) {
       const guidedAction = action as StudioGuidedAction;
       setLoading(true);
@@ -520,17 +554,7 @@ export function StudioShell() {
   }, [activeSnapshot, loadSnapshot, mode, router, toast, workflowId]);
 
   const handlePrimaryAction = useCallback((preferredAction?: StudioAction) => {
-    const actionCandidates = [
-      ...(activeSnapshot?.actions || []),
-      ...(activeSnapshot?.production_bible_summary?.next_actions || []),
-    ];
-    const executableAction = actionCandidates.find(isExecutableSafeAction);
-    const navigationAction = actionCandidates.find(isNavigationAction);
-    const preferredActionIsSupported =
-      isExecutableSafeAction(preferredAction) ||
-      isNavigationAction(preferredAction) ||
-      requiresConfirmation(preferredAction as StudioGuidedAction);
-    const action = preferredActionIsSupported ? preferredAction : executableAction || navigationAction;
+    const action = preferredAction || activeSnapshot?.guidance?.recommended_action || activeSnapshot?.guidance?.next_action;
 
     if (requiresConfirmation(action as StudioGuidedAction)) {
       setPendingAction(action as StudioGuidedAction);
@@ -626,46 +650,18 @@ export function StudioShell() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div>
         <div>
           <div className="flex items-center gap-2 text-sm text-cyan-200">
             <BookOpen className="h-4 w-4" />
             连续动漫工作台
           </div>
-          <h1 className="mt-2 text-2xl font-semibold text-white">系列动漫工作室</h1>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-white">系列动漫工作室</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
             统一创作工作台会聚合动漫设定本、剧本分镜、资产/声音锁、草片任务和质量门禁；高级制作流程仍保留给精修使用。
           </p>
         </div>
-        <div className="w-full lg:w-80">
-          <Select
-            value={workflowId}
-            onChange={(event) => handleWorkflowChange(event.target.value)}
-            options={workflowOptions}
-            placeholder={workflowOptions.length ? '选择本集工程' : '暂无本集工程'}
-            disabled={loading || !workflowOptions.length}
-          />
-        </div>
       </div>
-
-      <StudioModeBanner mode={mode} onModeChange={handleModeChange} />
-
-      {expertLinks.length > 0 ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-          <span className="text-xs text-white/45">高级工具</span>
-          {expertLinks.map((link) => (
-            <Button
-              key={link.href}
-              variant="outline"
-              size="sm"
-              className="h-7 border-white/15 px-2 text-xs text-white/70 hover:bg-white/10"
-              onClick={() => router.push(withStudioContext(link.href, activeSnapshot))}
-            >
-              {link.label}
-            </Button>
-          ))}
-        </div>
-      ) : null}
 
       {error && (
         <div className="flex flex-col gap-3 rounded-lg border border-red-500/25 bg-red-500/10 p-3 text-sm text-red-50 sm:flex-row sm:items-center sm:justify-between">
@@ -713,17 +709,20 @@ export function StudioShell() {
             </div>
           ) : null}
           {activeSnapshot ? (
-            <div className="space-y-3">
-              <StudioCommandBar
-                snapshot={activeSnapshot}
-                mode={mode}
-                loading={loading}
-                onPrimaryAction={handleGuidedAction}
-              />
-              <StudioStageFlow snapshot={activeSnapshot} />
-              <StudioActionProgress action={lastAction} loading={loading} retryMessage={snapshotRetryMessage} />
-              <SeriesOverviewPanel snapshot={activeSnapshot} onPrimaryAction={handlePrimaryAction} />
-            </div>
+            <StudioEpisodeWorkspace
+              snapshot={activeSnapshot}
+              workflows={workflows}
+              workflowId={workflowId}
+              expertLinks={expertLinks}
+              mode={mode}
+              loading={loading}
+              lastAction={lastAction}
+              retryMessage={snapshotRetryMessage}
+              onModeChange={handleModeChange}
+              onWorkflowChange={handleWorkflowChange}
+              onOpenExpert={(href) => router.push(withStudioContext(href, activeSnapshot))}
+              onPrimaryAction={handleGuidedAction}
+            />
           ) : null}
           <StudioExpertSections
             setup={(
@@ -760,6 +759,7 @@ export function StudioShell() {
             )}
             review={(
               <>
+                <ProductionGraphPanel snapshot={activeSnapshot} />
                 <StudioContinuityBoard snapshot={activeSnapshot} />
                 <ConsistencyLedgerPanel snapshot={activeSnapshot} onRepair={handleLedgerRepair} />
               </>

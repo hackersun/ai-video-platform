@@ -80,6 +80,17 @@ const toMediaUrl = (url?: string) => {
   return url.startsWith('/') ? `${API_ORIGIN}${url}` : url;
 };
 
+const formatSyncSeconds = (value: any) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? `${Math.round(number * 100) / 100}s` : '缺';
+};
+
+const syncStatusCopy = (status?: string) => {
+  if (status === 'blocking') return { label: '红', className: 'border-red-500/30 bg-red-500/10 text-red-100' };
+  if (status === 'warning') return { label: '黄', className: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100' };
+  return { label: '绿', className: 'border-green-500/30 bg-green-500/10 text-green-100' };
+};
+
 const buildReadinessItems = (workflowData: WorkflowData): ReadinessItem[] => {
   const mediaCount = workflowData.videoJobIds.length + workflowData.mediaJobIds.length;
   return [
@@ -173,6 +184,7 @@ interface WorkflowData {
   editableTimelineId?: string;
   editableTimelineClipCount?: number;
   renderIssues?: any[];
+  mediaSyncHealth?: any;
   renderIsPublishable?: boolean;
   renderOutputKind?: string;
   renderPublicationBlockers?: any[];
@@ -184,6 +196,32 @@ type ReadinessItem = {
   label: string;
   ok: boolean;
   detail: string;
+};
+
+const isReadyTtsJob = (job: any) => (
+  (job?.status === 'succeeded' || job?.status === 'completed') && Boolean(job?.audio_url)
+);
+
+const ttsCreatedKey = (job: any) => String(job?.created_at || '');
+
+const selectReadyTtsJobsForSynthesis = (jobs?: any[]) => {
+  const selectedByShot = new Map<string, any>();
+  const passthrough: any[] = [];
+
+  for (const job of jobs || []) {
+    if (!isReadyTtsJob(job)) continue;
+    const shotId = job?.shot_id;
+    if (!shotId) {
+      passthrough.push(job);
+      continue;
+    }
+    const current = selectedByShot.get(shotId);
+    if (!current || ttsCreatedKey(job) >= ttsCreatedKey(current)) {
+      selectedByShot.set(shotId, job);
+    }
+  }
+
+  return [...Array.from(selectedByShot.values()), ...passthrough];
 };
 
 type WorkflowPatchHandler = (patch: Partial<WorkflowData>, stepIndex?: number) => Promise<void>;
@@ -460,7 +498,7 @@ function WorkflowPageContent() {
         );
         setWorkflowData(prev => ({
           ...prev,
-          ttsJobIds: filtered.map((t: any) => t.id),
+          ttsJobIds: selectReadyTtsJobsForSynthesis(filtered).map((t: any) => t.id),
           ttsJobs: filtered,
         }));
       }
@@ -515,6 +553,7 @@ function WorkflowPageContent() {
           editableTimelineId: latestExtra.timeline_id || status.metadata?.latest_timeline_id || prev.editableTimelineId,
           editableTimelineClipCount: latestExtra.timeline_clip_count || prev.editableTimelineClipCount,
           renderIssues: latestExtra.render_issues || prev.renderIssues,
+          mediaSyncHealth: latest?.media_sync_health || latestExtra.media_sync_health || prev.mediaSyncHealth,
           renderIsPublishable: typeof latest?.is_publishable === 'boolean'
             ? latest.is_publishable
             : typeof latestExtra.is_publishable === 'boolean'
@@ -533,11 +572,11 @@ function WorkflowPageContent() {
   // 初始化工作流
   useEffect(() => {
     const urlWorkflowId = searchParams.get('workflow_id');
+    const requestedStep = WORKFLOW_STEPS.findIndex((step) => step.id === searchParams.get('step')); if (requestedStep >= 0) setCurrentStep(requestedStep);
     if (urlWorkflowId && workflowId !== urlWorkflowId) {
       setWorkflowId(urlWorkflowId);
     }
   }, [searchParams, workflowId]);
-
   // 定期刷新状态
   useEffect(() => {
     if (workflowId) {
@@ -1212,6 +1251,104 @@ function ProductionReadinessPanel({ workflowData, currentStep }: { workflowData:
       </CardContent>
     </Card>
   );
+}
+
+function MediaSyncHealthCard({ health }: { health?: any }) {
+  if (!health || !Array.isArray(health.segments) || health.segments.length === 0) {
+    return null;
+  }
+  const status = syncStatusCopy(health.status);
+  const summary = health.summary || {};
+
+  return (
+    <div data-testid="workflow-media-sync-health" className={`mt-3 rounded border p-3 ${status.className}`}>
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="font-medium">音频/字幕/视频时长一致性体检</div>
+          <div className="mt-1 text-xs opacity-80">
+            绿 {summary.green || 0} · 黄 {summary.yellow || 0} · 红 {summary.red || 0} · 共 {summary.segment_count || health.segments.length} 段
+          </div>
+        </div>
+        <Badge variant="outline" className="w-fit border-current/30 text-current">
+          {status.label}灯
+        </Badge>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-2">
+        {health.segments.map((segment: any) => {
+          const segmentStatus = syncStatusCopy(segment.status);
+          const issueText = Array.isArray(segment.issues) && segment.issues.length > 0
+            ? segment.issues.map((issue: any) => issue.message || issue.code).filter(Boolean).join('；')
+            : '';
+          return (
+            <div key={`${segment.index}-${segment.shot_id || ''}`} className={`rounded border p-2 text-xs ${segmentStatus.className}`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">镜头 {segment.shot_number || segment.index}</span>
+                <span>{segmentStatus.label}</span>
+              </div>
+              <div className="mt-1 grid grid-cols-3 gap-1 opacity-85">
+                <span>视频 {formatSyncSeconds(segment.video_duration_seconds)}</span>
+                <span>音频 {formatSyncSeconds(segment.audio_duration_seconds)}</span>
+                <span>字幕 {formatSyncSeconds(segment.subtitle_duration_seconds)}</span>
+              </div>
+              <div className="mt-1 opacity-85">
+                音频差 {formatSyncSeconds(segment.audio_video_delta_seconds)} · 字幕差 {formatSyncSeconds(segment.subtitle_video_delta_seconds)}
+              </div>
+              {issueText && <div className="mt-1 line-clamp-2 opacity-75">{issueText}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function buildShotConsistencyGapChips(shot: any) {
+  const extra = shot?.extra_data || {};
+  const report = extra.consistency_gap_report || extra.character_consistency_gap_report || {};
+  const present = report.present || {};
+  const productionContext = extra.production_context || {};
+  const locks = Array.isArray(productionContext.asset_version_locks) ? productionContext.asset_version_locks : [];
+  const characterRefs = Array.isArray(shot?.character_refs) ? shot.character_refs : [];
+  const requiredMultiViewCount = Number(present.required_multi_view_count || report.required_multi_view_count || 3);
+  const multiViewCount = Number(
+    present.multi_view_count
+    || report.multi_view_count
+    || extra.multi_view_count
+    || characterRefs.filter((ref: any) => ref?.view || ref?.view_key || ref?.image_url || ref?.url).length
+    || 0
+  );
+  const hasCharacterReference = Boolean(
+    present.character_reference
+    || report.character_reference
+    || characterRefs.length > 0
+    || locks.some((lock: any) => lock.category === 'character')
+  );
+  const hasVisualDna = Boolean(
+    present.visual_dna
+    || report.visual_dna
+    || extra.visual_dna
+    || productionContext.visual_dna
+  );
+  const hasCostumeLock = Boolean(
+    present.costume_lock
+    || report.costume_lock
+    || productionContext.costume_lock
+    || locks.some((lock: any) => ['costume', 'wardrobe', 'character_costume'].includes(lock.category || lock.lock_type))
+  );
+  const hasPropLock = Boolean(
+    present.prop_lock
+    || report.prop_lock
+    || productionContext.prop_lock
+    || locks.some((lock: any) => ['prop', 'props', '道具'].includes(lock.category || lock.lock_type))
+  );
+
+  return [
+    { key: 'character-reference', label: hasCharacterReference ? '参考图 OK' : '参考图缺', ok: hasCharacterReference },
+    { key: 'visual-dna', label: hasVisualDna ? '视觉 DNA OK' : '视觉 DNA 缺', ok: hasVisualDna },
+    { key: 'multi-view', label: multiViewCount >= requiredMultiViewCount ? `多视图 ${multiViewCount}/${requiredMultiViewCount}` : `多视图 ${multiViewCount}/${requiredMultiViewCount}`, ok: multiViewCount >= requiredMultiViewCount },
+    { key: 'costume-lock', label: hasCostumeLock ? '服装锁 OK' : '服装锁缺', ok: hasCostumeLock },
+    { key: 'prop-lock', label: hasPropLock ? '道具锁 OK' : '道具锁缺', ok: hasPropLock },
+  ];
 }
 
 function ProductionControlPanel({
@@ -2386,7 +2523,6 @@ function StoryboardStep({
         novel_id: workflowData.novelId,
         chapter_id: workflowData.chapterId,
         script_id: workflowData.scriptId || undefined,
-        shot_count: 8,
         style: 'anime',
         use_ai_refine: true,
         model_config_id: selectedTextModel?.id || textModelConfigId || undefined,
@@ -2600,20 +2736,43 @@ function ShotStep({
         </div>
       ) : shots.length > 0 ? (
         <div className="space-y-2">
-          {shots.map((shot) => (
-            <div key={shot.id} className="rounded-lg border border-white/10 bg-white/5 p-4">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded bg-violet-500/20 text-violet-200 flex items-center justify-center text-sm">
-                  {shot.shot_number}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-white font-medium line-clamp-1">{shot.prompt || shot.visual_description || '未设置镜头描述'}</div>
-                  <div className="mt-1 text-sm text-white/50 line-clamp-2">{shot.dialogue || shot.extra_data?.subtitle_text || '无对白'}</div>
-                  <div className="mt-1 text-xs text-white/35">{shot.duration || 4}s · 视频 {shot.video_status || 'pending'} · 语音 {shot.audio_status || 'pending'}</div>
+          {shots.map((shot) => {
+            const gapChips = buildShotConsistencyGapChips(shot);
+            const missingCount = gapChips.filter((chip) => !chip.ok).length;
+            return (
+              <div key={shot.id} className="rounded-lg border border-white/10 bg-white/5 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 rounded bg-violet-500/20 text-violet-200 flex items-center justify-center text-sm">
+                    {shot.shot_number}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-white font-medium line-clamp-1">{shot.prompt || shot.visual_description || '未设置镜头描述'}</div>
+                    <div className="mt-1 text-sm text-white/50 line-clamp-2">{shot.dialogue || shot.extra_data?.subtitle_text || '无对白'}</div>
+                    <div className="mt-1 text-xs text-white/35">{shot.duration || 4}s · 视频 {shot.video_status || 'pending'} · 语音 {shot.audio_status || 'pending'}</div>
+                    <div className="mt-3" data-testid={`shot-consistency-gaps-${shot.id}`}>
+                      <div className="mb-1 text-xs text-white/45">
+                        一致性缺口：{missingCount > 0 ? `${missingCount} 项待补齐` : '已满足基础锁定'}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {gapChips.map((chip) => (
+                          <span
+                            key={chip.key}
+                            className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                              chip.ok
+                                ? 'border-green-500/30 bg-green-500/10 text-green-100'
+                                : 'border-yellow-500/30 bg-yellow-500/10 text-yellow-100'
+                            }`}
+                          >
+                            {chip.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="text-center py-12 text-white/40">
@@ -2740,8 +2899,30 @@ function VideoStep({
       if (detail?.code === 'generation_preflight_failed') {
         setBatchPreflightFailure(detail);
         setBatchResult(null);
+      } else if (detail?.code === 'multi_speaker_dialogue_requires_segmented_tts') {
+        const speakers = Array.isArray(detail.speakers) && detail.speakers.length
+          ? `涉及角色：${detail.speakers.join('、')}`
+          : '';
+        setBatchPreflightFailure({
+          code: detail.code,
+          message: detail.message || '同一镜头包含多个说话人，需要拆分镜头或启用分段 TTS。',
+          blocking_issue_count: 1,
+          issues: [{
+            code: detail.code,
+            field: 'dialogue',
+            severity: 'blocking',
+            message: [detail.message, speakers].filter(Boolean).join(' '),
+            shot_id: detail.shot_id,
+            shot_number: detail.shot_number,
+          }],
+        });
+        setBatchResult(null);
       }
-      toast({ title: '批量直生音视频失败', description: detail?.message || err.message || '请稍后重试。', type: 'error' });
+      toast({
+        title: detail?.code === 'multi_speaker_dialogue_requires_segmented_tts' ? '镜头对白需拆分' : '批量直生音视频失败',
+        description: detail?.message || err.message || '请稍后重试。',
+        type: 'error',
+      });
     } finally {
       setIsGeneratingBatch(false);
     }
@@ -2969,7 +3150,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
   const [renderErrorDetail, setRenderErrorDetail] = useState<any>(null);
   const [renderBackend, setRenderBackend] = useState<WorkflowRenderBackend>('local_artifact_package');
   const [externalConfigId, setExternalConfigId] = useState('');
-  const [burnSubtitles, setBurnSubtitles] = useState(false);
+  const [burnSubtitles, setBurnSubtitles] = useState(true);
   const [useEditableTimeline, setUseEditableTimeline] = useState(true);
   const [renderConfigs, setRenderConfigs] = useState<any[]>([]);
   const [isSyncingTimeline, setIsSyncingTimeline] = useState(false);
@@ -3087,9 +3268,14 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
       });
       setRenderResult(result);
       if (result.status === 'preflight_failed') {
-        setPreflight({ ready: false, issues: result.issues || [], blocking_issue_count: result.issues?.length || 0 });
+        setPreflight({
+          ready: false,
+          issues: result.issues || [],
+          blocking_issue_count: result.issues?.length || 0,
+          media_sync_health: result.media_sync_health,
+        });
       } else {
-        setPreflight({ ready: true, issues: [], blocking_issue_count: 0 });
+        setPreflight({ ready: true, issues: [], blocking_issue_count: 0, media_sync_health: result.media_sync_health });
       }
       onSynthesisComplete?.(result);
       setRenderErrorDetail(null);
@@ -3196,6 +3382,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
     : '';
   const renderStatus = renderResult?.render_status || renderResult?.status || workflowData.renderStatus;
   const renderIssues = preflight?.issues || workflowData.renderIssues || [];
+  const mediaSyncHealth = renderResult?.media_sync_health || preflight?.media_sync_health || workflowData.mediaSyncHealth;
   const editableTimelineId = timelineResult?.timeline_id || workflowData.editableTimelineId;
   const currentRenderSource = renderResult?.render_source || preflight?.render_source;
   const renderOutputKind = renderResult?.output_kind || preflight?.output_kind || workflowData.renderOutputKind;
@@ -3437,7 +3624,7 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                   {isPreflighting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <AlertCircle className="w-4 h-4 mr-2" />}
                   渲染预检
                 </Button>
-                <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => handleRender(Boolean(renderArtifacts.preview_url))} disabled={isRendering}>
+                <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={() => handleRender(Boolean(renderedMp4Url || renderArtifacts.preview_url))} disabled={isRendering}>
                   {isRendering ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
                   {renderBackend === 'ffmpeg_cloud'
                     ? '提交云渲染'
@@ -3465,6 +3652,8 @@ function SynthesisStep({ workflowId, workflowData, onSynthesisComplete }: {
                 ))}
               </div>
             )}
+
+            <MediaSyncHealthCard health={mediaSyncHealth} />
 
             {renderErrorDetail && (
               <div className="mt-3 rounded border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-100">
@@ -3533,6 +3722,7 @@ function ExportStep({ workflowData }: any) {
   const renderManifestUrl = workflowData.renderManifestUrl;
   const srtUrl = workflowData.renderSrtUrl;
   const timelineUrl = workflowData.renderTimelineUrl;
+  const mediaSyncHealth = workflowData.mediaSyncHealth;
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -3630,6 +3820,20 @@ function ExportStep({ workflowData }: any) {
           </Button>
         </div>
       </div>
+
+      {isRenderedMp4 && outputUrl && (
+        <div className="rounded border border-green-500/30 bg-green-500/10 p-4 text-sm text-green-100">
+          <div className="font-medium">本地 FFmpeg 真实成片已生成</div>
+          <div className="mt-1 text-green-100/75">可直接打开真实 MP4，并下载字幕与时间线交付物。</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <a className="text-green-200 underline" href={toMediaUrl(outputUrl)} target="_blank" rel="noreferrer">打开真实 MP4</a>
+            <a className="text-green-200 underline" href={toMediaUrl(outputUrl)} download>下载 MP4</a>
+            {srtUrl && <a className="text-green-200 underline" href={toMediaUrl(srtUrl)} download>下载 SRT</a>}
+          </div>
+        </div>
+      )}
+
+      <MediaSyncHealthCard health={mediaSyncHealth} />
     </div>
   );
 }

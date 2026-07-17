@@ -3,16 +3,17 @@ Dashboard 统计 API 端点
 """
 
 from app.core.time_utils import utc_now
-from typing import List, Optional
+from typing import Any, List, Optional
 from datetime import datetime, timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, union_all
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from app.core.database import get_db
+from app.core.database import DATABASE_DIAGNOSTIC, get_db
+from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
 from app.models.asset import Asset
 from app.models.chapter import Chapter
@@ -28,6 +29,13 @@ from app.models.storyboard import Storyboard
 from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.activity import Activity
+from app.models.quality_evaluation import QualityEvaluation
+from app.models.workflow import Workflow
+from app.services.production_metrics import (
+    aggregate_production_metrics,
+    evaluate_readiness_tiers,
+    persist_production_readiness_evidence,
+)
 
 router = APIRouter(tags=["Dashboard"])
 
@@ -153,6 +161,20 @@ class AnalyticsDashboardResponse(BaseModel):
     daily_series: List[AnalyticsDailyStats]
     model_usage: List[AnalyticsModelUsage]
     recent_activities: List[dict] = []
+    production_metrics: dict = {}
+
+
+class ProductionReadinessEvidenceRequest(BaseModel):
+    workflow_id: str
+    deterministic: dict = Field(default_factory=dict)
+    internal_trial: dict = Field(default_factory=dict)
+    live_run: Optional[dict] = None
+
+
+def _readiness_evidence_write_allowed() -> bool:
+    """Keep client-authored canary evidence inside an isolated DEV database."""
+
+    return bool(is_dev_mode() and DATABASE_DIAGNOSTIC.isolation_required)
 
 
 # ============== API端点 ==============
@@ -232,6 +254,7 @@ async def get_analytics_dashboard(
     daily_series = await _get_daily_analytics(db, user_id, safe_days, generated_at)
     model_usage = await _get_model_usage(db, user_id)
     recent_activities = await _get_recent_activities(db, user_id, limit=8)
+    production_metrics = await _get_production_metrics(db, user_id)
 
     return AnalyticsDashboardResponse(
         generated_at=generated_at,
@@ -243,7 +266,176 @@ async def get_analytics_dashboard(
         daily_series=daily_series,
         model_usage=model_usage,
         recent_activities=recent_activities,
+        production_metrics=production_metrics,
     )
+
+
+@router.post("/analytics/production-readiness-evidence")
+async def write_production_readiness_evidence(
+    request: ProductionReadinessEvidenceRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    if not _readiness_evidence_write_allowed():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="生产就绪证据只能由隔离 DEV canary 写入",
+        )
+    if request.deterministic or request.internal_trial:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="deterministic/internal_trial 证据必须由服务端验证流程生成",
+        )
+    if not request.live_run:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="隔离 DEV canary 写入必须提供 live_run 审计证据",
+        )
+    try:
+        evidence = await persist_production_readiness_evidence(
+            db,
+            user_id,
+            request.workflow_id,
+            request.model_dump(exclude={"workflow_id"}, exclude_none=True),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error)) from error
+    return {
+        "workflow_id": request.workflow_id,
+        "evidence": evidence,
+        "readiness": evaluate_readiness_tiers(
+            evidence.get("deterministic") or {},
+            evidence.get("internal_trial") or {},
+            evidence.get("live_runs") or [],
+        ),
+    }
+
+async def _get_production_metrics(db: AsyncSession, user_id: str) -> dict:
+    quality_result = await db.execute(
+        select(QualityEvaluation)
+        .join(Workflow, QualityEvaluation.workflow_id == Workflow.id)
+        .where(Workflow.user_id == user_id)
+        .order_by(QualityEvaluation.evaluated_at.desc())
+    )
+    latest_quality: dict[tuple[str, str, str], QualityEvaluation] = {}
+    for row in quality_result.scalars().all():
+        if row.shot_id:
+            latest_quality.setdefault(
+                (str(row.shot_id), str(row.artifact_id), str(row.dimension)),
+                row,
+            )
+    quality_by_artifact: dict[tuple[str, str], list[QualityEvaluation]] = {}
+    for (shot_id, artifact_id, _), row in latest_quality.items():
+        quality_by_artifact.setdefault((shot_id, artifact_id), []).append(row)
+    required_dimensions = {
+        "narrative_truth", "character_visual", "scene_prop_state",
+        "motion_camera", "voice_lipsync", "delivery_integrity",
+    }
+    quality_by_shot: dict[str, list[QualityEvaluation]] = {}
+    for (shot_id, _), rows in quality_by_artifact.items():
+        if {str(row.dimension) for row in rows} != required_dimensions:
+            continue
+        existing = quality_by_shot.get(shot_id)
+        if existing is None or max(row.evaluated_at for row in rows) > max(row.evaluated_at for row in existing):
+            quality_by_shot[shot_id] = rows
+
+    accepted_artifact_by_shot: dict[str, str] = {}
+    for shot_id, rows in quality_by_shot.items():
+        artifact_ids = {str(row.artifact_id) for row in rows}
+        if len(rows) == 6 and len(artifact_ids) == 1 and not any(row.blocking for row in rows):
+            accepted_artifact_by_shot[shot_id] = next(iter(artifact_ids))
+
+    async def rows_for(model):
+        result = await db.execute(select(model).where(model.user_id == user_id).order_by(model.created_at))
+        return result.scalars().all()
+
+    raw_jobs: list[tuple[str, Any, str | None, bool]] = []
+    for job in await rows_for(VideoJob):
+        extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+        raw_jobs.append(("video", job, str(extra.get("shot_id")) if extra.get("shot_id") else None, True))
+    for job in await rows_for(TTSJob):
+        raw_jobs.append(("tts", job, str(job.shot_id) if job.shot_id else None, False))
+    for job in await rows_for(MediaGenerationJob):
+        raw_jobs.append(("media", job, str(job.shot_id) if job.shot_id else None, True))
+    for job in await rows_for(SynthesisJob):
+        extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+        raw_jobs.append(("synthesis", job, str(extra.get("shot_id")) if extra.get("shot_id") else None, False))
+    for job in await rows_for(ImageJob):
+        raw_jobs.append(("image", job, str(job.shot_id) if job.shot_id else None, False))
+    raw_jobs.sort(key=lambda item: getattr(item[1], "created_at", None) or datetime.min)
+
+    visual_attempt_by_shot: dict[str, int] = {}
+    attempts: list[dict[str, Any]] = []
+    for kind, job, shot_id, final_capable in raw_jobs:
+        extra = job.extra_data if isinstance(getattr(job, "extra_data", None), dict) else {}
+        if final_capable and shot_id:
+            visual_attempt_by_shot[shot_id] = visual_attempt_by_shot.get(shot_id, 0) + 1
+            attempt_number = visual_attempt_by_shot[shot_id]
+        else:
+            attempt_number = 1
+        quality_rows = quality_by_shot.get(shot_id or "", [])
+        issue_codes = list(dict.fromkeys(str(code) for row in quality_rows for code in ((row.evidence or {}).get("issue_codes") or [])))
+        accepted_final = bool(
+            final_capable
+            and shot_id
+            and accepted_artifact_by_shot.get(shot_id) == job.id
+            and job.status in {"succeeded", "completed"}
+        )
+        if accepted_final:
+            metric_status = "accepted"
+        elif job.status in {"cancelled", "canceled"}:
+            metric_status = "abandoned"
+        elif job.status == "failed":
+            metric_status = "failed"
+        else:
+            metric_status = str(job.status or "pending")
+        elapsed_minutes = 0.0
+        if job.created_at and job.updated_at:
+            elapsed_minutes = max(0.0, (job.updated_at - job.created_at).total_seconds() / 60)
+        provider_id = (
+            getattr(job, "provider_id", None)
+            or extra.get("provider_id")
+            or (getattr(job, "api_provider", None) if kind == "tts" else None)
+            or "evidence_missing"
+        )
+        model_id = getattr(job, "model_id", None) or getattr(job, "model", None) or "evidence_missing"
+        raw_cost = extra.get("cost_rmb")
+        if raw_cost is None and kind == "image":
+            raw_cost = getattr(job, "cost", None)
+        duration = getattr(job, "duration", None) or getattr(job, "duration_seconds", None) or 0
+        attempts.append({
+            "shot_id": shot_id,
+            "attempt": attempt_number,
+            "status": metric_status,
+            "accepted_final": accepted_final,
+            "final_duration_seconds": duration if accepted_final else 0,
+            "cost_rmb": raw_cost,
+            "wall_clock_minutes": extra.get("wall_clock_minutes") or elapsed_minutes,
+            "human_review_minutes": extra.get("human_review_minutes") or 0,
+            "human_repair_minutes": extra.get("human_repair_minutes") or 0,
+            "issue_codes": issue_codes,
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "prompt_version": extra.get("prompt_skill_version") or "evidence_missing",
+            "contract_version": extra.get("episode_contract_version") or "evidence_missing",
+        })
+    metrics = aggregate_production_metrics(attempts)
+    workflow_result = await db.execute(
+        select(Workflow).where(Workflow.user_id == user_id).order_by(Workflow.updated_at.desc())
+    )
+    persisted_evidence: dict[str, Any] = {}
+    for workflow in workflow_result.scalars().all():
+        metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
+        candidate = metadata.get("production_readiness_evidence")
+        if isinstance(candidate, dict):
+            persisted_evidence = candidate
+            break
+    metrics["readiness"] = evaluate_readiness_tiers(
+        persisted_evidence.get("deterministic") or {},
+        persisted_evidence.get("internal_trial") or {},
+        persisted_evidence.get("live_runs") or [],
+    )
+    return metrics
 
 
 async def _get_recent_activities(db: AsyncSession, user_id: str, limit: int = 5) -> List[dict]:

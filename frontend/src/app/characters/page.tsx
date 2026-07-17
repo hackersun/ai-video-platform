@@ -79,15 +79,59 @@ interface Character {
   voice: string;
   avatar?: string;
   tags: string[];
+  source?: 'legacy' | 'story_entity';
+  source_label?: string;
+  read_only?: boolean;
+  production_entity_id?: string;
   created_at?: string;
   updated_at?: string;
 }
+
+type StoryEntityCharacter = {
+  id: string;
+  novel_id?: string | null;
+  chapter_id?: string | null;
+  name?: string;
+  description?: string | null;
+  appearance?: string | null;
+  attributes?: Record<string, any>;
+  tags?: string[];
+};
+
+const normalizeCharacterName = (name?: string | null) => (name || '').replace(/\s+/g, '').toLowerCase();
+
+const productionCharacterFromEntity = (entity: StoryEntityCharacter): Character => {
+  const attrs = entity.attributes || {};
+  const visualDna = attrs.visual_dna && typeof attrs.visual_dna === 'object' ? attrs.visual_dna : {};
+  const dnaSummary = Object.entries(visualDna)
+    .slice(0, 4)
+    .map(([key, value]) => `${key}: ${String(value)}`)
+    .join('；');
+  return {
+    id: entity.id,
+    production_entity_id: entity.id,
+    novel_id: entity.novel_id || undefined,
+    chapter_id: entity.chapter_id || undefined,
+    name: entity.name || '未命名生产角色',
+    description: entity.description || 'StoryEntity 生产角色',
+    appearance: entity.appearance || dnaSummary || '',
+    personality: attrs.personality || '',
+    voice: attrs.voice || attrs.voice_id || attrs.voice_profile || '',
+    avatar: attrs.avatar || attrs.avatar_url || undefined,
+    tags: Array.from(new Set(['StoryEntity', ...((entity.tags || []).filter(Boolean))])),
+    source: 'story_entity',
+    source_label: 'StoryEntity',
+    read_only: true,
+  };
+};
 
 function CharactersPageContent() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const initialNovelId = searchParams.get('novel_id') || '';
   const [characters, setCharacters] = useState<Character[]>([]);
+  const [legacyCharacterCount, setLegacyCharacterCount] = useState(0);
+  const [productionEntityCount, setProductionEntityCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -144,10 +188,37 @@ function CharactersPageContent() {
     try {
       const params = new URLSearchParams();
       if (novelId) params.set('novel_id', novelId);
-      const data = await fetchJsonWithAuth(`${API_BASE}/characters${params.toString() ? `?${params}` : ''}`);
-      setCharacters(Array.isArray(data) ? data : []);
+      const [legacyData, productionData] = await Promise.all([
+        fetchJsonWithAuth(`${API_BASE}/characters${params.toString() ? `?${params}` : ''}`),
+        novelId
+          ? apiClient.getStoryEntities({ novel_id: novelId, entity_type: 'character', limit: 200 }).catch(() => [])
+          : Promise.resolve([]),
+      ]);
+      const legacyCharacters = Array.isArray(legacyData)
+        ? legacyData.map((item: Character) => ({ ...item, source: 'legacy' as const, source_label: 'Character' }))
+        : [];
+      const legacyNames = new Set(legacyCharacters.map((item) => normalizeCharacterName(item.name)).filter(Boolean));
+      const productionNames = new Set<string>();
+      const productionCharacters = Array.isArray(productionData)
+        ? productionData
+          .filter((entity: StoryEntityCharacter) => normalizeCharacterName(entity.name))
+          .filter((entity: StoryEntityCharacter) => !novelId || entity.novel_id === novelId)
+          .filter((entity: StoryEntityCharacter) => !legacyNames.has(normalizeCharacterName(entity.name)))
+          .filter((entity: StoryEntityCharacter) => {
+            const name = normalizeCharacterName(entity.name);
+            if (productionNames.has(name)) return false;
+            productionNames.add(name);
+            return true;
+          })
+          .map(productionCharacterFromEntity)
+        : [];
+      setLegacyCharacterCount(legacyCharacters.length);
+      setProductionEntityCount(productionCharacters.length);
+      setCharacters([...legacyCharacters, ...productionCharacters]);
     } catch (err: any) {
       setError(err.message || '加载失败');
+      setLegacyCharacterCount(0);
+      setProductionEntityCount(0);
     } finally {
       setLoading(false);
     }
@@ -320,7 +391,9 @@ function CharactersPageContent() {
     setAutoGenerateAvatar(true);
   };
 
-  const handleEdit = () => { if (selectedCharacter) setIsEditing(true); };
+  const handleEdit = () => {
+    if (selectedCharacter && !selectedCharacter.read_only) setIsEditing(true);
+  };
 
   const handleSave = async () => {
     try {
@@ -521,6 +594,12 @@ function CharactersPageContent() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10 bg-white/5 border-white/10 text-white" />
               </div>
+              <div
+                data-testid="character-source-summary"
+                className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60"
+              >
+                角色总数 {legacyCharacterCount + productionEntityCount} · 手工角色 {legacyCharacterCount} · 生产实体 {productionEntityCount}
+              </div>
               <div className="space-y-2">
                 {filteredCharacters.map((char) => (
                   <div key={char.id}
@@ -543,6 +622,11 @@ function CharactersPageContent() {
                           {char.novel_id ? novels.find((novel) => novel.id === char.novel_id)?.title || '已绑定小说' : '全局角色'}
                         </div>
                       </div>
+                      {char.source_label && (
+                        <span className="rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[10px] text-white/60">
+                          {char.source_label}
+                        </span>
+                      )}
                       <ChevronRight className="w-4 h-4 text-white/40" />
                     </div>
                     <div className="flex gap-1 mt-2">
@@ -574,7 +658,7 @@ function CharactersPageContent() {
                       )}
                     </CardTitle>
                     <div className="flex gap-2">
-                      {!isEditing && selectedCharacter && (
+                      {!isEditing && selectedCharacter && !selectedCharacter.read_only && (
                         <>
                           <Button variant="outline" size="sm" onClick={handleEdit}>
                             <Edit2 className="w-4 h-4 mr-1" />编辑
@@ -611,6 +695,11 @@ function CharactersPageContent() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-6">
+                    {selectedCharacter?.read_only && (
+                      <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-3 text-sm leading-6 text-cyan-50">
+                        该角色来自 StoryEntity / Story Bible 生产实体，已纳入剧集一致性、定稿卡和镜头引用链路。需要修改时请到 Story Bible 实体管理或定稿卡页面处理。
+                      </div>
+                    )}
                     <div className="space-y-4">
                       <div className="flex items-center gap-2 text-white/80 mb-2">
                         <User className="w-4 h-4" /><span className="font-medium">基本信息</span>
@@ -739,7 +828,7 @@ function CharactersPageContent() {
                             <User className="w-10 h-10 text-white" />
                           </div>
                         )}
-                        {selectedCharacter && !isEditing && (
+                        {selectedCharacter && !isEditing && !selectedCharacter.read_only && (
                           <Button variant="outline" size="sm"
                             onClick={() => handleGenerateAvatar(selectedCharacter.id)}
                             disabled={generatingAvatar === selectedCharacter.id}

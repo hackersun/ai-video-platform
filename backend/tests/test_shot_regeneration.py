@@ -559,6 +559,94 @@ def test_regeneration_marks_superseded_and_concatenate_uses_latest(client: TestC
     assert manifest["segments"][0]["video"]["url"] != "https://example.com/old-shot.mp4"
 
 
+def test_concatenate_uses_ready_success_job_when_same_shot_has_newer_running_job(client: TestClient) -> None:
+    user_id = uuid4().hex
+    workflow_id, shot_ids = _create_workflow_with_shots(
+        client,
+        user_id,
+        shot_specs=[{"prompt": "云灯集市远景", "dialogue": "旁白：集市亮起来。"}],
+    )
+    succeeded_video_id = _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        status="succeeded",
+        video_url="https://example.com/succeeded-shot.mp4",
+    )
+    running_video_id = _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        status="running",
+    )
+
+    concat_resp = client.post(
+        f"/api/v1/workflow/concatenate/{workflow_id}",
+        json={
+            "video_job_ids": [succeeded_video_id, running_video_id],
+            "include_subtitles": False,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert concat_resp.status_code == 200, concat_resp.text
+    manifest_resp = client.get(concat_resp.json()["manifest_url"])
+    assert manifest_resp.status_code == 200
+    manifest = manifest_resp.json()
+    assert [segment["video"]["job_id"] for segment in manifest["segments"]] == [succeeded_video_id]
+
+
+def test_concatenate_uses_latest_ready_tts_for_same_shot(client: TestClient) -> None:
+    user_id = uuid4().hex
+    workflow_id, shot_ids = _create_workflow_with_shots(
+        client,
+        user_id,
+        shot_specs=[{"prompt": "云灯集市近景", "dialogue": "旁白：集市亮起来。"}],
+    )
+    video_id = _insert_video_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        status="succeeded",
+    )
+    old_tts_id = _insert_tts_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        text="旧配音台词",
+    )
+    new_tts_id = _insert_tts_job_for_shot(
+        user_id=user_id,
+        workflow_id=workflow_id,
+        shot_id=shot_ids[0],
+        shot_number=1,
+        text="新配音台词",
+    )
+
+    concat_resp = client.post(
+        f"/api/v1/workflow/concatenate/{workflow_id}",
+        json={
+            "video_job_ids": [video_id],
+            "tts_job_ids": [old_tts_id, new_tts_id],
+            "include_subtitles": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert concat_resp.status_code == 200, concat_resp.text
+    manifest_resp = client.get(concat_resp.json()["manifest_url"])
+    assert manifest_resp.status_code == 200
+    manifest = manifest_resp.json()
+    segment = manifest["segments"][0]
+    assert segment["audio"]["job_id"] == new_tts_id
+    assert segment["audio"]["text"] == "新配音台词"
+    assert segment["subtitle"]["text"] == "新配音台词"
+
+
 def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
     user_id = uuid4().hex
     latest_render_artifacts = {

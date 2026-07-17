@@ -1,5 +1,5 @@
 import { fetchJsonWithAuth } from './fetch-with-auth';
-import type { StudioActionResult, StudioRunMode, StudioSnapshot, StudioWorkflowOption } from './studio-types';
+import type { StudioActionResult, StudioGuidedAction, StudioRunMode, StudioSnapshot, StudioWorkflowOption } from './studio-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -48,4 +48,18 @@ export async function getStudioActions(workflowId: string) {
   return fetchJsonWithAuth<{ items: StudioActionResult[]; count: number }>(
     `${API_BASE}/studio/workflows/${workflowId}/actions`
   );
+}
+
+export async function resumeStudioOrchestration(workflowId: string, taskId: string) {
+  return fetchJsonWithAuth<{
+    workflow_id: string;
+    task_id: string;
+    status: string;
+    resumed_stage: string;
+    completed_stages: string[];
+    safe_next_action: StudioGuidedAction;
+    action_result?: StudioActionResult | null;
+  }>(`${API_BASE}/studio/workflows/${workflowId}/orchestration/${taskId}/resume`, {
+    method: 'POST',
+  });
 }

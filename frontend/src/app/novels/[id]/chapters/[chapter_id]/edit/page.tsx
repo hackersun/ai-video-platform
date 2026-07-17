@@ -7,6 +7,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { MainLayout } from '@/components/layout/main-layout';
+import { StoryWorkbenchPanel, getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import { useToast } from '@/components/ui/toast';
 import { apiClient } from '@/lib/api-client';
 import {
@@ -272,6 +273,11 @@ export default function ChapterEditPage() {
 
   const wordCount = formData.content.replace(/\s/g, '').length;
   const canContinueFromContext = wordCount === 0;
+  const contentPreview = getStoryExcerpt(
+    formData.content,
+    '这个章节还没有正文，适合让 AI 根据前文、Story Bible 和实体上下文生成本章内容。',
+    260
+  );
 
   return (
     <MainLayout>
@@ -373,17 +379,22 @@ export default function ChapterEditPage() {
             </div>
           </div>
 
-          {/* AI辅助 */}
-          <Card className="bg-violet-500/5 border-violet-500/20">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-violet-400 text-base flex items-center gap-2">
-                <Sparkles className="w-4 h-4" />
-                AI辅助写作
-                {isGenerating && <Loader2 className="w-4 h-4 animate-spin ml-2" />}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-1 gap-3">
+          <StoryWorkbenchPanel
+            heading="章节写作助手"
+            description="边写边看正文摘要、保存状态和 AI 辅助动作，减少在页面里来回寻找按钮。"
+            title={formData.title || chapter.title || '未命名章节'}
+            subtitle={`《${novel.title}》 · 第 ${chapter.chapter_number} 章`}
+            excerptLabel="当前正文预览"
+            excerpt={contentPreview}
+            metrics={[
+              { label: '字数', value: `${wordCount} 字` },
+              {
+                label: '保存',
+                value: saveState === 'saving' ? '自动保存中' : saveState === 'saved' ? '已保存' : saveState === 'error' ? '失败' : '待编辑',
+              },
+            ]}
+            actions={
+              <>
                 <Input
                   value={aiInstruction}
                   onChange={(e) => setAiInstruction(e.target.value)}
@@ -399,56 +410,58 @@ export default function ChapterEditPage() {
                   className="bg-white/5 border-white/10 text-white"
                   title="目标字数"
                 />
-              </div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-violet-500/50 text-violet-400 hover:bg-violet-500/10"
-                  onClick={handleAIGenerate}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4 mr-1" />
-                  )}
-                  重新生成
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
-                  onClick={handleAIExtend}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-4 h-4 mr-1" />
-                  )}
-                  {canContinueFromContext ? '生成本章内容' : '续写内容'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-green-500/50 text-green-400 hover:bg-green-500/10"
-                  onClick={handleAIPolish}
-                  disabled={isGenerating}
-                >
-                  {isGenerating ? (
-                    <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4 mr-1" />
-                  )}
-                  润色内容
-                </Button>
-              </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 xl:grid-cols-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-violet-500/50 text-violet-300 hover:bg-violet-500/10"
+                    onClick={handleAIGenerate}
+                    disabled={isGenerating}
+                  >
+                    {isGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4 mr-1" />
+                    )}
+                    重新生成
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-blue-500/50 text-blue-300 hover:bg-blue-500/10"
+                    onClick={handleAIExtend}
+                    disabled={isGenerating}
+                  >
+                    {isGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-1" />
+                    )}
+                    {canContinueFromContext ? '生成本章内容' : '续写内容'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-green-500/50 text-green-300 hover:bg-green-500/10"
+                    onClick={handleAIPolish}
+                    disabled={isGenerating}
+                  >
+                    {isGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4 mr-1" />
+                    )}
+                    润色内容
+                  </Button>
+                </div>
+              </>
+            }
+            footer={
               <p className="text-xs leading-5 text-white/40">
                 AI 会读取小说简介、前后章节、Story Bible 及已抽取的人物/场景/道具/事件，生成后立即保存并同步一致性上下文。
               </p>
-            </CardContent>
-          </Card>
+            }
+          />
         </div>
       </div>
       <ConfirmDialog

@@ -9,9 +9,12 @@ API调用规范:
 - TTS模型:   POST /v1/t2a_v2          → model_id = speech-2.6-hd
 """
 
+from pathlib import Path
 from typing import List, Dict, Optional, Any
+import asyncio
 import aiohttp
 import os
+import shutil
 import uuid
 import base64
 
@@ -27,14 +30,13 @@ from app.core.minimax_config import (
     DEFAULT_TTS_VOICE,
     TTS_VOICES,
 )
+from app.services.minimax_errors import MiniMaxProviderRejected, minimax_provider_rejection
+from app.services.minimax_tts_request import (
+    build_minimax_tts_request,
+    resolve_minimax_tts_model_id,
+)
 
-
-def _normalize_tts_model_id(model: str) -> str:
-    """Convert local MiniMax catalog IDs to the API model ID used by /t2a_v2."""
-    model_config = get_minimax_model(model)
-    if model_config.get("type") == "tts" and model_config.get("api_model_id"):
-        return model_config["api_model_id"]
-    return model
+MINIMAX_VOICE_CLONE_MODEL = "speech-2.8-hd"
 
 
 def _normalize_image_model_id(model: str) -> str:
@@ -46,16 +48,23 @@ def _normalize_image_model_id(model: str) -> str:
 
 
 def _raise_for_minimax_base_resp(result: Any, operation: str) -> None:
+    rejection = minimax_provider_rejection(result, operation)
+    if rejection:
+        raise rejection
+
+
+def _extract_file_id(result: Any) -> Optional[str]:
     if not isinstance(result, dict):
-        return
-    base_resp = result.get("base_resp") or result.get("baseResponse")
-    if not isinstance(base_resp, dict):
-        return
-    status_code = base_resp.get("status_code")
-    if status_code in (None, 0, "0"):
-        return
-    message = base_resp.get("status_msg") or base_resp.get("message") or "未知错误"
-    raise Exception(f"MiniMax {operation}失败 [{status_code}]: {message}")
+        return None
+    for key in ("file_id", "id"):
+        if result.get(key) not in (None, ""):
+            return str(result[key])
+    file_obj = result.get("file")
+    if isinstance(file_obj, dict):
+        for key in ("file_id", "id"):
+            if file_obj.get(key) not in (None, ""):
+                return str(file_obj[key])
+    return None
 
 
 def _chat_endpoint_for_model(model: str) -> str:
@@ -90,6 +99,55 @@ def _extract_audio_url(value: Any, base_url: str, *, allow_plain: bool = True) -
     return None
 
 
+async def probe_audio_duration_seconds(audio_source: str, timeout_seconds: float = 10.0) -> Optional[float]:
+    """Read actual media duration when ffprobe is available.
+
+    MiniMax may return hosted MP3 URLs without duration metadata. Estimating
+    from character count is too inaccurate for subtitle/audio sync, so prefer
+    probing the returned media and fall back only when probing is unavailable.
+    """
+    if not audio_source or not shutil.which("ffprobe"):
+        return None
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=nw=1:nk=1",
+            audio_source,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        if proc.returncode != 0:
+            return None
+        raw_duration = stdout.decode("utf-8", errors="ignore").strip().splitlines()[0]
+        duration = float(raw_duration)
+        return round(duration, 3) if duration > 0 else None
+    except (IndexError, ValueError, OSError, asyncio.TimeoutError):
+        if proc and proc.returncode is None:
+            proc.kill()
+            await proc.communicate()
+        return None
+
+
+def _estimate_tts_duration_seconds(text: str, speed: float) -> float:
+    safe_speed = speed if speed > 0 else 1.0
+    return round(len(text) / (150 * safe_speed), 1)
+
+
+async def _resolve_tts_duration_seconds(text: str, speed: float, audio_source: Optional[str]) -> float:
+    if audio_source:
+        probed_duration = await probe_audio_duration_seconds(audio_source)
+        if probed_duration is not None:
+            return probed_duration
+    return _estimate_tts_duration_seconds(text, speed)
+
+
 class MiniMaxService:
     """MiniMax API 服务类"""
 
@@ -100,6 +158,89 @@ class MiniMaxService:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}"
         }
+
+    # ============== 声音克隆 ==============
+
+    async def upload_voice_clone_audio(self, audio_path: str) -> Dict[str, Any]:
+        """
+        Upload local voice sample to MiniMax Files API for voice cloning.
+
+        Official flow: POST /v1/files/upload with purpose=voice_clone, then use
+        the returned file_id in POST /v1/voice_clone.
+        """
+        source = Path(audio_path)
+        if not source.exists() or not source.is_file():
+            raise Exception(f"MiniMax 声音克隆上传失败: 音频文件不存在 {audio_path}")
+
+        upload_url = f"{self.base_url}/files/upload"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        form = aiohttp.FormData()
+        form.add_field("purpose", "voice_clone")
+        with source.open("rb") as audio_file:
+            form.add_field(
+                "file",
+                audio_file,
+                filename=source.name,
+                content_type="application/octet-stream",
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    upload_url,
+                    headers=headers,
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=180),
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        raise Exception(f"MiniMax 声音克隆上传失败 [{resp.status}]: {text}")
+                    result = await resp.json()
+
+        _raise_for_minimax_base_resp(result, "声音克隆上传")
+        file_id = _extract_file_id(result)
+        if not file_id:
+            raise Exception("MiniMax 声音克隆上传失败: 未返回 file_id")
+        result["file_id"] = file_id
+        return result
+
+    async def clone_voice(
+        self,
+        *,
+        file_id: str,
+        voice_id: str,
+        text: str,
+        model: str = MINIMAX_VOICE_CLONE_MODEL,
+        accuracy: float = 0.8,
+        need_noise_reduction: bool = False,
+        need_volume_normalization: bool = False,
+    ) -> Dict[str, Any]:
+        """Create a cloud voice clone that can later be used by /t2a_v2."""
+        clone_url = f"{self.base_url}/voice_clone"
+        payload = {
+            "file_id": int(file_id) if str(file_id).isdigit() else file_id,
+            "voice_id": voice_id,
+            "text": text,
+            "model": resolve_minimax_tts_model_id(model),
+            "accuracy": accuracy,
+            "need_noise_reduction": need_noise_reduction,
+            "need_volume_normalization": need_volume_normalization,
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                clone_url,
+                headers=self.headers,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=180),
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise Exception(f"MiniMax 声音克隆失败 [{resp.status}]: {text}")
+                result = await resp.json()
+
+        _raise_for_minimax_base_resp(result, "声音克隆")
+        result["voice_id"] = voice_id
+        result["file_id"] = str(file_id)
+        return result
 
     # ============== 文本生成 ==============
 
@@ -199,26 +340,17 @@ class MiniMaxService:
         模型: speech-2.6-hd, speech-2.6-turbo
         返回: 音频 URL 或 base64
         """
-        api_model = _normalize_tts_model_id(model)
-        speech_url = f"{self.base_url}/t2a_v2"
-        payload = {
-            "model": api_model,
-            "text": text,
-            "stream": False,
-            "output_format": output_format,
-            "voice_setting": {
-                "voice_id": voice_id,
-                "speed": speed,
-                "vol": vol,
-                "pitch": pitch,
-            },
-            "language_boost": language_boost,
-        }
-        payload.update(kwargs)
+        request = build_minimax_tts_request(
+            model_id=model, text=text, voice_id=voice_id, speed=speed,
+            vol=vol, pitch=pitch, output_format=output_format,
+            language_boost=language_boost, extra_params=kwargs,
+        )
+        api_model = request.payload["model"]
+        speech_url = f"{self.base_url}{request.url_path}"
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                speech_url, headers=self.headers, json=payload,
+                speech_url, headers=self.headers, json=request.payload,
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status != 200:
@@ -293,7 +425,7 @@ class MiniMaxService:
                     with open(audio_path, "wb") as f:
                         f.write(audio_bytes)
                     audio_url = f"/static/{output_dir}/{filename}"
-                    estimated_duration = round(len(text) / (150 * speed), 1)
+                    estimated_duration = await _resolve_tts_duration_seconds(text, speed, audio_path)
                     return {
                         "task_id": task_id,
                         "audio_url": audio_url,
@@ -311,7 +443,7 @@ class MiniMaxService:
 
         # 如果没有成功处理，返回原始响应
         if audio_url:
-            estimated_duration = round(len(text) / (150 * speed), 1)
+            estimated_duration = await _resolve_tts_duration_seconds(text, speed, audio_url)
             return {
                 "task_id": task_id,
                 "audio_url": audio_url,

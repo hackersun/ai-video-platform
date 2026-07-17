@@ -46,6 +46,30 @@ def _adapter_module():
         pytest.fail(f"video_reference_adapter module is missing: {exc}")
 
 
+def _seedance_contract_metadata() -> dict[str, Any]:
+    return {
+        "contract_status": "experimental",
+        "contract_version": "seedance-2.0-ark-2026-07-11",
+        "verified_at": None,
+        "reference_limits": {
+            "images": 9,
+            "videos": 3,
+            "audios": 3,
+            "at_reference": True,
+            "native_audio": True,
+        },
+        "verification_gaps": ["live_canary_job_id", "failure_retry_evidence"],
+        "contract_model_family": "seedance_2",
+        "contract_roles": {
+            "image": "reference_image",
+            "video": "reference_video",
+            "audio": "reference_audio",
+        },
+        "contract_pricing_status": "unconfirmed",
+        "contract_agent_plan_multireference": False,
+    }
+
+
 async def _public_resolver(_db: AsyncSession, _user_id: str, url: str | None) -> dict[str, Any]:
     if url and url.startswith("https://"):
         return {"provider_url": url, "omitted_reason": None}
@@ -95,6 +119,16 @@ def _entity(user_id: str, entity_id: str, entity_type: str, name: str) -> StoryE
         entity_type=entity_type,
         name=name,
         is_approved=True,
+    )
+
+
+def _candidate_entity(user_id: str, entity_id: str, entity_type: str, name: str) -> StoryEntity:
+    return StoryEntity(
+        id=entity_id,
+        user_id=user_id,
+        entity_type=entity_type,
+        name=name,
+        extra_data={"lifecycle": {"status": "candidate"}},
     )
 
 
@@ -407,6 +441,84 @@ async def test_non_public_urls_skipped_unless_resolver_maps_public_url(db_sessio
     assert mapped["dropped"] == []
 
 
+@pytest.mark.asyncio
+async def test_candidate_entity_refs_are_not_used_as_video_references(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = Shot(
+        id=f"shot-{uuid4()}",
+        user_id=user_id,
+        storyboard_id=f"storyboard-{uuid4()}",
+        shot_number=1,
+        character_refs=[{"entity_id": "char-candidate", "name": "候选角色"}],
+        extra_data={"entity_refs": {"characters": [{"entity_id": "char-candidate", "name": "候选角色"}]}},
+    )
+    db_session.add_all(
+        [
+            _candidate_entity(user_id, "char-candidate", "character", "候选角色"),
+            _asset(user_id, "char-candidate", "character", "front", "候选角色正面"),
+            _asset(user_id, "char-candidate", "character", "side", "候选角色侧面"),
+            _asset(user_id, "char-candidate", "character", "back", "候选角色背面"),
+        ]
+    )
+    await db_session.flush()
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 9, "videos": 0, "audios": 0, "at_reference": True, "native_audio": False},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert package["images"] == []
+    assert package["at_reference_text"] is None
+
+
+@pytest.mark.asyncio
+async def test_reference_package_keeps_legacy_asset_refs_without_story_entity(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    build_reference_package = getattr(builder, "build_reference_package", None)
+    assert callable(build_reference_package)
+
+    user_id = f"user-{uuid4()}"
+    shot = Shot(
+        id=f"shot-{uuid4()}",
+        user_id=user_id,
+        storyboard_id=f"storyboard-{uuid4()}",
+        shot_number=1,
+        character_refs=[{"entity_id": "char-legacy-asset", "name": "旧资产角色"}],
+        extra_data={"entity_refs": {"characters": [{"entity_id": "char-legacy-asset", "name": "旧资产角色"}]}},
+    )
+    db_session.add_all(
+        [
+            _asset(user_id, "char-legacy-asset", "character", "front", "旧资产角色正面"),
+            _asset(user_id, "char-legacy-asset", "character", "side", "旧资产角色侧面"),
+            _asset(user_id, "char-legacy-asset", "character", "back", "旧资产角色背面"),
+        ]
+    )
+    await db_session.flush()
+
+    package = await build_reference_package(
+        db_session,
+        user_id,
+        shot=shot,
+        lineage={},
+        model_limits={"images": 9, "videos": 0, "audios": 0, "at_reference": True, "native_audio": False},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert [(item["entity_id"], item["view_key"]) for item in package["images"]] == [
+        ("char-legacy-asset", "front"),
+        ("char-legacy-asset", "side"),
+        ("char-legacy-asset", "back"),
+    ]
+
+
 def test_provider_content_adapter_submits_multimodal_references() -> None:
     adapter = _adapter_module()
     build_provider_content = getattr(adapter, "build_video_provider_content", None)
@@ -431,6 +543,8 @@ def test_provider_content_adapter_submits_multimodal_references() -> None:
             "at_reference_text": "@图1为主角孙剑正面形象基准；@图2为主角孙剑侧面形象基准",
         },
         model_limits={"images": 9, "videos": 3, "audios": 3, "at_reference": True, "native_audio": False},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -451,12 +565,13 @@ def test_provider_content_adapter_submits_multimodal_references() -> None:
         "role": "reference_audio",
     }
     assert result["content"][-1]["text"].startswith("@图1为主角孙剑正面形象基准")
-    assert "--duration 8 --resolution 720p --camerafixed false --watermark true" in result["content"][-1]["text"]
+    assert "--duration 8 --resolution 720p --camerafixed false --watermark false" in result["content"][-1]["text"]
     assert result["metadata"] == {
         "mode": "multimodal",
         "image_count": 2,
         "video_count": 1,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -486,7 +601,7 @@ def test_provider_content_adapter_keeps_single_image_shape_when_limits_do_not_al
         {"type": "image_url", "image_url": {"url": "https://cdn.example.com/current-shot.png"}},
         {
             "type": "text",
-            "text": "旧山门外的定场镜头 --duration 4 --resolution 480p --camerafixed false --watermark true",
+            "text": "旧山门外的定场镜头 --duration 4 --resolution 480p --camerafixed false --watermark false",
         },
     ]
     assert result["metadata"]["image_count"] == 1
@@ -513,6 +628,8 @@ def test_provider_content_adapter_allows_audio_with_single_image_limit() -> None
             ],
         },
         model_limits={"images": 1, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -527,6 +644,7 @@ def test_provider_content_adapter_allows_audio_with_single_image_limit() -> None
         "image_count": 1,
         "video_count": 0,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -548,6 +666,8 @@ def test_provider_content_adapter_allows_audio_without_image_capacity() -> None:
             ],
         },
         model_limits={"images": 0, "videos": 0, "audios": 1, "at_reference": False, "native_audio": True},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -562,6 +682,7 @@ def test_provider_content_adapter_allows_audio_without_image_capacity() -> None:
         "image_count": 0,
         "video_count": 0,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -585,6 +706,8 @@ def test_provider_content_adapter_keeps_media_references_without_images() -> Non
             ],
         },
         model_limits={"images": 9, "videos": 1, "audios": 1, "at_reference": True, "native_audio": False},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
     )
 
     assert result["mode"] == "multimodal"
@@ -604,6 +727,7 @@ def test_provider_content_adapter_keeps_media_references_without_images() -> Non
         "image_count": 0,
         "video_count": 1,
         "audio_count": 1,
+        **_seedance_contract_metadata(),
     }
 
 
@@ -632,7 +756,166 @@ def test_provider_content_adapter_respects_text_only_model_contract() -> None:
     assert result["content"] == [
         {
             "type": "text",
-            "text": "纯文字生成镜头，不应发送任何参考图 --duration 5 --resolution 720P --camerafixed false --watermark true",
+            "text": "纯文字生成镜头，不应发送任何参考图 --duration 5 --resolution 720P --camerafixed false --watermark false",
         },
     ]
     assert result["metadata"]["image_count"] == 0
+
+
+def test_provider_content_records_seedance_contract_status() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [{"url": "https://cdn.example.com/mili-front.png"}],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+            "at_reference_text": "@image1 主角定稿图；@video1 上一镜头；@audio1 角色声线。",
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+        model_id="doubao-seedance-2-0-260128",
+        provider="volcano",
+    )
+
+    metadata = result["metadata"]
+    assert metadata["contract_status"] == "experimental"
+    assert metadata["contract_model_family"] == "seedance_2"
+    assert metadata["contract_roles"] == {
+        "image": "reference_image",
+        "video": "reference_video",
+        "audio": "reference_audio",
+    }
+    assert metadata["contract_pricing_status"] == "unconfirmed"
+
+
+def test_provider_content_without_model_id_does_not_infer_seedance_contract() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [{"url": "https://cdn.example.com/mili-front.png"}],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["image_url", "video_url", "audio_url", "text"]
+    metadata = result["metadata"]
+    assert metadata["contract_model_family"] == "legacy"
+    assert metadata["contract_status"] == "unavailable"
+    assert metadata["reference_limits"] == {}
+    assert metadata["verification_gaps"] == ["model_contract_not_registered"]
+
+
+def test_non_seedance_adapter_metadata_is_unavailable_without_changing_payload_limits() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/mili-front.png"},
+                {"url": "https://cdn.example.com/mili-side.png"},
+            ],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits={"images": 2, "videos": 1, "audios": 1},
+        model_id="some-other-video-model",
+        provider="other-provider",
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == [
+        "image_url",
+        "image_url",
+        "video_url",
+        "audio_url",
+        "text",
+    ]
+    assert result["metadata"]["image_count"] == 2
+    assert result["metadata"]["video_count"] == 1
+    assert result["metadata"]["audio_count"] == 1
+    assert result["metadata"]["contract_status"] == "unavailable"
+    assert result["metadata"]["reference_limits"] == {}
+    assert result["metadata"]["verification_gaps"] == ["model_contract_not_registered"]
+
+
+def test_non_seedance_contract_limits_keep_registry_multireference_limits() -> None:
+    adapter = _adapter_module()
+    apply_limits = getattr(adapter, "apply_seedance_contract_limits")
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    limits = {"images": 9, "videos": 3, "audios": 2}
+    assert apply_limits(
+        limits,
+        model_id="happyhorse-1.1-r2v",
+        provider="alibaba",
+    ) == limits
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [{"url": "https://cdn.example.com/mili-front.png"}],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits=limits,
+        model_id="happyhorse-1.1-r2v",
+        provider="alibaba",
+    )
+
+    assert result["mode"] == "multimodal"
+    assert [item["type"] for item in result["content"]] == ["image_url", "video_url", "audio_url", "text"]
+    assert result["metadata"]["contract_model_family"] == "legacy"
+
+
+def test_provider_content_clamps_agent_plan_to_single_reference() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="米粒举起星灯尾巴，照亮雨夜屋顶。",
+        duration=4,
+        resolution="720p",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/mili-front.png"},
+                {"url": "https://cdn.example.com/mili-side.png"},
+            ],
+            "videos": [{"url": "https://cdn.example.com/prev-shot.mp4"}],
+            "audios": [{"url": "https://cdn.example.com/voice.wav"}],
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+        model_id="doubao-seedance-2.0-fast",
+        provider="volcano_agent_plan",
+    )
+
+    assert result["mode"] == "single_image"
+    assert result["content"] == [
+        {"type": "image_url", "image_url": {"url": "https://cdn.example.com/mili-front.png"}},
+        {
+            "type": "text",
+            "text": "米粒举起星灯尾巴，照亮雨夜屋顶。 --duration 4 --resolution 720p --camerafixed false --watermark false",
+        },
+    ]
+    metadata = result["metadata"]
+    assert metadata["image_count"] == 1
+    assert metadata["video_count"] == 0
+    assert metadata["audio_count"] == 0
+    assert metadata["contract_agent_plan_multireference"] is False

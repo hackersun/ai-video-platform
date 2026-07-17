@@ -20,7 +20,7 @@ import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import apiClient from '@/lib/api-client';
-
+import { subtitleQueryContext } from '@/lib/subtitle-query-context';
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const MEDIA_BASE = API_BASE.replace(/\/api\/v1$/, '');
 
@@ -111,7 +111,7 @@ export default function SubtitlesPage() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiClient.getSubtitleTracks({ include_segments: true });
+      const data = await apiClient.getSubtitleTracks(subtitleQueryContext(window.location.search));
       const list = Array.isArray(data) ? data : [];
       setTracks(list);
       setSelectedTrackId((current) => {

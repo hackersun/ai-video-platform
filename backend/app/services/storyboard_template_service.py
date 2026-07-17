@@ -506,10 +506,63 @@ def match_storyboard_template(
 
 
 def extract_story_beats(content: str, desired_count: int) -> List[str]:
+    beats = extract_raw_story_beats(content)
+    if not beats:
+        beats = ["故事开场", "人物行动", "情节推进", "结果确认"]
+    while len(beats) < desired_count:
+        beats.append(beats[-1])
+    return beats[:desired_count]
+
+
+def _clean_story_beat(value: str) -> str:
+    return (value or "").strip().strip(" ，；;:：")
+
+
+def _split_story_sentences(text: str) -> List[str]:
+    """Split Chinese prose without breaking punctuation inside paired quotes."""
+    parts: List[str] = []
+    buffer: List[str] = []
+    quote_stack: List[str] = []
+    open_quotes = {"“": "”", "「": "」", "『": "』"}
+    close_quotes = {value: key for key, value in open_quotes.items()}
+    sentence_end = set("。！？；!?;\n")
+
+    for index, char in enumerate(text):
+        if char in open_quotes:
+            quote_stack.append(char)
+        buffer.append(char)
+
+        if char in close_quotes:
+            if quote_stack and quote_stack[-1] == close_quotes[char]:
+                quote_stack.pop()
+            previous = next((item for item in reversed(buffer[:-1]) if item.strip()), "")
+            if not quote_stack and previous in sentence_end:
+                part = _clean_story_beat("".join(buffer))
+                if part:
+                    parts.append(part)
+                buffer = []
+            continue
+
+        if char in sentence_end and not quote_stack:
+            next_char = text[index + 1] if index + 1 < len(text) else ""
+            if next_char in close_quotes:
+                continue
+            part = _clean_story_beat("".join(buffer))
+            if part:
+                parts.append(part)
+            buffer = []
+
+    tail = _clean_story_beat("".join(buffer))
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def extract_raw_story_beats(content: str) -> List[str]:
     cleaned = re.sub(r"\s+", " ", content or "").strip()
     if not cleaned:
-        return ["故事开场", "人物行动", "情节推进", "结果确认"][:desired_count]
-    parts = [part.strip(" ，。！？；:：") for part in re.split(r"[。！？；\n]+", cleaned) if part.strip()]
+        return []
+    parts = _split_story_sentences(cleaned)
     if not parts:
         parts = [cleaned[:80]]
     beats: List[str] = []
@@ -519,11 +572,62 @@ def extract_story_beats(content: str, desired_count: int) -> List[str]:
             beats.extend(sub_parts)
         else:
             beats.append(part)
-    if not beats:
-        beats = [cleaned[:80]]
-    while len(beats) < desired_count:
-        beats.append(beats[-1])
-    return beats[:desired_count]
+    return beats
+
+
+def plan_storyboard_shot_count(
+    *,
+    template: Dict[str, Any],
+    source_content: str,
+    requested_shot_count: Optional[int] = None,
+) -> Dict[str, Any]:
+    template_count = max(1, len(template.get("shots") or []))
+    if requested_shot_count is not None:
+        shot_count = max(1, min(50, int(requested_shot_count)))
+        return {
+            "source": "requested",
+            "shot_count": shot_count,
+            "requested_shot_count": shot_count,
+            "story_beat_count": len(extract_raw_story_beats(source_content)),
+            "template_shot_count": template_count,
+            "reason": "使用用户指定镜头数量",
+        }
+
+    beats = extract_raw_story_beats(source_content)
+    beat_count = len(beats)
+    text_length = len(re.sub(r"\s+", "", source_content or ""))
+    action_keyword_count = len(re.findall(r"战|追|逃|冲|爆|打|杀|剑|枪|跳|跑|危机|逼近|倒计时", source_content or ""))
+    dialogue_hint_count = len(re.findall(r"[：:「“\"]", source_content or ""))
+
+    if beat_count <= 1:
+        shot_count = 2
+    elif beat_count <= 2:
+        shot_count = 3
+    elif beat_count <= 4:
+        shot_count = 3 if text_length <= 260 else beat_count
+    else:
+        shot_count = min(8, beat_count)
+
+    if text_length >= 600:
+        shot_count = max(shot_count, min(8, round(text_length / 180)))
+    if action_keyword_count >= 4 or dialogue_hint_count >= 4:
+        shot_count = max(shot_count, min(8, beat_count + 1 if beat_count else template_count))
+
+    if beat_count >= 2:
+        shot_count = min(shot_count, beat_count)
+
+    shot_count = max(2, min(8, shot_count))
+    return {
+        "source": "auto",
+        "shot_count": shot_count,
+        "requested_shot_count": None,
+        "story_beat_count": beat_count,
+        "template_shot_count": template_count,
+        "text_length": text_length,
+        "action_keyword_count": action_keyword_count,
+        "dialogue_hint_count": dialogue_hint_count,
+        "reason": "根据情节点数量、文本长度、动作/对白密度自动规划镜头数量",
+    }
 
 
 def _story_context_items(story_context: Optional[Dict[str, Any]], key: str) -> List[Dict[str, Any]]:
@@ -542,6 +646,56 @@ def _story_context_names(story_context: Optional[Dict[str, Any]], key: str, limi
     return names
 
 
+def _is_trusted_character_name(name: str) -> bool:
+    text = re.sub(r"\s+", "", name or "")
+    if not re.fullmatch(r"[\u4e00-\u9fff]{2,6}", text):
+        return False
+    if text in {"角色A", "角色B", "角色C", "某人", "主角", "她", "他", "他们", "她们", "两人"}:
+        return False
+    if any(marker in text for marker in ("说", "回答", "低声", "不是", "而是", "只在", "因果", "字幕", "对白")):
+        return False
+    if text.endswith(("港", "码头", "机房", "灯塔", "星锚室", "罗盘", "围巾", "工具包", "铜钥匙", "铜铃")):
+        return False
+    return True
+
+
+def _trusted_character_names(story_context: Optional[Dict[str, Any]], limit: int = 4) -> List[str]:
+    return [name for name in _story_context_names(story_context, "characters", limit=limit * 2) if _is_trusted_character_name(name)][:limit]
+
+
+def _mentioned_character_names(beat: str, characters: List[str]) -> List[str]:
+    return [name for name in characters if name and name in (beat or "")]
+
+
+def _extract_direct_dialogue(
+    beat: str,
+    characters: List[str],
+    *,
+    speaker_hint: Optional[str] = None,
+) -> Optional[tuple[str, str]]:
+    text = (beat or "").strip()
+    if not text or not characters:
+        return None
+    for speaker in characters:
+        for pattern in (
+            re.compile(rf"{re.escape(speaker)}(?:低声说|低声道|回答|说道|说|问|喊)[：:]?\s*[“\"']?([^”\"'。！？]+)"),
+            re.compile(rf"{re.escape(speaker)}[^。！？；“”\"']{{0,16}}(?:低声说|低声道|回答|说道|说|问|喊)[：:]?\s*[“\"']?([^”\"'。！？]+)"),
+            re.compile(rf"{re.escape(speaker)}[：:]\s*[“\"']?([^”\"'。！？]+)"),
+        ):
+            match = pattern.search(text)
+            if match:
+                line = _short_clause(match.group(1), 44)
+                if line:
+                    return speaker, line
+    if speaker_hint and speaker_hint in characters:
+        pronoun_match = re.search(r"(?:[他她它]|TA)?(?:低声说|低声道|回答|说道|说|问|喊)[：:]?\s*[“\"']([^”\"'。！？]+)", text)
+        if pronoun_match:
+            line = _short_clause(pronoun_match.group(1), 44)
+            if line:
+                return speaker_hint, line
+    return None
+
+
 def _first_context_name(story_context: Optional[Dict[str, Any]], key: str) -> Optional[str]:
     names = _story_context_names(story_context, key, limit=1)
     return names[0] if names else None
@@ -554,38 +708,109 @@ def _short_clause(value: str, limit: int = 42) -> str:
     return text[:limit].rstrip("，、；")
 
 
+def _with_sentence_punctuation(value: str) -> str:
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if text.endswith(("。", "！", "？", "；", "!", "?", "。”", "！”", "？”", "；”")):
+        return text
+    return f"{text}。"
+
+
+def _sanitize_narration_clause(value: str) -> str:
+    text = (value or "").strip()
+    text = re.sub(r"^[他她它](?:低声说|低声道|说道|说|问|喊)[：:][“\"']?", "", text)
+    return text.strip(" ，。！？；:：") or (value or "").strip()
+
+
+def _is_inscription_or_text_beat(value: str) -> bool:
+    text = value or ""
+    return bool(re.search(r"(?:刻着|写着|标着|显示|字幕|屏幕|纸上|信上|牌匾).*?[“\"']", text))
+
+
+def _select_template_dialogue_speaker(
+    *,
+    beat: str,
+    characters: List[str],
+    shot_index: int,
+    speaker_hint: Optional[str],
+) -> Optional[str]:
+    mentioned = _mentioned_character_names(beat, characters)
+    for candidate in [
+        mentioned[-1] if mentioned else None,
+        speaker_hint if speaker_hint in characters else None,
+        characters[shot_index % len(characters)] if characters else None,
+    ]:
+        if candidate:
+            return candidate
+    return None
+
+
+def _build_character_fallback_line(
+    *,
+    beat_clause: str,
+    speaker: str,
+    scene: Optional[str],
+    prop: Optional[str],
+    event: Optional[str],
+) -> str:
+    clean = _sanitize_narration_clause(beat_clause)
+    clean = clean.replace(speaker, "").strip(" ，。！？；:：") or clean
+    if prop and prop in clean:
+        return _with_sentence_punctuation(f"{prop}的异常必须马上确认")
+    if event and event in clean:
+        return _with_sentence_punctuation(f"这件事不能再拖了")
+    if scene and scene in clean:
+        return _with_sentence_punctuation(f"这里不对劲，我们得立刻行动")
+    if any(marker in clean for marker in ("危险", "异常", "倒计时", "追踪", "追杀", "失控")):
+        return _with_sentence_punctuation("不对，这里一定有问题")
+    return _with_sentence_punctuation("我必须弄清楚真相")
+
+
 def _build_template_dialogue(
     *,
     dialogue_role: Optional[str],
     beat: str,
     shot_index: int,
     story_context: Optional[Dict[str, Any]],
+    speaker_hint: Optional[str] = None,
 ) -> Optional[str]:
+    characters = _trusted_character_names(story_context)
+    direct_dialogue = _extract_direct_dialogue(beat, characters, speaker_hint=speaker_hint)
+    if direct_dialogue:
+        speaker, line = direct_dialogue
+        return f"{speaker}：{line}。"
+
     if not dialogue_role:
         return None
 
-    characters = _story_context_names(story_context, "characters")
     scene = _first_context_name(story_context, "scenes")
     prop = _first_context_name(story_context, "props")
     event = _first_context_name(story_context, "events")
     beat_clause = _short_clause(beat)
 
     if dialogue_role == "旁白":
-        anchors = [item for item in (scene, prop, event) if item]
-        if anchors:
-            return f"（旁白）{_short_clause('、'.join(anchors), 32)}牵动局势，{beat_clause}。"
-        return f"（旁白）{beat_clause}。"
+        return f"（旁白）{_with_sentence_punctuation(_sanitize_narration_clause(beat_clause))}"
 
     if dialogue_role == "角色":
-        speaker = characters[shot_index % len(characters)] if characters else "主角"
-        line = beat_clause
-        if prop and prop not in line:
-            line = f"{_short_clause(prop, 12)}还在，{line}"
-        if event and event not in line:
-            line = f"{line}，别让{_short_clause(event, 16)}断掉"
-        elif scene and scene not in line:
-            line = f"这里是{_short_clause(scene, 12)}，{line}"
-        return f"{speaker}：{line}。"
+        if _is_inscription_or_text_beat(beat):
+            return f"（旁白）{_with_sentence_punctuation(_sanitize_narration_clause(beat_clause))}"
+        speaker = _select_template_dialogue_speaker(
+            beat=beat,
+            characters=characters,
+            shot_index=shot_index,
+            speaker_hint=speaker_hint,
+        )
+        if not speaker:
+            return f"（旁白）{_with_sentence_punctuation(_sanitize_narration_clause(beat_clause))}"
+        line = _build_character_fallback_line(
+            beat_clause=beat_clause,
+            speaker=speaker,
+            scene=scene,
+            prop=prop,
+            event=event,
+        )
+        return f"{speaker}：{line}"
 
     return None
 
@@ -610,28 +835,42 @@ def build_template_shots(
     story_context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     patterns = template["shots"]
-    target_count = shot_count or len(patterns)
-    if target_count <= 0:
-        target_count = len(patterns)
+    target_count = plan_storyboard_shot_count(
+        template=template,
+        source_content=source_content,
+        requested_shot_count=shot_count,
+    )["shot_count"]
     beats = extract_story_beats(source_content, target_count)
+    compact_text_length = len(re.sub(r"\s+", "", source_content or ""))
+    duration_cap = 4 if target_count <= 3 and compact_text_length <= 260 else 10
     shots: List[Dict[str, Any]] = []
+    characters = _trusted_character_names(story_context)
+    last_mentioned_character: Optional[str] = None
 
     for index in range(target_count):
         pattern = patterns[index % len(patterns)]
         beat = beats[index]
         visual_focus = pattern["visual_focus"]
         dialogue_role = pattern.get("dialogue_role")
+        mentioned_characters = _mentioned_character_names(beat, characters)
         dialogue = _build_template_dialogue(
             dialogue_role=dialogue_role,
             beat=beat,
             shot_index=index,
             story_context=story_context,
+            speaker_hint=last_mentioned_character,
         )
+        if mentioned_characters:
+            last_mentioned_character = mentioned_characters[-1]
+        else:
+            extracted_speaker = _extract_template_dialogue_speaker(dialogue)
+            if extracted_speaker and extracted_speaker != "旁白":
+                last_mentioned_character = extracted_speaker
 
         shots.append(
             {
                 "shot_number": index + 1,
-                "duration": max(4, min(10, int(pattern["duration"]))),
+                "duration": max(4, min(duration_cap, int(pattern["duration"]))),
                 "shot_type": pattern["shot_type"],
                 "prompt": f"{source_title}，{beat[:50]}，{visual_focus}",
                 "dialogue": dialogue,

@@ -28,6 +28,11 @@ IMAGE_LIST_KEYS = (
     "outputs",
     "output",
     "result",
+    "results",
+    "artifacts",
+    "payload",
+    "image",
+    "urls",
 )
 
 

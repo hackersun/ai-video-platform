@@ -2,6 +2,41 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
+## Sustainable AI Development Rules
+
+The authoritative rules are documented in:
+
+- `docs/architecture/ai-development-governance.md`
+- `docs/architecture/module-boundaries.md`
+
+These rules apply to human and AI-authored changes. They are mandatory for new code and use a ratchet for legacy hotspots so the current repository can improve without a broad rewrite.
+
+The uncommitted product work that already existed when these rules were introduced on 2026-07-12 must be preserved and stabilized first. Until the machine baseline is recorded, the manual ratchet compares each new task with the file state captured at that task's start; it does not authorize reverting or rewriting earlier user work.
+
+### Non-Negotiable Rules
+
+- Preserve shipped behavior, stored data, API contracts, persisted workflow state, and provider safety gates unless the approved task explicitly changes them.
+- Keep behavior changes separate from structural refactors. A refactor batch must be behavior-neutral and protected by characterization or contract tests.
+- New production files should target 300 lines and must not exceed 500 lines without an approved design exception. After the code-health tool is enabled, every exception must also be recorded in `tools/code_health/policy.json`.
+- New Python or TypeScript logic functions should target 50 lines and must not exceed 80 lines. FastAPI route handlers must not exceed 60 lines. React route pages must not exceed 300 lines and feature components must not exceed 200 lines.
+- Existing files over 500 lines must not grow. Existing files over 800 lines must extract at least one responsibility before receiving non-trivial new behavior. Pure generated or declarative catalog files require an explicit exception.
+- FastAPI endpoints may depend on schemas and application services; endpoints must not import other endpoints. Services, domain modules, repositories, and adapters must not import API endpoint modules.
+- Next.js route pages compose feature modules. They must not become the owner of reusable business rules, provider contracts, or a second API client.
+- A business rule has one owner. Do not copy a rule into another route, service, page, or test helper. Exact duplicate blocks of 10 or more meaningful lines must be shared or explicitly justified.
+- Cross-feature imports use a documented public facade. Do not import another feature's private implementation.
+- Every behavior change starts with a failing test or an approved documented exception. Every completed batch runs fresh targeted tests plus the relevant build/typecheck command.
+- One task and one commit should express one intent. Do not combine opportunistic cleanup with feature work.
+- Before editing a legacy hotspot, read its characterization tests, public contract, callers, and the relevant section of the architecture rules. New behavior should be placed in a focused module and called from the compatibility entry point.
+
+### Legacy Hotspot Ratchet
+
+Until automated checks are enabled, reviewers and agents must manually enforce:
+
+- No net line growth in `backend/app/api/v1/endpoints/workflow.py`, `backend/app/api/v1/endpoints/story_bible.py`, `backend/app/api/v1/endpoints/storyboards.py`, `backend/app/api/v1/endpoints/video.py`, `frontend/src/lib/api-client.ts`, or any `frontend/src/app/**/page.tsx` already over 800 lines.
+- No new endpoint-to-endpoint imports or service-to-endpoint imports.
+- No new function over 80 lines or React component over 200 lines.
+- If a requested change cannot meet these constraints safely, stop after producing a scoped extraction design and request approval before implementation.
+
 ## Project Overview
 
 AI视频平台 is an AI-powered animation/comic video generation platform supporting character consistency management, intelligent storyboard generation, and video synthesis.

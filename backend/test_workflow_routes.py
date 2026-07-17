@@ -5,6 +5,7 @@ Workflow route tests for TTS and synthesis.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,7 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
-from app.models import Asset, StoryEntity
+from app.models import Asset, Novel, Project, Script, StoryEntity
+from app.models.series_production_run import SeriesProductionRun
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.shot import Shot
@@ -21,6 +23,9 @@ from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
 from app.models.workflow import Workflow
+from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.core.time_utils import utc_now
+from app.api.v1.endpoints.workflow import _dialogue_sync_diagnostics
 from init_db import init_db
 from main import app
 
@@ -34,6 +39,217 @@ def _init_database() -> None:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("DEV_MODE", "true")
     return TestClient(app)
+
+
+def test_series_run_workflow_media_requires_passed_preflight(client: TestClient) -> None:
+    user_id, novel_id, run_id, workflow_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Novel(id=novel_id, user_id=user_id, title="门禁测试小说"))
+            session.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="shots_ready", current_episode_number=1,
+                requested_stages=["media"], model_bindings={}, budget_policy={}, cost_summary={},
+                gate_summary={}, run_metadata={}, episodes=[], version=1,
+            ))
+            session.add(Workflow(
+                id=workflow_id, user_id=user_id, novel_id=novel_id, title="整书第一集",
+                metadata_={"series_run_id": run_id, "episode_number": 1},
+            ))
+            await session.commit()
+
+    asyncio.run(_seed())
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first"},
+        headers={"Authorization": f"Bearer {user_id}"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "series_run_media_preflight_required"
+
+
+def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, novel_id, script_id, storyboard_id, shot_id, workflow_id, run_id = (str(uuid4()) for _ in range(7))
+    bindings = {}
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(Novel(id=novel_id, user_id=user_id, title="live image order"))
+            from app.models.storyboard import Storyboard
+            db.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="live script", content="live"))
+            db.add(Storyboard(id=storyboard_id, script_id=script_id, user_id=user_id, novel_id=novel_id, title="live", content={}))
+            db.add(Shot(id=shot_id, user_id=user_id, storyboard_id=storyboard_id, shot_number=1, prompt="live shot"))
+            db.add(Workflow(id=workflow_id, user_id=user_id, novel_id=novel_id, storyboard_id=storyboard_id, title="live", metadata_={"series_run_id": run_id}))
+            for capability, tags, model_type in (
+                ("text", ["chat"], "chat"), ("image", ["text-to-image"], "image-generation"),
+                ("tts", ["text-to-speech"], "tts"), ("video", ["text-to-video"], "video-generation"),
+            ):
+                provider = LLMProvider(id=str(uuid4()), name=f"live-{capability}-{uuid4()}", is_active=True)
+                model = LLMModel(id=str(uuid4()), provider_id=provider.id, model_id=f"api-{capability}", model_name=capability, model_type=model_type, capabilities=tags, is_active=True)
+                config = LLMConfig(id=str(uuid4()), user_id=user_id, model_id=model.id, name=capability, api_key="opaque", is_active=True, test_status="success", tested_at=utc_now())
+                db.add_all([provider, model, config]); bindings[capability] = config.id
+            db.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1", idempotency_key=str(uuid4()),
+                status="media_running", requested_stages=["media"],
+                model_bindings={"capabilities": {name: {"config_id": value} for name, value in bindings.items()}},
+                budget_policy={"live_canary": True, "max_rmb": "5.00", "estimates_rmb": {"image": "1.00"}},
+                cost_summary={}, gate_summary={}, run_metadata={},
+                episodes=[{"episode_number": 1, "canonical_ids": {"workflow_id": workflow_id, "shot_ids": [shot_id]}}], version=1,
+                created_at=utc_now() - timedelta(seconds=1),
+            ))
+            await db.commit()
+
+    asyncio.run(_seed())
+
+    async def _config(*args, **kwargs):
+        return "opaque", "synthetic", "api-image", None
+
+    async def _provider(*args, **kwargs):
+        async with AsyncSessionLocal() as db:
+            operation = await db.scalar(select(LiveCanaryProviderOperation).where(LiveCanaryProviderOperation.job_id == shot_id))
+            assert operation is not None and operation.status == "reserved" and operation.provider_task_id is None
+            run = await db.get(SeriesProductionRun, run_id)
+            assert run.cost_summary["reserved_rmb"] == "1.00"
+        return {"task_id": "mock-image-task", "data": [{"url": "/static/generated/mock-live.png"}]}
+
+    monkeypatch.setattr("app.api.v1.endpoints.shots.get_user_image_model_config", _config)
+    monkeypatch.setattr("app.api.v1.endpoints.shots.create_image_generation_service", lambda *args: object())
+    monkeypatch.setattr("app.api.v1.endpoints.shots.call_image_generation_provider", _provider)
+    response = client.post(f"/api/v1/shots/{shot_id}/generate-image", json={"style": "anime"}, headers=_auth_headers(user_id))
+    assert response.status_code == 200, response.text
+
+    async def _assert_terminal() -> None:
+        async with AsyncSessionLocal() as db:
+            operation = await db.scalar(select(LiveCanaryProviderOperation).where(LiveCanaryProviderOperation.job_id == shot_id))
+            run = await db.get(SeriesProductionRun, run_id)
+            assert operation.status == "reconciled" and operation.provider_task_id == "mock-image-task"
+            assert run.cost_summary["spent_rmb"] == "1.00" and run.cost_summary["reserved_rmb"] == "0.00"
+    asyncio.run(_assert_terminal())
+
+
+def test_live_project_image_without_novel_id_still_requires_canonical_shot(client: TestClient) -> None:
+    user_id, project_id, novel_id, run_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(Project(id=project_id, user_id=user_id, name="live project"))
+            db.add(Novel(id=novel_id, user_id=user_id, project_id=project_id, title="live project novel"))
+            db.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="media_running", requested_stages=["media"],
+                model_bindings={}, budget_policy={"live_canary": True, "max_rmb": "5.00"},
+                cost_summary={}, gate_summary={}, run_metadata={}, episodes=[], version=1,
+            ))
+            await db.commit()
+
+    asyncio.run(_seed())
+    response = client.post(
+        "/api/v1/images/generate",
+        json={"prompt": "must not call provider", "project_id": project_id},
+        headers=_auth_headers(user_id),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "live_canary_shot_context_required"
+
+
+def test_series_run_workflow_media_rechecks_fresh_snapshot_before_provider_call(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, novel_id, run_id, workflow_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Novel(id=novel_id, user_id=user_id, title="新鲜门禁测试"))
+            session.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="media_running", current_episode_number=1,
+                requested_stages=["media"], model_bindings={}, budget_policy={}, cost_summary={},
+                gate_summary={"media_preflight": {"ready": True, "snapshot_hash": "old"}},
+                run_metadata={"media_preflight": {"ready": True, "snapshot_hash": "old"}},
+                episodes=[{"episode_number": 1, "canonical_ids": {"workflow_id": workflow_id}}], version=1,
+            ))
+            session.add(Workflow(
+                id=workflow_id, user_id=user_id, novel_id=novel_id, title="已通过旧门禁",
+                metadata_={
+                    "series_run_id": run_id,
+                    "episode_contract": {"contract_id": "stable-contract", "status": "locked", "snapshot_hash": "old"},
+                },
+            ))
+            await session.commit()
+
+    async def _fresh(*_args, **_kwargs):
+        return {"ready": True, "snapshot_hash": "fresh", "issues": []}
+
+    asyncio.run(_seed())
+    monkeypatch.setattr("app.features.workflow_media.application.load_context.evaluate_media_preflight", _fresh)
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first"},
+        headers={"Authorization": f"Bearer {user_id}"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["snapshot_changed"] is True
+
+    async def _load_contract():
+        async with AsyncSessionLocal() as session:
+            value = await session.get(Workflow, workflow_id)
+            return value.metadata_["episode_contract"]
+
+    contract = asyncio.run(_load_contract())
+    assert contract["contract_id"] == "stable-contract"
+    assert contract["status"] == "superseded_review_required"
+    assert contract["superseded_reason"] == "input_snapshot_changed"
+
+
+def test_series_run_workflow_persists_fresh_not_ready_even_when_hash_is_unchanged(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, novel_id, run_id, workflow_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Novel(id=novel_id, user_id=user_id, title="同hash失败门禁"))
+            session.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="media_running", current_episode_number=1,
+                requested_stages=["media"], model_bindings={}, budget_policy={}, cost_summary={},
+                gate_summary={"media_preflight": {"ready": True, "snapshot_hash": "same"}},
+                run_metadata={}, episodes=[{"canonical_ids": {"workflow_id": workflow_id}}], version=1,
+            ))
+            session.add(Workflow(
+                id=workflow_id, user_id=user_id, novel_id=novel_id, title="待废弃contract",
+                metadata_={
+                    "series_run_id": run_id,
+                    "episode_contract": {"contract_id": "same-contract", "snapshot_hash": "same", "status": "locked"},
+                },
+            ))
+            await session.commit()
+
+    async def _fresh(*_args, **_kwargs):
+        return {"ready": False, "snapshot_hash": "same", "codes": ["state_machine_blocking"], "issues": [{"code": "state_machine_blocking"}]}
+
+    asyncio.run(_seed())
+    monkeypatch.setattr("app.features.workflow_media.application.load_context.evaluate_media_preflight", _fresh)
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first"}, headers={"Authorization": f"Bearer {user_id}"},
+    )
+    assert response.status_code == 409
+
+    async def _load():
+        async with AsyncSessionLocal() as session:
+            run = await session.get(SeriesProductionRun, run_id)
+            workflow = await session.get(Workflow, workflow_id)
+            return run.gate_summary["media_preflight"], workflow.metadata_["episode_contract"]
+
+    gate, contract = asyncio.run(_load())
+    assert gate["ready"] is False
+    assert contract["status"] == "superseded_review_required"
 
 
 @pytest.fixture()
@@ -75,6 +291,107 @@ def _auth_headers(user_id: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {user_id}"}
 
 
+def test_dialogue_sync_diagnostics_pads_short_audio_without_blocking() -> None:
+    contract = {"version": 1, "spoken_text": "我们把愿望送回去。"}
+
+    short_audio = _dialogue_sync_diagnostics(
+        segment_index=4,
+        video_duration=4.0,
+        audio_duration=2.75,
+        contract=contract,
+    )
+    assert short_audio["status"] == "needs_review"
+    assert short_audio["issues"] == [
+        {
+            "code": "dialogue_audio_tail_padding",
+            "severity": "warning",
+            "message": "第 4 段配音短于视频镜头 1.25s，将以尾部静音对齐。",
+            "segment_index": 4,
+            "blocking": False,
+            "direction": "shorter",
+            "resolved_by": "pad_silence",
+        }
+    ]
+
+    long_audio = _dialogue_sync_diagnostics(
+        segment_index=4,
+        video_duration=4.0,
+        audio_duration=5.25,
+        contract=contract,
+    )
+    assert long_audio["issues"][0]["code"] == "dialogue_audio_timing_mismatch"
+    assert long_audio["issues"][0]["blocking"] is False
+    assert long_audio["issues"][0]["resolved_by"] == "trim_to_segment"
+
+
+def test_media_sync_health_uses_render_audio_duration_after_padding_or_trim() -> None:
+    from app.api.v1.endpoints.workflow import _build_media_sync_health
+
+    health = _build_media_sync_health([
+        {
+            "index": 1,
+            "start_seconds": 0.0,
+            "duration_seconds": 4.0,
+            "video": {"duration_seconds": 4.0},
+            "audio": {
+                "duration_seconds": 6.25,
+                "render_duration_seconds": 4.0,
+                "duration_strategy": "trim_to_segment",
+                "url": "https://example.com/a.mp3",
+            },
+            "subtitle": {"enabled": True, "text": "孙剑：我不会再输。", "start_seconds": 0.0, "end_seconds": 4.0},
+            "sync_diagnostics": {
+                "issues": [
+                    {
+                        "code": "dialogue_audio_timing_mismatch",
+                        "blocking": False,
+                        "resolved_by": "trim_to_segment",
+                        "message": "配音超出视频",
+                    }
+                ],
+            },
+        },
+        {
+            "index": 2,
+            "start_seconds": 4.0,
+            "duration_seconds": 4.0,
+            "video": {"duration_seconds": 4.0},
+            "audio": {
+                "duration_seconds": 2.59,
+                "render_duration_seconds": 4.0,
+                "duration_strategy": "pad_silence",
+                "url": "https://example.com/b.mp3",
+            },
+            "subtitle": {"enabled": True, "text": "沈岚：先看记录。", "start_seconds": 4.0, "end_seconds": 8.0},
+            "sync_diagnostics": {
+                "issues": [
+                    {
+                        "code": "dialogue_audio_tail_padding",
+                        "blocking": False,
+                        "resolved_by": "pad_silence",
+                        "message": "尾部静音补齐",
+                    }
+                ],
+            },
+        },
+    ])
+
+    assert health["status"] == "ok"
+    assert health["summary"]["green"] == 2
+    assert health["summary"]["red"] == 0
+    assert health["summary"]["yellow"] == 0
+    assert health["segments"][0]["status"] == "ok"
+    assert health["segments"][0]["audio_duration_seconds"] == 4.0
+    assert health["segments"][0]["audio_source_duration_seconds"] == 6.25
+    assert health["segments"][0]["audio_duration_strategy"] == "trim_to_segment"
+    assert health["segments"][0]["audio_video_delta_seconds"] == 0.0
+    assert health["segments"][0]["subtitle_video_delta_seconds"] == 0.0
+    assert health["segments"][1]["status"] == "ok"
+    assert health["segments"][1]["audio_duration_seconds"] == 4.0
+    assert health["segments"][1]["audio_source_duration_seconds"] == 2.59
+    assert health["segments"][1]["audio_duration_strategy"] == "pad_silence"
+
+
 def _attach_music_asset_to_shot(user_id: str, shot_id: str, novel_id: str, music_cue: str, url: str) -> None:
     async def _update() -> None:
         async with AsyncSessionLocal() as session:
@@ -108,7 +425,7 @@ def _create_novel(client: TestClient, user_id: str) -> str:
     response = client.post(
         "/api/v1/novels",
         json={"title": f"Novel for {user_id}", "description": "test novel"},
-        headers=_auth_headers(user_id),
+        headers=_signed_auth_headers(user_id),
     )
     assert response.status_code == 201
     return response.json()["id"]
@@ -123,7 +440,7 @@ def _create_chapter(client: TestClient, user_id: str, novel_id: str, title: str 
             "chapter_number": 1,
             "content": "雨夜街道中，主角发现关键线索并推动剧情。",
         },
-        headers=_auth_headers(user_id),
+        headers=_signed_auth_headers(user_id),
     )
     assert response.status_code == 201
     return response.json()["id"]
@@ -522,6 +839,16 @@ def _get_video_job_extra(job_id: str) -> dict:
     return asyncio.run(_get())
 
 
+def _get_video_job_prompt(job_id: str) -> str:
+    async def _get() -> str:
+        async with AsyncSessionLocal() as session:
+            job = await session.get(VideoJob, job_id)
+            assert job is not None
+            return job.prompt
+
+    return asyncio.run(_get())
+
+
 def _get_first_workflow_shot_id(workflow_id: str) -> str:
     async def _get() -> str:
         async with AsyncSessionLocal() as session:
@@ -715,7 +1042,7 @@ def test_video_job_includes_workflow_lineage_fields(client: TestClient, monkeypa
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     shot_id, storyboard_id, script_id = _create_shot(client, "video-lineage-user")
 
@@ -764,7 +1091,7 @@ def test_video_generation_passes_seed_and_sdk_parameters(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-seed-user"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
@@ -789,7 +1116,7 @@ def test_video_generation_passes_seed_and_sdk_parameters(
     assert captured["resolution"] == "1080p"
     assert captured["seed"] == 4242
     assert captured["camera_fixed"] is False
-    assert captured["watermark"] is True
+    assert captured["watermark"] is False
     assert "--resolution 1080p" in captured["content"][-1]["text"]
 
     job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
@@ -819,7 +1146,7 @@ def test_video_generation_uses_selected_video_model_config_metadata(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-selected-model-user"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
@@ -872,7 +1199,7 @@ def test_video_generation_skips_local_reference_image_for_provider(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-local-image-user"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
@@ -953,7 +1280,7 @@ def test_video_generation_maps_local_reference_image_through_public_storage(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-public-storage-user"
     storage_config_id = _create_public_storage_config(client, user_id)
@@ -1008,7 +1335,7 @@ def test_video_generation_records_multiview_refs_but_sends_single_provider_image
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-multiview-single-image-user"
     novel_resp = client.post(
@@ -1123,7 +1450,7 @@ def test_video_generation_accepts_seedance_20_fast_model(client: TestClient, mon
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-seedance-20-fast-user"
     create_resp = client.post(
@@ -1169,7 +1496,7 @@ def test_video_generation_submits_seedance20_reference_package_content(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     shot_id, _storyboard_id, _script_id = _create_shot(client, user_id)
@@ -1229,7 +1556,7 @@ def test_video_generation_accepts_volcano_agent_plan_video_model(client: TestCli
         captured_client["base_url"] = base_url
         return _FakeArkClient()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", _fake_create_ark_client)
 
     user_id = "video-agent-plan-user"
     create_resp = client.post(
@@ -1273,7 +1600,7 @@ def test_video_job_infers_full_lineage_from_chapter_shot(client: TestClient, mon
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-full-lineage-user"
     novel_id = _create_novel(client, user_id)
@@ -1375,6 +1702,29 @@ def test_chapter_generation_reuses_latest_script_when_multiple_scripts_exist(cli
     storyboard_resp = client.get(f"/api/v1/storyboards/{payload['storyboard_id']}", headers=_auth_headers(user_id))
     assert storyboard_resp.status_code == 200, storyboard_resp.text
     assert storyboard_resp.json()["script_id"] == latest_script_id
+
+
+def test_chapter_generate_all_creates_draft_script_when_no_script_exists(client: TestClient) -> None:
+    user_id = f"chapter-production-no-script-{uuid4()}"
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 自动草稿")
+
+    generate_resp = client.post(
+        f"/api/v1/chapters/{chapter_id}/generate-all",
+        json={"style": "anime"},
+        headers=_auth_headers(user_id),
+    )
+    assert generate_resp.status_code == 200, generate_resp.text
+    payload = generate_resp.json()
+    assert payload["script_id"]
+    assert payload["storyboard_id"]
+    assert 2 <= payload["shot_count"] <= 8
+
+    storyboard_resp = client.get(f"/api/v1/storyboards/{payload['storyboard_id']}", headers=_auth_headers(user_id))
+    assert storyboard_resp.status_code == 200, storyboard_resp.text
+    storyboard = storyboard_resp.json()
+    assert storyboard["script_id"] == payload["script_id"]
+    assert storyboard["content"]["shot_count_plan"]["source"] == "auto"
 
 
 def test_video_job_update_cancel_and_archive_management(client: TestClient) -> None:
@@ -1743,6 +2093,161 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert rendered_status_job["segment_count"] == 2
 
 
+def test_workflow_concatenate_uses_dialogue_sync_contract_for_subtitle_and_timing(
+    client: TestClient,
+) -> None:
+    user_id = f"dialogue-sync-concat-user-{uuid4()}"
+    headers = _signed_auth_headers(user_id)
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 对白同步")
+    storyboard_resp = client.post(
+        "/api/v1/storyboards/generate-smart",
+        json={"novel_id": novel_id, "chapter_id": chapter_id, "shot_count": 1, "style": "anime", "use_ai_refine": False},
+        headers=headers,
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_payload = storyboard_resp.json()
+    shot = storyboard_payload["shots"][0]
+
+    async def _lock_shot_dialogue() -> None:
+        async with AsyncSessionLocal() as session:
+            db_shot = await session.get(Shot, shot["id"])
+            assert db_shot is not None
+            db_shot.dialogue = "孙剑：我不会再输。"
+            db_shot.extra_data = {
+                **(db_shot.extra_data or {}),
+                "subtitle_text": "孙剑：我不会再输。",
+            }
+            await session.commit()
+
+    asyncio.run(_lock_shot_dialogue())
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "对白同步工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": storyboard_payload["script_id"],
+            "storyboard_id": storyboard_payload["id"],
+        },
+        headers=headers,
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    video_resp = client.post(
+        "/api/v1/video/generate",
+        json={
+            "prompt": "孙剑从木榻上坐起，压低声音开口。",
+            "workflow_id": workflow_id,
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": storyboard_payload["script_id"],
+            "storyboard_id": storyboard_payload["id"],
+            "shot_id": shot["id"],
+            "duration": 4,
+        },
+        headers=headers,
+    )
+    assert video_resp.status_code == 200
+    video_job_id = video_resp.json()["job_id"]
+
+    tts_resp = client.post(
+        "/api/v1/tts/generate",
+        json={
+            "text": "我不会再输。",
+            "title": "孙剑对白配音",
+            "voice_model": "sunqinyue-default",
+            "workflow_id": workflow_id,
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": storyboard_payload["script_id"],
+            "storyboard_id": storyboard_payload["id"],
+            "shot_id": shot["id"],
+        },
+        headers=headers,
+    )
+    assert tts_resp.status_code == 200
+    tts_job_id = tts_resp.json()["job_id"]
+
+    dialogue_sync_contract = {
+        "version": 1,
+        "speaker": "孙剑",
+        "subtitle_text": "孙剑：我不会再输。",
+        "spoken_text": "我不会再输。",
+        "segments": [{"speaker": "孙剑", "text": "我不会再输。", "start_seconds": 0.0, "end_seconds": 4.0}],
+        "start_seconds": 0.0,
+        "end_seconds": 4.0,
+        "audio_source": "separate_tts",
+        "video_native_audio": False,
+        "mouth_performance": "match_spoken_text_only",
+        "voice": "sunqinyue-default",
+        "voice_source": "story_bible",
+    }
+
+    async def _attach_dialogue_contract() -> None:
+        async with AsyncSessionLocal() as session:
+            video_job = await session.get(VideoJob, video_job_id)
+            tts_job = await session.get(TTSJob, tts_job_id)
+            assert video_job is not None
+            assert tts_job is not None
+            video_extra = dict(video_job.extra_data or {})
+            video_extra["dialogue_sync_contract"] = dialogue_sync_contract
+            video_extra["video_native_audio"] = False
+            video_job.extra_data = video_extra
+            tts_extra = dict(tts_job.extra_data or {})
+            tts_extra["dialogue_sync_contract"] = dialogue_sync_contract
+            tts_job.extra_data = tts_extra
+            tts_job.text = "我不会再输。"
+            tts_job.voice = "sunqinyue-default"
+            tts_job.duration_seconds = 6.25
+            await session.commit()
+
+    asyncio.run(_attach_dialogue_contract())
+
+    concat_resp = client.post(
+        f"/api/v1/workflow/concatenate/{workflow_id}",
+        json={
+            "video_job_ids": [video_job_id],
+            "tts_job_ids": [tts_job_id],
+            "include_subtitles": True,
+            "quality_profile": "review",
+        },
+        headers=headers,
+    )
+    assert concat_resp.status_code == 200, concat_resp.text
+    manifest_resp = client.get(concat_resp.json()["manifest_url"])
+    assert manifest_resp.status_code == 200
+    manifest = manifest_resp.json()
+
+    segment = manifest["segments"][0]
+    assert segment["subtitle"]["text"] == "孙剑：我不会再输。"
+    assert segment["audio"]["text"] == "我不会再输。"
+    assert segment["dialogue_sync_contract"]["speaker"] == "孙剑"
+    assert segment["dialogue_sync_contract"]["voice"] == "sunqinyue-default"
+    assert segment["sync_diagnostics"]["duration_mismatch_seconds"] == 2.25
+    assert segment["sync_diagnostics"]["issues"][0]["code"] == "dialogue_audio_timing_mismatch"
+    assert segment["duration_seconds"] == 4.0
+    assert segment["end_seconds"] == 4.0
+    assert segment["audio"]["duration_seconds"] == 6.25
+    assert segment["audio"]["render_duration_seconds"] == 4.0
+    assert segment["audio"]["duration_strategy"] == "trim_to_segment"
+    assert segment["sync_diagnostics"]["issues"][0]["blocking"] is False
+    assert segment["sync_diagnostics"]["issues"][0]["resolved_by"] == "trim_to_segment"
+
+    preflight_resp = client.get(
+        f"/api/v1/workflow/{workflow_id}/render/preflight",
+        headers=headers,
+    )
+    assert preflight_resp.status_code == 200
+    preflight = preflight_resp.json()
+    assert preflight["ready"] is True
+    assert preflight["issues"] == []
+    assert preflight["media_sync_health"]["status"] == "ok"
+    assert preflight["media_sync_health"]["summary"]["green"] == 1
+
+
 def test_workflow_media_batch_separate_video_tts_uses_selected_models(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1779,7 +2284,7 @@ def test_workflow_media_batch_separate_video_tts_uses_selected_models(
             "status": "succeeded",
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
     monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
 
     user_id = uuid4().hex
@@ -1874,6 +2379,103 @@ def test_workflow_media_batch_separate_video_tts_uses_selected_models(
     assert selected_tts["extra_data"]["api_model_id"] == "speech-test"
 
 
+def test_workflow_media_batch_requires_explicit_real_tts_config_before_video_submit(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = "video-task-default-tts"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    def _fake_create_ark_client(api_key: str, base_url: str | None = None):
+        assert api_key == "sk-volcano"
+        return _FakeArkClient()
+
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
+
+    user_id = uuid4().hex
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"seedance-video-{uuid4()}",
+        api_model_id="doubao-seedance-1-5-pro-251215",
+        model_type="video",
+        capabilities=["text-to-video"],
+        api_key="sk-volcano",
+    )
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 默认火山 TTS")
+    storyboard_resp = client.post(
+        "/api/v1/storyboards/generate-smart",
+        json={"novel_id": novel_id, "chapter_id": chapter_id, "shot_count": 1, "style": "anime", "use_ai_refine": False},
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_payload = storyboard_resp.json()
+
+    async def _make_shot_dialogue() -> None:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Shot).where(Shot.storyboard_id == storyboard_payload["id"]))
+            shot = result.scalar_one()
+            shot.dialogue = "许澜：别让钟声越过第三道防线。"
+            shot.extra_data = {**(shot.extra_data or {}), "subtitle_text": shot.dialogue}
+            await session.commit()
+
+    asyncio.run(_make_shot_dialogue())
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "默认火山 TTS 工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": storyboard_payload["script_id"],
+            "storyboard_id": storyboard_payload["id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    monkeypatch.setenv("DEV_MODE", "false")
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "subtitle_mode": "shot_dialogue",
+            "audio_mode": "model_audio",
+            "voice_model": "female_nvsheng",
+        },
+        headers=_signed_auth_headers(user_id),
+    )
+    assert batch_resp.status_code == 422, batch_resp.text
+    detail = batch_resp.json()["detail"]
+    assert detail["code"] == "real_tts_model_unconfigured"
+    assert detail["provider_id"] == "minimax"
+    assert detail["model_id"] == "speech-02-hd"
+    assert captured_video == []
+
+    video_jobs = client.get(f"/api/v1/video/jobs?workflow_id={workflow_id}", headers=_signed_auth_headers(user_id)).json()
+    tts_jobs = client.get(f"/api/v1/tts/jobs?workflow_id={workflow_id}", headers=_signed_auth_headers(user_id)).json()
+    assert video_jobs == []
+    assert tts_jobs == []
+
+
 def test_workflow_media_batch_tts_uses_story_bible_character_voice(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -1903,7 +2505,7 @@ def test_workflow_media_batch_tts_uses_story_bible_character_voice(
             "status": "succeeded",
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
     monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
 
     user_id = uuid4().hex
@@ -2024,6 +2626,245 @@ def test_workflow_media_batch_tts_uses_story_bible_character_voice(
     assert selected_tts["extra_data"]["voice_source"] == "story_bible"
     assert selected_tts["extra_data"]["voice_character_name"] == "孙剑"
     assert selected_tts["extra_data"]["story_bible_id"] == story_bible_id
+
+
+def test_workflow_media_batch_tts_uses_user_default_voice_clone_when_story_bible_has_no_voice(
+    client: TestClient,
+) -> None:
+    user_id = uuid4().hex
+
+    clone_resp = client.post(
+        "/api/v1/tts/voice-clones",
+        data={
+            "name": "孙秦岳默认声线",
+            "provider": "heygen",
+            "voice_id": "sunqinyue-default",
+            "description": "本地个人数字员工声线资产",
+            "sample_audio_url": "/static/generated/voice-clones/sunqinyue-default.mp3",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert clone_resp.status_code == 201, clone_resp.text
+
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 默认声线")
+    bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "novel_id": novel_id,
+            "title": "无角色声线 Story Bible",
+            "style": "科幻",
+            "character_rules": [{"name": "孙剑", "appearance": "黑衣少年"}],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert bible_resp.status_code == 201
+    story_bible_id = bible_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "默认声线剧本",
+            "content": "孙剑确认任务。",
+            "genre": "科幻",
+            "style": "anime",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "title": "默认声线分镜",
+            "content": {"chapter_id": chapter_id, "story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    shot_resp = client.post(
+        "/api/v1/shots",
+        json={
+            "storyboard_id": storyboard_resp.json()["id"],
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "孙剑抬头确认星图",
+            "dialogue": "孙剑：这一轮我来守住出口。",
+            "character_refs": [{"name": "孙剑"}],
+            "extra_data": {"story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert shot_resp.status_code == 201
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "默认声线工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_resp.json()["id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "audio_mode": "model_audio",
+            "voice_model": "female-shaonj",
+            "story_bible_id": story_bible_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert batch_resp.status_code == 200, batch_resp.text
+    payload = batch_resp.json()
+    assert payload["tts_voice_lock_count"] == 1
+
+    tts_jobs = client.get(f"/api/v1/tts/jobs?workflow_id={workflow_id}", headers=_auth_headers(user_id)).json()
+    selected_tts = next(item for item in tts_jobs if item["id"] == payload["tts_job_ids"][0])
+    assert selected_tts["voice"] == "sunqinyue-default"
+    assert selected_tts["extra_data"]["voice_source"] == "user_default_voice_clone"
+    assert selected_tts["extra_data"]["voice_lock_snapshot"]["voice"] == "sunqinyue-default"
+    assert selected_tts["extra_data"]["voice_lock_snapshot"]["voice_asset_id"] == clone_resp.json()["id"]
+
+
+def test_workflow_media_batch_limits_user_default_voice_clone_to_main_character(
+    client: TestClient,
+) -> None:
+    user_id = uuid4().hex
+
+    clone_resp = client.post(
+        "/api/v1/tts/voice-clones",
+        data={
+            "name": "孙秦岳默认声线",
+            "provider": "minimax",
+            "voice_id": "sunqinyue-default",
+            "description": "本地个人数字员工声线资产",
+            "sample_audio_url": "/static/generated/voice-clones/sunqinyue-default.mp3",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert clone_resp.status_code == 201, clone_resp.text
+
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 多角色声线")
+    bible_resp = client.post(
+        "/api/v1/story-bibles",
+        json={
+            "novel_id": novel_id,
+            "title": "多角色声线 Story Bible",
+            "style": "现代奇幻",
+            "character_rules": [
+                {"name": "孙剑", "role": "主角", "appearance": "黑衣青年"},
+                {"name": "沈岚", "role": "配角", "gender": "female", "appearance": "白发女医"},
+            ],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert bible_resp.status_code == 201
+    story_bible_id = bible_resp.json()["id"]
+
+    script_resp = client.post(
+        "/api/v1/scripts",
+        json={
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "title": "多角色声线剧本",
+            "content": "孙剑和沈岚在旧车站确认线索，旁白交代雨夜环境。",
+            "genre": "现代奇幻",
+            "style": "anime",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert script_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards",
+        json={
+            "script_id": script_resp.json()["id"],
+            "title": "多角色声线分镜",
+            "content": {"chapter_id": chapter_id, "story_bible_id": story_bible_id},
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_id = storyboard_resp.json()["id"]
+
+    shots = [
+        {
+            "storyboard_id": storyboard_id,
+            "shot_number": 1,
+            "duration": 4,
+            "prompt": "孙剑在旧车站举起铜铃",
+            "dialogue": "孙剑：我来确认出口。",
+            "character_refs": [{"name": "孙剑"}],
+            "extra_data": {"story_bible_id": story_bible_id},
+        },
+        {
+            "storyboard_id": storyboard_id,
+            "shot_number": 2,
+            "duration": 4,
+            "prompt": "沈岚在雨棚下翻开病历",
+            "dialogue": "沈岚：别急，先看这份记录。",
+            "character_refs": [{"name": "沈岚"}],
+            "extra_data": {"story_bible_id": story_bible_id},
+        },
+        {
+            "storyboard_id": storyboard_id,
+            "shot_number": 3,
+            "duration": 4,
+            "prompt": "雨夜旧车站空镜",
+            "dialogue": "（旁白）雨水吞没了站台尽头的灯光。",
+            "character_refs": [],
+            "extra_data": {"story_bible_id": story_bible_id},
+        },
+    ]
+    for shot in shots:
+        shot_resp = client.post("/api/v1/shots", json=shot, headers=_auth_headers(user_id))
+        assert shot_resp.status_code == 201, shot_resp.text
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "多角色声线工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": script_resp.json()["id"],
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+    workflow_id = workflow_resp.json()["workflow_id"]
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "audio_mode": "model_audio",
+            "voice_model": "female-shaonj",
+            "story_bible_id": story_bible_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert batch_resp.status_code == 200, batch_resp.text
+
+    tts_jobs = client.get(f"/api/v1/tts/jobs?workflow_id={workflow_id}", headers=_auth_headers(user_id)).json()
+    main_tts = next(item for item in tts_jobs if "我来确认出口" in item["text"])
+    side_tts = next(item for item in tts_jobs if "先看这份记录" in item["text"])
+    narrator_tts = next(item for item in tts_jobs if "雨水吞没" in item["text"])
+    assert main_tts["voice"] == "sunqinyue-default"
+    assert main_tts["extra_data"]["voice_source"] == "user_default_voice_clone"
+    assert side_tts["voice"] == "female-shaonj"
+    assert side_tts["extra_data"]["voice_source"] == "provider_default_tts"
+    assert narrator_tts["voice"] == "female-shaonj"
+    assert narrator_tts["extra_data"]["voice_source"] == "provider_default_tts"
 
 
 def test_video_consistency_package_uses_real_novel_character_and_shared_style_seed(
@@ -2357,7 +3198,7 @@ def test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     headers = _signed_auth_headers(user_id)
@@ -2456,6 +3297,53 @@ def test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs(
     assert asyncio.run(_count_video_jobs()) == 0
 
 
+def test_workflow_media_batch_requires_real_video_when_requested(client: TestClient) -> None:
+    user_id = uuid4().hex
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-real-video-required-{uuid4()}",
+        api_model_id="doubao-seedance-1-5-pro-251215",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="",
+    )
+    shot_id, storyboard_id, script_id = _create_shot(client, user_id)
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "真实视频门禁工作流",
+            "script_id": script_id,
+            "storyboard_id": storyboard_id,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "shot_ids": [shot_id],
+            "audio_mode": "none",
+            "require_real_video": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert batch_resp.status_code == 422
+    detail = batch_resp.json()["detail"]
+    assert detail["code"] == "real_video_model_unconfigured"
+
+    async def _count_video_jobs() -> int:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(VideoJob).where(VideoJob.user_id == user_id))
+            return len(result.scalars().all())
+
+    assert asyncio.run(_count_video_jobs()) == 0
+
+
 def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -2478,7 +3366,7 @@ def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -2540,6 +3428,7 @@ def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
     assert "视频一致性约束" in first_prompt
     assert "角色视觉DNA锁" in first_prompt
     assert "沈砚" in first_prompt
+    assert captured_video[0]["generate_audio"] is False
     assert captured_video[0]["content"][0]["type"] == "image_url"
     assert captured_video[0]["seed"] != captured_video[1]["seed"]
 
@@ -2549,6 +3438,115 @@ def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
     ]
     assert jobs[0]["consistency"]["series_seed"] == jobs[1]["consistency"]["series_seed"]
     assert jobs[0]["prompt_parameters"]["reference_image_source"] == "character_avatar"
+
+
+def test_workflow_media_batch_sanitizes_provider_video_prompt(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = "video-safe-prompt-task"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
+
+    user_id = uuid4().hex
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-video-safe-prompt-model-{uuid4()}",
+        api_model_id="doubao-seedance-safe-prompt-test",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="sk-video",
+    )
+    novel_id = _create_novel(client, user_id)
+    chapter_id = _create_chapter(client, user_id, novel_id, "第一章 安全提示词")
+    character_resp = client.post(
+        "/api/v1/characters",
+        json={
+            "novel_id": novel_id,
+            "name": "许澜",
+            "appearance": "灰蓝外套，红围巾，冷静行动",
+            "avatar": "https://example.com/xulan.png",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert character_resp.status_code == 201
+    storyboard_resp = client.post(
+        "/api/v1/storyboards/generate-smart",
+        json={"novel_id": novel_id, "chapter_id": chapter_id, "shot_count": 1, "style": "anime", "use_ai_refine": False},
+        headers=_auth_headers(user_id),
+    )
+    assert storyboard_resp.status_code == 201
+    storyboard_payload = storyboard_resp.json()
+
+    async def _inject_risky_prompt() -> None:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Shot).where(Shot.storyboard_id == storyboard_payload["id"]))
+            shot = result.scalars().first()
+            assert shot is not None
+            shot.prompt = "失踪档案被抹除，主角拒绝牺牲别人。"
+            shot.visual_description = "失踪档案被抹除，画面出现血迹。"
+            await session.commit()
+
+    asyncio.run(_inject_risky_prompt())
+
+    workflow_resp = client.post(
+        "/api/v1/workflow/start",
+        json={
+            "title": "安全提示词工作流",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "script_id": storyboard_payload["script_id"],
+            "storyboard_id": storyboard_payload["id"],
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert workflow_resp.status_code == 201
+
+    batch_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert batch_resp.status_code == 200, batch_resp.text
+    assert len(captured_video) == 1
+    provider_text = captured_video[0]["content"][-1]["text"]
+    assert "失踪" not in provider_text
+    assert "抹除" not in provider_text
+    assert "牺牲" not in provider_text
+    assert "血迹" not in provider_text
+    assert "档案" not in provider_text
+    assert "待查资料" in provider_text
+    assert "隐藏" in provider_text
+
+    job = client.get(
+        f"/api/v1/video/jobs/{batch_resp.json()['video_job_ids'][0]}",
+        headers=_auth_headers(user_id),
+    ).json()
+    assert job["prompt_parameters"]["provider_prompt_sanitized"] is True
+    replacement_sources = {item["source"] for item in job["prompt_parameters"]["provider_prompt_replacements"]}
+    assert {"失踪档案", "抹除", "牺牲别人"}.issubset(replacement_sources)
 
 
 def test_workflow_media_batch_skips_local_reference_image_for_provider(
@@ -2573,7 +3571,7 @@ def test_workflow_media_batch_skips_local_reference_image_for_provider(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -2640,6 +3638,22 @@ def test_workflow_media_batch_skips_local_reference_image_for_provider(
     assert "公网" in job["prompt_parameters"]["image_url_omitted_reason"]
     assert "参考图接入说明" in job["prompt"]
 
+    strict_resp = client.post(
+        f"/api/v1/workflow/{workflow_resp.json()['workflow_id']}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "model_config_id": video_config_id,
+            "audio_mode": "none",
+            "require_provider_reference_image": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert strict_resp.status_code == 422
+    strict_detail = strict_resp.json()["detail"]
+    assert strict_detail["code"] == "provider_reference_image_missing"
+    assert strict_detail["shot_id"] == storyboard_payload["shots"][0]["id"]
+    assert len(captured_video) == 1
+
 
 def test_workflow_media_batch_maps_local_reference_image_through_public_storage(
     client: TestClient,
@@ -2663,7 +3677,7 @@ def test_workflow_media_batch_maps_local_reference_image_through_public_storage(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     storage_config_id = _create_public_storage_config(client, user_id)
@@ -2754,7 +3768,7 @@ def test_workflow_media_batch_submits_seedance20_reference_package_content(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -2829,7 +3843,7 @@ def test_workflow_media_batch_keeps_legacy_single_image_reference_content(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -3919,7 +4933,7 @@ def test_final_quality_media_batch_requires_asset_and_voice_locks(client: TestCl
     detail = response.json()["detail"]
     assert detail["code"] == "final_quality_locks_missing"
     assert detail["missing_assets"]
-    assert detail["missing_voices"]
+    assert detail["missing_voices"] == []
 
 
 def test_final_quality_seedance20_blocks_insufficient_reference_package(
@@ -3940,7 +4954,7 @@ def test_final_quality_seedance20_blocks_insufficient_reference_package(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     asset_locks = [
@@ -4010,7 +5024,7 @@ def test_final_quality_legacy_video_model_allows_single_reference_view(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     asset_locks = [
@@ -4105,6 +5119,113 @@ def test_final_quality_media_batch_saves_asset_and_voice_lock_snapshots(client: 
         "voice": "story-bible-sunjian",
         "voice_source": "story_bible",
     }
+
+
+def test_final_quality_separate_video_tts_uses_provider_default_voice_lock(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_video: list[dict] = []
+    captured_tts: list[dict] = []
+
+    class _FakeTasks:
+        @staticmethod
+        def create(*args, **kwargs):
+            captured_video.append(kwargs)
+
+            class _CreateResult:
+                id = "video-task-final-default-voice"
+
+            return _CreateResult()
+
+    class _FakeContentGeneration:
+        tasks = _FakeTasks()
+
+    class _FakeArkClient:
+        content_generation = _FakeContentGeneration()
+
+    def _fake_create_ark_client(api_key: str, base_url: str | None = None):
+        assert api_key == "sk-volcano"
+        return _FakeArkClient()
+
+    async def _fake_volcano_tts(self, *args, **kwargs):
+        captured_tts.append(kwargs)
+        return {
+            "task_id": "tts-task-final-default-voice",
+            "audio_url": "https://example.com/final-default-voice.mp3",
+            "duration": 2.5,
+            "status": "succeeded",
+        }
+
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.services.volcano_service.VolcanoService.text_to_speech", _fake_volcano_tts)
+
+    user_id = f"final-provider-voice-{uuid4().hex[:15]}"
+    video_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-final-provider-video-{uuid4()}",
+        api_model_id="doubao-seedance-1-5-pro-251215",
+        model_type="video",
+        capabilities=["text-to-video", "image-to-video"],
+        api_key="sk-volcano",
+    )
+    audio_config_id = _insert_model_config(
+        user_id=user_id,
+        provider_id="volcano",
+        model_id=f"test-final-provider-tts-{uuid4()}",
+        api_model_id="doubao-tts",
+        model_type="tts",
+        capabilities=["text-to-speech"],
+        api_key="sk-volcano-tts",
+    )
+    asset_locks = [
+        {
+            "asset_id": "asset-sunjian-v1",
+            "asset_version_id": "asset-sunjian-version-1",
+            "entity_name": "孙剑",
+            "category": "character",
+        }
+    ]
+    workflow_id, story_bible_id = _create_final_quality_workflow(
+        client,
+        user_id,
+        asset_locks=asset_locks,
+        character_rules=[{"name": "孙剑"}],
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "final_quality",
+            "model_config_id": video_config_id,
+            "audio_model_config_id": audio_config_id,
+            "audio_mode": "model_audio",
+            "voice_model": "female-shaonj",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["tts_voice_lock_count"] == 1
+    assert len(payload["video_job_ids"]) == 1
+    assert len(payload["tts_job_ids"]) == 1
+    assert captured_video[0]["generate_audio"] is False
+    assert captured_tts[0]["voice"] == "female_nvsheng"
+    video_extra = _get_video_job_extra(payload["video_job_ids"][0])
+    tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])
+    assert video_extra["voice_lock_snapshot"] == {
+        "character_name": "孙剑",
+        "story_bible_id": story_bible_id,
+        "voice": "female_nvsheng",
+        "speed": 1.0,
+        "voice_source": "provider_default_tts",
+    }
+    assert tts_extra["voice_lock_snapshot"] == video_extra["voice_lock_snapshot"]
+    assert tts_extra["dialogue_sync_contract"]["voice"] == "female_nvsheng"
+    assert tts_extra["dialogue_sync_contract"]["video_native_audio"] is False
 
 
 def test_final_quality_no_dialogue_shot_does_not_require_voice_lock(client: TestClient) -> None:
@@ -4246,9 +5367,23 @@ def test_separate_video_tts_records_tts_audio_route_for_voice_lock(client: TestC
     assert len(payload["tts_job_ids"]) == 1
     video_extra = _get_video_job_extra(payload["video_job_ids"][0])
     tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])
+    video_prompt = _get_video_job_prompt(payload["video_job_ids"][0])
     assert video_extra["audio_route"] == {"route": "tts", "reason": "voice_lock"}
+    assert video_extra["video_native_audio"] is False
     assert "visual_consistency_auto_check" not in video_extra
     assert tts_extra["audio_route"] == {"route": "tts", "reason": "voice_lock"}
+    assert video_extra["dialogue_sync_contract"] == tts_extra["dialogue_sync_contract"]
+    contract = video_extra["dialogue_sync_contract"]
+    assert contract["speaker"] == "孙剑"
+    assert contract["spoken_text"] == "出发。"
+    assert contract["subtitle_text"] == "孙剑：出发。"
+    assert contract["voice"] == "story-bible-sunjian"
+    assert contract["audio_source"] == "separate_tts"
+    assert contract["video_native_audio"] is False
+    assert _get_tts_job_text(payload["tts_job_ids"][0]) == contract["spoken_text"]
+    assert "只做无声口型和表演" in video_prompt
+    assert "不要生成原生对白或人声" in video_prompt
+    assert "出发。" in video_prompt
 
 
 def test_separate_video_tts_uses_legacy_subtitle_field_for_tts_text(client: TestClient) -> None:
@@ -4278,7 +5413,40 @@ def test_separate_video_tts_uses_legacy_subtitle_field_for_tts_text(client: Test
     tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])
     assert video_extra["audio_route"] == {"route": "tts", "reason": "voice_lock_missing"}
     assert tts_extra["audio_route"] == {"route": "tts", "reason": "voice_lock_missing"}
-    assert _get_tts_job_text(payload["tts_job_ids"][0]) == "孙剑：旧字段对白。"
+    assert video_extra["dialogue_sync_contract"] == tts_extra["dialogue_sync_contract"]
+    assert tts_extra["dialogue_sync_contract"]["subtitle_text"] == "孙剑：旧字段对白。"
+    assert tts_extra["dialogue_sync_contract"]["spoken_text"] == "旧字段对白。"
+    assert _get_tts_job_text(payload["tts_job_ids"][0]) == "旧字段对白。"
+
+
+def test_separate_video_tts_rejects_multi_speaker_single_tts_contract(client: TestClient) -> None:
+    user_id = f"audio-route-multi-speaker-{uuid4().hex[:16]}"
+    workflow_id, story_bible_id = _create_audio_route_workflow(
+        client,
+        user_id,
+        dialogue="孙剑：出发。\n阿岚：等等。",
+        character_rules=[
+            {"name": "孙剑", "voice": "story-bible-sunjian"},
+            {"name": "阿岚", "voice": "story-bible-alan"},
+        ],
+    )
+
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={
+            "strategy": "separate_video_tts",
+            "production_strategy": "draft_fast",
+            "story_bible_id": story_bible_id,
+            "audio_mode": "model_audio",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "multi_speaker_dialogue_requires_segmented_tts"
+    assert detail["shot_number"] == 1
+    assert detail["speakers"] == ["孙剑", "阿岚"]
 
 
 def test_action_shot_records_native_audio_route_on_seedance20(client: TestClient) -> None:
@@ -4345,9 +5513,9 @@ def test_production_native_audio_route_does_not_require_tts_api_key(
             "blocking_issue_count": 0,
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
     monkeypatch.setattr(
-        "app.api.v1.endpoints.workflow.build_generation_context_package",
+            "app.features.workflow_media.application.prepare_separate_media.build_generation_context_package",
         _fake_generation_context_package,
     )
 

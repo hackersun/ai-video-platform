@@ -108,6 +108,15 @@ async function installAssetMocks(page: any) {
     contentType: 'application/json',
     body: JSON.stringify(entities),
   }));
+  await page.route('**/api/v1/asset-maintenance/entity-options**', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify(entities.map((entity) => ({
+      ...entity,
+      lifecycle_status: 'approved',
+      active_asset_count: entity.id === 'entity-character' ? 1 : 0,
+    }))),
+  }));
   await page.route('**/api/v1/assets/view-presets', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -210,17 +219,17 @@ test('asset edit supports URL previews, history backfill, entity-specific guidan
   const wizard = page.getByTestId('asset-wizard');
   await page.getByLabel('向导小说').selectOption(novel.id);
   await expect(wizard.getByRole('heading', { name: '角色三视图' })).toBeVisible();
-  await expect(wizard.getByRole('button', { name: '生成角色缺失视图' })).toBeVisible();
+  await expect(wizard.getByRole('button', { name: /生成 \d+ 个缺失视图/ })).toBeVisible();
 
   await page.getByLabel('资产对象类型').selectOption('scene');
   await expect(wizard.getByRole('heading', { name: '场景四视图' })).toBeVisible();
   await expect(wizard.getByText('固定场景全景、空间布局、关键细节和光影氛围。')).toBeVisible();
-  await expect(wizard.getByRole('button', { name: '生成场景缺失视图' })).toBeVisible();
+  await expect(wizard.getByRole('button', { name: /生成 \d+ 个缺失视图/ })).toBeVisible();
 
   await page.getByLabel('资产对象类型').selectOption('prop');
   await expect(wizard.getByRole('heading', { name: '道具多视图' })).toBeVisible();
   await expect(wizard.getByText('固定道具主视图、细节、比例和使用状态。')).toBeVisible();
-  await expect(wizard.getByRole('button', { name: '生成道具缺失视图' })).toBeVisible();
+  await expect(wizard.getByRole('button', { name: /生成 \d+ 个缺失视图/ })).toBeVisible();
 
   await page.getByLabel('资产对象类型').selectOption('character');
   await page.getByLabel('小说对象').selectOption('entity-character');

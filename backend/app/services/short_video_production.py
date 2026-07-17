@@ -15,6 +15,7 @@ from app.core.time_utils import utc_now
 from app.models import Asset, Chapter, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard, Workflow
 from app.services.default_anime_library import ensure_default_anime_assets
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 from app.services.story_prompt_context import compact_text, load_story_prompt_context
 
 
@@ -256,11 +257,13 @@ async def _load_entities(
 ) -> List[StoryEntity]:
     if not novel_id:
         return []
-    query = select(StoryEntity).where(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
-    if chapter_id:
-        query = query.where((StoryEntity.chapter_id == chapter_id) | (StoryEntity.chapter_id.is_(None)))
-    result = await db.execute(query.order_by(StoryEntity.entity_type, desc(StoryEntity.updated_at)))
-    return list(result.scalars().all())
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
+    return sorted(entities, key=lambda entity: (entity.entity_type or "", str(entity.updated_at or "")), reverse=True)
 
 
 def _entity_to_ref(entity: StoryEntity) -> Dict[str, Any]:
@@ -275,6 +278,101 @@ def _entity_to_ref(entity: StoryEntity) -> Dict[str, Any]:
         "visual_dna": attrs.get("visual_dna") or attrs.get("scene_dna") or attrs.get("prop_dna") or {},
         "asset_pack": attrs.get("asset_pack") or attrs.get("reference_assets") or attrs.get("scene_assets") or attrs.get("prop_assets") or {},
     }
+
+
+def _asset_view_key(asset: Asset) -> Optional[str]:
+    params = _json_dict(asset.generation_params)
+    value = params.get("view_key") or params.get("asset_subtype") or params.get("view_angle")
+    return str(value).strip() if value else None
+
+
+def _flatten_grouped_entity_ids(grouped_refs: Dict[str, List[Dict[str, Any]]]) -> set[str]:
+    entity_ids: set[str] = set()
+    for refs in grouped_refs.values():
+        for ref in refs:
+            entity_id = str(ref.get("entity_id") or "").strip()
+            if entity_id:
+                entity_ids.add(entity_id)
+    return entity_ids
+
+
+async def _load_locked_assets_for_refs(
+    db: AsyncSession,
+    user_id: str,
+    grouped_refs: Dict[str, List[Dict[str, Any]]],
+) -> List[Asset]:
+    entity_ids = _flatten_grouped_entity_ids(grouped_refs)
+    if not entity_ids:
+        return []
+    result = await db.execute(
+        select(Asset)
+        .where(
+            Asset.user_id == user_id,
+            Asset.entity_id.in_(entity_ids),
+            Asset.is_active == True,
+            Asset.is_locked == True,
+            Asset.is_final == True,
+        )
+        .order_by(Asset.entity_type, Asset.entity_id, Asset.version.desc(), Asset.updated_at.desc())
+    )
+    return list(result.scalars().all())
+
+
+def _asset_lock_items(assets: List[Asset]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for asset in assets:
+        view_key = _asset_view_key(asset) or "main"
+        key = (str(asset.entity_id or ""), str(asset.entity_type or asset.category or ""), view_key)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(
+            {
+                "asset_id": asset.id,
+                "entity_id": asset.entity_id,
+                "entity_type": asset.entity_type or asset.category,
+                "name": asset.name,
+                "view_key": view_key,
+                "url": asset.url,
+                "version": asset.version or 1,
+                "is_locked": bool(asset.is_locked),
+                "is_final": bool(asset.is_final),
+                "source": "locked_entity_asset",
+            }
+        )
+    return items
+
+
+def _character_multiview_refs_from_assets(assets: List[Asset]) -> List[Dict[str, Any]]:
+    refs: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for asset in assets:
+        entity_type = asset.entity_type or asset.category
+        if entity_type != "character":
+            continue
+        view_key = _asset_view_key(asset)
+        if view_key not in {"front", "side", "back", "full_body"}:
+            continue
+        if not asset.url:
+            continue
+        key = (str(asset.entity_id or ""), view_key)
+        if key in seen:
+            continue
+        seen.add(key)
+        refs.append(
+            {
+                "asset_id": asset.id,
+                "entity_id": asset.entity_id,
+                "character_id": asset.character_id,
+                "character": asset.name,
+                "view_key": view_key,
+                "url": asset.url,
+                "version": asset.version or 1,
+                "source": "locked_entity_asset",
+            }
+        )
+    return refs
 
 
 def _group_entities_for_shot(
@@ -513,7 +611,15 @@ async def build_shot_production_contract(
     production_context = _json_dict(extra.get("production_context"))
     existing_refs = _json_dict(extra.get("entity_refs"))
     grouped_refs = _group_entities_for_shot(entities, shot, existing_refs)
-    blockers, warnings = _build_contract_issues(shot, grouped_refs, production_context, story_bible)
+    locked_assets = await _load_locked_assets_for_refs(db, user_id, grouped_refs)
+    derived_asset_locks = _asset_lock_items(locked_assets)
+    derived_multiview_refs = _character_multiview_refs_from_assets(locked_assets)
+    effective_production_context = {
+        **production_context,
+        "asset_version_locks": production_context.get("asset_version_locks") or derived_asset_locks,
+        "character_multiview_refs": production_context.get("character_multiview_refs") or derived_multiview_refs,
+    }
+    blockers, warnings = _build_contract_issues(shot, grouped_refs, effective_production_context, story_bible)
     quality_report = build_shot_quality_report(shot)
     budget_estimate = estimate_shot_generation_budget(shot)
     seed = production_context.get("seed") or extra.get("seed") or _stable_seed(
@@ -565,12 +671,12 @@ async def build_shot_production_contract(
             "music_cue": shot.music_cue,
             "sfx_cue": shot.sfx_cue,
             "ambient_sound": shot.ambient_sound,
-            "keyframes": shot.keyframes or production_context.get("keyframes") or [],
+            "keyframes": shot.keyframes or effective_production_context.get("keyframes") or [],
         },
-        "asset_locks": production_context.get("asset_version_locks") or [],
-        "character_multiview_refs": production_context.get("character_multiview_refs") or [],
-        "lip_sync": production_context.get("lip_sync") or {},
-        "review_state": production_context.get("review_state") or "pending_review",
+        "asset_locks": effective_production_context.get("asset_version_locks") or [],
+        "character_multiview_refs": effective_production_context.get("character_multiview_refs") or [],
+        "lip_sync": effective_production_context.get("lip_sync") or {},
+        "review_state": effective_production_context.get("review_state") or "pending_review",
         "seed": seed,
         "model_route": build_short_video_model_route(),
         "story_bible_state": _story_bible_state(story_bible),

@@ -38,6 +38,7 @@ from app.services.storyboard_template_service import (
     list_templates,
     match_storyboard_template,
     merge_template_overrides,
+    plan_storyboard_shot_count,
 )
 
 router = APIRouter(tags=["分镜管理"])
@@ -804,6 +805,317 @@ def normalize_shot_data(shot_data: dict, index: int, template: Optional[dict] = 
     }
 
 
+def ensure_shot_dialogue_subtitle(shot_data: dict) -> None:
+    """Ensure generated shots have subtitle text for production readiness."""
+    extra_data = shot_data.get("extra_data") if isinstance(shot_data.get("extra_data"), dict) else {}
+    existing = (extra_data.get("subtitle_text") or shot_data.get("dialogue") or "").strip()
+    if existing:
+        shot_data["extra_data"] = extra_data
+        extra_data.setdefault("subtitle_text", existing)
+        return
+
+    source_text = (
+        extra_data.get("source_beat")
+        or extra_data.get("source_scene_beat")
+        or shot_data.get("visual_description")
+        or shot_data.get("prompt")
+        or ""
+    )
+    subtitle_text = _compact_scene_text(source_text, 72)
+    if not subtitle_text:
+        return
+
+    narration = f"（旁白）{subtitle_text}"
+    shot_data["dialogue"] = narration
+    extra_data["subtitle_text"] = narration
+    extra_data.setdefault("dialogue_speaker", "旁白")
+    extra_data.setdefault("dialogue_source", "story_beat_narration_fallback")
+    extra_data.setdefault("dialogue_intent", "旁白")
+    shot_data["extra_data"] = extra_data
+
+
+def _parse_storyboard_dialogue_lines(dialogue: Optional[str], fallback_speaker: Optional[str]) -> list[dict[str, str]]:
+    lines = [line.strip() for line in (dialogue or "").splitlines() if line.strip()]
+    parsed: list[dict[str, str]] = []
+    for line in lines:
+        narrator = re.match(r"^（\s*([^）]{1,12})\s*）\s*(.+)$", line)
+        if narrator:
+            speaker = narrator.group(1).strip()
+            parsed.append({"speaker": "旁白" if speaker in NARRATOR_SPEAKERS else speaker, "text": narrator.group(2).strip()})
+            continue
+        match = re.match(r"^\s*([^：:（）()，。！？\n]{1,24})\s*[：:]\s*(.+)$", line)
+        if match:
+            parsed.append({"speaker": match.group(1).strip(), "text": match.group(2).strip()})
+            continue
+        parsed.append({"speaker": fallback_speaker or "", "text": line})
+    return [item for item in parsed if item["text"]]
+
+
+def _format_storyboard_dialogue_line(speaker: str, text: str) -> str:
+    clean_text = text.strip()
+    if not speaker or speaker == "旁白":
+        return f"（旁白）{clean_text}"
+    return f"{speaker}：{clean_text}"
+
+
+def split_multi_speaker_dialogue_shots(shots_data: list[dict]) -> list[dict]:
+    """Split generated shots so each shot carries at most one speaker voice."""
+    split_shots: list[dict] = []
+    for raw_shot in shots_data:
+        extra_data = raw_shot.get("extra_data") if isinstance(raw_shot.get("extra_data"), dict) else {}
+        fallback_speaker = extra_data.get("dialogue_speaker") or raw_shot.get("dialogue_speaker")
+        segments = _parse_storyboard_dialogue_lines(raw_shot.get("dialogue"), fallback_speaker)
+        distinct_speakers = {segment["speaker"] for segment in segments if segment.get("speaker")}
+        if len(distinct_speakers) <= 1:
+            split_shots.append(raw_shot)
+            continue
+
+        grouped: list[dict[str, Any]] = []
+        for segment in segments:
+            speaker = segment.get("speaker") or fallback_speaker or ""
+            text = segment.get("text") or ""
+            if grouped and grouped[-1]["speaker"] == speaker:
+                grouped[-1]["texts"].append(text)
+            else:
+                grouped.append({"speaker": speaker, "texts": [text]})
+
+        segment_count = len(grouped)
+        segment_duration = max(3, int(round(float(raw_shot.get("duration") or 4) / max(1, segment_count))))
+        for segment_index, group in enumerate(grouped, start=1):
+            speaker = str(group.get("speaker") or "").strip()
+            text = "".join(str(item).strip() for item in group.get("texts") or [] if str(item).strip())
+            if not text:
+                continue
+            shot = {
+                **raw_shot,
+                "duration": segment_duration,
+                "dialogue": _format_storyboard_dialogue_line(speaker, text),
+                "prompt": f"{raw_shot.get('prompt') or ''}，对白段{segment_index}/{segment_count}，{speaker or '旁白'}说话".strip("，"),
+                "visual_description": (
+                    f"{raw_shot.get('visual_description') or raw_shot.get('prompt') or ''}"
+                    f" 本镜头只表现{speaker or '旁白'}这一段台词，口型与字幕同步。"
+                ).strip(),
+                "extra_data": {
+                    **extra_data,
+                    "dialogue_speaker": speaker or extra_data.get("dialogue_speaker"),
+                    "dialogue_source": extra_data.get("dialogue_source") or "split_multi_speaker_dialogue",
+                    "subtitle_text": _format_storyboard_dialogue_line(speaker, text),
+                    "dialogue_segment_index": segment_index,
+                    "dialogue_segment_count": segment_count,
+                    "split_from_shot_number": raw_shot.get("shot_number"),
+                    "split_reason": "multi_speaker_dialogue",
+                },
+            }
+            split_shots.append(shot)
+
+    for index, shot in enumerate(split_shots, start=1):
+        shot["shot_number"] = index
+    return split_shots
+
+
+def _dialogue_dedupe_key(dialogue: Optional[str]) -> str:
+    text = re.sub(r"\s+", "", dialogue or "")
+    text = re.sub(r"^（旁白）", "旁白：", text)
+    return text.strip("。！？!?,，；;")
+
+
+def _fallback_dialogue_from_shot_context(shot: dict) -> str:
+    extra_data = shot.get("extra_data") if isinstance(shot.get("extra_data"), dict) else {}
+    source = (
+        extra_data.get("source_beat")
+        or extra_data.get("source_scene_beat")
+        or shot.get("prompt")
+        or shot.get("visual_description")
+        or ""
+    )
+    text = _compact_scene_text(str(source), 42)
+    if not text:
+        return ""
+    if not text.endswith(("。", "！", "？", "；", "!", "?", ";")):
+        text = f"{text}。"
+    return f"（旁白）{text}"
+
+
+def dedupe_repeated_shot_dialogues(shots_data: list[dict]) -> list[dict]:
+    """Rewrite duplicate shot dialogue to shot-specific narration."""
+    seen: set[str] = set()
+    for shot in shots_data:
+        dialogue = (shot.get("dialogue") or "").strip()
+        key = _dialogue_dedupe_key(dialogue)
+        if not key:
+            continue
+        if key not in seen:
+            seen.add(key)
+            continue
+        replacement = _fallback_dialogue_from_shot_context(shot)
+        replacement_key = _dialogue_dedupe_key(replacement)
+        if not replacement or replacement_key in seen:
+            continue
+        extra_data = shot.get("extra_data") if isinstance(shot.get("extra_data"), dict) else {}
+        shot["dialogue"] = replacement
+        shot["extra_data"] = {
+            **extra_data,
+            "subtitle_text": replacement,
+            "dialogue_speaker": "旁白",
+            "dialogue_rewritten_reason": "duplicate_dialogue",
+            "original_dialogue": dialogue,
+        }
+        seen.add(replacement_key)
+    return shots_data
+
+
+def prepare_storyboard_shots_for_production(shots_data: list[dict]) -> list[dict]:
+    return dedupe_repeated_shot_dialogues(split_multi_speaker_dialogue_shots(shots_data))
+
+
+def _compact_scene_text(value: Optional[str], limit: int = 160) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip(" -：:，。")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+SCRIPT_SCENE_SECTION_LABELS = (
+    "场景类型",
+    "时长",
+    "地点",
+    "人物",
+    "戏剧核心",
+    "画面描述",
+    "对话/旁白",
+    "镜头序列",
+    "音效/音乐提示",
+    "字幕要点",
+)
+
+
+def _extract_plain_script_scene_section(block: str, label: str) -> str:
+    labels = "|".join(re.escape(item) for item in SCRIPT_SCENE_SECTION_LABELS)
+    match = re.search(
+        rf"^\s*{re.escape(label)}\s*[：:]\s*(?P<body>.*?)(?=^\s*(?:{labels})\s*[：:]|\Z)",
+        block,
+        flags=re.S | re.M,
+    )
+    return match.group("body") if match else ""
+
+
+def _extract_script_scene_field(block: str, label: str) -> str:
+    match = re.search(
+        rf"【{re.escape(label)}】(?P<body>.*?)(?=【(?:画面描述|对话/旁白|镜头序列|音效/音乐提示|字幕要点)】|$)",
+        block,
+        flags=re.S,
+    )
+    body = match.group("body") if match else _extract_plain_script_scene_section(block, label)
+    return _compact_scene_text(body)
+
+
+def _extract_script_scene_people(block: str) -> str:
+    match = re.search(r"^\s*(?:-\s*)?人物[：:]\s*(.+?)\s*$", block, flags=re.M)
+    return _compact_scene_text(match.group(1) if match else "")
+
+
+def _clean_script_dialogue_text(value: str) -> str:
+    text = (value or "").strip()
+    text = re.sub(r"^(?:【[^】]{1,30}】|\[[^\]]{1,30}\])\s*", "", text)
+    return text.strip()
+
+
+def _extract_script_scene_dialogues(block: str) -> list[str]:
+    dialogues: list[str] = []
+    section_match = re.search(
+        r"【对话/旁白】(?P<body>.*?)(?=【(?:画面描述|镜头序列|音效/音乐提示|字幕要点)】|$)",
+        block,
+        flags=re.S,
+    )
+    source = (
+        section_match.group("body")
+        if section_match
+        else _extract_plain_script_scene_section(block, "对话/旁白") or block
+    )
+    for line in source.splitlines() or [source]:
+        text = line.strip()
+        if not text or re.search(r"无对白|纯音效", text):
+            continue
+        narrator = re.match(r"^\s*[-—]?\s*（\s*([^）]{1,12})\s*）\s*[：:]?\s*(.+)$", text)
+        if narrator:
+            speaker = narrator.group(1).strip()
+            dialogue_text = _clean_script_dialogue_text(narrator.group(2))
+            if speaker in NARRATOR_SPEAKERS and dialogue_text:
+                dialogues.append(f"（旁白）{dialogue_text}")
+            continue
+        match = re.match(r"^\s*[-—]?\s*([^：:（）()，。！？\n]{1,16})\s*[：:]\s*(.+)$", text)
+        if not match:
+            continue
+        speaker = match.group(1).strip()
+        dialogue_text = match.group(2).strip()
+        if speaker in {"环境音", "背景音乐", "字幕要点", "场景类型", "时长", "地点", "人物", "戏剧核心"}:
+            continue
+        dialogue_text = _clean_script_dialogue_text(dialogue_text)
+        if speaker and dialogue_text:
+            dialogues.append(f"{speaker}：{dialogue_text}")
+    return dialogues
+
+
+def extract_script_scene_beats(content: Optional[str]) -> list[dict[str, Any]]:
+    script_text = content or ""
+    scene_matches = list(re.finditer(r"^\s*(?:【\s*)?第\s*[\d一二三四五六七八九十]+\s*场(?:\s*】)?[^\n]*", script_text, flags=re.M))
+    scenes: list[dict[str, Any]] = []
+    for index, match in enumerate(scene_matches):
+        next_start = scene_matches[index + 1].start() if index + 1 < len(scene_matches) else len(script_text)
+        scene_label = f"第{index + 1}场"
+        raw_title = re.sub(r"^\s*(?:【\s*)?第\s*[\d一二三四五六七八九十]+\s*场(?:\s*】)?", "", match.group(0)).strip()
+        block = script_text[match.end():next_start]
+        visual = _extract_script_scene_field(block, "画面描述")
+        people = _extract_script_scene_people(block)
+        dialogues = _extract_script_scene_dialogues(block)
+        beat_parts = [
+            raw_title or scene_label,
+            f"人物：{people}" if people else None,
+            f"画面：{visual}" if visual else None,
+            f"对白：{' / '.join(dialogues)}" if dialogues else None,
+        ]
+        scenes.append(
+            {
+                "title": raw_title or scene_label,
+                "people": people,
+                "visual": visual,
+                "dialogues": dialogues,
+                "beat": "。".join(part for part in beat_parts if part),
+            }
+        )
+    return [scene for scene in scenes if scene["beat"]]
+
+
+def apply_script_scene_beats_to_template_shots(
+    shots_data: list[dict],
+    scenes: list[dict[str, Any]],
+    *,
+    source_title: str,
+) -> list[dict]:
+    if not scenes:
+        return shots_data
+    for index, shot in enumerate(shots_data):
+        scene = scenes[min(index, len(scenes) - 1)]
+        dialogues = scene.get("dialogues") or []
+        dialogue = "\n".join(dialogues) if dialogues else shot.get("dialogue")
+        scene_visual = scene.get("visual") or scene.get("beat") or ""
+        shot["prompt"] = f"{source_title}，{scene.get('title')}，{_compact_scene_text(scene_visual, 80)}"
+        shot["visual_description"] = (
+            f"{scene_visual}。保持人物、场景、道具状态和对白顺序连续，动漫电影质感。"
+        )
+        shot["dialogue"] = dialogue
+        extra_data = shot.get("extra_data") if isinstance(shot.get("extra_data"), dict) else {}
+        shot["extra_data"] = {
+            **extra_data,
+            "source_scene_title": scene.get("title"),
+            "source_scene_beat": scene.get("beat"),
+            "dialogue_source": "script_scene_dialogue" if dialogues else extra_data.get("dialogue_source"),
+            "subtitle_text": dialogue or extra_data.get("subtitle_text"),
+            "script_scene_dialogues": dialogues,
+        }
+    return shots_data
+
+
 async def persist_storyboard_with_shots(
     db: AsyncSession,
     *,
@@ -844,6 +1156,7 @@ async def persist_storyboard_with_shots(
     chapter_id = (content or {}).get("chapter_id")
     for index, raw_shot in enumerate(shots_data):
         shot_data = normalize_shot_data(raw_shot, index, template)
+        ensure_shot_dialogue_subtitle(shot_data)
         shot_text = " ".join(
             value
             for value in (
@@ -1578,6 +1891,155 @@ async def list_storyboard_video_merge_versions(
     return [_build_storyboard_merge_version_response(job) for job in jobs]
 
 
+async def generate_script_storyboard_template_fallback(
+    *,
+    request: StoryboardGenerateRequest,
+    script: Script,
+    script_title: str,
+    db: AsyncSession,
+    user_id: str,
+) -> StoryboardGenerateResponse:
+    """DEV_MODE-only deterministic storyboard fallback for script-driven generation."""
+    script_scene_beats = extract_script_scene_beats(script.content)
+    scene_source_content = (
+        "\n".join(scene["beat"] for scene in script_scene_beats)
+        if script_scene_beats
+        else script.content or ""
+    )
+    templates = await load_user_storyboard_templates(db, user_id)
+    template_match = match_storyboard_template(
+        title=script_title,
+        genre=script.genre or "",
+        content=scene_source_content,
+        templates=templates,
+    )
+    template = template_match["template"]
+    shot_count_plan = plan_storyboard_shot_count(
+        template=template,
+        source_content=scene_source_content,
+        requested_shot_count=request.shot_count or (len(script_scene_beats) if script_scene_beats else None),
+    )
+    if script_scene_beats and request.shot_count is None:
+        shot_count_plan = {
+            **shot_count_plan,
+            "source": "script_scene_count",
+            "reason": "根据剧本场次自动规划镜头数量",
+        }
+    inferred_novel_id = request.novel_id or script.novel_id
+    script_extra = script.extra_data if isinstance(script.extra_data, dict) else {}
+    source_chapter_id = script.chapter_id or script_extra.get("chapter_id")
+    story_prompt_context = await load_story_prompt_context(
+        db,
+        user_id,
+        novel_id=inferred_novel_id,
+        chapter_id=source_chapter_id,
+        script_id=script.id,
+        title=script_title,
+        genre=script.genre,
+        description=script.content,
+        style=request.style,
+    )
+    novel_continuity = await build_novel_continuity_package(
+        db,
+        user_id,
+        novel_id=inferred_novel_id,
+        chapter_id=source_chapter_id,
+        story_bible_id=request.story_bible_id,
+        project_id=request.project_id,
+        task="storyboard_generation",
+    )
+    shots_data = build_template_shots(
+        template=template,
+        source_title=script_title,
+        source_content=scene_source_content,
+        shot_count=shot_count_plan["shot_count"],
+        story_context=build_shot_dialogue_context(story_prompt_context),
+    )
+    shots_data = apply_script_scene_beats_to_template_shots(
+        shots_data,
+        script_scene_beats,
+        source_title=script_title,
+    )
+    # Script template fallback should preserve the requested/scene shot count;
+    # segmented TTS can still split multi-speaker dialogue later if needed.
+    shots_data = dedupe_repeated_shot_dialogues(shots_data)
+
+    storyboard_title = f"{script_title} - 分镜"
+    title_index = 2
+    while True:
+        title_result = await db.execute(
+            select(Storyboard).where(
+                and_(
+                    Storyboard.user_id == user_id,
+                    Storyboard.script_id == request.script_id,
+                    Storyboard.title == storyboard_title,
+                )
+            )
+        )
+        if title_result.scalar_one_or_none() is None:
+            break
+        storyboard_title = f"{script_title} - 分镜 {title_index}"
+        title_index += 1
+
+    content = {
+        "source": "script_storyboard_template_fallback",
+        "shots_summary": f"共{len(shots_data)}个镜头",
+        "novel_id": inferred_novel_id,
+        "chapter_id": source_chapter_id,
+        "story_bible_id": request.story_bible_id,
+        "project_id": request.project_id,
+        "template_id": template["id"],
+        "template_name": template["name"],
+        "template_match_score": template_match["score"],
+        "template_match_reason": template_match["reason"],
+        "shot_count_plan": shot_count_plan,
+        "script_scene_count": len(script_scene_beats),
+        "ai_refined": False,
+        "review_status": "pending_review",
+        "automation_level": "template_draft",
+        "novel_continuity": novel_continuity,
+        "novel_series_seed": novel_continuity.get("novel_series_seed"),
+        "chapter_seed": novel_continuity.get("chapter_seed"),
+        "continuity_lock": novel_continuity.get("continuity_lock"),
+    }
+    description = f"模板兜底：{template['name']}，{template_match['reason']}，共{len(shots_data)}个镜头"
+    db_storyboard, created_shots = await persist_storyboard_with_shots(
+        db,
+        user_id=user_id,
+        script_id=request.script_id,
+        script_title=script_title,
+        storyboard_title=storyboard_title,
+        novel_id=inferred_novel_id,
+        genre=script.genre,
+        style=request.style,
+        description=description,
+        content=content,
+        shots_data=shots_data,
+        template=template,
+        source_content=script.content,
+        continuity_context=novel_continuity,
+        dialogue_source="script",
+    )
+
+    return StoryboardGenerateResponse(
+        id=str(db_storyboard.id),
+        script_id=str(request.script_id),
+        user_id=str(user_id),
+        novel_id=inferred_novel_id,
+        chapter_id=source_chapter_id,
+        title=storyboard_title,
+        script_title=script_title,
+        description=description,
+        content=content,
+        shot_count=len(shots_data),
+        total_duration=db_storyboard.total_duration or 0,
+        status=db_storyboard.status or "draft",
+        shots=[ShotBriefResponse(**s) for s in created_shots],
+        created_at=str(db_storyboard.created_at),
+        updated_at=str(db_storyboard.updated_at),
+    )
+
+
 @router.post("/generate", response_model=StoryboardGenerateResponse, status_code=status.HTTP_201_CREATED)
 async def generate_storyboard(
     request: StoryboardGenerateRequest,
@@ -1593,16 +2055,41 @@ async def generate_storyboard(
         raise HTTPException(status_code=400, detail="剧本内容为空，无法生成分镜")
 
     # 获取用户的API密钥
-    api_key, provider_name, model_id, base_url = await get_user_qwen_api_key(
-        db,
-        user_id,
-        request.model_config_id,
-    )
+    try:
+        api_key, provider_name, model_id, base_url = await get_user_qwen_api_key(
+            db,
+            user_id,
+            request.model_config_id,
+        )
+    except HTTPException:
+        if not is_dev_mode():
+            raise
+        return await generate_script_storyboard_template_fallback(
+            request=request,
+            script=script,
+            script_title=script_title,
+            db=db,
+            user_id=user_id,
+        )
 
     service = create_text_generation_service(api_key, provider_name, base_url)
 
+    templates = await load_user_storyboard_templates(db, user_id)
+    template_match = match_storyboard_template(
+        title=script_title,
+        genre=script.genre or "",
+        content=script.content,
+        templates=templates,
+    )
+    shot_count_plan = plan_storyboard_shot_count(
+        template=template_match["template"],
+        source_content=script.content,
+        requested_shot_count=request.shot_count,
+    )
+    planned_shot_count = shot_count_plan["shot_count"]
+
     # 构建分镜生成提示词
-    shot_count_hint = f"生成约{request.shot_count}个镜头" if request.shot_count else "自动确定镜头数量"
+    shot_count_hint = f"生成{planned_shot_count}个镜头"
     style_hint = f"风格：{request.style}"
     consistency_prompt = ""
     inferred_novel_id = request.novel_id or script.novel_id
@@ -1626,7 +2113,8 @@ async def generate_storyboard(
         "source_content": _compact_prompt_context_value(script.content),
         "genre": script.genre or "",
         "style": request.style,
-        "shot_count": request.shot_count or "自动",
+        "shot_count": planned_shot_count,
+        "shot_count_plan": shot_count_plan,
         "dialogue": dialogue_sample,
         "subtitle_text": dialogue_sample,
     }
@@ -1642,7 +2130,8 @@ async def generate_storyboard(
             extra_context={
                 **prompt_skill_context,
                 "分镜风格": request.style,
-                "镜头数量": request.shot_count or "自动",
+                "镜头数量": planned_shot_count,
+                "镜头数量规划": shot_count_plan.get("reason"),
                 "剧本标题": script_title,
                 "整部小说连续性锁": novel_continuity.get("prompt_block"),
             },
@@ -1753,6 +2242,10 @@ async def generate_storyboard(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"AI生成分镜失败: {str(e)}"
     )
+    if request.shot_count is not None:
+        shots_data = dedupe_repeated_shot_dialogues(shots_data)
+    else:
+        shots_data = prepare_storyboard_shots_for_production(shots_data)
 
     now = utc_now()
     storyboard_title = f"{script_title} - 分镜"
@@ -1778,6 +2271,11 @@ async def generate_storyboard(
         "novel_id": inferred_novel_id,
         "chapter_id": source_chapter_id,
         "novel_continuity": novel_continuity,
+        "template_id": template_match["template"]["id"],
+        "template_name": template_match["template"]["name"],
+        "template_match_score": template_match["score"],
+        "template_match_reason": template_match["reason"],
+        "shot_count_plan": shot_count_plan,
         "novel_series_seed": novel_continuity.get("novel_series_seed"),
         "chapter_seed": novel_continuity.get("chapter_seed"),
         "continuity_lock": novel_continuity.get("continuity_lock"),
@@ -1884,13 +2382,25 @@ async def generate_smart_storyboard(
         project_id=request.project_id,
         task="storyboard_generation",
     )
+    shot_count_plan = plan_storyboard_shot_count(
+        template=template,
+        source_content=source_content,
+        requested_shot_count=request.shot_count,
+    )
     shots_data = build_template_shots(
         template=template,
         source_title=source_title,
         source_content=source_content,
-        shot_count=request.shot_count,
+        shot_count=shot_count_plan["shot_count"],
         story_context=build_shot_dialogue_context(story_prompt_context),
     )
+    if source_script:
+        script_scene_beats = extract_script_scene_beats(source_content)
+        shots_data = apply_script_scene_beats_to_template_shots(
+            shots_data,
+            script_scene_beats,
+            source_title=source_title,
+        )
 
     ai_refined = False
     if request.use_ai_refine:
@@ -1916,6 +2426,10 @@ async def generate_smart_storyboard(
 
             if not is_dev_mode():
                 raise HTTPException(status_code=500, detail=f"AI细化分镜失败: {str(exc)}")
+    if request.shot_count is not None:
+        shots_data = dedupe_repeated_shot_dialogues(shots_data)
+    else:
+        shots_data = prepare_storyboard_shots_for_production(shots_data)
 
     if source_script:
         script_id = source_script.id
@@ -1962,6 +2476,7 @@ async def generate_smart_storyboard(
         "template_match_score": match["score"],
         "template_match_reason": match["reason"],
         "ai_refined": ai_refined,
+        "shot_count_plan": shot_count_plan,
         "review_status": "pending_review",
         "automation_level": "smart_draft",
         "novel_continuity": novel_continuity,

@@ -7,6 +7,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 import base64
 import json
+import re
 from jose import JWTError, jwt
 
 security = HTTPBearer(auto_error=False)  # auto_error=False allows optional auth
@@ -76,7 +77,9 @@ async def get_current_user_id(
         payload = _decode_jwt_payload(token)
         if payload and 'sub' in payload:
             return payload['sub']
-        return token[:36] if len(token) > 36 else token
+        if len(token) > 36 and re.match(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", token):
+            return token[:36]
+        return token
 
     user_id = _verify_signed_access_token(token)
     if user_id:

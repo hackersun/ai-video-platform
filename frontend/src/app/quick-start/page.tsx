@@ -249,7 +249,7 @@ export default function QuickStartPage() {
     style: 'anime',
     chapterTitle: '第一章',
     chapterContent: '',
-    shotCount: 4,
+    shotCount: '' as number | '',
     createStoryBible: true,
     autoProducePreview: true,
   });
@@ -278,7 +278,7 @@ export default function QuickStartPage() {
       { label: '作品名', ok: form.title.trim().length > 0 },
       { label: '故事梗概', ok: form.premise.trim().length >= 8 },
       { label: '章节内容', ok: content.length >= 8 },
-      { label: '镜头数', ok: form.shotCount >= 1 && form.shotCount <= 12 },
+      { label: '镜头数', ok: form.shotCount === '' || (form.shotCount >= 1 && form.shotCount <= 12) },
     ];
   }, [form]);
 
@@ -472,7 +472,7 @@ export default function QuickStartPage() {
       ...sampleStory,
       genre: 'fantasy',
       style: 'anime',
-      shotCount: 4,
+      shotCount: '' as number | '',
       createStoryBible: true,
       autoProducePreview: true,
     }));
@@ -671,7 +671,7 @@ export default function QuickStartPage() {
       const storyboard = await apiClient.generateSmartStoryboard({
         novel_id: novel.id,
         chapter_id: chapter.id,
-        shot_count: form.shotCount,
+        ...(typeof form.shotCount === 'number' ? { shot_count: form.shotCount } : {}),
         style: form.style,
         title: `${title} 首集分镜`,
         story_bible_id: storyBibleId,
@@ -679,7 +679,7 @@ export default function QuickStartPage() {
         model_config_id: textModelConfigId || undefined,
       });
       ensureActive();
-      const shotCount = storyboard.shot_count || storyboard.shots?.length || form.shotCount;
+      const shotCount = storyboard.shot_count || storyboard.shots?.length || (typeof form.shotCount === 'number' ? form.shotCount : 0);
       markStep('storyboard', 'done', `已生成 ${shotCount} 个镜头`);
 
       markStep('workflow', 'running', '正在创建首集制作工作流');
@@ -844,13 +844,20 @@ export default function QuickStartPage() {
                   <Select value={form.style} onChange={(event) => setForm({ ...form, style: event.target.value })} options={styleOptions} />
                 </div>
                 <div className="space-y-1.5">
-                  <div className="text-xs text-white/50">首集镜头数</div>
+                  <div className="text-xs text-white/50">首集镜头数（留空自动）</div>
                   <Input
                     type="number"
                     min={1}
                     max={12}
                     value={form.shotCount}
-                    onChange={(event) => setForm({ ...form, shotCount: Number(event.target.value) })}
+                    placeholder="自动"
+                    onChange={(event) => {
+                      const value = event.target.value.trim();
+                      setForm({
+                        ...form,
+                        shotCount: value ? Math.max(1, Math.min(12, Number(value) || 1)) : '',
+                      });
+                    }}
                     aria-label="首集镜头数"
                     className="bg-white/5 border-white/10 text-white"
                   />

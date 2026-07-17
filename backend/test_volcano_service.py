@@ -125,6 +125,7 @@ def test_generate_video_skips_local_reference_image(monkeypatch) -> None:
 
     assert result["id"] == "video-task-123"
     assert captured["json"]["content"][0]["type"] == "text"
+    assert "--watermark false" in captured["json"]["content"][0]["text"]
     assert all(item["type"] != "image_url" for item in captured["json"]["content"])
     assert "云端调用不传image_url" in captured["json"]["content"][0]["text"]
 
@@ -209,3 +210,29 @@ def test_volcano_agent_plan_image_factory_uses_plan_base_url(monkeypatch) -> Non
     assert result["data"][0]["url"] == "https://example.com/image.png"
     assert captured["url"] == "https://ark.cn-beijing.volces.com/api/plan/v3/images/generations"
     assert captured["json"]["model"] == "doubao-seedream-5.0-lite"
+
+
+def test_volcano_image_service_passes_seedream_50_flagship_model_id(monkeypatch) -> None:
+    captured: dict = {}
+
+    monkeypatch.setattr(
+        "app.services.volcano_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {"data": [{"url": "https://example.com/seedream-5.png"}]},
+            captured,
+        ),
+    )
+
+    service = create_image_generation_service("ark-key", "volcano", None)
+    result = asyncio.run(
+        service.generate_image(
+            prompt="anime character turnaround",
+            model="doubao-seedream-5-0-260128",
+            size="2048x2048",
+        )
+    )
+
+    assert result["data"][0]["url"].endswith("seedream-5.png")
+    assert captured["url"] == "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    assert captured["json"]["model"] == "doubao-seedream-5-0-260128"
+    assert captured["timeout"].total >= 600

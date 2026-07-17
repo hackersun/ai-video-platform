@@ -664,6 +664,20 @@ def test_llm_model_catalog_backfills_seedance_20_models() -> None:
     assert models["Doubao-Seed-2.0-pro"]["model_type"] == "chat"
 
 
+def test_llm_model_catalog_backfills_seedream_50_pro_model() -> None:
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer seedream-50-pro-catalog-user"}
+
+    response = client.get("/api/v1/llm/models?provider=volcano", headers=headers)
+
+    assert response.status_code == 200
+    models = {item["model_id"]: item for item in response.json()}
+    flagship = models["doubao-seedream-5-0-260128"]
+    assert flagship["model_type"] == "image-generation"
+    assert flagship["model_name_cn"] == "豆包 Seedream 5.0 Pro"
+    assert flagship["is_recommended"] is True
+
+
 def test_llm_model_catalog_backfills_minimax_m3_model() -> None:
     client = TestClient(app)
     headers = {"Authorization": "Bearer minimax-m3-catalog-user"}
@@ -1182,6 +1196,67 @@ async def test_minimax_m3_test_uses_domestic_endpoint_for_cn_key(monkeypatch: py
     assert result["success"] is True
     assert captured["url"] == "https://api.minimaxi.com/v1/text/chatcompletion_v2"
     assert captured["json"]["model"] == "MiniMax-M3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("base_resp", "expected_success"),
+    [
+        ({"status_code": 2054, "status_msg": "voice id not exist"}, False),
+        ({"status_code": 0, "status_msg": "success"}, True),
+    ],
+)
+async def test_minimax_tts_test_requires_successful_business_response(
+    monkeypatch: pytest.MonkeyPatch,
+    base_resp: dict,
+    expected_success: bool,
+) -> None:
+    captured: dict = {}
+
+    class _Elapsed:
+        @staticmethod
+        def total_seconds() -> float:
+            return 0.01
+
+    class _Response:
+        status_code = 200
+        elapsed = _Elapsed()
+        text = "provider response must stay private"
+
+        @staticmethod
+        def json() -> dict:
+            return {"data": {"audio": "00"}, "base_resp": base_resp}
+
+    class _Client:
+        def __init__(self, timeout: float):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, url: str, json: dict, headers: dict) -> _Response:
+            captured.update(url=url, payload=json)
+            return _Response()
+
+    monkeypatch.setattr("app.api.v1.endpoints.llm_config.httpx.AsyncClient", _Client)
+
+    result = await _test_minimax_api(
+        "sk-cp-valid-key", "MiniMax-speech-2.6-hd", "配置兼容性验证",
+    )
+
+    assert result["success"] is expected_success
+    assert captured["url"] == "https://api.minimaxi.com/v1/t2a_v2"
+    assert captured["payload"]["model"] == "speech-2.6-hd"
+    assert captured["payload"]["voice_setting"]["voice_id"] == "male-qn-qingse"
+    if expected_success:
+        assert result["message"].startswith("MiniMax TTS 精确验证成功")
+    else:
+        assert result["response"] is None
+        assert "2054" in result["message"]
+        assert "voice id not exist" not in str(result)
 
 
 @pytest.mark.asyncio

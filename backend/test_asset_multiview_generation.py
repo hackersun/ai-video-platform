@@ -610,7 +610,7 @@ def test_generate_character_entity_views_are_linked_to_character_records_for_vid
 
 
 def test_video_multiview_collection_accepts_legacy_entity_linked_character_assets() -> None:
-    from app.api.v1.endpoints.video import _collect_character_multiview_refs
+    from app.features.video_generation.public import collect_character_multiview_refs
 
     legacy_asset = SimpleNamespace(
         id="legacy-back-asset",
@@ -630,7 +630,7 @@ def test_video_multiview_collection_accepts_legacy_entity_linked_character_asset
         },
     )
 
-    refs = _collect_character_multiview_refs(
+    refs = collect_character_multiview_refs(
         [legacy_asset],
         [{"entity_id": "entity-sunjian", "character_id": "character-sunjian", "name": "孙剑"}],
     )

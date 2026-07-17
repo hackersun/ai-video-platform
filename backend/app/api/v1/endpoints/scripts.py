@@ -27,7 +27,9 @@ from app.services.story_prompt_context import (
     compact_text,
     load_story_prompt_context,
 )
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 from app.services.chapter_naming import format_chapter_label, normalize_duplicate_chapter_label_text
+from app.services.episode_production_service import create_script_record
 from app.api.v1.endpoints.dashboard import log_activity
 
 router = APIRouter(tags=["剧本管理"])
@@ -288,6 +290,94 @@ def _extract_names(items: list[Any], key: str = "name", limit: int = 12) -> list
     return names
 
 
+SCRIPT_CHARACTER_BLOCKLIST = {
+    "两人",
+    "二人",
+    "众人",
+    "他们",
+    "我们",
+    "星轨线",
+    "铜铃会指",
+    "信纸上",
+    "灯塔顶部",
+}
+
+
+def _normalize_character_anchor(value: str) -> Optional[str]:
+    name = re.sub(r"\s+", "", value or "").strip("，。！？；:：、")
+    if "把" in name:
+        name = name.split("把")[-1]
+    name = re.sub(r"^(?:少年|少女|青年|女孩|男孩|老人)", "", name)
+    name = re.sub(r"(?:带进|带入|追来|提醒|决定|发现|看见|约定|冲向|稳住|握紧|说|问|喊)$", "", name)
+    if len(name) < 2 or len(name) > 4:
+        return None
+    if name in SCRIPT_CHARACTER_BLOCKLIST:
+        return None
+    if any(token in name for token in ("星轨", "铜铃", "信纸", "镜面", "线索", "回声", "失踪", "雾港", "永远", "午夜", "夹层", "空间")):
+        return None
+    if not re.search(r"[\u4e00-\u9fff]", name):
+        return None
+    return name
+
+
+def _append_character_anchor(names: list[str], value: str) -> None:
+    name = _normalize_character_anchor(value)
+    if name and name not in names:
+        names.append(name)
+
+
+def _chapter_character_anchors(content: str, known_names: list[str]) -> list[str]:
+    text = content or ""
+    names: list[str] = []
+    for match in re.finditer(r"([\u4e00-\u9fff]{2,4})(?:和|与)([\u4e00-\u9fff]{2,4})", text):
+        _append_character_anchor(names, match.group(1))
+        _append_character_anchor(names, match.group(2))
+    for match in re.finditer(r"(?:少年|少女|青年|女孩|男孩|老人)?([\u4e00-\u9fff]{2,4})(?:在|从|追来|提醒|决定|发现|看见|约定|冲向|稳住|握紧|说|问|喊)", text):
+        _append_character_anchor(names, match.group(1))
+    for known_name in known_names:
+        if known_name in text:
+            _append_character_anchor(names, known_name)
+    return names
+
+
+def _first_valid_entity_name(candidates: list[str], chapter_content: str, fallback: str) -> str:
+    for candidate in candidates:
+        name = re.sub(r"\s+", "", candidate or "").strip("，。！？；:：、")
+        if not name or len(name) > 16:
+            continue
+        if name.startswith(("的", "的人", "而是", "可", "把")):
+            continue
+        if name not in chapter_content:
+            continue
+        return name
+    return fallback
+
+
+def _derive_scene_anchor(chapter_content: str, fallback: str) -> str:
+    specific_matches = [
+        (chapter_content.find(token), token)
+        for token in ("旧邮局", "暗巷", "废弃灯塔", "灯塔", "维修舱", "控制台")
+        if token in chapter_content
+    ]
+    if specific_matches:
+        return min(specific_matches, key=lambda item: item[0])[1]
+    ambient_matches = [
+        (chapter_content.find(token), token)
+        for token in ("雾港", "海边")
+        if token in chapter_content
+    ]
+    if ambient_matches:
+        return min(ambient_matches, key=lambda item: item[0])[1]
+    return fallback
+
+
+def _derive_prop_anchor(chapter_content: str, candidates: list[str], fallback: str) -> str:
+    for token in ("铜铃芯", "铜铃", "手电", "维修徽章", "徽章", "信纸", "信", "镜面", "星轨线"):
+        if token in chapter_content:
+            return token
+    return _first_valid_entity_name(candidates, chapter_content, fallback)
+
+
 def _relationship_items(entities: list[StoryEntity]) -> list[dict[str, Any]]:
     relationships: list[dict[str, Any]] = []
     for entity in entities:
@@ -313,11 +403,17 @@ async def load_story_entities_for_scope(
     novel_id: str,
     chapter_id: Optional[str] = None,
 ) -> list[StoryEntity]:
-    query = select(StoryEntity).where(
-        and_(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
     )
-    result = await db.execute(query.order_by(StoryEntity.entity_type, desc(StoryEntity.updated_at)))
-    return list(result.scalars().all())
+    recent_first = sorted(
+        entities,
+        key=lambda entity: entity.updated_at or entity.created_at or datetime.min,
+        reverse=True,
+    )
+    return sorted(recent_first, key=lambda entity: entity.entity_type or "")
 
 
 def _priority_sort_entities(items: list[StoryEntity], priority_text: str) -> list[StoryEntity]:
@@ -543,6 +639,102 @@ def summarize_script_context(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+SPEAKER_NAME_BLOCKLIST = {
+    "低声",
+    "轻声",
+    "沉声",
+    "急声",
+    "坚定",
+    "这里",
+    "系统",
+    "不能",
+    "他说",
+    "她说",
+    "他低声",
+    "她低声",
+}
+
+
+def _is_valid_dialogue_speaker_name(value: str) -> bool:
+    name = re.sub(r"\s+", "", value or "").strip("，。！？；:：、")
+    if len(name) < 2 or len(name) > 8:
+        return False
+    if name in SPEAKER_NAME_BLOCKLIST:
+        return False
+    if any(token in name for token in ("第", "场", "章", "说", "低声", "轻声", "沉声", "急声", "这里", "系统")):
+        return False
+    if name.startswith(("他", "她", "它", "这", "那")):
+        return False
+    return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", name))
+
+
+def _append_unique_speaker(names: list[str], value: str) -> None:
+    name = re.sub(r"\s+", "", value or "").strip("，。！？；:：、")
+    if _is_valid_dialogue_speaker_name(name) and name not in names:
+        names.append(name)
+
+
+def extract_chapter_dialogue_speakers(content: str, known_names: list[str]) -> list[str]:
+    names: list[str] = []
+    for name in known_names:
+        _append_unique_speaker(names, name)
+
+    text = content or ""
+    patterns = [
+        r"([\u4e00-\u9fffA-Za-z0-9_·]{2,8})(?:单人|独自|同框|站在|看着|扶住|走向|冲向|说|问|喊|回答|回应)",
+        r"(?:和|与)([\u4e00-\u9fffA-Za-z0-9_·]{2,8})(?:同框|争执|站在|说|问|喊|回答|回应)",
+        r"([\u4e00-\u9fffA-Za-z0-9_·]{2,8})[：:][^。！？\n]{1,80}",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
+            _append_unique_speaker(names, match.group(1))
+    return names
+
+
+def _last_speaker_in_text(text: str, speakers: list[str]) -> Optional[str]:
+    last_name: Optional[str] = None
+    last_index = -1
+    for speaker in speakers:
+        index = text.rfind(speaker)
+        if index > last_index:
+            last_name = speaker
+            last_index = index
+    return last_name
+
+
+def extract_chapter_dialogue_lines(content: str, known_names: list[str]) -> list[dict[str, str]]:
+    speakers = extract_chapter_dialogue_speakers(content, known_names)
+    if not speakers:
+        return []
+
+    speech_verb = r"(?:低声说|轻声说|沉声说|急声说|说道|说|问道|问|喊道|喊|回答|回应|答道)"
+    sentences = [part for part in re.split(r"(?<=[。！？])", content or "") if part.strip()]
+    lines: list[dict[str, str]] = []
+    last_speaker: Optional[str] = None
+
+    for sentence in sentences:
+        matches = list(re.finditer(rf"{speech_verb}[：:][“\"']?([^。！？\n]+)", sentence))
+        if not matches:
+            last_speaker = _last_speaker_in_text(sentence, speakers) or last_speaker
+            continue
+        for match in matches:
+            prefix = sentence[:match.start()]
+            speaker = _last_speaker_in_text(prefix, speakers) or last_speaker
+            text = match.group(1).strip().strip("“”\"' ")
+            if speaker and text:
+                lines.append({"speaker": speaker, "text": text})
+                last_speaker = speaker
+        last_speaker = _last_speaker_in_text(sentence, speakers) or last_speaker
+
+    return lines[:8]
+
+
+def _format_dialogue_bullets(lines: list[dict[str, str]], fallback: str) -> str:
+    if not lines:
+        return fallback
+    return "\n".join(f"- {line['speaker']}：\"{line['text']}。\"" for line in lines)
+
+
 def build_script_prompt_blocks(
     *,
     novel: Novel,
@@ -625,13 +817,49 @@ def build_dev_script_content(
     style_desc: str,
 ) -> str:
     summary = summarize_script_context(context)
-    protagonist = (summary["characters"] or ["主角"])[0]
-    scene = (summary["scenes"] or ["核心场景"])[0]
-    prop = (summary["props"] or ["关键道具"])[0]
-    event = (summary["events"] or ["关键事件"])[0]
-    prev_title = summary["previous_chapter"]["title"] if summary.get("previous_chapter") else "故事开端"
+    dialogue_lines = extract_chapter_dialogue_lines(chapter.content or "", summary["characters"] or [])
+    dialogue_speakers: list[str] = []
+    for line in dialogue_lines:
+        _append_unique_speaker(dialogue_speakers, line["speaker"])
+
+    chapter_content = chapter.content or ""
+    character_anchors = _chapter_character_anchors(chapter_content, summary["characters"] or [])
+    protagonist = (character_anchors or dialogue_speakers or ["主角"])[0]
+    second_actor = (
+        dialogue_speakers[1]
+        if len(dialogue_speakers) > 1
+        else (character_anchors[1] if len(character_anchors) > 1 else protagonist)
+    )
+    closing_actors = "、".join(dialogue_speakers or character_anchors) if (dialogue_speakers or character_anchors) else protagonist
+    scene = _derive_scene_anchor(chapter_content, _first_valid_entity_name(summary["scenes"] or [], chapter_content, "核心场景"))
+    prop = _derive_prop_anchor(chapter_content, summary["props"] or [], "关键道具")
+    event = _first_valid_entity_name(summary["events"] or [], chapter_content, "关键事件")
+    previous_chapter = summary.get("previous_chapter")
+    prev_title = previous_chapter["title"] if previous_chapter else None
     next_title = summary["next_chapter"]["title"] if summary.get("next_chapter") else "后续章节"
     chapter_label = format_chapter_label(chapter.title, chapter.chapter_number)
+    first_scene_core = (
+        f"承接《{prev_title}》的结果，用{prop}或异常画面引出{event}。"
+        if prev_title
+        else f"从当前章节开端建立悬念，用{prop}或异常画面引出{event}。"
+    )
+    opening_narration = (
+        f'- （旁白）"上一章留下的线索，在这一刻重新指向{event}。"'
+        if prev_title
+        else f'- （旁白）"本章开场的线索，在这一刻指向{event}。"'
+    )
+    first_scene_dialogue = _format_dialogue_bullets(
+        dialogue_lines[:1],
+        f'- {protagonist}：（低声）"这件事还没有结束。"',
+    )
+    second_scene_dialogue = _format_dialogue_bullets(
+        dialogue_lines[1:2],
+        f'- {second_actor}：（坚定）"我会查清楚。"',
+    )
+    third_scene_dialogue = _format_dialogue_bullets(
+        dialogue_lines[2:],
+        '- （旁白）"真正的答案，还藏在下一道门后。"',
+    )
     return f"""剧本标题：{chapter_label} 动漫短剧改编
 
 【第1场】开场钩子
@@ -639,14 +867,14 @@ def build_dev_script_content(
 - 时长：约8秒
 - 地点：{scene}
 - 人物：{protagonist}
-- 戏剧核心：承接《{prev_title}》的结果，用{prop}或异常画面引出{event}。
+- 戏剧核心：{first_scene_core}
 
 【画面描述】
 {style_desc}。镜头先交代{scene}的空间和氛围，再把注意力推向{protagonist}与{prop}，保证人物造型、道具状态和事件因果与小说一致。
 
 【对话/旁白】
-- {protagonist}：（低声）"这件事还没有结束。"
-- （旁白）"上一章留下的线索，在这一刻重新指向{event}。"
+{first_scene_dialogue}
+{opening_narration}
 
 【镜头序列】
 1. 全景 - 固定 - 展示{scene}和当前气氛。
@@ -662,14 +890,14 @@ def build_dev_script_content(
 - 场景类型：中景动作场
 - 时长：约12秒
 - 地点：{scene}
-- 人物：{protagonist}
-- 戏剧核心：{protagonist}围绕{event}做出选择，推动下一场。
+- 人物：{second_actor}
+- 戏剧核心：{second_actor}围绕{event}做出选择，推动下一场。
 
 【画面描述】
 角色动作、表情和站位要清楚，避免新增无关角色。道具状态必须承接上一场。
 
 【对话/旁白】
-- {protagonist}：（坚定）"我会查清楚。"
+{second_scene_dialogue}
 
 【镜头序列】
 1. 中景 - 跟拍 - 角色移动并确认线索。
@@ -685,14 +913,14 @@ def build_dev_script_content(
 - 场景类型：悬念场
 - 时长：约8秒
 - 地点：{scene}
-- 人物：{protagonist}
+- 人物：{closing_actors}
 - 戏剧核心：本章结果必须能自然接到《{next_title}》，不提前改写后续事件。
 
 【画面描述】
 用一个未解决动作或关键信号收束，形成下一集钩子。
 
 【对话/旁白】
-- （旁白）"真正的答案，还藏在下一道门后。"
+{third_scene_dialogue}
 
 【镜头序列】
 1. 特写 - 固定 - 关键物件或线索。
@@ -1102,8 +1330,8 @@ async def create_script(
         novel_title = novel.title
     extra_data = {"chapter_id": chapter_id} if chapter_id else {}
 
-    db_script = Script(
-        id=str(uuid4()),
+    db_script = await create_script_record(
+        db,
         user_id=user_id,
         novel_id=novel_id,
         chapter_id=chapter_id,
@@ -1113,10 +1341,8 @@ async def create_script(
         genre=script.genre,
         style=script.style,
         duration=script.duration,
-        status="draft",
         extra_data=extra_data,
     )
-    db.add(db_script)
     await db.commit()
     await db.refresh(db_script)
 

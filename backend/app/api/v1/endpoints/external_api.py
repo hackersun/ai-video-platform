@@ -10,9 +10,11 @@ from __future__ import annotations
 from app.core.time_utils import utc_now
 
 import shutil
+from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,6 +28,8 @@ from app.core.model_registry import get_registry
 from app.core.qwen_config import QWEN_MODELS
 from app.core.security import get_current_user_id
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
+from app.services.media_delivery import resolve_provider_media_url
+from app.services.media_persistence import STATIC_ROOT
 
 router = APIRouter(tags=["外部API"])
 
@@ -246,6 +250,19 @@ class ExternalAPITestResponse(BaseModel):
     checked_at: datetime
 
 
+class ExternalAPIDeliveryTestResponse(BaseModel):
+    config_id: str
+    status: str
+    success: bool
+    message: str
+    checked_at: datetime
+    source_url: str
+    delivery_method: Optional[str] = None
+    object_key: Optional[str] = None
+    download_status: Optional[int] = None
+    provider_url_preview: Optional[str] = None
+
+
 class ProductionCapabilityStatus(BaseModel):
     providers: List[ExternalAPIProviderResponse]
     configs: List[ExternalAPIConfigResponse]
@@ -390,6 +407,31 @@ def _is_public_http_url(url: str) -> bool:
     return is_cloud_accessible_http_url(url)
 
 
+def _mask_url_for_response(url: Optional[str]) -> Optional[str]:
+    if not url:
+        return None
+    parts = urlsplit(url)
+    masked_query = []
+    for key, value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() in {"token", "authorization", "signature", "sign", "x-amz-signature"}:
+            masked_query.append((key, "***"))
+        else:
+            masked_query.append((key, value))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(masked_query), parts.fragment))
+
+
+def _write_delivery_probe_file() -> str:
+    target_dir = Path(STATIC_ROOT) / "generated" / "adapter-self-check"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / f"probe-{uuid4().hex}.png"
+    # 1x1 transparent PNG. The self-check validates delivery plumbing, not image quality.
+    target_path.write_bytes(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
+        b"\x00\x00\x00\rIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    return f"/static/generated/adapter-self-check/{target_path.name}"
+
+
 async def _test_external_config(config: ExternalAPIConfig, provider: ExternalAPIProvider) -> tuple[str, str]:
     provider_key = provider.name
     extra = config.extra_config or {}
@@ -448,10 +490,22 @@ async def _test_external_config(config: ExternalAPIConfig, provider: ExternalAPI
             return "failed", "缺少公网基础地址，请填写 CDN/对象存储公开域名"
         if not _is_public_http_url(public_base_url):
             return "failed", "公网基础地址必须是云端可访问的 http(s) URL，不能使用 localhost、内网或相对路径"
+        storage_provider = str(extra.get("storage_provider") or extra.get("provider") or "").strip().lower()
+        if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
+            api_key = config.get_api_key_decrypted()
+            api_secret = config.get_api_secret_decrypted()
+            bucket = str(extra.get("bucket") or extra.get("bucket_name") or "").strip()
+            if not api_key or not api_secret or not bucket:
+                return "failed", "七牛对象存储需要配置 Access Key、Secret Key 和 bucket，不能仅映射公网域名"
+            upload_url = str(extra.get("upload_url") or "https://upload.qiniup.com").strip()
+            if not _is_public_http_url(upload_url):
+                return "failed", "七牛上传地址必须是云端可访问的 http(s) URL"
         local_prefix = extra.get("local_static_prefix") or "/static/"
         public_prefix = extra.get("public_static_prefix") or "/static/"
         if not str(local_prefix).startswith("/") or not str(public_prefix).startswith("/"):
             return "failed", "静态路径前缀必须以 / 开头"
+        if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
+            return "success", f"七牛对象存储上传出口可用：{public_base_url.rstrip('/')}{str(public_prefix).rstrip('/')}/..."
         return "success", f"对象存储/CDN公网出口可用：{public_base_url.rstrip('/')}{str(public_prefix).rstrip('/')}/..."
 
     return "configured", "配置完整；该适配器将在任务提交时验证"
@@ -555,6 +609,102 @@ async def test_config(
         success=status_value in {"success", "configured"},
         message=message,
         checked_at=config.tested_at,
+    )
+
+
+@router.post("/configs/{config_id}/delivery-test", response_model=ExternalAPIDeliveryTestResponse)
+async def test_config_media_delivery(
+    config_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    config, provider = await _get_config_with_provider(db, user_id, config_id)
+    if provider.api_type != "storage":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有对象存储/CDN配置支持媒体交付自检")
+
+    status_value, base_message = await _test_external_config(config, provider)
+    if status_value == "failed":
+        config.test_status = "failed"
+        config.test_message = base_message
+        config.tested_at = utc_now()
+        await db.commit()
+        return ExternalAPIDeliveryTestResponse(
+            config_id=config.id,
+            status="failed",
+            success=False,
+            message=base_message,
+            checked_at=config.tested_at,
+            source_url="",
+        )
+
+    source_url = _write_delivery_probe_file()
+    delivery = await resolve_provider_media_url(
+        db,
+        user_id,
+        source_url,
+        media_type="image",
+        storage_config_id=config.id,
+    )
+    provider_url = delivery.get("provider_url")
+    if not delivery.get("image_url_sent") or not provider_url:
+        message = delivery.get("omitted_reason") or "对象存储未返回云端可读 URL"
+        config.test_status = "failed"
+        config.test_message = message
+        config.tested_at = utc_now()
+        await db.commit()
+        return ExternalAPIDeliveryTestResponse(
+            config_id=config.id,
+            status="failed",
+            success=False,
+            message=message,
+            checked_at=config.tested_at,
+            source_url=source_url,
+            delivery_method=delivery.get("delivery_method"),
+            object_key=delivery.get("object_key"),
+            provider_url_preview=_mask_url_for_response(provider_url),
+        )
+
+    download_status: Optional[int] = None
+    try:
+        async with httpx.AsyncClient(timeout=min(config.timeout or 15, 15), follow_redirects=True) as client:
+            response = await client.get(provider_url)
+        download_status = response.status_code
+        response.raise_for_status()
+    except Exception as exc:
+        message = f"对象存储已生成 URL，但云端读取失败：{exc}"
+        config.test_status = "failed"
+        config.test_message = message
+        config.tested_at = utc_now()
+        await db.commit()
+        return ExternalAPIDeliveryTestResponse(
+            config_id=config.id,
+            status="failed",
+            success=False,
+            message=message,
+            checked_at=config.tested_at,
+            source_url=source_url,
+            delivery_method=delivery.get("delivery_method"),
+            object_key=delivery.get("object_key"),
+            download_status=download_status,
+            provider_url_preview=_mask_url_for_response(provider_url),
+        )
+
+    message = "真实媒体交付自检通过：本地 /static 探针文件已转换为云端可读 URL，并完成下载验证"
+    config.test_status = "success"
+    config.test_message = message
+    config.tested_at = utc_now()
+    await db.commit()
+    return ExternalAPIDeliveryTestResponse(
+        config_id=config.id,
+        status="success",
+        success=True,
+        message=message,
+        checked_at=config.tested_at,
+        source_url=source_url,
+        delivery_method=delivery.get("delivery_method"),
+        object_key=delivery.get("object_key"),
+        download_status=download_status,
+        provider_url_preview=_mask_url_for_response(provider_url),
     )
 
 

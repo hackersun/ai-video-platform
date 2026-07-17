@@ -272,3 +272,8 @@ VOLCANO_AGENT_PLAN_MODELS = [
         description="Agent Plan Seedance 2.0 Fast 视频生成模型，适合批量镜头草稿和快速预览。",
     ),
 ]
+
+
+def find_volcano_agent_plan_model(model_id: str) -> dict | None:
+    """Resolve an Agent Plan catalog model by its product-facing identifier."""
+    return next((model for model in VOLCANO_AGENT_PLAN_MODELS if model["id"] == model_id), None)

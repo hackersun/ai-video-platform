@@ -16,6 +16,7 @@ from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models import Chapter, Script, Shot, Storyboard
 from app.api.v1.endpoints.storyboards import extract_dialogue_speaker, strip_dialogue_speaker
+from app.services.storyboard_template_service import plan_storyboard_shot_count
 
 router = APIRouter(tags=["分镜AI生成"])
 
@@ -212,7 +213,7 @@ class BatchGenerateShotsRequest(BaseModel):
     """批量生成镜头请求"""
     storyboard_id: str = Field(..., description="分镜ID")
     scene_description: str = Field(..., description="场景描述")
-    shot_count: int = Field(5, ge=1, le=20, description="生成镜头数量")
+    shot_count: Optional[int] = Field(None, ge=1, le=20, description="生成镜头数量，不传则按上下文自动规划")
     style: str = Field("anime", description="风格")
     chapter_content: Optional[str] = Field(None, description="章节完整内容")
     script_content: Optional[str] = Field(None, description="剧本内容（优先用于台词和镜头拆分）")
@@ -369,6 +370,13 @@ async def generate_shots(
     """
     try:
         service, _provider_name, model_id, _base_url = await get_user_text_generation_service(db, user_id)
+        source_content = request.script_content or request.chapter_content or request.scene_description
+        shot_count_plan = plan_storyboard_shot_count(
+            template={"shots": [{}, {}, {}, {}]},
+            source_content=source_content,
+            requested_shot_count=request.shot_count,
+        )
+        effective_shot_count = min(20, shot_count_plan["shot_count"])
 
         # 构建提示词 - 明确要求中文输出
         system_prompt = """你是一个专业的视频分镜师，擅长将场景描述转化为详细的分镜脚本。
@@ -406,7 +414,7 @@ async def generate_shots(
 
 场景：{request.scene_description}
 风格：{request.style}
-镜头数量：{request.shot_count}个
+镜头数量：{effective_shot_count}个
 """
 
         if request.chapter_content:
@@ -422,7 +430,7 @@ async def generate_shots(
             ])
             user_prompt += f"\n\n角色列表：\n{chars_info}"
 
-        user_prompt += "\n\n请生成" + str(request.shot_count) + "个镜头，从开场到结尾，形成完整的分镜序列。"
+        user_prompt += "\n\n请生成" + str(effective_shot_count) + "个镜头，从开场到结尾，形成完整的分镜序列。"
 
         messages = [
             {"role": "system", "content": system_prompt},

@@ -2,8 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Archive,
-  Boxes,
   Edit3,
   Eye,
   ExternalLink,
@@ -11,14 +9,9 @@ import {
   Image as ImageIcon,
   Loader2,
   Lock,
-  Unlock,
   Music,
-  Plus,
   RefreshCw,
-  Save,
-  Search,
   Shield,
-  Trash2,
   Video,
   Volume2,
   X,
@@ -37,12 +30,21 @@ import {
 } from '@/components/media/image-style-template-picker';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/lib/api-client';
 import { formatChapterLabel } from '@/lib/chapter-label';
+import { AssetWorkbench } from '@/features/assets/components/asset-workbench';
+import { AssetProductionWizard } from '@/features/assets/components/asset-production-wizard';
+import { deactivateAssetEntity, listAssetEntityOptions } from '@/features/assets/api';
+import type { AssetEntityOption } from '@/features/assets/types';
+import { AssetEditorDrawer } from '@/features/assets/components/asset-editor-drawer';
+import {
+  getAssetFailure as assetFailureInfo,
+  getConsistencyScore as visualConsistencyScore,
+  type AssetWorkbenchItem,
+} from '@/features/assets/asset-workbench-model';
 
 type AssetCategory = {
   id: string;
@@ -72,47 +74,13 @@ type ScriptItem = {
   title: string;
 };
 
-type StoryEntity = {
-  id: string;
-  name: string;
-  entity_type: string;
+type Asset = AssetWorkbenchItem & {
   description?: string;
-  appearance?: string;
-  visual_prompt?: string;
-};
-
-type Asset = {
-  id: string;
-  category: string;
-  name: string;
-  description?: string;
-  asset_type?: string;
-  url?: string;
-  thumbnail_url?: string;
-  source_url?: string;
-  project_id?: string;
-  novel_id?: string;
-  chapter_id?: string;
-  script_id?: string;
-  entity_id?: string;
-  entity_type?: string;
-  tags?: string[];
-  style_tags?: string[];
   prompt_template?: string;
   source_prompt?: string;
   variables?: any[];
   shot_template?: any;
-  generation_params?: Record<string, any>;
-  is_public?: boolean;
   likes?: number;
-  usage_count?: number;
-  version?: number;
-  is_locked?: boolean;
-  is_final?: boolean;
-  status?: string;
-  error_message?: string;
-  visual_consistency?: { score?: number } | number;
-  created_at?: string;
 };
 
 type PreviewMedia = {
@@ -174,14 +142,6 @@ const ASSET_TYPE_LABELS = ASSET_TYPE_OPTIONS.reduce<Record<string, string>>((acc
   acc[option.value] = option.label;
   return acc;
 }, {});
-
-const QUICK_PRESET_FILTERS = [
-  { label: '角色三视图', category: 'character' },
-  { label: '场景四视图', category: 'scene' },
-  { label: '道具多视图', category: 'prop' },
-  { label: '风格图', category: 'style' },
-  { label: '画面比例', category: 'aspect_ratio' },
-];
 
 const ENTITY_TYPE_LABELS: Record<string, string> = {
   character: '角色',
@@ -462,27 +422,6 @@ const readAspectRatios = (shotTemplate: any) => {
   return [];
 };
 
-const assetFailureInfo = (asset: Asset) => {
-  const params = asset.generation_params || {};
-  const status = asset.status || params.status;
-  const failed = status === 'failed' || status === 'error';
-  if (!failed) return null;
-  return {
-    error: asset.error_message || params.error_message || params.error_reason || '生成失败，暂无详细原因',
-    retryable: params.retryable !== false,
-    viewLabel: params.view_label || params.view_title || params.view_key,
-  };
-};
-
-const visualConsistencyScore = (asset: Asset) => {
-  const topLevel = typeof asset.visual_consistency === 'number'
-    ? asset.visual_consistency
-    : asset.visual_consistency?.score;
-  const nested = asset.generation_params?.visual_consistency?.score;
-  const score = topLevel ?? nested;
-  return typeof score === 'number' && Number.isFinite(score) ? Math.round(score) : null;
-};
-
 const VIEW_KEY_LABELS: Record<string, string> = {
   front: '正面',
   side: '侧面',
@@ -634,7 +573,6 @@ function AssetMediaField({
 }
 
 export default function AssetsPage() {
-  const formSectionRef = useRef<HTMLDivElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const lineageContextRef = useRef('');
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -643,7 +581,7 @@ export default function AssetsPage() {
   const [novels, setNovels] = useState<Novel[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [scripts, setScripts] = useState<ScriptItem[]>([]);
-  const [entities, setEntities] = useState<StoryEntity[]>([]);
+  const [entities, setEntities] = useState<AssetEntityOption[]>([]);
   const [viewPresets, setViewPresets] = useState<AssetViewPreset[]>(FALLBACK_VIEW_PRESETS);
   const [styleTemplates, setStyleTemplates] = useState<ImageStyleTemplate[]>(FALLBACK_STYLE_TEMPLATES);
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -728,14 +666,6 @@ export default function AssetsPage() {
     && targetSource === 'production-card'
     && Boolean(targetViewKey && targetView);
 
-  const styleOptions = useMemo(
-    () => (styleTemplates.length ? styleTemplates : FALLBACK_STYLE_TEMPLATES).map((template) => ({
-      value: template.style,
-      label: template.label,
-    })),
-    [styleTemplates]
-  );
-
   const wizardEntities = useMemo(
     () => entities.filter((entity) => entity.entity_type === selectedEntityType),
     [entities, selectedEntityType]
@@ -761,7 +691,9 @@ export default function AssetsPage() {
       const disabled = selectedEntityType === 'character' && isCompositeCharacterName(entity.name);
       return {
         value: entity.id,
-        label: disabled ? `${entity.name}（群体/复合角色，请先拆分）` : entity.name,
+        label: disabled
+          ? `${entity.name}（群体/复合角色，请先拆分）`
+          : `${entity.name} · ${entity.active_asset_count} 项资产`,
         disabled,
       };
     }),
@@ -995,12 +927,20 @@ export default function AssetsPage() {
         const [chapterList, scriptList, entityList] = await Promise.all([
           apiClient.getChapters(activeNovelId).catch(() => []),
           apiClient.getScripts({ novel_id: activeNovelId, page_size: 100 }).catch(() => []),
-          apiClient.getStoryEntities({ novel_id: activeNovelId, limit: 200 }).catch(() => []),
+          listAssetEntityOptions({ novel_id: activeNovelId, limit: 200 }).catch(() => []),
         ]);
         setChapters(Array.isArray(chapterList) ? chapterList : []);
         setScripts(Array.isArray(scriptList) ? scriptList : []);
         const nextEntities = Array.isArray(entityList) ? entityList : [];
         setEntities(nextEntities);
+        setSelectedEntityId((current) => (
+          current && !nextEntities.some((entity) => entity.id === current) ? '' : current
+        ));
+        setForm((current) => (
+          current.entity_id && !nextEntities.some((entity) => entity.id === current.entity_id)
+            ? { ...current, entity_id: '' }
+            : current
+        ));
         if (pendingEntityId && nextEntities.some((entity) => entity.id === pendingEntityId)) {
           setSelectedEntityId(pendingEntityId);
           setPendingEntityId('');
@@ -1084,7 +1024,6 @@ export default function AssetsPage() {
     setFormOpen(true);
     setMessage(null);
     requestAnimationFrame(() => {
-      formSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       nameInputRef.current?.focus({ preventScroll: true });
     });
   };
@@ -1092,7 +1031,7 @@ export default function AssetsPage() {
   const startEdit = (asset: Asset) => {
     setEditingId(asset.id);
     setFormOpen(true);
-    setShowAdvancedFields(Boolean(asset.variables || asset.shot_template || asset.source_prompt || asset.generation_params));
+    setShowAdvancedFields(false);
     setForm({
       name: asset.name || '',
       category: asset.category || 'character',
@@ -1116,7 +1055,6 @@ export default function AssetsPage() {
     });
     setMessage(null);
     requestAnimationFrame(() => {
-      formSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       nameInputRef.current?.focus({ preventScroll: true });
     });
   };
@@ -1201,6 +1139,26 @@ export default function AssetsPage() {
     }
   };
 
+  const deactivateProductionEntity = async (entity: AssetEntityOption) => {
+    setMessage(null);
+    try {
+      const result = await deactivateAssetEntity(entity.id);
+      setAssets((current) => current.filter((asset) => asset.entity_id !== entity.id));
+      setEntities((current) => current.filter((item) => item.id !== entity.id));
+      setSelectedAssets((current) => new Set(Array.from(current).filter((assetId) => (
+        assets.find((asset) => asset.id === assetId)?.entity_id !== entity.id
+      ))));
+      setSelectedEntityId((current) => current === entity.id ? '' : current);
+      setForm((current) => current.entity_id === entity.id ? { ...current, entity_id: '' } : current);
+      if (editingAsset?.entity_id === entity.id) resetForm();
+      setMessage(`已停用制片对象「${result.entity_name}」，并归档 ${result.archived_asset_count} 项资产`);
+      return true;
+    } catch (err: any) {
+      setMessage(err?.message || '停用制片对象失败，请刷新后重试');
+      return false;
+    }
+  };
+
   const lockAsset = async (assetId: string) => {
     setMessage(null);
     try {
@@ -1268,7 +1226,7 @@ export default function AssetsPage() {
         startEdit(regenerated);
       }
       await loadAssets();
-      setMessage(`已按「${styleOptions.find((item) => item.value === selectedGenerationStyle)?.label || selectedGenerationStyle}」重新生成 ${asset.name}`);
+      setMessage(`已按「${styleTemplates.find((item) => item.style === selectedGenerationStyle)?.label || selectedGenerationStyle}」重新生成 ${asset.name}`);
     } catch (err: any) {
       setMessage(err?.message || '重新生成失败，请检查图像模型配置和资产绑定关系');
     } finally {
@@ -1582,312 +1540,100 @@ export default function AssetsPage() {
     }
   };
 
-  const stats = useMemo(() => ({
-    total: visibleAssets.length,
-    global: visibleAssets.filter((asset) => !asset.project_id && !asset.novel_id && !asset.chapter_id && !asset.script_id && !asset.entity_id).length,
-    public: visibleAssets.filter((asset) => asset.is_public).length,
-    referenced: visibleAssets.filter((asset) => (asset.usage_count || 0) > 0).length,
-    locked: visibleAssets.filter((asset) => asset.is_locked).length,
-    final: visibleAssets.filter((asset) => asset.is_final).length,
-  }), [visibleAssets]);
-
   const completedViewCount = activePreset.views.filter((view) => Boolean(viewAssetsByKey[view.key]?.url)).length;
   const totalRequiredViewCount = activePreset.views.length;
-  const wizardProgress = totalRequiredViewCount ? Math.round((completedViewCount / totalRequiredViewCount) * 100) : 0;
-  const selectedStyleLabel = styleOptions.find((option) => option.value === selectedGenerationStyle)?.label || selectedGenerationStyle || '未选择';
-  const selectedEntityTypeLabel = ENTITY_TYPE_LABELS[selectedEntityType] || selectedEntityType;
-  const generationButtonLabel = productionCardTargetActive && targetView
-    ? `生成${targetView.label}缺失视图`
-    : `生成${selectedEntityTypeLabel}缺失视图`;
-
   const resourcePreviewUrl = toMediaUrl(form.url);
   const thumbnailPreviewUrl = toMediaUrl(form.thumbnail_url);
 
   return (
     <MainLayout>
       <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-white">资产库</h1>
-            <p className="mt-1 text-white/60">统一管理角色三视图、场景/道具多视图、风格图、画面比例、音效、关键帧和提示词资产</p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" className="border-white/20 text-white" onClick={loadAssets} disabled={loading}>
-              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-              刷新
-            </Button>
-            <Button className="bg-violet-600 hover:bg-violet-700" onClick={startCreate}>
-              <Plus className="mr-2 h-4 w-4" />
-              新建资产
-            </Button>
-          </div>
-        </div>
+        <AssetWorkbench
+          assets={visibleAssets}
+          novels={novels}
+          selectedNovelId={selectedNovelId}
+          search={searchQuery}
+          loading={loading}
+          selectedIds={selectedAssets}
+          entityOptions={entities}
+          toMediaUrl={toMediaUrl}
+          categoryLabel={categoryLabel}
+          onNovelChange={setSelectedNovelId}
+          onSearchChange={setSearchQuery}
+          onRefresh={loadAssets}
+          onCreate={startCreate}
+          onCompleteMissing={() => document.querySelector('[data-testid="asset-wizard"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          onToggle={toggleAssetSelection}
+          onClearSelection={() => setSelectedAssets(new Set())}
+          onPreview={(asset) => previewAssetMedia(asset as Asset)}
+          onEdit={(asset) => startEdit(asset as Asset)}
+          onRetry={(asset) => retryAssetGeneration(asset as Asset)}
+          onRegenerate={(asset) => regenerateAsset(asset as Asset)}
+          onArchive={archiveAsset}
+          onLock={lockAsset}
+          onUnlock={unlockAsset}
+          onHistory={(asset) => asset.entity_id && loadVersionHistory(asset.entity_id, asset.category)}
+          onScopeGlobal={(asset) => bindAssetScope(asset as Asset, 'global')}
+          onBatchLock={batchLockAssets}
+          onBatchUnlock={batchUnlockAssets}
+          onBatchTag={batchSetAssetTags}
+          onBatchScope={batchSetAssetsToCurrentScope}
+          onBatchRebuild={rebuildAssetPack}
+          onBatchArchive={batchArchiveAssets}
+          onDeactivateEntity={deactivateProductionEntity}
+        />
 
-        <div className="grid grid-cols-2 gap-2 md:grid-cols-6">
-          {[
-            ['资产总数', stats.total],
-            ['全局资产', stats.global],
-            ['公开资产', stats.public],
-            ['已被引用', stats.referenced],
-            ['已锁定', stats.locked],
-            ['定稿', stats.final],
-          ].map(([label, value]) => (
-            <Card key={label} className="border-white/10 bg-white/[0.04]">
-              <CardContent className="flex items-center justify-between gap-2 px-3 py-2.5">
-                <div className="text-xs text-white/45">{label}</div>
-                <div className="text-lg font-semibold text-white">{value}</div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-
-        <Card className="bg-white/5 border-white/10" data-testid="asset-wizard">
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <CardTitle className="flex items-center gap-2 text-white">
-                  <Sparkles className="h-5 w-5 text-violet-300" />
-                  AI 资产制片向导
-                </CardTitle>
-                <p className="mt-1 text-sm text-white/55">
-                  先选小说对象，再补齐必备视图；生成后的参考图会自动绑定对象，后续镜头和视频可直接复用。
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <Badge variant="outline" className="border-white/20 text-white/70">{selectedEntityTypeLabel}</Badge>
-                <Badge variant="outline" className="border-violet-300/35 text-violet-100">{selectedStyleLabel}</Badge>
-                <Badge variant="outline" className="border-emerald-300/35 text-emerald-100">
-                  {completedViewCount}/{totalRequiredViewCount} 已完成
-                </Badge>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {productionCardTargetActive && targetView ? (
-              <div className="rounded-lg border border-amber-300/25 bg-amber-400/10 p-3 text-sm text-amber-50">
-                <div className="font-medium text-white">来自定稿卡的补齐任务</div>
-                <div className="mt-1 text-amber-100">
-                  {(selectedWizardEntity?.name || entityLabel(selectedEntityId))} · {targetView.label}
-                </div>
-                <div className="mt-1 text-xs leading-5 text-amber-100/70">
-                  已带入小说、对象和视图位置；生成后会自动绑定当前对象，返回定稿卡即可继续复审。
-                </div>
-              </div>
-            ) : null}
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_1fr]">
-              <div className="space-y-3 rounded-lg border border-white/10 bg-black/20 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <h2 className="text-lg font-semibold text-white">{activePreset.title}</h2>
-                  <Badge variant="outline" className="border-white/20 text-white/65">
-                    {activePreset.views.length} 个必备视图
-                  </Badge>
-                </div>
-                <p className="text-sm leading-6 text-white/55">
-                  {activePreset.description || '补齐视图后，可锁定为定稿参考，避免后续视频生成时人物、空间或道具随机变化。'}
-                </p>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <label className="space-y-1 text-sm text-white/70" htmlFor="asset-wizard-novel">
-                    <span>向导小说</span>
-                    <Select
-                      id="asset-wizard-novel"
-                      value={selectedNovelId}
-                      onChange={(event) => setSelectedNovelId(event.target.value)}
-                      options={[{ value: '', label: '请选择小说' }, ...novels.map((novel) => ({ value: novel.id, label: novel.title }))]}
-                    />
-                  </label>
-                  <label className="space-y-1 text-sm text-white/70" htmlFor="asset-wizard-entity-type">
-                    <span>资产对象类型</span>
-                    <Select
-                      id="asset-wizard-entity-type"
-                      value={selectedEntityType}
-                      onChange={(event) => {
-                        setSelectedEntityType(event.target.value);
-                        setSelectedEntityId('');
-                        setSelectedCategory(event.target.value);
-                        setTargetViewKey('');
-                        setTargetAction('');
-                        setTargetSource('');
-                      }}
-                      options={[
-                        { value: 'character', label: '角色' },
-                        { value: 'scene', label: '场景' },
-                        { value: 'prop', label: '道具' },
-                      ]}
-                    />
-                  </label>
-                  <label className="space-y-1 text-sm text-white/70" htmlFor="asset-wizard-entity">
-                    <span>小说对象</span>
-                    <Select
-                      id="asset-wizard-entity"
-                      value={selectedEntityId}
-                      disabled={!selectedNovelId || wizardEntities.length === 0}
-                      onChange={(event) => {
-                        setSelectedEntityId(event.target.value);
-                        setSelectedScope('');
-                        if (event.target.value !== selectedEntityId) {
-                          setTargetViewKey('');
-                          setTargetAction('');
-                          setTargetSource('');
-                        }
-                      }}
-                      options={[
-                        {
-                          value: '',
-                          label: selectedNovelId
-                            ? wizardEntities.length
-                              ? `请选择${ENTITY_TYPE_LABELS[selectedEntityType]}`
-                              : `暂无${ENTITY_TYPE_LABELS[selectedEntityType]}，请先在实体库提取或创建`
-                            : '请先选择小说',
-                        },
-                        ...wizardEntityOptions,
-                      ]}
-                    />
-                  </label>
-                  <label className="space-y-1 text-sm text-white/70" htmlFor="asset-wizard-style">
-                    <span>画面风格</span>
-                    <Select
-                      id="asset-wizard-style"
-                      value={selectedGenerationStyle}
-                      onChange={(event) => setSelectedGenerationStyle(event.target.value)}
-                      options={styleOptions}
-                    />
-                  </label>
-                  <label className="space-y-1 text-sm text-white/70" htmlFor="asset-wizard-consistency-mode">
-                    <span>一致性模式</span>
-                    <Select
-                      id="asset-wizard-consistency-mode"
-                      value={selectedConsistencyMode}
-                      onChange={(event) => setSelectedConsistencyMode(event.target.value as 'draft' | 'standard' | 'strict')}
-                      options={[
-                        { value: 'standard', label: '标准：故事契约 + 锚点参考' },
-                        { value: 'strict', label: '严格：必须支持参考图' },
-                        { value: 'draft', label: '草稿：快速生成后复审' },
-                      ]}
-                    />
-                  </label>
-                </div>
-
-                {(disabledWizardEntityCount > 0 || selectedWizardEntityInvalid) && (
-                  <div className="rounded-md border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-100">
-                    角色三视图只能用于单一角色，群体/复合角色请先在实体库拆分；否则容易生成多人拼接图、性别错乱或前后视图不是同一人物。
-                  </div>
-                )}
-
-                {selectedWizardEntity && (
-                  <div className="rounded-md border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs leading-5 text-emerald-50">
-                    已绑定：{selectedWizardEntity.name}
-                  </div>
-                )}
-
-                {selectedVisualContract && (
-                  <div data-testid="asset-visual-contract-panel" className="rounded-lg border border-cyan-300/25 bg-cyan-400/10 p-3 text-sm text-cyan-50">
-                    <div className="font-medium text-white">视觉契约</div>
-                    <div className="mt-2 grid gap-1 text-xs leading-5 text-cyan-100/80">
-                      {selectedVisualContract.continuity_axes?.era && <div>时代：{selectedVisualContract.continuity_axes.era}</div>}
-                      {selectedVisualContract.continuity_axes?.weather && <div>天气：{selectedVisualContract.continuity_axes.weather}</div>}
-                      {selectedVisualContract.continuity_axes?.lighting_direction && <div>光源：{selectedVisualContract.continuity_axes.lighting_direction}</div>}
-                      {selectedVisualContract.continuity_axes?.color_palette && <div>色彩：{selectedVisualContract.continuity_axes.color_palette}</div>}
-                      {Array.isArray(selectedVisualContract.spatial_layout?.fixed_elements) && selectedVisualContract.spatial_layout.fixed_elements.length ? <div>固定空间：{selectedVisualContract.spatial_layout.fixed_elements.join('、')}</div> : null}
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2 rounded-md border border-white/10 bg-white/[0.03] p-3">
-                  <div className="flex items-center justify-between text-xs text-white/55">
-                    <span>必备视图进度</span>
-                    <span>{completedViewCount}/{totalRequiredViewCount}</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full rounded-full bg-violet-400" style={{ width: `${wizardProgress}%` }} />
-                  </div>
-                </div>
-
-                <Button
-                  className="w-full bg-violet-600 hover:bg-violet-700"
-                  disabled={!selectedEntityId || generatingViews || selectedWizardEntityInvalid}
-                  onClick={generateMissingViews}
-                >
-                  {generatingViews ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                  {generationButtonLabel}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full border-cyan-300/40 text-cyan-100"
-                  disabled={reextractingAssets || selectedWizardEntityInvalid || (!selectedEntityId && !selectedNovelId)}
-                  onClick={rebuildAssetPack}
-                >
-                  {reextractingAssets ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-                  重建当前资产包
-                </Button>
-              </div>
-
-              <div className="space-y-3">
-                <ImageStyleTemplatePicker
-                  templates={styleTemplates}
-                  value={selectedGenerationStyle}
-                  onChange={setSelectedGenerationStyle}
-                  toMediaUrl={toMediaUrl}
-                  recommendedFor={selectedEntityType}
-                  compact
-                  layout="inline"
-                />
-
-                {(activePreset.recommended_aspect_ratios?.length || activePreset.style_examples?.length) && (
-                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-[220px_1fr]">
-                    {activePreset.recommended_aspect_ratios?.length ? (
-                      <div className="rounded-lg border border-cyan-300/20 bg-cyan-500/10 p-3">
-                        <div className="text-xs text-cyan-100/70">推荐比例</div>
-                        <div className="mt-1 text-sm font-medium text-cyan-50">
-                          推荐比例：{activePreset.recommended_aspect_ratios.join('、')}
-                        </div>
-                      </div>
-                    ) : null}
-                    {activePreset.style_examples?.length ? (
-                      <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                        <div className="mb-2 text-xs text-white/45">题材模板示例</div>
-                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                          {activePreset.style_examples.slice(0, 4).map((example) => {
-                            const sampleUrl = toMediaUrl(example.sample_url);
-                            return (
-                              <div
-                                key={`${example.style}-${example.label}`}
-                                data-testid="asset-style-example"
-                                className="flex gap-3 rounded-md border border-white/10 bg-white/[0.04] p-2"
-                              >
-                                {sampleUrl ? (
-                                  <img src={sampleUrl} alt="" className="h-12 w-12 shrink-0 rounded object-cover" />
-                                ) : (
-                                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-white/5">
-                                    <Palette className="h-5 w-5 text-white/30" />
-                                  </div>
-                                )}
-                                <div className="min-w-0">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-sm font-medium text-white">{example.label}</span>
-                                    {example.aspect_ratio && (
-                                      <Badge variant="outline" className="border-cyan-300/30 text-cyan-100 text-[10px]">
-                                        {example.aspect_ratio}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  {example.prompt && (
-                                    <div className="mt-1 line-clamp-1 text-xs leading-5 text-white/45">{example.prompt}</div>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-
+        <AssetProductionWizard
+          novels={novels}
+          entityOptions={wizardEntityOptions}
+          selectedNovelId={selectedNovelId}
+          selectedEntityType={selectedEntityType}
+          selectedEntityId={selectedEntityId}
+          selectedStyle={selectedGenerationStyle}
+          consistencyMode={selectedConsistencyMode}
+          presetTitle={activePreset.title}
+          presetDescription={activePreset.description}
+          completedCount={completedViewCount}
+          totalCount={totalRequiredViewCount}
+          missingCount={missingViewKeys.length}
+          primaryActionLabel={productionCardTargetActive && targetView ? `生成${targetView.label}缺失视图` : undefined}
+          generating={generatingViews}
+          rebuilding={reextractingAssets}
+          entityInvalid={selectedWizardEntityInvalid}
+          disabledEntityCount={disabledWizardEntityCount}
+          styleTemplates={styleTemplates}
+          visualContract={selectedVisualContract}
+          contextNotice={productionCardTargetActive && targetView ? (
+            <div className="rounded-lg border border-amber-300/25 bg-amber-400/10 p-3 text-sm text-amber-50">
+              <div className="font-medium text-white">来自定稿卡的补齐任务</div>
+              <div className="mt-1 text-amber-100">
+                {(selectedWizardEntity?.name || entityLabel(selectedEntityId))} · {targetView.label}
               </div>
             </div>
-
+          ) : undefined}
+          onNovelChange={setSelectedNovelId}
+          onEntityTypeChange={(value) => {
+            setSelectedEntityType(value);
+            setSelectedEntityId('');
+            setSelectedCategory(value);
+            setTargetViewKey('');
+            setTargetAction('');
+            setTargetSource('');
+          }}
+          onEntityChange={(value) => {
+            setSelectedEntityId(value);
+            setSelectedScope('');
+            if (value !== selectedEntityId) {
+              setTargetViewKey('');
+              setTargetAction('');
+              setTargetSource('');
+            }
+          }}
+          onStyleChange={setSelectedGenerationStyle}
+          onConsistencyModeChange={setSelectedConsistencyMode}
+          onGenerate={generateMissingViews}
+          onRebuild={rebuildAssetPack}
+        >
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -2044,115 +1790,7 @@ export default function AssetsPage() {
                 })}
               </div>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-white/5 border-white/10">
-          <CardContent className="p-4 space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_180px_150px_auto_auto] gap-3">
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-white/40" />
-                <Input
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') loadAssets();
-                  }}
-                  placeholder="搜索资产名称、描述、标签"
-                  className="pl-9 bg-white/5 border-white/10 text-white"
-                />
-              </div>
-              <Select value={selectedCategory} onChange={(event) => setSelectedCategory(event.target.value)} options={categoryOptions} />
-              <Select value={selectedProjectId} onChange={(event) => setSelectedProjectId(event.target.value)} options={projectOptions} />
-              <Select value={selectedScope} onChange={(event) => setSelectedScope(event.target.value)} options={scopeOptions} />
-              <label className="flex items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/70">
-                <input type="checkbox" checked={includePublic} onChange={(event) => setIncludePublic(event.target.checked)} />
-                包含公开
-              </label>
-              <Button variant="outline" className="border-white/20 text-white" onClick={loadAssets}>
-                搜索
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <Select
-                value={selectedNovelId}
-                onChange={(event) => setSelectedNovelId(event.target.value)}
-                options={[{ value: '', label: '全部小说' }, ...novels.map((novel) => ({ value: novel.id, label: novel.title }))]}
-              />
-              <Select
-                value={selectedChapterId}
-                onChange={(event) => setSelectedChapterId(event.target.value)}
-                options={[
-                  { value: '', label: '全部章节' },
-                  ...chapters.map((chapter) => ({
-                    value: chapter.id,
-                    label: formatChapterLabel(chapter),
-                  })),
-                ]}
-              />
-              <Select
-                value={selectedScriptId}
-                onChange={(event) => setSelectedScriptId(event.target.value)}
-                options={[{ value: '', label: '全部剧本' }, ...scripts.map((script) => ({ value: script.id, label: script.title }))]}
-              />
-              <Select
-                value={selectedEntityId}
-                onChange={(event) => setSelectedEntityId(event.target.value)}
-                options={[
-                  { value: '', label: '全部实体' },
-                  ...entities.map((entity) => ({ value: entity.id, label: `${entity.name} · ${entityTypeLabel(entity.entity_type)}` })),
-                ]}
-              />
-            </div>
-            <div className="text-xs text-white/45">
-              选择小说、章节、剧本或实体时，会同时展示可复用的全局资产；需要只看绑定资产时，使用“仅小说/仅章节/仅剧本/仅实体”范围。
-            </div>
-            {selectedAssets.size > 0 && (
-              <div className="flex flex-wrap items-center gap-2 rounded-md border border-violet-400/25 bg-violet-500/10 px-3 py-2">
-                <span className="text-sm text-white/70">已选择 {selectedAssets.size} 个资产</span>
-                <Button variant="outline" size="sm" className="border-emerald-400/40 text-emerald-200" onClick={batchLockAssets}>
-                  <Lock className="mr-1 h-3 w-3" />
-                  批量锁定
-                </Button>
-                <Button variant="outline" size="sm" className="border-amber-400/40 text-amber-200" onClick={batchUnlockAssets}>
-                  <Unlock className="mr-1 h-3 w-3" />
-                  批量解锁
-                </Button>
-                <Button variant="outline" size="sm" className="border-red-300/40 text-red-200" onClick={batchArchiveAssets}>
-                  <Trash2 className="mr-1 h-3 w-3" />
-                  批量归档
-                </Button>
-                <Button variant="outline" size="sm" className="border-violet-300/40 text-violet-100" onClick={rebuildAssetPack} disabled={reextractingAssets}>
-                  {reextractingAssets ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
-                  重建资产包
-                </Button>
-                <Button variant="outline" size="sm" className="border-cyan-300/40 text-cyan-100" onClick={batchSetAssetsToCurrentScope}>
-                  批量设为当前范围
-                </Button>
-                <Button variant="outline" size="sm" className="border-white/20 text-white" onClick={batchSetAssetTags}>
-                  批量标签
-                </Button>
-                <Button variant="outline" size="sm" className="border-white/20 text-white" onClick={() => setSelectedAssets(new Set())}>
-                  取消选择
-                </Button>
-              </div>
-            )}
-            <div className="flex flex-wrap gap-2">
-              {QUICK_PRESET_FILTERS.map((preset) => (
-                <Button
-                  key={preset.label}
-                  type="button"
-                  size="sm"
-                  variant={selectedCategory === preset.category ? 'default' : 'outline'}
-                  className={selectedCategory === preset.category ? 'bg-violet-600 hover:bg-violet-700' : 'border-white/20 text-white'}
-                  onClick={() => setSelectedCategory(preset.category)}
-                >
-                  {preset.label}
-                </Button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+        </AssetProductionWizard>
 
         {message && (
           <div className="rounded-md border border-white/10 bg-white/5 px-4 py-3 text-sm text-white/75">
@@ -2161,17 +1799,8 @@ export default function AssetsPage() {
         )}
 
         {formOpen && (
-          <Card ref={formSectionRef} className="scroll-mt-6 bg-white/5 border-white/10">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="flex items-center gap-2 text-white">
-                <Boxes className="h-5 w-5 text-violet-300" />
-                {editingId ? '编辑资产' : '新建资产'}
-              </CardTitle>
-              <Button variant="ghost" size="sm" className="text-white/60" onClick={resetForm}>
-                <X className="h-4 w-4" />
-              </Button>
-            </CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <AssetEditorDrawer title={editingId ? '编辑资产' : '新建资产'} saving={saving} onClose={resetForm} onSave={saveAsset}>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <Input ref={nameInputRef} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="资产名称" className="bg-white/5 border-white/10 text-white" />
               <Select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })} options={categories.map((category) => ({ value: category.name, label: category.name_cn || category.name }))} />
               <Select value={form.asset_type} onChange={(event) => setForm({ ...form, asset_type: event.target.value })} options={ASSET_TYPE_OPTIONS} />
@@ -2214,7 +1843,7 @@ export default function AssetsPage() {
               <div className="md:col-span-2 rounded-lg border border-violet-300/15 bg-violet-500/10 p-3">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <div className="text-sm font-medium text-white">AI 辅助说明</div>
+                    <div className="text-sm font-medium text-white">技术信息</div>
                     <div className="mt-1 text-xs leading-5 text-white/50">
                       {selectedFormEntity
                         ? `当前资产会绑定到「${selectedFormEntity.name}」，后续可在上方制片向导补齐三视图/四视图/多视图。`
@@ -2228,7 +1857,7 @@ export default function AssetsPage() {
                     className="border-white/20 text-white"
                     onClick={() => setShowAdvancedFields((value) => !value)}
                   >
-                    {showAdvancedFields ? '收起高级设置' : '高级设置'}
+                    {showAdvancedFields ? '收起' : '展开'}
                   </Button>
                 </div>
               </div>
@@ -2279,7 +1908,7 @@ export default function AssetsPage() {
               {showAdvancedFields && (
                 <div className="md:col-span-2 grid grid-cols-1 gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
                   <div>
-                    <div className="text-sm font-medium text-white">高级设置</div>
+                    <div className="text-sm font-medium text-white">技术字段</div>
                     <div className="mt-1 text-xs text-white/45">
                       这些字段主要给需要接入自定义模板、批量生成或调试生成链路的人使用；普通创作不需要维护。
                     </div>
@@ -2313,246 +1942,10 @@ export default function AssetsPage() {
                 <input type="checkbox" checked={form.is_public} onChange={(event) => setForm({ ...form, is_public: event.target.checked })} />
                 允许公开复用
               </label>
-              <div className="flex justify-end gap-2 md:col-span-2">
-                <Button variant="outline" className="border-white/20 text-white" onClick={resetForm}>取消</Button>
-                <Button className="bg-violet-600 hover:bg-violet-700" onClick={saveAsset} disabled={saving}>
-                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  保存资产
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </AssetEditorDrawer>
         )}
 
-        {loading ? (
-          <Card className="bg-white/5 border-white/10">
-            <CardContent className="p-8 text-center text-white/60">
-              <Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />
-              正在加载资产...
-            </CardContent>
-          </Card>
-        ) : visibleAssets.length === 0 ? (
-          <Card className="bg-white/5 border-white/10">
-            <CardContent className="p-8 text-center">
-              <Archive className="mx-auto mb-3 h-8 w-8 text-white/30" />
-              <div className="text-white">暂无资产</div>
-              <div className="mt-1 text-sm text-white/50">可先登记角色参考图、场景参考图、道具图或音效素材。</div>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {visibleAssets.map((asset) => {
-              const Icon = categoryIcon(asset.category, asset.asset_type);
-              const previewUrl = toMediaUrl(asset.thumbnail_url || asset.url);
-              const promptSummary = compactText(asset.prompt_template || asset.source_prompt);
-              const viewItems = readViewItems(asset.shot_template);
-              const ratioItems = readAspectRatios(asset.shot_template);
-              const isStarter = asset.source_url?.startsWith('starter:') || asset.generation_params?.source === 'starter';
-              const failure = assetFailureInfo(asset);
-              const consistencyScore = visualConsistencyScore(asset);
-              const lineageInfo = visualLineageInfo(asset);
-              return (
-                <Card key={asset.id} data-testid="asset-card" className="overflow-hidden border-white/10 bg-white/5 md:grid md:grid-cols-[168px_1fr]">
-                  <div className="h-36 bg-black/30 md:h-full md:min-h-44">
-                    {previewUrl && ((asset.asset_type || 'image') === 'image' || isImageLikeUrl(asset.url) || isImageLikeUrl(asset.thumbnail_url)) ? (
-                      <AssetImagePreview
-                        src={previewUrl}
-                        fallbackSrc={toMediaUrl(asset.url)}
-                        alt={asset.name}
-                        className="h-full w-full object-contain"
-                      />
-                    ) : (
-                      <div className="flex h-full items-center justify-center">
-                        <Icon className="h-10 w-10 text-white/30" />
-                      </div>
-                    )}
-                  </div>
-                  <CardContent className="space-y-3 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <div className="truncate font-medium text-white">{asset.name}</div>
-                          {isStarter && (
-                            <Badge variant="outline" className="border-violet-300/40 text-violet-100 text-[10px]">系统预置 · 可编辑</Badge>
-                          )}
-                          {failure && (
-                            <Badge variant="outline" className="border-red-400/40 text-red-200 text-[10px]">生成失败</Badge>
-                          )}
-                        </div>
-                        <div className="mt-1 text-xs text-white/45">{categoryLabel(asset.category)} · {projectLabel(asset.project_id)} · {scopeLabel(asset)}</div>
-                        <div className="mt-1 text-[11px] text-white/30">
-                          {[
-                            novelLabel(asset.novel_id),
-                            chapterLabel(asset.chapter_id),
-                            scriptLabel(asset.script_id),
-                            entityLabel(asset.entity_id),
-                          ].filter(Boolean).join(' · ')}
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="text-white/70 border-white/30 shrink-0">
-                        {assetTypeLabel(asset.asset_type)}
-                      </Badge>
-                    </div>
-                    {asset.description && (
-                      <p className="line-clamp-2 text-sm text-white/60">{asset.description}</p>
-                    )}
-                    {failure && (
-                      <div className="rounded-md border border-red-400/20 bg-red-500/10 p-2 text-xs leading-5 text-red-100">
-                        <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-red-100/80">
-                          <span>生成失败</span>
-                          {failure.viewLabel && (
-                            <Badge variant="outline" className="border-red-300/30 text-red-100 text-[10px]">
-                              {failure.viewLabel}
-                            </Badge>
-                          )}
-                        </div>
-                        {failure.error}
-                      </div>
-                    )}
-                    {consistencyScore !== null && (
-                      <div className="rounded-md border border-emerald-400/20 bg-emerald-500/10 px-2 py-1.5 text-xs text-emerald-50">
-                        一致性评分 {consistencyScore}
-                      </div>
-                    )}
-                    {lineageInfo && (
-                      <div className="rounded-md border border-cyan-400/20 bg-cyan-500/10 px-2 py-1.5 text-xs leading-5 text-cyan-50">
-                        {lineageInfo.contractId && <div>契约ID {lineageInfo.contractId}</div>}
-                        {lineageInfo.referenceLabel && <div>继承{lineageInfo.referenceLabel}参考</div>}
-                      </div>
-                    )}
-                    {promptSummary && (
-                      <div className="rounded-md border border-violet-400/20 bg-violet-500/10 p-2 text-xs leading-5 text-violet-50">
-                        <div className="mb-1 text-[11px] text-violet-200/80">提示词</div>
-                        {promptSummary}
-                      </div>
-                    )}
-                    {viewItems.length > 0 && (
-                      <div className="space-y-1">
-                        <div className="text-[11px] text-white/35">视图/镜头结构</div>
-                        <div className="flex flex-wrap gap-1">
-                          {viewItems.slice(0, 5).map((view: any, index: number) => (
-                            <Badge key={`${asset.id}-view-${index}`} variant="outline" className="border-white/20 text-white/65">
-                              {view?.label || view?.name || view?.camera_angle || `视图 ${index + 1}`}
-                            </Badge>
-                          ))}
-                          {viewItems.length > 5 && (
-                            <Badge variant="outline" className="border-white/20 text-white/45">+{viewItems.length - 5}</Badge>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    {ratioItems.length > 0 && (
-                      <div className="space-y-1">
-                        <div className="text-[11px] text-white/35">推荐画面比例</div>
-                        <div className="flex flex-wrap gap-1">
-                          {ratioItems.slice(0, 6).map((ratio: any, index: number) => (
-                            <Badge key={`${asset.id}-ratio-${index}`} variant="outline" className="border-cyan-300/40 text-cyan-100">
-                              {String(ratio)}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    <div className="flex flex-wrap gap-1">
-                      {(asset.tags || []).slice(0, 4).map((tag) => (
-                        <Badge key={tag} variant="outline" className="border-violet-300/40 text-violet-100">{tag}</Badge>
-                      ))}
-                      {(asset.style_tags || []).slice(0, 3).map((tag) => (
-                        <Badge key={tag} variant="outline" className="border-cyan-300/40 text-cyan-100">{tag}</Badge>
-                      ))}
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-white/45">
-                      <span>引用 {asset.usage_count || 0}</span>
-                      <div className="flex items-center gap-2">
-                        {(asset as Asset).is_locked && (
-                          <span className="flex items-center gap-1 text-violet-400">
-                            <Lock className="h-3 w-3" />
-                            锁定
-                          </span>
-                        )}
-                        {(asset as Asset).is_final && (
-                          <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 text-[10px]">定稿</Badge>
-                        )}
-                        <span>{(asset as Asset).is_public ? '公开' : '私有'}</span>
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <div className="flex items-center gap-1">
-                        <input
-                          type="checkbox"
-                          aria-label={`选择${asset.name}`}
-                          checked={selectedAssets.has(asset.id)}
-                          onChange={() => toggleAssetSelection(asset.id)}
-                          className="rounded border-white/20"
-                        />
-                      </div>
-                      {asset.url && (
-                        <Button variant="outline" size="sm" className="border-white/20 text-white" onClick={() => previewAssetMedia(asset)}>
-                          <ExternalLink className="mr-1 h-3 w-3" />
-                          预览
-                        </Button>
-                      )}
-                      {failure?.retryable && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="重试生成"
-                          className="border-red-300/40 text-red-100"
-                          disabled={retryingAssetId === asset.id}
-                          onClick={() => retryAssetGeneration(asset)}
-                        >
-                          {retryingAssetId === asset.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <RefreshCw className="mr-1 h-3 w-3" />}
-                          重试生成
-                        </Button>
-                      )}
-                      {asset.entity_id && (asset.generation_params?.view_key || asset.generation_params?.asset_subtype || asset.generation_params?.view_angle) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="按当前约束重新生成一个新版本"
-                          className="border-pink-300/40 text-pink-100"
-                          disabled={regeneratingAssetId === asset.id}
-                          onClick={() => regenerateAsset(asset)}
-                        >
-                          {regeneratingAssetId === asset.id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Sparkles className="mr-1 h-3 w-3" />}
-                          重生成
-                        </Button>
-                      )}
-                      <Button variant="outline" size="sm" title="编辑资产" className="border-white/20 text-white" onClick={() => startEdit(asset)}>
-                        <Edit3 className="mr-1 h-3 w-3" />
-                        编辑
-                      </Button>
-                      {(asset as Asset).is_locked ? (
-                        <Button variant="outline" size="sm" title="解锁资产" className="border-amber-500/50 text-amber-300" onClick={() => unlockAsset(asset.id)}>
-                          <Unlock className="mr-1 h-3 w-3" />
-                          解锁
-                        </Button>
-                      ) : (
-                        <Button variant="outline" size="sm" title="锁定为定稿" className="border-emerald-500/50 text-emerald-300" onClick={() => lockAsset(asset.id)}>
-                          <Lock className="mr-1 h-3 w-3" />
-                          锁定
-                        </Button>
-                      )}
-                      {asset.entity_id && (
-                        <Button variant="outline" size="sm" title="版本历史" className="border-cyan-500/50 text-cyan-300" onClick={() => loadVersionHistory(asset.entity_id!, asset.category)}>
-                          <History className="mr-1 h-3 w-3" />
-                          历史
-                        </Button>
-                      )}
-                      <Button variant="outline" size="sm" title="升为全局资产" className="border-white/20 text-white" onClick={() => bindAssetScope(asset, 'global')}>
-                        全局
-                      </Button>
-                      <Button variant="outline" size="sm" title="归档资产" className="border-red-300/30 text-red-200" onClick={() => archiveAsset(asset.id)}>
-                        <Trash2 className="mr-1 h-3 w-3" />
-                        归档
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
       </div>
       {showVersionHistory && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm">

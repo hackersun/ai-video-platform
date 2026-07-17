@@ -8,7 +8,7 @@ import { MainLayout } from '@/components/layout/main-layout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import apiClient, { BatchFinalizeSupportingRequest, BatchFinalizeSupportingResponse, ProductionCard, ProductionCardsResponse } from '@/lib/api-client';
+import apiClient, { AssetBindingHealthItem, BatchFinalizeSupportingRequest, BatchFinalizeSupportingResponse, ProductionCard, ProductionCardsResponse } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 
 const ENTITY_LABELS: Record<ProductionCard['entity_type'], string> = {
@@ -95,6 +95,21 @@ function studioHref(workflowId: string) {
   return `/studio?${params.toString()}`;
 }
 
+function finalQualityStudioHref(workflowId: string, providerId: string, modelId: string) {
+  const params = new URLSearchParams({
+    provider_id: providerId,
+    model_id: modelId,
+    production_strategy: 'final_quality',
+  });
+  if (workflowId) params.set('workflow_id', workflowId);
+  return `/studio?${params.toString()}`;
+}
+
+function modelLabel(modelId: string) {
+  if (modelId === 'seedance-2.0') return 'Seedance 2.0';
+  return modelId;
+}
+
 function MetricTile({ label, value, detail, tone }: { label: string; value: string | number; detail: string; tone: string }) {
   return (
     <div className={cn('rounded-xl border px-4 py-3', tone)}>
@@ -109,10 +124,22 @@ function ProductionCardItem({
   card,
   completingKey,
   onCompleteViews,
+  bindingHealth,
+  selectedProviderId,
+  selectedModelId,
+  bindingAssetId,
+  onCreateBinding,
+  workflowId,
 }: {
   card: ProductionCard;
   completingKey: string | null;
   onCompleteViews: (card: ProductionCard, viewKeys: string[]) => void;
+  bindingHealth: Record<string, AssetBindingHealthItem>;
+  selectedProviderId: string;
+  selectedModelId: string;
+  bindingAssetId: string | null;
+  onCreateBinding: (assetId: string, assetVersion: number) => void;
+  workflowId: string;
 }) {
   const score = scoreValue(card);
   const gaps = card.readiness?.gaps || [];
@@ -124,6 +151,14 @@ function ProductionCardItem({
   const isCompletingCard = Boolean(completingKey) && (completingKey === 'all' || completingKey === cardCompletionKey);
   const meta = ENTITY_META[card.entity_type];
   const EntityIcon = meta.icon;
+  const canonicalViews = (card.visual?.views || []).filter((view) => view.asset_id);
+  const healthItems = canonicalViews.map((view) => bindingHealth[view.asset_id!]).filter(Boolean);
+  const missingBindingView = canonicalViews.find((view) => {
+    const health = bindingHealth[view.asset_id!];
+    return health?.binding_required && !health.binding_ready;
+  });
+  const providerReady = healthItems.length === canonicalViews.length && healthItems.every((item) => !item.binding_required || item.binding_ready);
+  const finalQualityReady = isReady && canonicalViews.length > 0 && providerReady;
 
   return (
     <Card data-testid={`production-card-${card.entity_id}`} className="group overflow-hidden border-white/10 bg-[#151a22] text-white shadow-[0_18px_60px_rgba(0,0,0,0.22)] transition-colors hover:border-white/20">
@@ -205,6 +240,48 @@ function ProductionCardItem({
           ))}
         </div>
 
+        <div className="space-y-2 rounded-md border border-white/10 bg-slate-950/35 p-3 text-xs" data-testid={`binding-health-${card.entity_id}`}>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-white/55">Canonical</span>
+            <span className={isReady ? 'text-emerald-200' : 'text-amber-200'}>
+              {preview?.version ? `Canonical v${preview.version} ${isReady ? '已就绪' : '待补齐'}` : `Canonical ${isReady ? '已就绪' : '待补齐'}`}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-white/55">{selectedProviderId}</span>
+            <span className={providerReady ? 'text-emerald-200' : 'text-amber-200'}>
+              {modelLabel(selectedModelId)} 引用{providerReady ? '已验证' : '未就绪'}
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-2 pt-1">
+            {missingBindingView?.asset_id ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 border-cyan-200/30 bg-transparent px-2 text-xs text-cyan-50 hover:bg-cyan-300/15"
+                disabled={Boolean(bindingAssetId)}
+                onClick={() => onCreateBinding(missingBindingView.asset_id!, missingBindingView.version || 1)}
+              >
+                {bindingAssetId === missingBindingView.asset_id ? <Loader2 className="mr-1 h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+                生成模型引用
+              </Button>
+            ) : null}
+            {finalQualityReady ? (
+              <Button
+                type="button"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => { window.location.href = finalQualityStudioHref(workflowId, selectedProviderId, selectedModelId); }}
+              >
+                终稿生成
+              </Button>
+            ) : (
+              <Button type="button" size="sm" className="h-7 px-2 text-xs" disabled>终稿生成</Button>
+            )}
+          </div>
+        </div>
+
         {missingViews.length ? (
           <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300/20 bg-amber-400/10 p-2">
             <Button
@@ -274,6 +351,8 @@ function CardsContent() {
   const novelId = searchParams.get('novel_id') || '';
   const workflowId = searchParams.get('workflow_id') || '';
   const fromStudio = searchParams.get('source') === 'studio' || Boolean(workflowId);
+  const selectedProviderId = searchParams.get('provider_id') || 'volcano';
+  const selectedModelId = searchParams.get('model_id') || 'seedance-2.0';
   const [data, setData] = useState<ProductionCardsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -284,6 +363,18 @@ function CardsContent() {
   const [minOccurrences, setMinOccurrences] = useState('2');
   const [imageModelConfigId, setImageModelConfigId] = useState('');
   const [voicePoolInput, setVoicePoolInput] = useState('');
+  const [bindingHealth, setBindingHealth] = useState<Record<string, AssetBindingHealthItem>>({});
+  const [bindingAssetId, setBindingAssetId] = useState<string | null>(null);
+
+  const refreshBindingHealth = async (cards: ProductionCard[]) => {
+    const assetIds = Array.from(new Set(cards.flatMap((card) => (card.visual?.views || []).map((view) => view.asset_id).filter(Boolean) as string[])));
+    if (!assetIds.length) {
+      setBindingHealth({});
+      return;
+    }
+    const response = await apiClient.getAssetBindingHealth(assetIds, selectedProviderId, selectedModelId);
+    setBindingHealth(Object.fromEntries((response.assets || []).map((item) => [item.asset_id, item])));
+  };
 
   useEffect(() => {
     if (!novelId) return;
@@ -293,8 +384,11 @@ function CardsContent() {
     setError(null);
 
     apiClient.getProductionCards(novelId)
-      .then((response) => {
-        if (!cancelled) setData(response);
+      .then(async (response) => {
+        if (!cancelled) {
+          setData(response);
+          await refreshBindingHealth(response.cards || []);
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(err?.message || '定稿卡加载失败');
@@ -306,11 +400,32 @@ function CardsContent() {
     return () => {
       cancelled = true;
     };
-  }, [novelId]);
+  }, [novelId, selectedProviderId, selectedModelId]);
 
   const refreshCards = async () => {
     if (!novelId) return;
-    setData(await apiClient.getProductionCards(novelId));
+    const response = await apiClient.getProductionCards(novelId);
+    setData(response);
+    await refreshBindingHealth(response.cards || []);
+  };
+
+  const handleCreateBinding = async (assetId: string, assetVersion: number) => {
+    setBindingAssetId(assetId);
+    setError(null);
+    try {
+      await apiClient.createAssetProviderBinding(assetId, {
+        provider_id: selectedProviderId,
+        model_id: selectedModelId,
+        binding_kind: 'reference_image',
+        asset_version: assetVersion,
+        verify: true,
+      });
+      await refreshBindingHealth(data?.cards || []);
+    } catch (err: any) {
+      setError(err?.message || '模型引用生成失败');
+    } finally {
+      setBindingAssetId(null);
+    }
   };
 
   const handleFinalizeSupporting = async () => {
@@ -360,6 +475,12 @@ function CardsContent() {
       payload.model_config_id = imageModelConfigId.trim();
     }
     const result = await apiClient.generateEntityViewAssets(payload);
+    const assetIds = Object.values(result?.assets || {})
+      .map((asset: any) => asset?.id)
+      .filter(Boolean);
+    if (assetIds.length > 0) {
+      await apiClient.batchLockAssets(assetIds);
+    }
     return typeof result?.total === 'number' ? result.total : viewKeys.length;
   };
 
@@ -609,6 +730,12 @@ function CardsContent() {
                         card={card}
                         completingKey={completingKey}
                         onCompleteViews={handleCompleteViews}
+                        bindingHealth={bindingHealth}
+                        selectedProviderId={selectedProviderId}
+                        selectedModelId={selectedModelId}
+                        bindingAssetId={bindingAssetId}
+                        onCreateBinding={handleCreateBinding}
+                        workflowId={workflowId}
                       />
                     ))
                   ) : (

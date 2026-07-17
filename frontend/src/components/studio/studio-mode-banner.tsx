@@ -14,13 +14,13 @@ export function StudioModeBanner({
 }) {
   const Icon = mode === 'production' ? ShieldCheck : TestTube2;
   return (
-    <div className={`rounded-lg border p-4 ${studioModeTone(mode)}`} data-testid="studio-mode-banner">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="flex min-w-0 items-start gap-3">
-          <Icon className="mt-0.5 h-5 w-5 shrink-0" />
+    <div className={`rounded-lg border px-3 py-2.5 ${studioModeTone(mode)}`} data-testid="studio-mode-banner">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <Icon className="h-4 w-4 shrink-0" />
           <div className="min-w-0">
-            <div className="font-medium text-white">{studioModeLabels[mode]}</div>
-            <div className="mt-1 text-sm leading-6 text-white/70">{studioModeDescriptions[mode]}</div>
+            <div className="text-sm font-medium text-white">{studioModeLabels[mode]}</div>
+            <div className="mt-0.5 text-xs leading-5 text-white/65">{studioModeDescriptions[mode]}</div>
           </div>
         </div>
         <div className="flex shrink-0 gap-2">

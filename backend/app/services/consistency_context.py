@@ -9,7 +9,6 @@ composition logic.
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
-from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, desc, or_, select
@@ -18,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.model_registry import get_task_default
 from app.core.time_utils import utc_now
 from app.models import Character, Project, Script, Shot, StoryBible, StoryEntity, Storyboard
-from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
+from app.services.entity_extraction_service import ENTITY_TYPES
+from app.services.entity_review_service import run_candidate_entity_extraction
 from app.services.entity_ref_normalizer import normalize_entity_refs
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_entries
+from app.services.story_entity_lifecycle import query_story_entities_for_prompt_context
 
 
 def _compact_ids(values: Iterable[Optional[str]]) -> List[str]:
@@ -63,6 +64,85 @@ def _entity_ref(entity: StoryEntity, character: Optional[Character] = None) -> D
             }
         )
     return ref
+
+
+NOISE_CHARACTER_NAME_MARKERS = ("因果", "小说", "对白", "字幕", "标注", "关键", "与", "并", "来的不")
+NOISE_CHARACTER_EXACT_NAMES = {"霓虹", "追来的不"}
+NOISE_CHARACTER_SCENE_SUFFIXES = ("列车", "车站", "站台", "车厢")
+NOISE_CHARACTER_RECIPIENT_PREFIXES = ("对", "向", "给", "把", "将", "被")
+NOISE_PROP_NAMES = {
+    "开场钩",
+    "视觉钩",
+    "本场视觉钩",
+    "成为本场视觉钩",
+    "下一集钩",
+    "形成下一集钩",
+    "最后一句钩",
+    "保留最后一句钩",
+    "拉镜",
+    "推镜",
+    "摇镜",
+    "运镜",
+    "镜",
+    "紧铜铃",
+    "对孙剑",
+    "白色药",
+}
+NOISE_PROP_HOOK_MARKERS = ("开场", "结尾", "视觉", "本场", "下一集", "最后一句", "保留", "形成", "成为")
+NOISE_PROP_CAMERA_MARKERS = ("拉", "推", "摇", "运", "跟", "固定", "全景", "近景", "中景", "远景", "特写")
+NOISE_SCENE_COPY_MARKERS = ("这一刻", "指向", "推向", "注意力", "重新", "保证", "字幕", "对白")
+NOISE_PROP_COPY_MARKERS = ("推向", "指向", "注意到", "注意力", "重新", "刻着", "守住", "吹灭")
+
+
+def _is_noise_character_entity(entity: StoryEntity) -> bool:
+    if entity.entity_type != "character":
+        return False
+    name = (entity.name or "").strip()
+    if not name:
+        return True
+    if name in NOISE_CHARACTER_EXACT_NAMES:
+        return True
+    if len(name) > 2 and name.startswith(NOISE_CHARACTER_RECIPIENT_PREFIXES):
+        return True
+    if name.endswith(NOISE_CHARACTER_SCENE_SUFFIXES):
+        return True
+    return any(marker in name for marker in NOISE_CHARACTER_NAME_MARKERS)
+
+
+def _is_noise_prop_entity(entity: StoryEntity) -> bool:
+    if entity.entity_type != "prop":
+        return False
+    name = (entity.name or "").strip()
+    if not name:
+        return True
+    if name in NOISE_PROP_NAMES:
+        return True
+    if name.endswith("钩") and any(marker in name for marker in NOISE_PROP_HOOK_MARKERS):
+        return True
+    if name.endswith("镜") and any(marker in name for marker in NOISE_PROP_CAMERA_MARKERS):
+        return True
+    if any(marker in name for marker in NOISE_PROP_COPY_MARKERS) and len(name) > 4:
+        return True
+    return False
+
+
+def _is_noise_scene_entity(entity: StoryEntity) -> bool:
+    if entity.entity_type != "scene":
+        return False
+    name = (entity.name or "").strip()
+    if not name:
+        return True
+    if any(marker in name for marker in NOISE_SCENE_COPY_MARKERS):
+        return True
+    return False
+
+
+def _is_noise_story_entity(entity: StoryEntity) -> bool:
+    return (
+        _is_noise_character_entity(entity)
+        or _is_noise_prop_entity(entity)
+        or _is_noise_scene_entity(entity)
+    )
 
 
 def _summarize_refs(refs: List[Dict[str, Any]]) -> str:
@@ -180,50 +260,33 @@ async def load_or_extract_story_entities(
     if not novel_id and not chapter_id:
         return []
 
-    query = select(StoryEntity).where(StoryEntity.user_id == user_id)
-    if novel_id:
-        query = query.where(StoryEntity.novel_id == novel_id)
-    if chapter_id:
-        query = query.where(or_(StoryEntity.chapter_id == chapter_id, StoryEntity.chapter_id.is_(None)))
-    result = await db.execute(query.order_by(desc(StoryEntity.updated_at)))
-    entities = list(result.scalars().all())
+    entities = await query_story_entities_for_prompt_context(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
 
     if not persist_missing or not text:
         return entities
 
-    known = {(entity.entity_type, entity.name) for entity in entities}
-    try:
-        extracted = extract_story_entities(text, set(ENTITY_TYPES))
-    except ValueError:
-        extracted = []
-
-    created: List[StoryEntity] = []
-    for item in extracted:
-        key = (item["entity_type"], item["name"])
-        if key in known:
-            continue
-        entity = StoryEntity(
-            id=str(uuid4()),
-            user_id=user_id,
-            novel_id=novel_id,
-            chapter_id=chapter_id,
-            entity_type=item["entity_type"],
-            name=item["name"],
-            description=item.get("description"),
-            aliases=item.get("aliases") or [],
-            attributes=item.get("attributes") or {},
-            evidence=item.get("evidence"),
-            confidence=item.get("confidence") or 100,
-            source=item.get("source") or "deterministic",
-        )
-        db.add(entity)
-        created.append(entity)
-        known.add(key)
-
-    if created:
-        await db.flush()
-        entities.extend(created)
-    return entities
+    await run_candidate_entity_extraction(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        source_type="chapter" if chapter_id else "novel",
+        source_id=chapter_id or novel_id,
+        text=text,
+        entity_types=sorted(ENTITY_TYPES),
+        persist=True,
+    )
+    return await query_story_entities_for_prompt_context(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
 
 
 async def build_shot_entity_context(
@@ -243,6 +306,16 @@ async def build_shot_entity_context(
         text=source_text,
         persist_missing=True,
     )
+    if not entities:
+        return {
+            "character_refs": [],
+            "scene_refs": [],
+            "prop_refs": [],
+            "event_refs": [],
+            "entity_refs": {"characters": [], "scenes": [], "props": [], "events": []},
+            "environment_context": None,
+        }
+    entities = [entity for entity in entities if not _is_noise_story_entity(entity)]
     if not entities:
         return {
             "character_refs": [],

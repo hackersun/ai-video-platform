@@ -76,7 +76,7 @@ def _create_short_video_fixture(client: TestClient, user_id: str) -> dict:
     assert chapter_resp.status_code == 201
     chapter_id = chapter_resp.json()["id"]
 
-    _create_entity(
+    character = _create_entity(
         client,
         user_id,
         novel_id,
@@ -92,7 +92,7 @@ def _create_short_video_fixture(client: TestClient, user_id: str) -> dict:
             "visual_dna": {"hair": "黑色短发", "costume": "深色校服"},
         },
     )
-    _create_entity(
+    scene = _create_entity(
         client,
         user_id,
         novel_id,
@@ -101,7 +101,7 @@ def _create_short_video_fixture(client: TestClient, user_id: str) -> dict:
         "废弃天桥",
         {"scene_tags": ["室外", "夜晚", "悬疑"], "scene_dna": {"weather": "雨后", "lighting": "冷蓝月光"}},
     )
-    _create_entity(
+    prop = _create_entity(
         client,
         user_id,
         novel_id,
@@ -110,7 +110,7 @@ def _create_short_video_fixture(client: TestClient, user_id: str) -> dict:
         "青铜吊坠",
         {"prop_dna": {"material": "青铜", "shape": "六边形", "marking": "裂纹月纹"}, "owner": "沈砚"},
     )
-    _create_entity(
+    event = _create_entity(
         client,
         user_id,
         novel_id,
@@ -217,7 +217,50 @@ def _create_short_video_fixture(client: TestClient, user_id: str) -> dict:
         "storyboard_id": storyboard_id,
         "shot_ids": shot_ids,
         "workflow_id": workflow_resp.json()["workflow_id"],
+        "entity_ids": {
+            "character": character["id"],
+            "scene": scene["id"],
+            "prop": prop["id"],
+            "event": event["id"],
+        },
     }
+
+
+def _create_and_lock_asset(
+    client: TestClient,
+    user_id: str,
+    *,
+    novel_id: str,
+    chapter_id: str,
+    entity_id: str,
+    entity_type: str,
+    view_key: str,
+) -> dict:
+    create_resp = client.post(
+        "/api/v1/assets",
+        json={
+            "category": entity_type,
+            "asset_type": "image",
+            "name": f"{entity_type}-{view_key}",
+            "url": f"/static/dev/{entity_id}-{view_key}.png",
+            "thumbnail_url": f"/static/dev/{entity_id}-{view_key}.png",
+            "novel_id": novel_id,
+            "chapter_id": chapter_id,
+            "entity_id": entity_id,
+            "entity_type": entity_type,
+            "generation_params": {
+                "source": "entity_multiview",
+                "view_key": view_key,
+                "reference_role": "character_multiview" if entity_type == "character" else f"{entity_type}_multiview",
+            },
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    asset_id = create_resp.json()["id"]
+    lock_resp = client.post(f"/api/v1/assets/{asset_id}/lock", headers=_auth_headers(user_id))
+    assert lock_resp.status_code == 200, lock_resp.text
+    return lock_resp.json()
 
 
 def test_short_episode_plan_contains_vertical_short_drama_controls(client: TestClient) -> None:
@@ -276,6 +319,47 @@ def test_shot_production_contract_persists_story_entities_and_model_route(client
     production_context = shot_resp.json()["extra_data"]["production_context"]
     assert production_context["production_contract"]["seed"] == contract["seed"]
     assert production_context["production_contract"]["lineage"]["shot_id"] == shot_id
+
+
+def test_shot_production_contract_derives_locks_and_multiview_from_final_assets(client: TestClient) -> None:
+    user_id = "short-contract-assets-user"
+    fixture = _create_short_video_fixture(client, user_id)
+    entity_ids = fixture["entity_ids"]
+    for view_key in ("front", "side", "back"):
+        _create_and_lock_asset(
+            client,
+            user_id,
+            novel_id=fixture["novel_id"],
+            chapter_id=fixture["chapter_id"],
+            entity_id=entity_ids["character"],
+            entity_type="character",
+            view_key=view_key,
+        )
+    for entity_type, view_key in (("scene", "establishing"), ("scene", "lighting"), ("prop", "main")):
+        _create_and_lock_asset(
+            client,
+            user_id,
+            novel_id=fixture["novel_id"],
+            chapter_id=fixture["chapter_id"],
+            entity_id=entity_ids[entity_type],
+            entity_type=entity_type,
+            view_key=view_key,
+        )
+
+    response = client.post(
+        f"/api/v1/short-video/shots/{fixture['shot_ids'][0]}/production-contract?persist=true",
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200, response.text
+    contract = response.json()["contract"]
+    warning_codes = {issue["code"] for issue in contract["warnings"]}
+    assert "missing_asset_locks" not in warning_codes
+    assert "missing_multiview_refs" not in warning_codes
+    assert len(contract["asset_locks"]) >= 6
+    refs_by_view = {item["view_key"]: item for item in contract["character_multiview_refs"]}
+    assert {"front", "side", "back"}.issubset(refs_by_view)
+    assert all(ref["url"].startswith("/static/dev/") for ref in refs_by_view.values())
 
 
 def test_workflow_short_video_readiness_and_refresh_contracts(client: TestClient) -> None:

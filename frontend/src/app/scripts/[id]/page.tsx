@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MainLayout } from '@/components/layout/main-layout';
+import { StoryWorkbenchPanel, getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import { useToast } from '@/components/ui/toast';
 import { 
   FileText, 
@@ -73,6 +74,7 @@ interface Storyboard {
   id: string;
   title: string;
   status: string;
+  shot_count?: number;
   shots_count?: number;
   created_at: string;
 }
@@ -96,11 +98,16 @@ export default function ScriptDetailPage() {
   const [loadingVersions, setLoadingVersions] = useState(false);
   const [restoreTargetId, setRestoreTargetId] = useState<string | null>(null);
   const [restoringVersion, setRestoringVersion] = useState(false);
+  const [aiEditing, setAiEditing] = useState<'polish_content' | 'polish_description' | null>(null);
   
   // 编辑状态
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [content, setContent] = useState('');
+
+  const getStoryboardShotCount = (storyboard: Storyboard) => (
+    storyboard.shot_count ?? storyboard.shots_count ?? 0
+  );
 
   useEffect(() => {
     if (scriptId) {
@@ -239,7 +246,6 @@ export default function ScriptDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           script_id: script.id,
-          shot_count: 5,
           style: script.style || 'anime',
         })
       });
@@ -257,6 +263,39 @@ export default function ScriptDetailPage() {
       toast({ title: '生成分镜失败', description: err.message || '请稍后重试。', type: 'error' });
     } finally {
       setGeneratingStoryboard(false);
+    }
+  };
+
+  const handleAIScriptEdit = async (mode: 'polish_content' | 'polish_description') => {
+    if (!script) return;
+    if (!title.trim()) {
+      toast({ title: '请输入剧本标题', type: 'info' });
+      return;
+    }
+
+    setAiEditing(mode);
+    try {
+      const result = await apiClient.assistScriptEdit({
+        title,
+        description,
+        content,
+        genre: script.genre,
+        style: script.style,
+        mode,
+      });
+      setTitle(result.title || title);
+      setDescription(result.description ?? description);
+      setContent(result.content || content);
+      setHasChanges(true);
+      toast({
+        title: mode === 'polish_content' ? 'AI 已润色剧本正文' : 'AI 已优化剧本描述',
+        description: '请核对右侧预览和正文后保存。',
+        type: 'success',
+      });
+    } catch (err: any) {
+      toast({ title: 'AI 处理失败', description: err?.message || '请稍后重试。', type: 'error' });
+    } finally {
+      setAiEditing(null);
     }
   };
 
@@ -303,23 +342,29 @@ export default function ScriptDetailPage() {
     writing: '连载中',
     completed: '已完成'
   };
+  const scriptWordCount = content.replace(/\s/g, '').length;
+  const scriptPreview = getStoryExcerpt(
+    content || description,
+    '这个剧本还没有正文，适合先从章节内容生成动漫短剧脚本。',
+    280
+  );
 
   return (
     <MainLayout>
       <div className="space-y-6">
         {/* 顶部导航 */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
             <Button variant="ghost" onClick={() => router.push('/scripts')}>
               <ArrowLeft className="w-4 h-4 mr-2" />
               返回
             </Button>
-            <div>
-              <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                <FileText className="w-6 h-6" />
+            <div className="min-w-0">
+              <h1 className="flex items-center gap-2 break-words text-xl font-bold text-white sm:text-2xl">
+                <FileText className="w-6 h-6 shrink-0" />
                 {script.title}
               </h1>
-              <div className="flex items-center gap-2 mt-1">
+              <div className="mt-1 flex flex-wrap items-center gap-2">
                 <Badge className={STATUS_COLORS[script.status]}>
                   {STATUS_LABELS[script.status]}
                 </Badge>
@@ -333,7 +378,7 @@ export default function ScriptDetailPage() {
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 lg:justify-end">
             {hasChanges && (
               <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">
                 未保存
@@ -354,9 +399,10 @@ export default function ScriptDetailPage() {
           </div>
         </div>
 
-        {/* 标签页 */}
-        <Tabs defaultValue="content" className="space-y-4">
-          <TabsList className="bg-white/5">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+          {/* 标签页 */}
+          <Tabs defaultValue="content" className="space-y-4">
+          <TabsList className="h-auto max-w-full flex-wrap justify-start bg-white/5">
             <TabsTrigger value="content" className="data-[state=active]:bg-blue-600">
               <FileText className="w-4 h-4 mr-2" />
               剧本内容
@@ -379,7 +425,7 @@ export default function ScriptDetailPage() {
           <TabsContent value="content">
             <Card className="bg-white/5 border-white/10">
               <CardContent className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div>
                     <label className="text-white/80 mb-2 block">剧本标题</label>
                     <Input
@@ -415,7 +461,7 @@ export default function ScriptDetailPage() {
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     placeholder="输入或粘贴剧本内容…"
-                    className="bg-white/10 border-white/20 text-white min-h-[400px] resize-none"
+                    className="min-h-[clamp(460px,62vh,820px)] resize-y bg-white/10 border-white/20 text-base leading-7 text-white"
                   />
                 </div>
               </CardContent>
@@ -540,7 +586,7 @@ export default function ScriptDetailPage() {
                           <div>
                             <div className="text-white font-medium">{sb.title}</div>
                             <div className="text-white/40 text-sm flex items-center gap-2">
-                              <span>{sb.shots_count || 0} 个镜头</span>
+                              <span>{getStoryboardShotCount(sb)} 个镜头</span>
                               <span>·</span>
                               <span>{new Date(sb.created_at).toLocaleDateString()}</span>
                             </div>
@@ -567,7 +613,83 @@ export default function ScriptDetailPage() {
               </CardContent>
             </Card>
           </TabsContent>
-        </Tabs>
+          </Tabs>
+
+          <StoryWorkbenchPanel
+            heading="剧本生产助手"
+            description="边编辑边核对剧本摘要、分镜状态和 AI 生产动作，减少在多个标签之间来回切换。"
+            title={title || script.title || '未命名剧本'}
+            subtitle={[
+              script.genre ? `题材：${GENRE_LABELS[script.genre] || script.genre}` : '',
+              script.style ? `风格：${STYLE_LABELS[script.style] || script.style}` : '',
+            ].filter(Boolean).join(' · ') || '动漫剧本'}
+            excerptLabel="剧本预览"
+            excerpt={scriptPreview}
+            metrics={[
+              { label: '字数', value: `${scriptWordCount} 字` },
+              { label: '分镜', value: storyboards.length },
+              { label: '版本', value: versions.length || '未加载' },
+              { label: '状态', value: STATUS_LABELS[script.status] || script.status },
+            ]}
+            actions={
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleAIScriptEdit('polish_content')}
+                  disabled={aiEditing !== null || saving}
+                  className="justify-start border-violet-500/50 text-violet-300 hover:bg-violet-500/10"
+                >
+                  {aiEditing === 'polish_content' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                  AI 润色正文
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleAIScriptEdit('polish_description')}
+                  disabled={aiEditing !== null || saving}
+                  className="justify-start border-blue-500/50 text-blue-300 hover:bg-blue-500/10"
+                >
+                  {aiEditing === 'polish_description' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                  优化描述
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleGenerateStoryboard}
+                  disabled={generatingStoryboard}
+                  className="justify-start bg-purple-600 hover:bg-purple-700"
+                >
+                  {generatingStoryboard ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <LayoutGrid className="w-4 h-4 mr-2" />}
+                  生成分镜
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={loadConsistency}
+                  disabled={checkingConsistency}
+                  className="justify-start border-green-500/50 text-green-300 hover:bg-green-500/10"
+                >
+                  {checkingConsistency ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ShieldCheck className="w-4 h-4 mr-2" />}
+                  一致性检查
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={createVersion}
+                  className="justify-start border-white/20"
+                >
+                  <History className="w-4 h-4 mr-2" />
+                  保存版本
+                </Button>
+              </>
+            }
+            footer={
+              <p className="text-xs leading-5 text-white/40">
+                AI 会基于当前标题、描述、正文、题材和风格进行润色；生成分镜会继续沿用剧本风格进入镜头拆解。
+              </p>
+            }
+          />
+        </div>
 
         {/* 底部快捷操作 */}
         {script.status === 'completed' && storyboards.length > 0 && (

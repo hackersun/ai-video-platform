@@ -14,8 +14,9 @@ from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Chapter, Novel, StoryBible, StoryEntity
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 from app.services.story_prompt_context import compact_text
-from app.services.story_state_machine import build_story_state_machine, format_state_machine_summary
+from app.services.story_state_machine import build_story_state_machine
 
 
 MAX_PROVIDER_SEED = 2_147_483_647
@@ -137,6 +138,32 @@ def _event_tail(state_machine: Dict[str, Any], *, chapter_number: Optional[int],
         }
         for event in events[-limit:]
     ]
+
+
+def _scoped_state_machine_summary(
+    state_machine: Dict[str, Any],
+    *,
+    current_snapshot: Optional[Dict[str, Any]],
+    chapter_number: Optional[int],
+    limit: int = 6,
+) -> str:
+    if not state_machine:
+        return ""
+    lines: List[str] = []
+    snapshot_summary = _snapshot_summary(current_snapshot)
+    state_summary = _json_dict(snapshot_summary).get("state_summary")
+    if state_summary:
+        lines.append(str(state_summary))
+    events = _event_tail(state_machine, chapter_number=chapter_number, limit=limit)
+    if events:
+        values = [
+            f"第{event.get('chapter_number')}章 {event.get('name')}"
+            for event in events
+            if event.get("name")
+        ]
+        if values:
+            lines.append("最近事件：" + "；".join(values))
+    return "\n".join(lines)
 
 
 def _entity_locks(entities: List[StoryEntity], *, limit: int = 32) -> Dict[str, List[Dict[str, Any]]]:
@@ -297,16 +324,16 @@ async def build_novel_continuity_package(
     current_snapshot = _find_snapshot(state_machine, current_chapter_id)
     previous_snapshot = _find_snapshot(state_machine, getattr(previous_chapter, "id", None))
 
-    entity_filters = [StoryEntity.user_id == user_id, or_(StoryEntity.novel_id == novel.id, StoryEntity.novel_id.is_(None))]
-    if current_chapter_id:
-        entity_filters.append(or_(StoryEntity.chapter_id == current_chapter_id, StoryEntity.chapter_id.is_(None)))
-    entity_result = await db.execute(
-        select(StoryEntity)
-        .where(and_(*entity_filters))
-        .order_by(StoryEntity.entity_type, desc(StoryEntity.updated_at))
-        .limit(120)
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel.id,
+        chapter_id=current_chapter_id,
+        include_global_novel_entities=True,
+        limit=120,
     )
-    entity_locks = _entity_locks(list(entity_result.scalars().all()))
+    entities = sorted(entities, key=lambda entity: (entity.entity_type or "", str(entity.updated_at or "")), reverse=True)
+    entity_locks = _entity_locks(entities)
 
     novel_series_seed = derive_stable_seed([
         "novel_series",
@@ -342,7 +369,11 @@ async def build_novel_continuity_package(
         "previous_chapter_state": _snapshot_summary(previous_snapshot),
         "chapter_state_snapshot": _snapshot_summary(current_snapshot),
         "state_machine_version": state_machine.get("version"),
-        "state_machine_summary": format_state_machine_summary(state_machine),
+        "state_machine_summary": _scoped_state_machine_summary(
+            state_machine,
+            current_snapshot=current_snapshot,
+            chapter_number=getattr(current_chapter, "chapter_number", None),
+        ),
         "state_machine_rules": _json_list(state_machine.get("rules")),
         "event_timeline_tail": _event_tail(
             state_machine,

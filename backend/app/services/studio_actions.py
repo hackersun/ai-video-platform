@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.time_utils import utc_now
 from app.models import StudioRepairAction, StudioReviewRun, Workflow
 from app.services.production_control import (
     apply_asset_locks_to_workflow,
@@ -27,6 +30,76 @@ ACTION_REGISTRY: Dict[str, Dict[str, str]] = {
     "media_audit": {"label": "审计媒体文件", "risk": "safe"},
     "skip_issue": {"label": "测试模式跳过", "risk": "confirm"},
 }
+
+RESUME_ACTION_BY_STAGE = {
+    "assets": "apply_asset_locks",
+    "review": "quality_check",
+    "final": "quality_check",
+}
+
+
+async def resume_studio_orchestration(
+    db: AsyncSession,
+    user_id: str,
+    workflow_id: str,
+    *,
+    task_id: str,
+) -> Dict[str, Any]:
+    workflow = await _load_workflow(db, user_id, workflow_id)
+    metadata = dict(workflow.metadata_ or {})
+    key = "studio_orchestration" if isinstance(metadata.get("studio_orchestration"), dict) else "episode_preview_orchestration"
+    orchestration = dict(metadata.get(key) or {})
+    if not orchestration or str(orchestration.get("task_id")) != task_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="持久化编排任务不存在")
+    if orchestration.get("status") != "failed":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="该编排任务当前不需要恢复")
+
+    failed_stage = str(orchestration.get("failed_stage") or "draft")
+    action_code = RESUME_ACTION_BY_STAGE.get(failed_stage)
+    action_result = None
+    if action_code:
+        action_result = await run_studio_action(
+            db,
+            user_id,
+            workflow_id,
+            code=action_code,
+            params={"resumed_from_task_id": task_id},
+        )
+        orchestration["status"] = "resumed"
+    else:
+        orchestration["status"] = "handoff_ready"
+
+    handoff_href = None
+    if failed_stage == "draft" and not action_code:
+        handoff_href = "/producer?" + urlencode({
+            "workflow_id": workflow.id,
+            "novel_id": workflow.novel_id or "",
+            "chapter_id": workflow.chapter_id or "",
+            "resume_task_id": task_id,
+        })
+
+    safe_next = {
+        "code": action_code or ("open_producer" if failed_stage == "draft" else f"resume_{failed_stage}"),
+        "label": "继续失败阶段" if action_code else "打开安全恢复入口",
+        "stage": failed_stage,
+        "safe": True,
+        "href": handoff_href,
+    }
+    orchestration["safe_next_action"] = safe_next
+    orchestration["last_resume_at"] = utc_now().isoformat()
+    metadata[key] = orchestration
+    workflow.metadata_ = metadata
+    flag_modified(workflow, "metadata_")
+    await db.commit()
+    return {
+        "workflow_id": workflow_id,
+        "task_id": task_id,
+        "status": orchestration["status"],
+        "resumed_stage": failed_stage,
+        "completed_stages": orchestration.get("completed_stages") or [],
+        "safe_next_action": safe_next,
+        "action_result": action_result,
+    }
 
 
 async def _load_workflow(db: AsyncSession, user_id: str, workflow_id: str) -> Workflow:

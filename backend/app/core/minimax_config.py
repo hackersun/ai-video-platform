@@ -9,6 +9,8 @@ API调用规范:
 - TTS模型:   POST /v1/t2a_v2              → model_id 传 speech-2.6-hd
 """
 
+from app.core.minimax_voice_contract import DEFAULT_MINIMAX_TTS_VOICE
+
 # ============== 全局配置 ==============
 
 MINIMAX_CONFIG = {
@@ -182,7 +184,7 @@ TTS_VOICES = [
 DEFAULT_TEXT_MODEL  = "MiniMax-M3"
 DEFAULT_IMAGE_MODEL = "MiniMax-image-01"
 DEFAULT_TTS_MODEL   = "MiniMax-speech-2.6-hd"
-DEFAULT_TTS_VOICE   = "female-shaonv"
+DEFAULT_TTS_VOICE   = DEFAULT_MINIMAX_TTS_VOICE
 
 
 # ============== 辅助函数 ==============

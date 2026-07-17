@@ -20,3 +20,15 @@ def test_extracts_local_dev_urls_without_duplicates():
     }
 
     assert extract_image_urls_from_provider_result(result) == ["/static/dev/avatar.png"]
+
+
+def test_extracts_bounded_nonstandard_nested_image_result():
+    result = {
+        "payload": {
+            "results": [
+                {"image": {"urls": ["https://cdn.example.com/nested.png"]}},
+            ],
+        },
+    }
+
+    assert extract_image_urls_from_provider_result(result) == ["https://cdn.example.com/nested.png"]

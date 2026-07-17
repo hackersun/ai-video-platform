@@ -5,9 +5,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
+from app.models import Asset
 from app.models.video_job import VideoJob
+from app.services.provider_asset_binding_service import upsert_provider_binding, verify_provider_binding
 from init_db import init_db
 from main import app
 from test_workflow_routes import (
@@ -51,7 +54,7 @@ def _patch_video_client(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
     return captured
 
 
@@ -88,6 +91,34 @@ def _get_video_job_data(job_id: str) -> dict:
             return {"model_id": job.model_id, "extra_data": job.extra_data or {}}
 
     return asyncio.run(_get())
+
+
+def _verify_seedance_bindings(user_id: str) -> None:
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            assets = list((await session.execute(
+                select(Asset).where(
+                    Asset.user_id == user_id,
+                    Asset.is_active.is_(True),
+                    Asset.is_locked.is_(True),
+                )
+            )).scalars().all())
+            assert len(assets) >= 2
+            for asset in assets:
+                binding = await upsert_provider_binding(
+                    session,
+                    asset_id=asset.id,
+                    asset_version=asset.version or 1,
+                    provider_id="volcano",
+                    model_id="doubao-seedance-2-0-260128",
+                    binding_kind="reference_image",
+                    public_url=asset.url,
+                    upload_status="ready",
+                )
+                await verify_provider_binding(session, binding.id)
+            await session.commit()
+
+    asyncio.run(_seed())
 
 
 def test_draft_fast_routes_to_seedance_fast_config(
@@ -208,6 +239,7 @@ def test_final_quality_routes_to_seedance_20_before_fast(
     )
     shot_id = _get_first_workflow_shot_id(workflow_id)
     _seed_shot_reference_assets(user_id, shot_id)
+    _verify_seedance_bindings(user_id)
 
     response = client.post(
         f"/api/v1/workflow/{workflow_id}/generate-media-batch",

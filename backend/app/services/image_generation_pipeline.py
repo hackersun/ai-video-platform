@@ -116,6 +116,7 @@ async def call_image_generation_provider(
     size: str = "2K",
     aspect_ratio: str = "1:1",
     openai_size: str = "1024x1024",
+    minimax_response_format: str = "base64",
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
     provider = (provider_name or "").lower()
@@ -128,7 +129,7 @@ async def call_image_generation_provider(
             model=model_id,
             aspect_ratio=aspect_ratio,
             n=num,
-            response_format="base64",
+            response_format=minimax_response_format,
         )
     if provider == "openai":
         return await service.generate_image(
@@ -150,6 +151,8 @@ def provider_task_id(result: Any, provider_name: Optional[str] = None) -> Option
         data = result.get("data")
         if not task_id and isinstance(data, dict):
             task_id = data.get("task_id")
+        if not task_id and ("base_resp" in result or "metadata" in result):
+            task_id = result.get("id")
         return task_id
     return result.get("task_id") or result.get("id")
 

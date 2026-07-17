@@ -57,6 +57,18 @@ type ExternalConfig = {
   extra_config?: Record<string, any>;
 };
 
+type DeliveryCheckResult = {
+  config_id: string;
+  status: string;
+  success: boolean;
+  message: string;
+  source_url?: string;
+  delivery_method?: string;
+  object_key?: string;
+  download_status?: number;
+  provider_url_preview?: string;
+};
+
 const TYPE_LABELS: Record<string, string> = {
   audio_video: '音视频直生',
   workflow: '工作流',
@@ -155,6 +167,8 @@ export default function ProductionAdaptersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [deliveryTestingId, setDeliveryTestingId] = useState<string | null>(null);
+  const [deliveryResults, setDeliveryResults] = useState<Record<string, DeliveryCheckResult>>({});
   const [deleteTarget, setDeleteTarget] = useState<ExternalConfig | null>(null);
   const [deletingConfig, setDeletingConfig] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -252,7 +266,10 @@ export default function ProductionAdaptersPage() {
         provider?.name === 'object_storage'
           ? JSON.stringify(
               {
+                storage_provider: 'qiniu',
                 public_base_url: 'https://cdn.example.com',
+                bucket: 'your-bucket-name',
+                upload_url: 'https://upload.qiniup.com',
                 local_static_prefix: '/static/',
                 public_static_prefix: '/static/',
               },
@@ -343,6 +360,26 @@ export default function ProductionAdaptersPage() {
       setError(err.message || '测试失败');
     } finally {
       setTestingId(null);
+    }
+  };
+
+  const handleDeliveryTest = async (configId: string) => {
+    setDeliveryTestingId(configId);
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await apiClient.testExternalConfigDelivery(configId);
+      setDeliveryResults((prev) => ({ ...prev, [configId]: result }));
+      if (result.success) {
+        setMessage(result.message || '真实媒体交付自检通过');
+      } else {
+        setError(result.message || '真实媒体交付自检失败');
+      }
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || '真实媒体交付自检失败');
+    } finally {
+      setDeliveryTestingId(null);
     }
   };
 
@@ -453,7 +490,9 @@ export default function ProductionAdaptersPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {configs.map((config) => (
+                  {configs.map((config) => {
+                    const deliveryResult = deliveryResults[config.id];
+                    return (
                     <div key={config.id} className="rounded-lg border border-white/10 bg-black/20 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
@@ -482,6 +521,17 @@ export default function ProductionAdaptersPage() {
                           {config.test_message && (
                             <div className="mt-2 text-xs text-white/40">{config.test_message}</div>
                           )}
+                          {deliveryResult && (
+                            <div className={`mt-3 rounded-lg border p-3 text-xs leading-5 ${deliveryResult.success ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-50/85' : 'border-red-500/25 bg-red-500/10 text-red-50/85'}`}>
+                              <div className="font-medium">{deliveryResult.message}</div>
+                              <div className="mt-2 grid gap-1 sm:grid-cols-2">
+                                {deliveryResult.delivery_method && <div>交付方式：{deliveryResult.delivery_method}</div>}
+                                {deliveryResult.download_status && <div>下载状态：HTTP {deliveryResult.download_status}</div>}
+                                {deliveryResult.object_key && <div className="sm:col-span-2 break-all">对象 Key：{deliveryResult.object_key}</div>}
+                                {deliveryResult.provider_url_preview && <div className="sm:col-span-2 break-all">URL 预览：{deliveryResult.provider_url_preview}</div>}
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <Button size="sm" variant="outline" className="border-white/20" onClick={() => handleEdit(config)}>
@@ -492,6 +542,12 @@ export default function ProductionAdaptersPage() {
                             {testingId === config.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <TestTube className="h-4 w-4 mr-2" />}
                             测试
                           </Button>
+                          {config.api_type === 'storage' && (
+                            <Button size="sm" variant="outline" className="border-cyan-300/30 text-cyan-50 hover:bg-cyan-500/10" onClick={() => handleDeliveryTest(config.id)} disabled={deliveryTestingId === config.id}>
+                              {deliveryTestingId === config.id ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Cloud className="h-4 w-4 mr-2" />}
+                              交付自检
+                            </Button>
+                          )}
                           <Button size="sm" variant="outline" className="border-red-400/30 text-red-100 hover:bg-red-500/10" onClick={() => setDeleteTarget(config)}>
                             <Trash2 className="h-4 w-4 mr-2" />
                             删除
@@ -499,7 +555,8 @@ export default function ProductionAdaptersPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -549,30 +606,32 @@ export default function ProductionAdaptersPage() {
                   </div>
                 )}
               </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="external-api-key" className="mb-2 block text-sm text-white/70">API Key</label>
+                  <Input
+                    id="external-api-key"
+                    type="password"
+                    value={form.apiKey}
+                    onChange={(event) => updateForm('apiKey', event.target.value)}
+                    placeholder={editingConfigId ? '留空则不更新' : '可选'}
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="external-api-secret" className="mb-2 block text-sm text-white/70">API Secret</label>
+                  <Input
+                    id="external-api-secret"
+                    type="password"
+                    value={form.apiSecret}
+                    onChange={(event) => updateForm('apiSecret', event.target.value)}
+                    placeholder={selectedProvider?.name === 'object_storage' ? '七牛 Secret Key' : '可选'}
+                    className="bg-white/5 border-white/10 text-white"
+                  />
+                </div>
+              </div>
               {selectedProvider?.name !== 'object_storage' && (
                 <>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div>
-                      <label className="mb-2 block text-sm text-white/70">API Key</label>
-                      <Input
-                        type="password"
-                        value={form.apiKey}
-                        onChange={(event) => updateForm('apiKey', event.target.value)}
-                        placeholder={editingConfigId ? '留空则不更新' : '可选'}
-                        className="bg-white/5 border-white/10 text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="mb-2 block text-sm text-white/70">API Secret</label>
-                      <Input
-                        type="password"
-                        value={form.apiSecret}
-                        onChange={(event) => updateForm('apiSecret', event.target.value)}
-                        placeholder="可选"
-                        className="bg-white/5 border-white/10 text-white"
-                      />
-                    </div>
-                  </div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
                       <label className="mb-2 block text-sm text-white/70">提交路径</label>
@@ -597,7 +656,7 @@ export default function ProductionAdaptersPage() {
               )}
               {selectedProvider?.name === 'object_storage' && (
                 <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/10 p-3 text-xs leading-5 text-cyan-50/80">
-                  当前版本支持公开静态媒体出口：例如把 `/static/generated/images/a.png` 映射为 `https://cdn.example.com/static/generated/images/a.png`。请确保 CDN/对象存储已同步这些静态文件或反向代理到后端静态目录。
+                  七牛上传模式需填写 API Key、API Secret，并在 JSON 中配置 `storage_provider: "qiniu"`、`bucket`、`upload_url` 和 `public_base_url`。平台会把本地 `/static/...` 文件上传到七牛对象存储后，再把真实公网对象 URL 提交给视频模型。
                 </div>
               )}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

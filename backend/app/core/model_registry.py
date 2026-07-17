@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.services.seedance_contract import resolve_seedance_contract
+
 
 DASHSCOPE_VIDEO_SYNTHESIS_PATH = "/api/v1/services/aigc/video-generation/video-synthesis"
 HAPPYHORSE_DURATIONS = list(range(3, 16))
@@ -272,6 +274,23 @@ MODELS: List[Dict[str, Any]] = [
         "endpoint_key": "image_generation",
         "limits": {"ratios": ["16:9", "9:16", "1:1"], "sizes": ["720p", "1080p"]},
         "status": {"active": True, "recommended": True, "verified": False},
+    },
+    {
+        "id": "volcano.seedream.5_0_pro",
+        "provider_id": "volcano",
+        "api_model_id": "doubao-seedream-5-0-260128",
+        "display_name": "豆包 Seedream 5.0 Pro",
+        "modality": "image",
+        "capabilities": [
+            "text_to_image",
+            "image_to_image",
+            "character_reference",
+            "scene_reference",
+            "multi_reference",
+        ],
+        "endpoint_key": "image_generation",
+        "limits": {"ratios": ["16:9", "9:16", "1:1"], "sizes": ["2K", "3K", "4K"]},
+        "status": {"active": True, "recommended": True, "verified": True},
     },
     {
         "id": "volcano.seedance.1_0_pro_fast",
@@ -614,14 +633,14 @@ TASK_DEFAULTS: Dict[str, Dict[str, Any]] = {
     "character_image": {
         "display_name": "角色定稿图",
         "required_capabilities": ["text_to_image", "character_reference"],
-        "default_model_id": "volcano.seedream.4_5",
-        "fallback_model_ids": [],
+        "default_model_id": "volcano.seedream.5_0_pro",
+        "fallback_model_ids": ["volcano.seedream.4_5"],
     },
     "scene_reference_image": {
         "display_name": "场景参考图",
         "required_capabilities": ["text_to_image", "scene_reference"],
-        "default_model_id": "volcano.seedream.4_5",
-        "fallback_model_ids": [],
+        "default_model_id": "volcano.seedream.5_0_pro",
+        "fallback_model_ids": ["volcano.seedream.4_5"],
     },
     "shot_video": {
         "display_name": "镜头视频",
@@ -687,8 +706,34 @@ def get_provider(provider_id: str) -> Optional[Dict[str, Any]]:
     return next((provider for provider in PROVIDERS if provider["id"] == provider_id), None)
 
 
+def get_model_contract_metadata(
+    model_id_or_api_id: str,
+    provider_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    contract = resolve_seedance_contract(model_id_or_api_id, provider_id)
+    reference_limits = contract.reference_limits if contract.model_family == "seedance_2" else {}
+    return {
+        "contract_status": contract.contract_status,
+        "contract_version": contract.contract_version,
+        "verified_at": contract.verified_at,
+        "reference_limits": reference_limits,
+        "verification_gaps": list(contract.verification_gaps),
+    }
+
+
+def _with_contract_metadata(model: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        **model,
+        **get_model_contract_metadata(
+            str(model.get("api_model_id") or model.get("id") or ""),
+            str(model.get("provider_id") or ""),
+        ),
+    }
+
+
 def get_model(model_id: str) -> Optional[Dict[str, Any]]:
-    return next((model for model in MODELS if model["id"] == model_id), None)
+    model = next((model for model in MODELS if model["id"] == model_id), None)
+    return _with_contract_metadata(model) if model else None
 
 
 def find_model(model_id_or_api_id: str) -> Optional[Dict[str, Any]]:
@@ -778,6 +823,6 @@ def get_video_model_catalog(task: str = "shot_video") -> Dict[str, Any]:
 def get_registry() -> Dict[str, Any]:
     return {
         "providers": PROVIDERS,
-        "models": MODELS,
+        "models": [_with_contract_metadata(model) for model in MODELS],
         "task_defaults": [get_task_default(task) for task in TASK_DEFAULTS],
     }

@@ -16,16 +16,27 @@ from sqlalchemy import select, update, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.model_registry import get_registry, get_task_default, get_video_model_catalog
+from app.core.model_registry import (
+    get_model_contract_metadata,
+    get_registry,
+    get_task_default,
+    get_video_model_catalog,
+)
 from app.core.security import get_current_user_id
+from app.core.volcano_image_catalog import VOLCANO_IMAGE_MODEL_SEEDS
 from app.core.volcano_agent_plan_config import (
     VOLCANO_AGENT_PLAN_BASE_URL,
     VOLCANO_AGENT_PLAN_MODELS,
     VOLCANO_AGENT_PLAN_PROVIDER,
     VOLCANO_AGENT_PLAN_PROVIDER_ID,
 )
+from app.features.video_generation.public import PROVIDER_VIDEO_WATERMARK_ARG
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog, encrypt_key
-
+from app.services.deterministic_provider_fake import (
+    deterministic_config_test_result,
+    deterministic_provider_fake_enabled,
+)
+from app.services.volcano_speech_tts import configure_volcano_speech_endpoint, test_volcano_speech_connection
 router = APIRouter(tags=["大模型配置"])
 
 
@@ -95,6 +106,11 @@ class LLMModelResponse(BaseModel):
     user_test_status: Optional[str] = None
     user_test_message: Optional[str] = None
     user_key_available: bool = False
+    contract_status: str = "unavailable"
+    contract_version: str = "legacy-single-reference-v1"
+    verified_at: Optional[str] = None
+    reference_limits: dict = Field(default_factory=dict)
+    verification_gaps: List[str] = Field(default_factory=list)
 
 
 class LLMConfigCreateRequest(BaseModel):
@@ -589,52 +605,7 @@ DEFAULT_MODELS = [
         "release_date": "2024-06-01"
     },
     # 火山引擎图像/视频生成模型
-    {
-        "id": "doubao-seedream-4.5",
-        "provider_id": "volcano",
-        "model_id": "Doubao-Seedream-4.5",
-        "model_name": "Doubao-Seedream-4.5",
-        "model_name_cn": "豆包Seedream-4.5",
-        "model_type": "image-generation",
-        "capabilities": ["text-to-image", "image-edit", "inpainting", "outpainting"],
-        "context_window": 4096,
-        "max_tokens": 4096,
-        "input_cost_per_1k": 0.05,
-        "output_cost_per_1k": 0.05,
-        "supports_streaming": False,
-        "supports_function_calling": False,
-        "supports_vision": False,
-        "supports_json_mode": False,
-        "is_active": True,
-        "is_recommended": True,
-        "description": "火山引擎高质量图像生成模型，支持文生图、图像编辑等",
-        "version": "4.5",
-        "release_date": "2026-03-01",
-        "endpoint_id": "ep-20260320112226-rgndq"
-    },
-    {
-        "id": "doubao-seedream-5.0-lite",
-        "provider_id": "volcano",
-        "model_id": "Doubao-Seedream-5.0-lite",
-        "model_name": "Doubao-Seedream-5.0-lite",
-        "model_name_cn": "豆包Seedream-5.0-lite",
-        "model_type": "image-generation",
-        "capabilities": ["text-to-image", "image-edit", "inpainting"],
-        "context_window": 4096,
-        "max_tokens": 4096,
-        "input_cost_per_1k": 0.02,
-        "output_cost_per_1k": 0.02,
-        "supports_streaming": False,
-        "supports_function_calling": False,
-        "supports_vision": False,
-        "supports_json_mode": False,
-        "is_active": True,
-        "is_recommended": True,
-        "description": "豆包轻量级图像生成模型，性价比高",
-        "version": "5.0-lite",
-        "release_date": "2026-03-01",
-        "endpoint_id": "ep-20260320113731-jzjkn"
-    },
+    *VOLCANO_IMAGE_MODEL_SEEDS,
     {
         "id": "doubao-seed-2.0-pro",
         "provider_id": "volcano",
@@ -1329,7 +1300,7 @@ async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
         data = {
             "model": actual_model,
             "content": [
-                {"type": "text", "text": f"{message} --duration 4 --resolution 720p --camerafixed true --watermark true"}
+                {"type": "text", "text": f"{message} --duration 4 --resolution 720p --camerafixed true --watermark {PROVIDER_VIDEO_WATERMARK_ARG}"}
             ]
         }
     elif model_type == "image-generation":
@@ -1781,7 +1752,9 @@ async def test_openai_api(api_key: str, model_id: str, message: str) -> dict:
 
 async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
     """测试 MiniMax API，根据模型类型走不同端点"""
-    from app.core.minimax_config import MINIMAX_MODELS, get_minimax_base_url
+    from app.core.minimax_config import DEFAULT_TTS_VOICE, MINIMAX_MODELS, get_minimax_base_url
+    from app.core.minimax_voice_contract import minimax_tts_verification_message
+    from app.services.minimax_errors import minimax_config_test_failure
 
     # 查找模型配置（支持内部ID和API model_id两种匹配）
     model_config = {}
@@ -1812,19 +1785,13 @@ async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
         }
     elif model_type == "tts":
         # TTS模型 → POST /v1/t2a_v2
-        url = f"{base_url}/t2a_v2"
-        data = {
-            "model": actual_model,
-            "text": message[:50],
-            "stream": False,
-            "output_format": "url",
-            "voice_setting": {
-                "voice_id": "female-shaonv",
-                "speed": 1.0,
-                "vol": 1.0,
-                "pitch": 0,
-            }
-        }
+        from app.services.minimax_tts_request import build_minimax_tts_request
+
+        request = build_minimax_tts_request(
+            model_id=actual_model, text=message[:50], voice_id=DEFAULT_TTS_VOICE, speed=1.0,
+        )
+        url = f"{base_url}{request.url_path}"
+        data = request.payload
     else:
         # 文本生成模型：M3 使用新端点，旧 MiniMax 文本模型保留 OpenAI-compatible 端点
         if actual_model == "MiniMax-M3":
@@ -1843,8 +1810,8 @@ async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
 
             if response.status_code == 200:
                 result = response.json()
-
-                # 提取有意义的结果摘要
+                if failure := minimax_config_test_failure(result, int(response.elapsed.total_seconds() * 1000)):
+                    return failure
                 response_text = ""
                 if model_type == "text-generation":
                     choices = result.get("choices", [])
@@ -1865,7 +1832,7 @@ async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
 
                 return {
                     "success": True,
-                    "message": "MiniMax API 连接成功！",
+                    "message": minimax_tts_verification_message(actual_model) if model_type == "tts" else "MiniMax API 连接成功！",
                     "response": response_text,
                     "response_time_ms": int(response.elapsed.total_seconds() * 1000),
                     "tokens_used": result.get("usage", {}).get("total_tokens", 0) if model_type == "text-generation" else 0
@@ -2010,6 +1977,7 @@ async def list_models(
             "user_test_status": primary_test_status,
             "user_test_message": primary_test_message,
             "user_key_available": primary_key_available,
+            **get_model_contract_metadata(model.model_id, model.provider_id),
         })
 
     return responses
@@ -2203,22 +2171,26 @@ async def test_config(
         )
     )
     row = result.first()
-    
     if not row:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="配置不存在"
         )
-    
     config, model = row
-    
     # 获取provider信息
     provider_result = await db.execute(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
     provider_id = provider.id if provider else model.provider_id
-    
+    if deterministic_provider_fake_enabled():
+        test_result = deterministic_config_test_result(model.model_id)
+        config.test_status = "success"
+        config.test_message = test_result["message"]
+        config.tested_at = utc_now()
+        await db.commit()
+        return test_result
+
     api_key = config.get_api_key_decrypted()
     if not api_key:
         test_result = {
@@ -2235,7 +2207,11 @@ async def test_config(
         return test_result
 
     # 根据提供商调用测试
-    if provider_id == "volcano":
+    if provider_id == "volcano" and model.model_type in ("tts", "audio", "speech"):
+        extra = config.extra_params if isinstance(config.extra_params, dict) else {}
+        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra)
+        test_result = await test_volcano_speech_connection(api_key, base_url or "", request.message)
+    elif provider_id == "volcano":
         test_result = await test_volcano_api(api_key, model.model_id, request.message)
     elif provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
         test_result = await test_volcano_agent_plan_api(api_key, model.model_id, request.message)
@@ -2257,13 +2233,11 @@ async def test_config(
             "response_time_ms": 0,
             "tokens_used": 0
         }
-    
     # 更新测试状态
     config.test_status = "success" if test_result["success"] else "failed"
     config.test_message = test_result["message"]
     config.tested_at = utc_now()
     await db.commit()
-    
     return test_result
 
 

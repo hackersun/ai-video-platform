@@ -1,0 +1,40 @@
+{
+  "direct_success_db": [
+    "backend/tests/test_workflow_media_public_contract.py::test_direct_batch_locks_response_and_persistence_contract"
+  ],
+  "separate_success": [
+    "backend/tests/test_workflow_media_public_contract.py::test_separate_batch_locks_completed_and_no_tts_contract[model_audio-1]"
+  ],
+  "separate_pending": [
+    "backend/test_workflow_routes.py::test_workflow_media_batch_separate_video_tts_uses_selected_models"
+  ],
+  "separate_no_tts": [
+    "backend/tests/test_workflow_media_public_contract.py::test_separate_batch_locks_completed_and_no_tts_contract[none-0]"
+  ],
+  "missing_invalid_and_missing_shots": [
+    "backend/tests/test_workflow_media_public_contract.py::test_batch_locks_owned_workflow_error[missing-payload0-404-工作流不存在]",
+    "backend/tests/test_workflow_media_public_contract.py::test_batch_locks_validation_and_missing_shot_errors"
+  ],
+  "real_model_missing": [
+    "backend/test_workflow_routes.py::test_workflow_media_batch_requires_real_video_when_requested"
+  ],
+  "series_preflight_blocked": [
+    "backend/test_workflow_routes.py::test_series_run_workflow_media_requires_passed_preflight"
+  ],
+  "series_preflight_stale_supersede_commit": [
+    "backend/test_workflow_routes.py::test_series_run_workflow_media_rechecks_fresh_snapshot_before_provider_call",
+    "backend/test_workflow_routes.py::test_series_run_workflow_persists_fresh_not_ready_even_when_hash_is_unchanged"
+  ],
+  "prompt_fallback_and_reference_omission": [
+    "backend/tests/test_workflow_media_public_contract.py::test_separate_batch_locks_prompt_fallback_and_local_reference_omission"
+  ],
+  "provider_unknown_budget_and_zero_job": [
+    "backend/tests/test_workflow_media_public_contract.py::test_live_provider_unknown_submission_precommits_budget_without_job"
+  ],
+  "transaction_probe": [
+    "backend/tests/test_workflow_media_public_contract.py::test_direct_batch_rolls_back_all_rows_when_second_shot_fails"
+  ],
+  "openapi_complete_canonical_hash": [
+    "backend/tests/test_workflow_media_public_contract.py::test_openapi_locks_workflow_media_schema_contract"
+  ]
+}

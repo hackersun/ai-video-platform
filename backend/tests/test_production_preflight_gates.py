@@ -126,6 +126,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=character_entity_id,
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="character",
                 name="沈砚",
                 description="黑发青年，灰蓝长衫",
@@ -139,6 +141,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=f"scene-{uuid4()}",
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="scene",
                 name="旧码头",
                 description="冷雾弥漫的木质码头",
@@ -152,6 +156,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=f"prop-{uuid4()}",
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="prop",
                 name="铜铃",
                 description="关键线索道具",
@@ -165,6 +171,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=f"event-{uuid4()}",
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="event",
                 name="追查铜铃",
                 description="沈砚在旧码头发现铜铃线索",
@@ -282,6 +290,24 @@ def test_production_bible_summary_endpoint_exposes_core_sections(monkeypatch: py
     user_id = str(uuid4())
     seeded = asyncio.run(_seed_workflow_with_shot(user_id=user_id, image_url="https://cdn.example.com/shot.png"))
 
+    async def _seed_global_template_entity() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(
+                StoryEntity(
+                    id=f"global-template-{uuid4()}",
+                    user_id=user_id,
+                    novel_id=None,
+                    entity_type="character",
+                    name="全局模板角色",
+                    description="不应计入单部小说 Production Bible",
+                    attributes={},
+                    confidence=90,
+                )
+            )
+            await db.commit()
+
+    asyncio.run(_seed_global_template_entity())
+
     with TestClient(app) as test_client:
         response = test_client.get(
             f"/api/v1/story-bibles/production-bible/{seeded['novel_id']}/summary",
@@ -292,6 +318,8 @@ def test_production_bible_summary_endpoint_exposes_core_sections(monkeypatch: py
     summary = response.json()["summary"]
     assert summary["style"]["style"] == "冷色悬疑动漫风格"
     assert summary["characters"][0]["name"] == "沈砚"
+    assert "全局模板角色" not in {item["name"] for item in summary["characters"]}
+    assert summary["counts"]["characters"] == 1
     assert summary["scenes"][0]["name"] == "旧码头"
     assert summary["props"][0]["name"] == "铜铃"
     assert summary["events"][0]["name"] == "追查铜铃"
@@ -441,7 +469,7 @@ def test_production_video_unsafe_skip_does_not_bypass_hard_preflight(
         (),
         {"content_generation": type("Content", (), {"tasks": FakeTasks()})()},
     )()
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: fake_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: fake_client)
 
     with TestClient(app) as test_client:
         response = test_client.post(
@@ -493,7 +521,7 @@ def test_production_video_preflight_uses_resolved_model_config_when_request_omit
         (),
         {"content_generation": type("Content", (), {"tasks": FakeTasks()})()},
     )()
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: fake_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: fake_client)
 
     with TestClient(app) as test_client:
         response = test_client.post(
@@ -544,7 +572,7 @@ def test_production_video_unsafe_skip_checks_shot_local_reference_image(
         (),
         {"content_generation": type("Content", (), {"tasks": FakeTasks()})()},
     )()
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: fake_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: fake_client)
 
     with TestClient(app) as test_client:
         response = test_client.post(

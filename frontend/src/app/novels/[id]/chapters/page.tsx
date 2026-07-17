@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
 import { useToast } from '@/components/ui/toast';
+import { getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import {
   getDefaultConfigForCapability,
@@ -334,6 +335,16 @@ function ChaptersContent() {
                               {chapter.updated_at?.split('T')[0]}
                             </span>
                           </div>
+                          <div className="mt-3 rounded-md border border-white/10 bg-black/15 p-3">
+                            <div className="mb-1 text-xs font-medium text-white/40">正文预览</div>
+                            <p className="line-clamp-3 break-words text-sm leading-6 text-white/65">
+                              {getStoryExcerpt(chapter.content, '这个章节还没有正文，适合先用 AI 生成本章内容。', 180)}
+                            </p>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2 text-xs text-white/45">
+                            <span className="rounded bg-cyan-500/10 px-2 py-1 text-cyan-100">AI 下一步</span>
+                            <span>先核对正文，再生成剧本、分镜或继续润色。</span>
+                          </div>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-1 sm:justify-end">
@@ -350,7 +361,7 @@ function ChaptersContent() {
                         <Button asChild variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
                           <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapter.id}`}>
                             <FileText className="w-4 h-4 mr-1" />
-                            剧本
+                            生成剧本
                           </Link>
                         </Button>
                         <Button

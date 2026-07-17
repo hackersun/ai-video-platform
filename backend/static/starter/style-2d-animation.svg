@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-label="2D animation anime style reference">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7dd3fc"/>
+      <stop offset="1" stop-color="#fde68a"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="540" fill="url(#sky)"/>
+  <rect y="368" width="960" height="172" fill="#5eead4"/>
+  <circle cx="760" cy="88" r="46" fill="#fff7ed"/>
+  <path d="M0 374 C120 310 240 330 340 286 C510 214 640 302 960 240 L960 374 Z" fill="#a7f3d0"/>
+  <path d="M174 380 L240 188 L306 380 Z" fill="#0f172a"/>
+  <path d="M212 200 C244 164 294 172 312 214 C336 266 306 322 264 328 C214 336 180 288 190 238 C194 220 202 208 212 200 Z" fill="#f8fafc" stroke="#0f172a" stroke-width="8"/>
+  <path d="M206 230 C232 206 286 204 310 236 C294 188 224 180 206 230 Z" fill="#1f2937"/>
+  <circle cx="236" cy="258" r="8" fill="#0f172a"/>
+  <circle cx="282" cy="258" r="8" fill="#0f172a"/>
+  <path d="M238 292 C254 306 274 306 292 292" fill="none" stroke="#0f172a" stroke-width="6" stroke-linecap="round"/>
+  <rect x="186" y="328" width="126" height="132" rx="22" fill="#2563eb" stroke="#0f172a" stroke-width="8"/>
+  <path d="M186 356 L128 414" stroke="#0f172a" stroke-width="16" stroke-linecap="round"/>
+  <path d="M312 354 L382 310" stroke="#0f172a" stroke-width="16" stroke-linecap="round"/>
+  <rect x="486" y="226" width="250" height="142" rx="20" fill="#ffffff" opacity=".82" stroke="#0f172a" stroke-width="6"/>
+  <path d="M520 264 H704 M520 304 H666 M520 344 H620" stroke="#0f172a" stroke-width="10" stroke-linecap="round"/>
+  <text x="56" y="76" fill="#0f172a" font-family="Arial, sans-serif" font-size="34" font-weight="700">2D Animation</text>
+  <text x="56" y="118" fill="#334155" font-family="Arial, sans-serif" font-size="22">clean lines · readable faces · short drama</text>
+</svg>

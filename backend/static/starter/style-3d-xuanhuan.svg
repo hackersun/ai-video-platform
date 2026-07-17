@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="540" viewBox="0 0 960 540" role="img" aria-label="3D xuanhuan anime style reference">
+  <defs>
+    <linearGradient id="void" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#172554"/>
+      <stop offset=".55" stop-color="#581c87"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </linearGradient>
+    <radialGradient id="aura" cx=".5" cy=".46" r=".36">
+      <stop offset="0" stop-color="#cffafe" stop-opacity=".95"/>
+      <stop offset=".45" stop-color="#38bdf8" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="960" height="540" fill="url(#void)"/>
+  <rect width="960" height="540" fill="url(#aura)"/>
+  <path d="M90 430 L210 154 L328 430 Z" fill="#64748b" opacity=".7"/>
+  <path d="M626 430 L748 116 L872 430 Z" fill="#94a3b8" opacity=".45"/>
+  <ellipse cx="480" cy="406" rx="248" ry="72" fill="#0f172a" opacity=".55"/>
+  <path d="M480 162 C536 230 568 310 552 410 C514 436 444 436 406 410 C392 312 426 230 480 162 Z" fill="#f8fafc" stroke="#fbbf24" stroke-width="8"/>
+  <path d="M424 310 C458 292 500 292 536 310" fill="none" stroke="#38bdf8" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="480" cy="232" r="46" fill="#fee2e2" stroke="#fbbf24" stroke-width="6"/>
+  <path d="M424 214 C462 174 522 182 552 224" fill="none" stroke="#111827" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="480" cy="314" r="118" fill="none" stroke="#67e8f9" stroke-width="8" opacity=".6"/>
+  <circle cx="480" cy="314" r="170" fill="none" stroke="#facc15" stroke-width="5" opacity=".45"/>
+  <text x="56" y="78" fill="#f8fafc" font-family="Arial, sans-serif" font-size="34" font-weight="700">3D Xuanhuan</text>
+  <text x="56" y="120" fill="#dbeafe" font-family="Arial, sans-serif" font-size="22">volumetric light · aura · epic scale</text>
+</svg>

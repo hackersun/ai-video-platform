@@ -20,6 +20,9 @@ from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.core.api_key_utils import get_user_api_key
 from app.core.dev_generation import dev_audio_url, dev_tts_audio_url, estimate_tts_duration_seconds, is_dev_mode
+from app.core.minimax_config import DEFAULT_TTS_VOICE
+from app.core.time_utils import utc_now
+from app.services.dialogue_parser import extract_character_from_text, parse_dialogue
 from app.services.consistency_context import build_consistency_prompt
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.models.tts_job import TTSJob
@@ -27,64 +30,16 @@ from app.models.shot import Shot
 from app.models.character import Character
 from app.models.asset import Asset
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
+from app.services.minimax_service import MINIMAX_VOICE_CLONE_MODEL
+from app.services.volcano_speech_tts import configure_volcano_speech_endpoint
 
 router = APIRouter(tags=["语音合成"])
-
 STATIC_ROOT = Path(__file__).resolve().parents[4] / "static"
 VOICE_CLONE_DIR = STATIC_ROOT / "generated" / "voice-clones"
+VOICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 # ============== 辅助函数 ==============
-
-def extract_character_from_text(text: str) -> Optional[str]:
-    """
-    从文本中提取角色名。
-    支持格式: "角色名: 对话" 或 "角色名：对话" 或 "角色名说：" 等模式
-    """
-    if not text:
-        return None
-    patterns = [
-        r"([^\s：:]+)说[：:]",   # "张三说："
-        r"([^\s：:]+)道[：:]",     # "张三道："
-        r"([^\s：:]+)回答[：:]", # "张三回答："
-        r"([^\s：:]+)[：:]",      # "张三："
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-    return None
-
-
-def parse_dialogue(dialogue: str) -> List[Dict[str, str]]:
-    """
-    解析多角色对话文本，返回分段列表。
-    支持格式: "角色名: 对话文本" 每行一个
-    返回: [{'character': '小明', 'text': '对话内容'}, ...]
-    """
-    if not dialogue:
-        return []
-    lines = dialogue.strip().split('\n')
-    segments = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # 匹配 "角色名: 对话" 或 "角色名：对话"
-        match = re.match(r'^([^:：]+?)[:：]\s*(.+)$', line)
-        if match:
-            segments.append({
-                'character': match.group(1).strip(),
-                'text': match.group(2).strip()
-            })
-        else:
-            # 无角色名前缀，整段作为默认
-            segments.append({
-                'character': '',
-                'text': line
-            })
-    return segments
-
 
 def is_multi_character(segments: List[Dict]) -> bool:
     """判断是否为多角色对话"""
@@ -189,7 +144,7 @@ class TTSGenerateRequest(BaseModel):
     text_content: Optional[str] = Field(None, description="要转换的文本（支持多角色格式）")
     text: Optional[str] = Field(None, description="兼容旧字段：要转换的文本")
     title: Optional[str] = Field(None, description="任务标题")
-    voice_model: str = Field("female-shaonj", description="语音音色ID")
+    voice_model: str = Field(DEFAULT_TTS_VOICE, description="语音音色ID")
     voice: Optional[str] = Field(None, description="兼容旧字段：语音音色ID")
     speed: float = Field(1.0, description="语速")
     api_provider: Optional[str] = Field(None, description="API提供商: minimax, volcano")
@@ -280,6 +235,11 @@ class VoiceCloneResponse(BaseModel):
     novel_id: Optional[str] = None
     status: str
     is_custom: bool = True
+    provider_ready: bool = False
+    provider_file_id: Optional[str] = None
+    provider_tts_model: Optional[str] = None
+    provider_demo_audio_url: Optional[str] = None
+    provider_error: Optional[str] = None
     created_at: datetime
 
 
@@ -334,6 +294,7 @@ def _normalize_builtin_voice(item: dict, provider: str) -> dict:
 
 def _voice_clone_response(asset: Asset) -> VoiceCloneResponse:
     params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    clone_status = params.get("clone_status") or "ready"
     return VoiceCloneResponse(
         id=asset.id,
         voice_id=params.get("voice_id") or f"clone-{asset.id[:8]}",
@@ -344,9 +305,55 @@ def _voice_clone_response(asset: Asset) -> VoiceCloneResponse:
         sample_source=params.get("sample_source") or params.get("clone_source"),
         character_id=asset.character_id,
         novel_id=asset.novel_id,
-        status=params.get("clone_status") or "ready",
+        status=clone_status,
+        provider_ready=clone_status == "provider_ready",
+        provider_file_id=params.get("provider_file_id"),
+        provider_tts_model=_clone_tts_model_override(params),
+        provider_demo_audio_url=params.get("provider_demo_audio_url"),
+        provider_error=params.get("provider_error"),
         created_at=asset.created_at,
     )
+
+
+async def _find_voice_clone_asset(db: AsyncSession, user_id: str, voice_id: str) -> Optional[Asset]:
+    result = await db.execute(
+        select(Asset)
+        .where(
+            Asset.user_id == user_id,
+            Asset.category == "voice",
+            Asset.asset_type == "audio",
+            Asset.is_active == True,
+        )
+        .order_by(desc(Asset.created_at))
+    )
+    for asset in result.scalars().all():
+        params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+        if (params.get("voice_id") or f"clone-{asset.id[:8]}") == voice_id:
+            return asset
+    return None
+
+
+def _clone_tts_model_override(params: Optional[Dict[str, Any]]) -> Optional[str]:
+    if params and params.get("clone_status") == "provider_ready":
+        return params.get("provider_tts_model") or MINIMAX_VOICE_CLONE_MODEL
+    return None
+
+
+async def _ensure_minimax_voice_clone_ready(db: AsyncSession, user_id: str, voice_id: str) -> Optional[Dict[str, Any]]:
+    asset = await _find_voice_clone_asset(db, user_id, voice_id)
+    if not asset:
+        return None
+
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    clone_status = params.get("clone_status") or "ready"
+    if clone_status in {"ready", "provider_ready"}:
+        return params
+
+    provider_error = params.get("provider_error")
+    detail = f"MiniMax 克隆音色 {voice_id} 云端克隆未就绪，当前状态：{clone_status}"
+    if provider_error:
+        detail = f"{detail}；服务商错误：{provider_error}"
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
 
 
 async def _resolve_preview_tts_config(
@@ -384,7 +391,7 @@ async def _resolve_preview_tts_config(
         resolved_provider = provider_row.name or provider_row.id
         api_key = config.get_api_key_decrypted()
         extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-        base_url = extra.get("base_url") or model.base_url or provider_row.base_url
+        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or provider_row.base_url, extra)
         api_model_id = api_model_id or model.model_id
     else:
         if resolved_provider in {"minimax", "volcano"}:
@@ -400,14 +407,92 @@ async def _save_voice_clone_upload(sample_audio: UploadFile, voice_id: str) -> s
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持 wav/mp3/m4a/aac/ogg/webm 音频样本")
     VOICE_CLONE_DIR.mkdir(parents=True, exist_ok=True)
     target = (VOICE_CLONE_DIR / f"{voice_id}{ext}").resolve()
-    target.relative_to(STATIC_ROOT.resolve())
+    suffix = 1
+    while target.exists():
+        target = (VOICE_CLONE_DIR / f"{voice_id}-{suffix}{ext}").resolve()
+        suffix += 1
+    static_relative_path = target.relative_to(STATIC_ROOT.resolve()).as_posix()
     data = await sample_audio.read()
     if not data:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="声音样本不能为空")
     if len(data) > 30 * 1024 * 1024:
         raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="声音样本不能超过 30MB")
     target.write_bytes(data)
-    return f"/static/generated/voice-clones/{target.name}"
+    return f"/static/{static_relative_path}"
+
+
+def _resolve_static_media_path(media_url: Optional[str]) -> Optional[str]:
+    if not media_url or not media_url.startswith("/static/"):
+        return None
+    try:
+        media_path = (STATIC_ROOT / media_url.removeprefix("/static/")).resolve()
+        media_path.relative_to(STATIC_ROOT.resolve())
+    except ValueError:
+        return None
+    if not media_path.exists() or not media_path.is_file():
+        return None
+    return str(media_path)
+
+
+async def _activate_minimax_voice_clone(
+    asset: Asset,
+    db: AsyncSession,
+    user_id: str,
+    *,
+    model_config_id: Optional[str] = None,
+    preview_text: Optional[str] = None,
+) -> None:
+    params = dict(asset.generation_params) if isinstance(asset.generation_params, dict) else {}
+    provider = params.get("provider") or "custom"
+    if provider != "minimax":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅 MiniMax 声音克隆支持云端激活")
+    voice_id = (params.get("voice_id") or "").strip()
+    if not voice_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="声音资产缺少 voice_id")
+    audio_path = _resolve_static_media_path(asset.url)
+    if not audio_path:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="MiniMax 云端克隆需要本地上传的声音样本，请重新上传音频文件。",
+        )
+
+    api_key, _, model_id, base_url = await _resolve_preview_tts_config(
+        db,
+        user_id,
+        provider="minimax",
+        model_config_id=model_config_id,
+        model_id=None,
+    )
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="未配置 MiniMax 语音模型 API Key，无法执行云端声音克隆",
+        )
+
+    from app.services.minimax_service import MiniMaxService
+
+    service = MiniMaxService(api_key, base_url)
+    upload_result = await service.upload_voice_clone_audio(audio_path)
+    file_id = str(upload_result.get("file_id") or "")
+    if not file_id:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="MiniMax 声音样本上传未返回 file_id")
+    clone_result = await service.clone_voice(
+        file_id=file_id,
+        voice_id=voice_id,
+        text=(preview_text or f"这是 {asset.name} 的声音克隆试听。")[:200],
+        model=MINIMAX_VOICE_CLONE_MODEL,
+    )
+
+    params.update({
+        "clone_status": "provider_ready",
+        "provider_file_id": file_id,
+        "provider_tts_model": MINIMAX_VOICE_CLONE_MODEL,
+        "provider_demo_audio_url": clone_result.get("demo_audio"),
+        "provider_extra_info": clone_result.get("extra_info"),
+        "provider_error": None,
+        "cloud_activated_at": utc_now().isoformat(),
+    })
+    asset.generation_params = params
 
 
 # ============== API 端点 ==============
@@ -583,7 +668,7 @@ async def generate_tts(
         request.api_provider = provider.name or provider.id
         api_key = config.get_api_key_decrypted()
         extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-        base_url = extra.get("base_url") or model.base_url or provider.base_url
+        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or provider.base_url, extra)
         tts_model_id = tts_model_id or model.model_id
     elif request.api_provider == "minimax":
         api_key, base_url = await get_user_api_key(
@@ -714,11 +799,13 @@ async def generate_tts(
                     )
                     seg_voice = resolved_segment["voice"]
                     seg_speed = resolved_segment["speed"]
+                    voice_clone_params = await _ensure_minimax_voice_clone_ready(db, user_id, seg_voice)
+                    seg_model_id = _clone_tts_model_override(voice_clone_params) or tts_model_id or "speech-2.6-hd"
 
                     try:
                         result = await svc.text_to_speech(
                             text=seg['text'],
-                            model=tts_model_id or "speech-2.6-hd",
+                            model=seg_model_id,
                             voice_id=seg_voice,
                             speed=seg_speed
                         )
@@ -763,9 +850,11 @@ async def generate_tts(
             else:
                 # 单角色：整段生成
                 try:
+                    voice_clone_params = await _ensure_minimax_voice_clone_ready(db, user_id, voice_to_use)
+                    effective_tts_model_id = _clone_tts_model_override(voice_clone_params) or tts_model_id or "speech-2.6-hd"
                     result = await svc.text_to_speech(
                         text=request.text_content,
-                        model=tts_model_id or "speech-2.6-hd",
+                        model=effective_tts_model_id,
                         voice_id=voice_to_use,
                         speed=speed_to_use
                     )
@@ -951,9 +1040,11 @@ async def preview_tts_voice(
         if provider == "minimax":
             from app.services.minimax_service import MiniMaxService
 
+            voice_clone_params = await _ensure_minimax_voice_clone_ready(db, user_id, request.voice_model)
+            effective_model_id = _clone_tts_model_override(voice_clone_params) or model_id or "speech-2.6-hd"
             result = await MiniMaxService(api_key, base_url).text_to_speech(
                 text=text,
-                model=model_id or "speech-2.6-hd",
+                model=effective_model_id,
                 voice_id=request.voice_model,
                 speed=request.speed,
                 output_dir="audio/previews",
@@ -991,7 +1082,7 @@ async def preview_tts_voice(
     return TTSPreviewResponse(
         status=result.get("status") or "succeeded",
         audio_url=audio_url,
-        voice=request.voice_model,
+        voice=result.get("voice") or request.voice_model,
         provider=provider,
         duration_seconds=result.get("duration"),
         message=result.get("message") or "音色试听已生成",
@@ -1002,9 +1093,13 @@ async def preview_tts_voice(
 async def create_voice_clone_profile(
     name: str = Form(...),
     provider: str = Form("minimax"),
+    voice_id: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
     sample_audio_url: Optional[str] = Form(None),
     sample_source: Optional[str] = Form(None),
+    model_config_id: Optional[str] = Form(None),
+    activate_cloud: bool = Form(True),
+    preview_text: Optional[str] = Form(None),
     character_id: Optional[str] = Form(None),
     novel_id: Optional[str] = Form(None),
     sample_audio: Optional[UploadFile] = File(None),
@@ -1019,6 +1114,12 @@ async def create_voice_clone_profile(
     clean_name = name.strip()
     if not clean_name:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="音色名称不能为空")
+    clean_voice_id = (voice_id or "").strip() or None
+    if clean_voice_id and not VOICE_ID_PATTERN.match(clean_voice_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="voice_id 仅支持字母、数字、点、下划线、冒号和短横线，最长 128 位",
+        )
 
     if character_id:
         char_result = await db.execute(
@@ -1027,15 +1128,33 @@ async def create_voice_clone_profile(
         if not char_result.scalar_one_or_none():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="角色不存在")
 
+    if clean_voice_id:
+        existing_result = await db.execute(
+            select(Asset).where(
+                Asset.user_id == user_id,
+                Asset.category == "voice",
+                Asset.asset_type == "audio",
+                Asset.is_active == True,
+            )
+        )
+        for existing in existing_result.scalars().all():
+            params = existing.generation_params if isinstance(existing.generation_params, dict) else {}
+            if params.get("voice_id") == clean_voice_id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"voice_id 已存在: {clean_voice_id}",
+                )
+
     asset_id = str(uuid4())
-    voice_id = f"clone-{asset_id[:8]}"
+    resolved_voice_id = clean_voice_id or f"clone-{asset_id[:8]}"
     stored_sample_url = (sample_audio_url or "").strip() or None
     clone_source = (sample_source or "").strip() or ("url" if stored_sample_url else "upload")
     if sample_audio:
-        stored_sample_url = await _save_voice_clone_upload(sample_audio, voice_id)
+        stored_sample_url = await _save_voice_clone_upload(sample_audio, resolved_voice_id)
         clone_source = "recording" if clone_source == "recording" else "upload"
     if not stored_sample_url:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="请上传声音样本或填写样本音频 URL")
+    clone_status = "sample_uploaded" if clone_source in {"upload", "recording"} else "provider_pending"
 
     asset = Asset(
         id=asset_id,
@@ -1051,15 +1170,86 @@ async def create_voice_clone_profile(
         style_tags=["custom_voice"],
         is_public=False,
         generation_params={
-            "voice_id": voice_id,
+            "voice_id": resolved_voice_id,
             "provider": provider,
-            "clone_status": "ready" if clone_source == "url" else "sample_uploaded",
+            "clone_status": clone_status,
             "sample_audio_url": stored_sample_url,
             "sample_source": clone_source,
             "note": "本地已登记克隆音色；云端克隆训练需在对应服务商完成或由生产适配器接入。",
         },
     )
     db.add(asset)
+    await db.flush()
+    if provider == "minimax" and sample_audio and activate_cloud:
+        try:
+            await _activate_minimax_voice_clone(
+                asset,
+                db,
+                user_id,
+                model_config_id=model_config_id,
+                preview_text=preview_text,
+            )
+        except HTTPException as exc:
+            params = dict(asset.generation_params) if isinstance(asset.generation_params, dict) else {}
+            params.update({
+                "clone_status": "provider_failed",
+                "provider_error": exc.detail,
+            })
+            asset.generation_params = params
+        except Exception as exc:
+            params = dict(asset.generation_params) if isinstance(asset.generation_params, dict) else {}
+            params.update({
+                "clone_status": "provider_failed",
+                "provider_error": str(exc),
+            })
+            asset.generation_params = params
+    await db.commit()
+    await db.refresh(asset)
+    return _voice_clone_response(asset)
+
+
+@router.post("/voice-clones/{asset_id}/activate", response_model=VoiceCloneResponse)
+async def activate_voice_clone_profile(
+    asset_id: str,
+    model_config_id: Optional[str] = Form(None),
+    preview_text: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Upload an existing local MiniMax voice sample and create the cloud voice_id."""
+    result = await db.execute(
+        select(Asset).where(
+            Asset.id == asset_id,
+            Asset.user_id == user_id,
+            Asset.category == "voice",
+            Asset.asset_type == "audio",
+            Asset.is_active == True,
+        )
+    )
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="声音资产不存在")
+
+    try:
+        await _activate_minimax_voice_clone(
+            asset,
+            db,
+            user_id,
+            model_config_id=model_config_id,
+            preview_text=preview_text,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        params = dict(asset.generation_params) if isinstance(asset.generation_params, dict) else {}
+        params.update({
+            "clone_status": "provider_failed",
+            "provider_error": str(exc),
+        })
+        asset.generation_params = params
+        await db.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"MiniMax 云端声音克隆失败: {str(exc)}")
+
     await db.commit()
     await db.refresh(asset)
     return _voice_clone_response(asset)
@@ -1227,6 +1417,7 @@ async def list_available_voices(
         if provider and asset_provider not in {provider, "custom"}:
             continue
         voice_id = params.get("voice_id") or f"clone-{asset.id[:8]}"
+        clone_status = params.get("clone_status") or "ready"
         voices.append({
             "voice_id": voice_id,
             "id": voice_id,
@@ -1240,7 +1431,12 @@ async def list_available_voices(
             "sample_source": params.get("sample_source") or params.get("clone_source"),
             "character_id": asset.character_id,
             "novel_id": asset.novel_id,
-            "status": params.get("clone_status") or "ready",
+            "status": clone_status,
+            "provider_ready": clone_status == "provider_ready",
+            "provider_file_id": params.get("provider_file_id"),
+            "provider_tts_model": _clone_tts_model_override(params),
+            "provider_demo_audio_url": params.get("provider_demo_audio_url"),
+            "provider_error": params.get("provider_error"),
             "description": asset.description,
         })
 
