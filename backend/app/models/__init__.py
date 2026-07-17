@@ -41,6 +41,17 @@ from app.models.quality_evaluation import QualityEvaluation
 from app.models.series_production_run import SeriesProductionRun
 from app.models.series_anchor_generation_submission import SeriesAnchorGenerationSubmission
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.models.model_center import (
+    ModelBinding,
+    ModelCertificationRun,
+    ModelConfigAuditEvent,
+    ModelConnection,
+    ModelExecutionSnapshot,
+    ModelProfile,
+    ModelProfileVersion,
+    ModelProvider,
+    ProductionRecipeVersion,
+)
 
 __all__ = [
     "LLMProvider",
@@ -92,4 +103,13 @@ __all__ = [
     "QualityEvaluation",
     "SeriesProductionRun",
     "LiveCanaryProviderOperation",
+    "ModelProvider",
+    "ModelProfile",
+    "ModelConnection",
+    "ModelProfileVersion",
+    "ModelBinding",
+    "ProductionRecipeVersion",
+    "ModelCertificationRun",
+    "ModelExecutionSnapshot",
+    "ModelConfigAuditEvent",
 ]
