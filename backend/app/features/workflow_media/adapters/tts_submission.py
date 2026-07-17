@@ -27,6 +27,12 @@ from app.features.workflow_media.application.live_provider_attempts import (
     prepare_live_provider_attempt,
 )
 from app.features.workflow_media.application.reference_packages import workflow_shot_lineage
+from app.features.model_drivers.public import (
+    DriverError,
+    SpeechCommand,
+    build_builtin_driver_registry,
+    execute_generation,
+)
 from app.services.minimax_errors import MiniMaxProviderRejected
 
 
@@ -163,6 +169,24 @@ async def _resolve_voice(command: TTSSubmissionCommand, prepared: dict) -> _Voic
 
 async def _call_provider(command: TTSSubmissionCommand, text: str, voice: str, speed: float) -> dict:
     model = command.preparation.selected_audio_model or {}
+    generation = model.get("generation_context")
+    if generation is not None:
+        try:
+            submission = await execute_generation(
+                build_builtin_driver_registry(),
+                SpeechCommand(
+                    text=text,
+                    voice_id=voice,
+                    params={**dict(generation.profile.default_params), "speed": speed},
+                ),
+                generation.driver_context,
+            )
+        except DriverError as error:
+            raise WorkflowMediaError(422, str(error)) from error
+        result = dict(submission.output)
+        if submission.provider_task_id and not result.get("task_id"):
+            result["task_id"] = submission.provider_task_id
+        return result
     api_key = command.preparation.audio_api_key
     if model.get("provider_id") == "minimax":
         from app.services.minimax_service import MiniMaxService

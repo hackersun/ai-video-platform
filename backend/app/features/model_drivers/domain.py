@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Protocol, TypeAlias
 
-from app.features.model_config import ModelProfileContract
+from app.features.model_config.domain import ModelProfileContract
 
 
 @dataclass(frozen=True)

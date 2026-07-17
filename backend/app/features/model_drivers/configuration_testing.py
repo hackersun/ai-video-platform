@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from sqlalchemy import desc, select
 
-from app.features.model_config import ModelProfileContract
+from app.features.model_config.domain import ModelProfileContract
 from app.features.model_drivers.domain import DriverContext, DriverTestResult
 from app.features.model_drivers.executor import execute_connection_test
 from app.features.model_drivers.registry import build_builtin_driver_registry

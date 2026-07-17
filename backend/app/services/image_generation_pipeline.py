@@ -6,6 +6,9 @@ from typing import Any, Mapping, Optional
 
 from fastapi import HTTPException
 
+from app.features.model_config.public import ModelBindingError, resolve_generation_context
+from app.features.model_drivers import public as driver_kernel
+
 MINIMAX_IMAGE_PROMPT_MAX_CHARS = 1450
 
 _CRITICAL_IMAGE_PROMPT_KEYWORDS = (
@@ -119,24 +122,32 @@ async def call_image_generation_provider(
     minimax_response_format: str = "base64",
     generation_context: Any = None,
     generation_params: Mapping[str, Any] | None = None,
+    db: Any = None,
+    user_id: str | None = None,
+    config_id: str | None = None,
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
+    if generation_context is None and db is not None and user_id:
+        try:
+            generation_context = await resolve_generation_context(
+                db, user_id=user_id, stage="image", explicit_config_id=config_id,
+            )
+        except ModelBindingError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
     if generation_context is not None:
-        from app.features.model_drivers.public import (
-            ImageCommand,
-            build_builtin_driver_registry,
-            execute_generation,
-        )
-
         driver = generation_context.driver_context
         prepared_prompt = (
             _compact_minimax_image_prompt(prompt)
             if driver.driver_key == "minimax_image_v1" else prompt
         )
-        params = {**dict(generation_context.profile.default_params), **dict(generation_params or {})}
-        submission = await execute_generation(
-            build_builtin_driver_registry(),
-            ImageCommand(prompt=prepared_prompt, params=params),
+        params = {
+            **dict(generation_context.profile.default_params),
+            **_driver_image_params(driver.driver_key, num, size, aspect_ratio, minimax_response_format),
+            **dict(generation_params or {}),
+        }
+        submission = await driver_kernel.execute_generation(
+            driver_kernel.build_builtin_driver_registry(),
+            driver_kernel.ImageCommand(prompt=prepared_prompt, params=params),
             driver,
         )
         output = dict(submission.output)
@@ -164,6 +175,16 @@ async def call_image_generation_provider(
             save_local=False,
         )
     raise HTTPException(status_code=400, detail=f"不支持的图像模型服务商: {provider_name}")
+
+
+def _driver_image_params(
+    driver_key: str, num: int, size: str, aspect_ratio: str, response_format: str,
+) -> dict[str, Any]:
+    if driver_key == "minimax_image_v1":
+        return {"aspect_ratio": aspect_ratio, "n": num, "response_format": response_format}
+    if driver_key == "volcano_ark_image_v3":
+        return {"size": size, "num": num}
+    return {}
 
 
 def provider_task_id(result: Any, provider_name: Optional[str] = None) -> Optional[str]:

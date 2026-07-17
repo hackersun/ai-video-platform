@@ -373,7 +373,7 @@ async def generate_cover_image_for_user(
             num=1,
             size="2K",
             aspect_ratio="3:4",
-            openai_size="1024x1792",
+            openai_size="1024x1792", db=db, user_id=user_id, config_id=model_config_id,
         )
         task_id = provider_task_id(result_img, provider_name=provider_name)
         image_urls = extract_image_urls_from_provider_result(result_img)

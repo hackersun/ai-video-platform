@@ -81,7 +81,7 @@ from app.features.video_generation.public import (
     resolve_video_model_config,
     resolve_video_seed,
     sync_video_job_and_shot,
-    submit_ark_video_task,
+    submit_bound_video_task,
     video_model_metadata,
     video_prompt_parameters,
 )
@@ -724,7 +724,7 @@ async def generate_video(
             watermark=PROVIDER_VIDEO_WATERMARK_ENABLED, seed=video_seed,
         )
         try:
-            create_result = submit_ark_video_task(create_kwargs=create_kwargs, client=client)
+            create_result = await submit_bound_video_task(video_model_config.get("generation_context"), provider_final_prompt, create_kwargs, client)
         except Exception as exc:
             image_error = provider_image_url_error_message(exc, provider_image_url)
             if image_error:
@@ -746,7 +746,7 @@ async def generate_video(
                 )
                 retry_kwargs = {**create_kwargs, "content": fallback_content["content"]}
                 try:
-                    create_result = submit_ark_video_task(create_kwargs=retry_kwargs, client=client)
+                    create_result = await submit_bound_video_task(video_model_config.get("generation_context"), fallback_prompt["prompt"], retry_kwargs, client)
                 except Exception as retry_exc:
                     retry_image_error = provider_image_url_error_message(retry_exc, provider_image_url)
                     if retry_image_error:

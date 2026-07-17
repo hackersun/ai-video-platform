@@ -8,6 +8,12 @@ from uuid import uuid4
 from app.core.dev_generation import dev_video_url
 from app.features.video_generation import public as video_kernel
 from app.features.video_generation.schemas import VideoGenerateRequest
+from app.features.model_drivers.public import (
+    DriverError,
+    VideoCommand,
+    build_builtin_driver_registry,
+    execute_generation,
+)
 from app.features.workflow_media.application.live_provider_attempts import (
     finish_live_provider_attempt,
     prepare_live_provider_attempt,
@@ -219,6 +225,35 @@ def _create_kwargs(command: VideoSubmissionCommand, content: dict) -> dict[str, 
     )
 
 
+def _driver_video_command(command: VideoSubmissionCommand, content: dict) -> VideoCommand:
+    references = {"image_url": [], "video_url": [], "audio_url": []}
+    for item in content.get("content") or []:
+        if not isinstance(item, dict) or item.get("type") not in references:
+            continue
+        value = item.get(item["type"])
+        url = value.get("url") if isinstance(value, dict) else None
+        if isinstance(url, str) and url:
+            references[item["type"]].append(url)
+    params = {
+        **dict(command.runtime.selected_model["generation_context"].profile.default_params),
+        "duration": command.prepared.video_request.duration,
+        "resolution": command.request.resolution,
+        "camera_fixed": False,
+        "watermark": video_kernel.PROVIDER_VIDEO_WATERMARK_ENABLED,
+    }
+    if command.prepared.video_seed is not None:
+        params["seed"] = command.prepared.video_seed
+    return VideoCommand(
+        prompt=command.prepared.final_video_prompt,
+        reference_images=tuple(references["image_url"]),
+        reference_videos=tuple(references["video_url"]),
+        reference_audios=tuple(references["audio_url"]),
+        native_audio=command.request.native_audio,
+        dialogue_contract=command.prepared.dialogue_sync_contract,
+        params=params,
+    )
+
+
 async def _reserve(command: VideoSubmissionCommand, job_id: str, retry: bool) -> Optional[str]:
     suffix = "video-retry" if retry else "video"
     return await prepare_live_provider_attempt(
@@ -262,6 +297,28 @@ async def _retry_sensitive_prompt(
 async def _submit_live(
     command: VideoSubmissionCommand, data: dict, content: dict, job_id: str,
 ) -> tuple[str, Optional[str], dict]:
+    generation = command.runtime.selected_model.get("generation_context")
+    if generation is not None and generation.driver_context.driver_key != "volcano_ark_video_v3":
+        reservation = await _reserve(command, job_id, False)
+        try:
+            submission = await execute_generation(
+                build_builtin_driver_registry(), _driver_video_command(command, content),
+                generation.driver_context,
+            )
+        except DriverError as error:
+            await finish_live_provider_attempt(
+                command.context.db, command.context.series_run, reservation, submission_failed=True,
+            )
+            raise WorkflowMediaError(422, str(error)) from error
+        task_id = submission.provider_task_id
+        if not task_id:
+            raise WorkflowMediaError(422, "视频驱动未返回可轮询的任务标识")
+        if reservation:
+            await bind_provider_operation_for_reservation(
+                command.context.db, command.context.series_run,
+                reservation_id=reservation, provider_task_id=task_id,
+            )
+        return task_id, reservation, content
     client = video_kernel.create_ark_client(
         command.runtime.api_key, command.runtime.selected_model.get("base_url"),
     )

@@ -327,7 +327,7 @@ async def generate_image(
             num=request.num,
             size=request.size,
             aspect_ratio="1:1",
-            openai_size="1024x1024",
+            openai_size="1024x1024", db=db, user_id=user_id, config_id=request.model_config_id,
         )
 
         # 解析返回结果：兼容 data:[{url}]、data:{image_urls:[]}、images/local_urls 等结构

@@ -233,6 +233,139 @@ async def test_binding_driven_minimax_image_keeps_legacy_prompt_compaction(
 
 
 @pytest.mark.asyncio
+async def test_image_submitter_executes_selected_non_ark_driver_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import image_generation_pipeline
+
+    context = SimpleNamespace(
+        profile=SimpleNamespace(default_params={}),
+        driver_context=SimpleNamespace(driver_key="minimax_image_v1"),
+    )
+    captured = {}
+
+    async def resolve(*_args, **_kwargs):
+        return context
+
+    async def execute(_registry, command, driver):
+        captured.update(command=command, driver=driver)
+        return SimpleNamespace(output={"image_urls": ["https://example.test/image.png"]}, provider_task_id=None)
+
+    monkeypatch.setattr(image_generation_pipeline, "resolve_generation_context", resolve)
+    monkeypatch.setattr(image_generation_pipeline.driver_kernel, "execute_generation", execute)
+
+    result = await image_generation_pipeline.call_image_generation_provider(
+        object(), provider_name="volcano", model_id="ignored", prompt="driver selected",
+        db=object(), user_id="user-1", config_id="image-config",
+    )
+
+    assert result["image_urls"] == ["https://example.test/image.png"]
+    assert captured["driver"] is context.driver_context
+    assert captured["command"].params["response_format"] == "base64"
+
+
+@pytest.mark.asyncio
+async def test_workflow_video_submitter_executes_selected_non_ark_driver_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.workflow_media.adapters import video_submission
+
+    generation = SimpleNamespace(
+        profile=SimpleNamespace(default_params={}),
+        driver_context=SimpleNamespace(driver_key="non_ark_video_v1"),
+    )
+    command = SimpleNamespace(
+        runtime=SimpleNamespace(selected_model={"generation_context": generation}),
+        prepared=SimpleNamespace(
+            video_request=SimpleNamespace(duration=4), video_seed=7,
+            final_video_prompt="driver selected", dialogue_sync_contract=None,
+        ),
+        request=SimpleNamespace(resolution="720p", native_audio=False),
+        context=SimpleNamespace(db=object(), series_run=object()),
+    )
+    captured = {}
+
+    async def reserve(*_args, **_kwargs):
+        return None
+
+    async def execute(_registry, driver_command, driver_context):
+        captured.update(command=driver_command, context=driver_context)
+        return SimpleNamespace(provider_task_id="non-ark-task")
+
+    monkeypatch.setattr(video_submission, "_reserve", reserve)
+    monkeypatch.setattr(video_submission, "execute_generation", execute)
+    monkeypatch.setattr(
+        video_submission.video_kernel, "create_ark_client",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("Ark must not be selected")),
+    )
+
+    task_id, reservation, _content = await video_submission._submit_live(
+        command, {}, {"content": [{"type": "text", "text": "driver selected"}]}, "job-1",
+    )
+
+    assert (task_id, reservation) == ("non-ark-task", None)
+    assert captured["context"] is generation.driver_context
+    assert captured["command"].params["seed"] == 7
+
+
+@pytest.mark.asyncio
+async def test_direct_video_submitter_executes_selected_non_ark_driver_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.video_generation.application import driver_submission
+
+    generation = SimpleNamespace(
+        profile=SimpleNamespace(default_params={}),
+        driver_context=SimpleNamespace(driver_key="non_ark_video_v1"),
+    )
+    captured = {}
+
+    async def execute(_registry, command, driver_context):
+        captured.update(command=command, context=driver_context)
+        return SimpleNamespace(provider_task_id="direct-non-ark-task")
+
+    monkeypatch.setattr(driver_submission, "execute_generation", execute)
+
+    result = await driver_submission.submit_bound_video_task(
+        generation, "driver selected",
+        {"content": [{"type": "text", "text": "driver selected"}], "duration": 4, "resolution": "720p"},
+        object(),
+    )
+
+    assert result.id == "direct-non-ark-task"
+    assert captured["context"] is generation.driver_context
+    assert captured["command"].params == {"duration": 4, "resolution": "720p"}
+
+
+@pytest.mark.asyncio
+async def test_workflow_tts_submitter_executes_selected_non_ark_driver_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.workflow_media.adapters import tts_submission
+
+    generation = SimpleNamespace(
+        profile=SimpleNamespace(default_params={}),
+        driver_context=SimpleNamespace(driver_key="non_ark_speech_v1"),
+    )
+    command = SimpleNamespace(
+        preparation=SimpleNamespace(selected_audio_model={"generation_context": generation}),
+    )
+    captured = {}
+
+    async def execute(_registry, speech, driver_context):
+        captured.update(speech=speech, context=driver_context)
+        return SimpleNamespace(output={"audio_url": "https://example.test/audio.mp3"}, provider_task_id=None)
+
+    monkeypatch.setattr(tts_submission, "execute_generation", execute)
+
+    result = await tts_submission._call_provider(command, "你好", "voice-1", 1.2)
+
+    assert result["audio_url"] == "https://example.test/audio.mp3"
+    assert captured["context"] is generation.driver_context
+    assert captured["speech"].params == {"speed": 1.2}
+
+
+@pytest.mark.asyncio
 async def test_video_production_resolution_does_not_bypass_failed_binding_safety(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -249,6 +382,96 @@ async def test_video_production_resolution_does_not_bypass_failed_binding_safety
 
     with pytest.raises(model_config.VideoGenerationError, match="connection_not_verified"):
         await model_config.resolve_video_model_config(object(), "user-1", None)
+
+
+@pytest.mark.asyncio
+async def test_unverified_legacy_video_keeps_preflight_envelope_without_runtime_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.video_generation.application import model_config
+
+    async def fail_closed(*_args, **_kwargs):
+        raise ModelBindingError("legacy_config_not_verified")
+
+    async def forbidden_legacy_reload(*_args, **_kwargs):
+        raise AssertionError("unverified configuration must not be reloaded for runtime")
+
+    monkeypatch.setattr(model_config, "resolve_generation_context", fail_closed)
+    monkeypatch.setattr(model_config, "_legacy_video_model_config", forbidden_legacy_reload)
+
+    resolved = await model_config.resolve_video_model_config(object(), "user-1", "video-model", "pending-config")
+
+    assert resolved["binding_resolution_error"] == "legacy_config_not_verified"
+    assert resolved["model_config_id"] == "pending-config"
+    assert resolved["api_key"] is None
+
+
+@pytest.mark.asyncio
+async def test_verified_legacy_video_context_is_not_reloaded_from_active_config(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.video_generation.application import model_config
+
+    legacy = await _seed_legacy_config(db_session)
+    context = await resolve_generation_context(
+        db_session, user_id="user-1", stage="video", explicit_config_id=legacy.id,
+    )
+
+    async def resolve_context(*_args, **_kwargs):
+        return context
+
+    async def forbidden_legacy_reload(*_args, **_kwargs):
+        raise AssertionError("a verified v0 context must be executed as resolved")
+
+    monkeypatch.setattr(model_config, "resolve_generation_context", resolve_context)
+    monkeypatch.setattr(model_config, "_legacy_video_model_config", forbidden_legacy_reload)
+
+    resolved = await model_config.resolve_video_model_config(db_session, "user-1", None)
+
+    assert resolved["generation_context"] is context
+    assert resolved["model_config_id"] == legacy.id
+
+
+@pytest.mark.asyncio
+async def test_runtime_legacy_projection_requires_successful_connection_test(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.model_config.generation_context_repository import load_legacy_runtime_model
+
+    config = await _seed_legacy_config(db_session, config_id="unverified-legacy")
+    config.test_status = "pending"
+    await db_session.commit()
+
+    assert await load_legacy_runtime_model(
+        db_session, user_id="user-1", config_id=config.id,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_tts_binding_error_never_projects_unverified_legacy_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.workflow_media.application import prepare_separate_media
+
+    async def fail_closed(*_args, **_kwargs):
+        raise ModelBindingError("legacy_config_not_verified")
+
+    async def unsafe_projection(*_args, **_kwargs):
+        raise AssertionError("unverified TTS configuration must not reach legacy projection")
+
+    async def preflight_error(*_args, **_kwargs):
+        return prepare_separate_media.WorkflowMediaError(422, "legacy_config_not_verified")
+
+    monkeypatch.setattr(prepare_separate_media, "resolve_generation_context", fail_closed)
+    monkeypatch.setattr(
+        prepare_separate_media, "resolve_legacy_model_projection", unsafe_projection, raising=False,
+    )
+    monkeypatch.setattr(prepare_separate_media, "_legacy_binding_preflight_error", preflight_error)
+    context = SimpleNamespace(db=object(), user_id="user-1")
+
+    with pytest.raises(prepare_separate_media.WorkflowMediaError, match="legacy_config_not_verified"):
+        await prepare_separate_media._resolve_saved_tts_model(context, "unverified-tts")
 
 
 @pytest.mark.asyncio

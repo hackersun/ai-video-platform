@@ -11,6 +11,7 @@ from app.features.video_generation.application.consistency_package import (
     lookup_character_by_name,
 )
 from app.features.video_generation.application.job_sync import VideoJobSyncCommand, sync_video_job_and_shot
+from app.features.video_generation.application.driver_submission import submit_bound_video_task
 from app.features.video_generation.application.lineage import resolve_video_lineage
 from app.features.video_generation.application.model_config import (
     get_video_model_name,
@@ -75,6 +76,7 @@ __all__ = [
     "resolve_video_seed",
     "sync_video_job_and_shot",
     "submit_ark_video_task",
+    "submit_bound_video_task",
     "video_model_metadata",
     "video_prompt_parameters",
 ]

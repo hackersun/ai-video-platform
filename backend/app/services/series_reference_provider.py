@@ -127,6 +127,7 @@ class ConfiguredReferenceAdapter:
             result = await call_image_generation_provider(
                 service, provider_name=provider_name or "", model_id=model_id or "", prompt=prompt,
                 num=1, size="2K", aspect_ratio="3:2", openai_size="1536x1024", minimax_response_format="url",
+                db=db, user_id=run.user_id, config_id=image_config_id,
             )
         except MiniMaxProviderRejected as error:
             if error.provider_task_id or error.artifact_returned:

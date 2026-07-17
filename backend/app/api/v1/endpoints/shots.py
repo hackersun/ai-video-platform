@@ -1019,7 +1019,7 @@ async def generate_shot_image(
             num=1,
             size="2K",
             aspect_ratio="1:1",
-            openai_size="1024x1024",
+            openai_size="1024x1024", db=db, user_id=user_id, config_id=request.model_config_id if request else None,
         )
         task_id = provider_task_id(result, provider_name=provider_name)
         returned_image_urls = extract_image_urls_from_provider_result(result)

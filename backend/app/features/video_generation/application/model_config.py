@@ -19,7 +19,7 @@ from app.features.model_config.public import (
 from app.models import LLMConfig, LLMModel, LLMProvider
 
 
-_LEGACY_FALLBACK_ERRORS = {"legacy_config_not_verified", "model_binding_not_found"}
+_CATALOG_FALLBACK_ERRORS = {"model_binding_not_found"}
 
 def get_video_model_name(model_id: str) -> str:
     model = next((item for item in VOLCANO_MODELS if item["id"] == model_id), None)
@@ -174,6 +174,21 @@ def _generation_context_payload(context: GenerationContext) -> dict[str, Any]:
     }
 
 
+def _preflight_only_video_payload(
+    requested_model: Optional[str], config_id: str, error_code: str,
+) -> dict[str, Any]:
+    model_id = requested_model or VIDEO_MODEL_ID
+    return {
+        "provider_id": "volcano", "provider_name": "unverified",
+        "api_model_id": model_id, "config_model_id": model_id,
+        "model_config_id": config_id, "model_name": model_id,
+        "model_type": "video-generation", "base_url": None, "api_key": None,
+        "test_status": "pending", "model_endpoint_id": model_id,
+        "capabilities": [], "limits": {}, "protocol": {}, "routing": {},
+        "binding_resolution_error": error_code,
+    }
+
+
 async def resolve_video_model_config(
     db: AsyncSession,
     user_id: str,
@@ -185,11 +200,11 @@ async def resolve_video_model_config(
             db, user_id=user_id, stage="video", explicit_config_id=config_id,
         )
     except ModelBindingError as error:
-        if str(error) in _LEGACY_FALLBACK_ERRORS:
+        if str(error) in _CATALOG_FALLBACK_ERRORS and not config_id:
             return await _legacy_video_model_config(db, user_id, requested_model, config_id)
+        if str(error) == "legacy_config_not_verified" and config_id:
+            return _preflight_only_video_payload(requested_model, config_id, str(error))
         raise VideoGenerationError(422, str(error)) from error
-    if context.binding.binding_version == 0 and not config_id:
-        return await _legacy_video_model_config(db, user_id, requested_model, config_id)
     return _generation_context_payload(context)
 
 

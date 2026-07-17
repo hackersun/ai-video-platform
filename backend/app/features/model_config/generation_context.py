@@ -15,7 +15,7 @@ from app.features.model_config.bindings import (
     route_policy_for,
     select_binding_candidate,
 )
-from app.features.model_config.domain import ResolvedModelBinding
+from app.features.model_config.domain import ResolvedModelBinding, normalize_capabilities
 from app.features.model_config.generation_context_repository import (
     RuntimeConnectionRecord,
     load_active_binding_candidate,
@@ -23,6 +23,11 @@ from app.features.model_config.generation_context_repository import (
     load_runtime_connection,
 )
 from app.features.model_config.recipes import STAGE_REQUIREMENTS
+from app.features.model_drivers.public import (
+    DriverContext,
+    normalize_provider_base_url,
+    select_llm_connection_driver_key,
+)
 
 
 @dataclass(frozen=True)
@@ -40,8 +45,6 @@ class GenerationContext:
 
     @property
     def driver_context(self):
-        from app.features.model_drivers.domain import DriverContext
-
         return DriverContext(
             profile=self.profile,
             driver_key=self.profile.driver_key,
@@ -89,18 +92,39 @@ async def _resolve_recipe_binding(
 def _legacy_driver(binding: ResolvedModelBinding, connection: RuntimeConnectionRecord):
     if binding.binding_version != 0:
         return binding
-    from app.features.model_drivers.configuration_testing import select_llm_connection_driver_key
-
     model_type = binding.capability.split("_", 1)[0]
     driver_key = select_llm_connection_driver_key(connection.provider_name, model_type)
-    return replace(binding, profile=replace(binding.profile, driver_key=driver_key))
+    return replace(binding, profile=_legacy_execution_profile(binding.profile, driver_key))
+
+
+def _legacy_execution_profile(profile, driver_key: str):
+    capability = next(iter(profile.capabilities), "")
+    contracts = {
+        "video_generation": (
+            {"max_prompt_chars": 12000, "max_reference_images": 8, "max_reference_videos": 2, "max_reference_audios": 2},
+            {"duration": {"type": "integer"}, "resolution": {"type": "string"}, "camera_fixed": {"type": "boolean"}, "watermark": {"type": "boolean"}, "seed": {"type": "integer"}},
+        ),
+        "image_generation": (
+            {"max_prompt_chars": 12000, "max_reference_images": 0},
+            {"size": {"type": "string"}, "num": {"type": "integer"}, "aspect_ratio": {"type": "string"}, "n": {"type": "integer"}, "response_format": {"type": "string"}},
+        ),
+        "speech_generation": (
+            {"max_text_chars": 12000}, {"speed": {"type": "number"}},
+        ),
+        "text_generation": ({"max_prompt_chars": 12000}, {}),
+    }
+    limits, properties = contracts.get(capability, ({}, {}))
+    return replace(
+        profile, driver_key=driver_key, limits=limits,
+        parameter_schema={
+            "type": "object", "properties": properties, "required": [], "additionalProperties": False,
+        },
+    )
 
 
 def _normalized_base_url(
     binding: ResolvedModelBinding, connection: RuntimeConnectionRecord,
 ) -> str | None:
-    from app.features.model_drivers.text_response import normalize_provider_base_url
-
     base_url = connection.base_url
     if binding.binding_version == 0 and connection.provider_name == "minimax" and not base_url:
         from app.core.minimax_config import get_minimax_base_url
@@ -163,13 +187,9 @@ async def resolve_legacy_model_projection(
     record = await load_legacy_runtime_model(db, user_id=user_id, config_id=config_id)
     if record is None:
         raise ModelBindingError("legacy_config_not_found")
-    from app.features.model_config.domain import normalize_capabilities
-
     capability = STAGE_REQUIREMENTS[stage][1]
     if capability not in normalize_capabilities(record.model_type, record.capabilities):
         raise ModelBindingError("capability_mismatch")
-    from app.features.model_drivers.configuration_testing import select_llm_connection_driver_key
-
     driver_key = select_llm_connection_driver_key(
         record.provider_name, capability.split("_", 1)[0],
     )

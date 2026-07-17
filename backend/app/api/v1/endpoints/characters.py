@@ -533,7 +533,7 @@ async def _generate_avatar_for_character(
             num=1,
             size="2K",
             aspect_ratio="1:1",
-            openai_size="1024x1024",
+            openai_size="1024x1024", db=db, user_id=user_id, config_id=model_config_id,
         )
         task_id = provider_task_id(result, provider_name=provider_name)
         image_url = _extract_first_image_url(result)

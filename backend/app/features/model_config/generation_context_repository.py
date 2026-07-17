@@ -75,7 +75,12 @@ async def load_legacy_runtime_model(
     db: AsyncSession, *, user_id: str, config_id: str,
 ) -> LegacyRuntimeModelRecord | None:
     config = await db.get(LLMConfig, config_id)
-    if config is None or config.user_id != user_id or not config.is_active:
+    if (
+        config is None
+        or config.user_id != user_id
+        or not config.is_active
+        or config.test_status != "success"
+    ):
         return None
     model = await db.get(LLMModel, config.model_id)
     provider = await db.get(LLMProvider, model.provider_id) if model else None
