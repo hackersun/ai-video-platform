@@ -10,7 +10,7 @@ from app.features.model_config import ModelProfileContract
 
 @dataclass(frozen=True)
 class TextCommand:
-    capability: Literal["text_generation"] = "text_generation"
+    capability: Literal["text_generation"] = field(default="text_generation", init=False)
     prompt: str = ""
     output_contract: str = "plain_text"
     params: Mapping[str, Any] = field(default_factory=dict)
@@ -18,7 +18,7 @@ class TextCommand:
 
 @dataclass(frozen=True)
 class ImageCommand:
-    capability: Literal["image_generation"] = "image_generation"
+    capability: Literal["image_generation"] = field(default="image_generation", init=False)
     prompt: str = ""
     reference_images: tuple[str, ...] = ()
     params: Mapping[str, Any] = field(default_factory=dict)
@@ -26,7 +26,7 @@ class ImageCommand:
 
 @dataclass(frozen=True)
 class SpeechCommand:
-    capability: Literal["speech_generation"] = "speech_generation"
+    capability: Literal["speech_generation"] = field(default="speech_generation", init=False)
     text: str = ""
     voice_id: str = ""
     params: Mapping[str, Any] = field(default_factory=dict)
@@ -34,7 +34,7 @@ class SpeechCommand:
 
 @dataclass(frozen=True)
 class VideoCommand:
-    capability: Literal["video_generation"] = "video_generation"
+    capability: Literal["video_generation"] = field(default="video_generation", init=False)
     prompt: str = ""
     reference_images: tuple[str, ...] = ()
     reference_videos: tuple[str, ...] = ()
@@ -99,6 +99,17 @@ class DriverCapabilityError(DriverError):
         super().__init__(f"driver '{driver_key}' does not support capability '{capability}'")
 
 
+class DriverContextError(DriverError):
+    def __init__(self):
+        super().__init__("driver keys in the request context do not agree")
+
+
+class DriverExecutionError(DriverError):
+    def __init__(self, operation: str, sanitized_evidence: Mapping[str, Any]):
+        super().__init__(f"driver {operation} failed")
+        self.sanitized_evidence = sanitized_evidence
+
+
 class DriverParameterError(DriverError):
     pass
 
@@ -120,7 +131,9 @@ __all__ = [
     "Command",
     "DriverCapabilityError",
     "DriverContext",
+    "DriverContextError",
     "DriverError",
+    "DriverExecutionError",
     "DriverLimitError",
     "DriverParameterError",
     "DriverRegistrationError",

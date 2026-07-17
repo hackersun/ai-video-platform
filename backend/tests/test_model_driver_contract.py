@@ -4,8 +4,11 @@ from app.features.model_config import ModelProfileContract
 from app.features.model_drivers import (
     DriverCapabilityError,
     DriverContext,
+    DriverContextError,
+    DriverExecutionError,
     DriverLimitError,
     DriverParameterError,
+    DriverRegistrationError,
     DriverRegistry,
     DriverSchemaError,
     DriverSubmission,
@@ -15,6 +18,7 @@ from app.features.model_drivers import (
     TextCommand,
     execute_connection_test,
     execute_generation,
+    execute_poll,
 )
 
 
@@ -23,12 +27,13 @@ def profile(
     capabilities=frozenset({"text_generation"}),
     parameter_schema=None,
     limits=None,
+    driver_key="echo_text_v1",
 ) -> ModelProfileContract:
     return ModelProfileContract(
         profile_version_id="profile-v1",
         provider_id="echo",
         api_model_id="echo-text",
-        driver_key="echo_text_v1",
+        driver_key=driver_key,
         capabilities=capabilities,
         input_contract={},
         output_contract={},
@@ -45,9 +50,9 @@ def profile(
     )
 
 
-def context(*, driver_key="echo_text_v1", **profile_options) -> DriverContext:
+def context(*, driver_key="echo_text_v1", profile_driver_key=None, **profile_options) -> DriverContext:
     return DriverContext(
-        profile=profile(**profile_options),
+        profile=profile(driver_key=profile_driver_key or driver_key, **profile_options),
         driver_key=driver_key,
         connection_id="connection-1",
         secrets={"api_key": "top-secret"},
@@ -162,3 +167,93 @@ async def test_generation_rejects_unknown_limit_configuration():
             TextCommand(prompt="hello"),
             context(limits={"max_prompt_chars": 12, "unrecognized": 1}),
         )
+
+
+@pytest.mark.asyncio
+async def test_connection_test_rejects_explicit_driver_key_that_disagrees_with_context():
+    with pytest.raises(DriverContextError):
+        await execute_connection_test(
+            DriverRegistry([EchoTextDriver()]), "other_driver", context(driver_key="echo_text_v1")
+        )
+
+
+@pytest.mark.asyncio
+async def test_generation_rejects_context_driver_key_that_disagrees_with_profile():
+    with pytest.raises(DriverContextError):
+        await execute_generation(
+            DriverRegistry([EchoTextDriver()]),
+            TextCommand(prompt="hello"),
+            context(driver_key="other_driver", profile_driver_key="echo_text_v1"),
+        )
+
+
+def test_text_command_capability_cannot_be_forged_by_constructor():
+    with pytest.raises(TypeError):
+        TextCommand(capability="video_generation")
+
+
+@pytest.mark.asyncio
+async def test_generation_rejects_mutated_text_command_capability():
+    command = TextCommand(prompt="hello")
+    object.__setattr__(command, "capability", "video_generation")
+
+    with pytest.raises(DriverCapabilityError):
+        await execute_generation(DriverRegistry([EchoTextDriver()]), command, context())
+
+
+def test_registry_rejects_duplicate_driver_keys():
+    with pytest.raises(DriverRegistrationError, match="registered more than once"):
+        DriverRegistry([EchoTextDriver(), EchoTextDriver()])
+
+
+def test_driver_context_repr_excludes_decrypted_secrets():
+    assert "top-secret" not in repr(context())
+
+
+@pytest.mark.asyncio
+async def test_numeric_bounds_on_string_parameter_schema_fail_closed():
+    with pytest.raises(DriverSchemaError):
+        await execute_generation(
+            DriverRegistry([EchoTextDriver()]),
+            TextCommand(prompt="hello", params={"style": "formal"}),
+            context(parameter_schema={
+                "type": "object",
+                "properties": {"style": {"type": "string", "minimum": 1}},
+                "additionalProperties": False,
+            }),
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["connection", "generation", "poll"])
+async def test_driver_exceptions_are_secret_safe_and_preserve_cause(operation):
+    class ProviderError(RuntimeError):
+        def __init__(self):
+            super().__init__("provider returned top-secret")
+            self.evidence = {"nested": {"token": "top-secret"}}
+
+    class ExplodingDriver(EchoTextDriver):
+        async def test_connection(self, driver_context):
+            raise ProviderError()
+
+        async def submit(self, command, driver_context):
+            raise ProviderError()
+
+        async def poll(self, provider_task_id, driver_context):
+            raise ProviderError()
+
+    registry = DriverRegistry([ExplodingDriver()])
+    with pytest.raises(DriverExecutionError) as raised:
+        if operation == "connection":
+            await execute_connection_test(registry, "echo_text_v1", context())
+        elif operation == "generation":
+            await execute_generation(registry, TextCommand(prompt="hello"), context())
+        else:
+            await execute_poll(registry, "provider-job-1", context())
+
+    error = raised.value
+    assert "top-secret" not in str(error)
+    assert "top-secret" not in repr(error)
+    assert "top-secret" not in str(error.sanitized_evidence)
+    assert error.sanitized_evidence["provider_evidence"] == {"nested": {"token": "***"}}
+    assert isinstance(error.__cause__, ProviderError)

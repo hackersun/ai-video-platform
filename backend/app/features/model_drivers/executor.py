@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections.abc import Awaitable, Callable
 from typing import Any, Mapping
 
 from app.features.model_drivers.domain import (
     Command,
     DriverCapabilityError,
     DriverContext,
+    DriverContextError,
+    DriverExecutionError,
     DriverLimitError,
     DriverParameterError,
     DriverResultError,
@@ -38,7 +41,8 @@ _TYPE_CHECKS = {
 async def execute_connection_test(
     registry: DriverRegistry, driver_key: str, context: DriverContext
 ) -> DriverTestResult:
-    result = await registry.require(driver_key).test_connection(context)
+    driver = _require_driver(registry, driver_key, context)
+    result = await _execute_driver_operation("connection_test", lambda: driver.test_connection(context), context)
     if not isinstance(result, DriverTestResult) or not isinstance(result.sanitized_evidence, Mapping):
         raise DriverResultError("driver returned an invalid connection test result")
     return replace(
@@ -51,15 +55,25 @@ async def execute_connection_test(
 async def execute_generation(
     registry: DriverRegistry, command: Command, context: DriverContext
 ) -> DriverSubmission:
-    driver = registry.require(context.driver_key)
-    capability = command.capability
+    driver = _require_driver(registry, context.driver_key, context)
+    capability = _command_capability(command)
     if capability not in driver.capabilities or capability not in context.profile.capabilities:
         raise DriverCapabilityError(context.driver_key, capability)
     validate_params(context.profile.parameter_schema, command.params)
     validate_command_limits(command, context.profile.limits)
-    result = await driver.submit(command, context)
+    result = await _execute_driver_operation("generation", lambda: driver.submit(command, context), context)
     if not isinstance(result, DriverSubmission):
         raise DriverResultError("driver returned an invalid generation result")
+    return result
+
+
+async def execute_poll(
+    registry: DriverRegistry, provider_task_id: str, context: DriverContext
+) -> DriverSubmission:
+    driver = _require_driver(registry, context.driver_key, context)
+    result = await _execute_driver_operation("poll", lambda: driver.poll(provider_task_id, context), context)
+    if not isinstance(result, DriverSubmission):
+        raise DriverResultError("driver returned an invalid poll result")
     return result
 
 
@@ -115,6 +129,8 @@ def _validate_property_schema(schema: Any) -> None:
     value_type = schema.get("type")
     if value_type not in _TYPE_CHECKS:
         raise DriverSchemaError("unsupported parameter type")
+    if {"minimum", "maximum"} & set(schema) and value_type not in {"integer", "number"}:
+        raise DriverSchemaError("numeric bounds require a numeric parameter type")
     for key in ("minimum", "maximum"):
         if key in schema and (not isinstance(schema[key], (int, float)) or isinstance(schema[key], bool)):
             raise DriverSchemaError("parameter bounds must be numeric")
@@ -153,6 +169,41 @@ def _command_limit_values(command: Command) -> dict[str, int]:
     raise DriverCapabilityError("unknown", str(getattr(command, "capability", "unknown")))
 
 
+def _command_capability(command: Command) -> str:
+    expected = {
+        TextCommand: "text_generation",
+        ImageCommand: "image_generation",
+        SpeechCommand: "speech_generation",
+        VideoCommand: "video_generation",
+    }.get(type(command))
+    if expected is None or command.capability != expected:
+        raise DriverCapabilityError("unknown", str(getattr(command, "capability", "unknown")))
+    return expected
+
+
+def _require_driver(registry: DriverRegistry, selected_key: str, context: DriverContext):
+    if selected_key != context.driver_key or selected_key != context.profile.driver_key:
+        raise DriverContextError()
+    return registry.require(selected_key)
+
+
+async def _execute_driver_operation(
+    operation: str, call: Callable[[], Awaitable[Any]], context: DriverContext
+) -> Any:
+    try:
+        return await call()
+    except Exception as error:
+        evidence = _sanitize_evidence(
+            {
+                "operation": operation,
+                "provider_error": str(error),
+                "provider_evidence": getattr(error, "evidence", {}),
+            },
+            context.secrets,
+        )
+        raise DriverExecutionError(operation, evidence) from error
+
+
 def _sanitize_evidence(value: Any, secrets: Mapping[str, str]) -> Any:
     if isinstance(value, Mapping):
         return {
@@ -178,4 +229,6 @@ def _is_sensitive_key(key: object) -> bool:
     return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
 
 
-__all__ = ["execute_connection_test", "execute_generation", "validate_command_limits", "validate_params"]
+__all__ = [
+    "execute_connection_test", "execute_generation", "execute_poll", "validate_command_limits", "validate_params",
+]
