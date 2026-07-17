@@ -3,6 +3,7 @@ FastAPI 应用入口
 """
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 
@@ -30,16 +31,25 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+from app.models.llm_config import require_stable_encryption_key
 
 ALLOWED_ORIGIN_REGEX = (
     r"^https://([a-z0-9-]+--)?hackersun-ai-video-platform\.netlify\.app$"
     r"|^http://(localhost|127\.0\.0\.1)(:\d+)?$"
 )
 
+
+@asynccontextmanager
+async def persistent_credential_encryption_lifespan(_: FastAPI):
+    require_stable_encryption_key()
+    yield
+
+
 app = FastAPI(
     title="AI视频平台",
     description="纳米漫剧 AI视频生成平台",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=persistent_credential_encryption_lifespan,
 )
 
 # CORS配置

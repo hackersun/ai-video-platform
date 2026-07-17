@@ -31,7 +31,7 @@ from app.core.volcano_agent_plan_config import (
     VOLCANO_AGENT_PLAN_PROVIDER_ID,
 )
 from app.features.video_generation.public import PROVIDER_VIDEO_WATERMARK_ARG
-from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog, encrypt_key
+from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.services.deterministic_provider_fake import (
     deterministic_config_test_result,
     deterministic_provider_fake_enabled,
@@ -2071,8 +2071,9 @@ async def create_config(
         existing_plain_key = config.get_api_key_decrypted()
         api_key_changed = request.api_key != existing_plain_key
         config.name = request.name
-        config.api_key = encrypt_key(request.api_key)
-        config.api_secret = request.api_secret
+        config.set_api_key_encrypted(request.api_key)
+        if request.api_secret:
+            config.set_api_secret_encrypted(request.api_secret)
         config.temperature = request.temperature
         config.top_p = request.top_p
         config.max_tokens = request.max_tokens
@@ -2087,8 +2088,6 @@ async def create_config(
             user_id=user_id,
             model_id=request.model_id,
             name=request.name,
-            api_key=encrypt_key(request.api_key),
-            api_secret=request.api_secret,
             temperature=request.temperature,
             top_p=request.top_p,
             max_tokens=request.max_tokens,
@@ -2096,6 +2095,9 @@ async def create_config(
             is_default=request.is_default,
             test_status="pending"
         )
+        config.set_api_key_encrypted(request.api_key)
+        if request.api_secret:
+            config.set_api_secret_encrypted(request.api_secret)
         db.add(config)
 
     await db.commit()
@@ -2289,8 +2291,9 @@ async def update_config(
     config.name = request.name
     config.model_id = request.model_id
     if next_api_key:
-        config.api_key = encrypt_key(next_api_key)
-    config.api_secret = request.api_secret
+        config.set_api_key_encrypted(next_api_key)
+    if request.api_secret:
+        config.set_api_secret_encrypted(request.api_secret)
     config.temperature = request.temperature
     config.top_p = request.top_p
     config.max_tokens = request.max_tokens

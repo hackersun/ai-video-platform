@@ -903,7 +903,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
             config = LLMConfig(
                 id="llm-config-update-preserve-key-config",
                 user_id=user_id,
-                model_id="minimax-m2-7",
+                model_id="minimax-m2.7",
                 name="已验证配置",
                 is_active=True,
                 is_default=True,
@@ -911,6 +911,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
                 test_message="MiniMax API 连接成功！",
             )
             config.set_api_key_encrypted("sk-existing-key")
+            config.set_api_secret_encrypted("secret-existing")
             db.add(config)
             await db.commit()
 
@@ -921,7 +922,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
     response = client.put(
         "/api/v1/llm/configs/llm-config-update-preserve-key-config",
         json={
-            "model_id": "minimax-m2-7",
+            "model_id": "minimax-m2.7",
             "name": "只改名称和参数",
             "temperature": 0.6,
             "top_p": 0.8,
@@ -937,6 +938,34 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
     assert data["test_status"] == "success"
     assert data["test_message"] == "MiniMax API 连接成功！"
     assert data["key_available"] is True
+
+    async def _stored_secret() -> tuple[str | None, str]:
+        async with AsyncSessionLocal() as db:
+            config = await db.get(LLMConfig, "llm-config-update-preserve-key-config")
+            assert config is not None
+            return config.api_secret, config.get_api_secret_decrypted()
+
+    encrypted_secret, decrypted_secret = asyncio.run(_stored_secret())
+    assert encrypted_secret != "secret-existing"
+    assert decrypted_secret == "secret-existing"
+
+    null_secret_response = client.put(
+        "/api/v1/llm/configs/llm-config-update-preserve-key-config",
+        json={
+            "model_id": "minimax-m2.7",
+            "name": "明确保留 Secret",
+            "api_secret": None,
+            "temperature": 0.6,
+            "top_p": 0.8,
+            "max_tokens": 4096,
+            "is_default": True,
+        },
+        headers=headers,
+    )
+    assert null_secret_response.status_code == 200
+    encrypted_secret, decrypted_secret = asyncio.run(_stored_secret())
+    assert encrypted_secret != "secret-existing"
+    assert decrypted_secret == "secret-existing"
 
 
 def test_llm_defaults_are_scoped_by_model_capability() -> None:

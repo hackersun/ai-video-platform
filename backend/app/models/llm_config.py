@@ -17,12 +17,8 @@ from app.core.database import Base
 
 # ============== Fernet加密工具 ==============
 
-def get_encryption_key() -> bytes:
-    """
-    获取Fernet加密密钥。
-    优先从环境变量 FERNET_KEY 读取，否则生成一个（仅用于开发）。
-    重要：生产环境必须设置 FERNET_KEY 环境变量。
-    """
+def _configured_encryption_key() -> Optional[bytes]:
+    """读取已配置的Fernet密钥，不生成开发用临时密钥。"""
     key = os.getenv("FERNET_KEY")
     if not key:
         for env_path in (Path(__file__).resolve().parents[2] / ".env", Path(__file__).resolve().parents[3] / ".env"):
@@ -41,6 +37,18 @@ def get_encryption_key() -> bytes:
                 break
     if key:
         return key.encode() if isinstance(key, str) else key
+    return None
+
+
+def get_encryption_key() -> bytes:
+    """
+    获取Fernet加密密钥。
+    优先从环境变量 FERNET_KEY 读取，否则生成一个（仅用于开发）。
+    重要：生产环境必须设置 FERNET_KEY 环境变量。
+    """
+    key = _configured_encryption_key()
+    if key:
+        return key
 
     # 生成一个默认密钥（仅警告，不用于生产）
     warnings.warn(
@@ -53,6 +61,23 @@ def get_encryption_key() -> bytes:
     # Fernet requires a 32-byte URL-safe base64-encoded key
     from cryptography.fernet import Fernet as _Fernet
     return _Fernet.generate_key()
+
+
+def require_stable_encryption_key() -> None:
+    """生产环境启动前验证持久化凭据所需的Fernet密钥。"""
+    dev_mode = os.getenv("DEV_MODE", "true").lower() in {"true", "1", "yes"}
+    if dev_mode:
+        return
+
+    key = _configured_encryption_key()
+    if not key:
+        raise RuntimeError("FERNET_KEY is required when DEV_MODE=false")
+
+    try:
+        from cryptography.fernet import Fernet as _Fernet
+        _Fernet(key)
+    except Exception as error:
+        raise RuntimeError("FERNET_KEY must be a valid Fernet key when DEV_MODE=false") from error
 
 
 _fernet_cache: Optional["Fernet"] = None
@@ -223,6 +248,16 @@ class LLMConfig(Base):
     def set_api_key_encrypted(self, plain_key: str) -> None:
         """加密并设置API密钥。"""
         self.api_key = encrypt_key(plain_key) if plain_key else ""
+
+    def get_api_secret_decrypted(self) -> str:
+        """返回解密后的API Secret。"""
+        if not self.api_secret:
+            return ""
+        return decrypt_key(self.api_secret)
+
+    def set_api_secret_encrypted(self, plain_secret: Optional[str]) -> None:
+        """加密并设置API Secret。"""
+        self.api_secret = encrypt_key(plain_secret) if plain_secret else None
 
 
 class LLMUsageLog(Base):
