@@ -103,6 +103,8 @@ def _binding_safety_error(*, binding, profile, connection, model, provider, user
         return "binding_inactive"
     if profile is None or profile.status != "published":
         return "binding_profile_not_published"
+    if expected_capability not in set(profile.capabilities or []):
+        return "binding_capability_mismatch"
     if model is None or not model.enabled or provider is None or not provider.enabled:
         return "binding_owner_disabled"
     if connection is None or connection.status not in VERIFIED_CONNECTION_STATUSES:
