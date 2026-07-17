@@ -29,16 +29,28 @@ from app.features.model_config.repository import (
     list_product_catalog,
     resolve_profile_version,
 )
+from app.features.model_config.bindings import (
+    ModelBindingError,
+    RoutePolicy,
+    resolve_model_binding,
+    resolve_retry_binding,
+    route_policy_for,
+)
+from app.features.model_config.legacy_strategy_projection import (
+    resolve_legacy_strategy_config_id,
+)
 
 __all__ = [
     "BindingScope",
     "CatalogComparison",
     "CertificationLevel",
+    "ModelBindingError",
     "ModelConfigurationError",
     "ModelCapability",
     "ModelProfileContract",
     "ProfileStatus",
     "ResolvedModelBinding",
+    "RoutePolicy",
     "build_legacy_external_provider_response",
     "compare_legacy_and_canonical_catalogs",
     "is_product_visible_external_provider",
@@ -51,5 +63,9 @@ __all__ = [
     "project_legacy_external_providers",
     "project_legacy_llm_models",
     "resolve_profile_version",
+    "resolve_model_binding",
+    "resolve_legacy_strategy_config_id",
+    "resolve_retry_binding",
+    "route_policy_for",
     "select_legacy_external_providers",
 ]

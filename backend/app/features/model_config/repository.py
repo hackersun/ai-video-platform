@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.catalog import (
@@ -16,11 +16,16 @@ from app.features.model_config.catalog import (
 from app.features.model_config.domain import ModelProfileContract, normalize_capabilities
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.model_center import (
+    ModelBinding,
     ModelCertificationRun,
+    ModelConnection,
     ModelProfile,
     ModelProfileVersion,
     ModelProvider,
 )
+
+
+VERIFIED_CONNECTION_STATUSES = frozenset({"connection_verified", "verified"})
 
 
 class ModelConfigurationError(ValueError):
@@ -101,6 +106,62 @@ async def resolve_profile_version(
     if legacy_model_id:
         return await build_legacy_profile_contract(db, legacy_model_id)
     raise ModelConfigurationError("model_profile_required")
+
+
+async def load_binding_candidates(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    task: str,
+    capability: str,
+) -> tuple[ModelBinding, ...]:
+    rows = await db.scalars(
+        select(ModelBinding).where(
+            or_(ModelBinding.user_id == user_id, ModelBinding.scope_type == "system"),
+            ModelBinding.task == task,
+            ModelBinding.capability == capability,
+            ModelBinding.is_active == True,
+        )
+    )
+    return tuple(rows.all())
+
+
+async def load_verified_connections(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    provider_id: str,
+) -> tuple[ModelConnection, ...]:
+    rows = await db.scalars(
+        select(ModelConnection)
+        .where(
+            ModelConnection.user_id == user_id,
+            ModelConnection.provider_id == provider_id,
+            ModelConnection.status.in_(VERIFIED_CONNECTION_STATUSES),
+        )
+        .order_by(ModelConnection.id)
+    )
+    return tuple(rows.all())
+
+
+async def load_legacy_config_rows(
+    db: AsyncSession,
+    *,
+    user_id: str,
+) -> tuple[tuple[LLMConfig, LLMModel, LLMProvider], ...]:
+    result = await db.execute(
+        select(LLMConfig, LLMModel, LLMProvider)
+        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
+        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
+        .where(
+            LLMConfig.user_id == user_id,
+            LLMConfig.is_active == True,
+            LLMConfig.test_status == "success",
+            LLMModel.is_active == True,
+            LLMProvider.is_active == True,
+        )
+    )
+    return tuple(result.all())
 
 
 def _certification_status(
@@ -218,7 +279,11 @@ async def list_product_catalog(db: AsyncSession, user_id: str) -> ProductCatalog
 
 __all__ = [
     "ModelConfigurationError",
+    "VERIFIED_CONNECTION_STATUSES",
     "build_legacy_profile_contract",
+    "load_binding_candidates",
+    "load_legacy_config_rows",
+    "load_verified_connections",
     "list_product_catalog",
     "load_published_profile",
     "resolve_profile_version",

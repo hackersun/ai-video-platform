@@ -99,7 +99,7 @@ class ResolvedModelBinding:
     profile: ModelProfileContract
     connection_id: str | None
     binding_version: int
-    source_scope: Literal["request", "series", "project", "user", "system"]
+    source_scope: Literal["request", "series", "project", "user", "system", "legacy"]
 
 
 __all__ = [

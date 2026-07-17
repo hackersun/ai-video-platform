@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from uuid import uuid4
 
 import pytest
@@ -11,6 +12,7 @@ from app.core.database import AsyncSessionLocal
 from app.models import Asset
 from app.models.video_job import VideoJob
 from app.services.provider_asset_binding_service import upsert_provider_binding, verify_provider_binding
+from app.services import production_strategy_routing
 from init_db import init_db
 from main import app
 from test_workflow_routes import (
@@ -119,6 +121,19 @@ def _verify_seedance_bindings(user_id: str) -> None:
             await session.commit()
 
     asyncio.run(_seed())
+
+
+def test_strategy_routing_owns_binding_aliases_not_concrete_model_ids() -> None:
+    source = inspect.getsource(production_strategy_routing).lower()
+
+    assert production_strategy_routing.STRATEGY_BINDING_KEYS == {
+        "draft_fast": "video.draft_fast",
+        "final_quality": "video.final_quality",
+        "low_cost": "video.low_cost",
+        "direct_av_first": "video.direct_av",
+        "separate_video_tts": "video.separate_tts",
+    }
+    assert "seedance" not in source
 
 
 def test_draft_fast_routes_to_seedance_fast_config(
