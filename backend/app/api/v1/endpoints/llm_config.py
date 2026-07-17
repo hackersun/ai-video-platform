@@ -262,25 +262,34 @@ def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
     )
 
 
+INTERNAL_PROVIDER_PREFIXES = (
+    "preflight-",
+    "test-provider-",
+    "placeholder-provider-",
+    "contract-",
+)
+INTERNAL_PROVIDER_IDS = frozenset({"deterministic-acceptance"})
+
+
 def _is_internal_test_provider(provider: Optional[LLMProvider]) -> bool:
     if provider is None:
         return False
-    name_cn = (getattr(provider, "name_cn", None) or "").strip()
+    name_cn = str(getattr(provider, "name_cn", None) or "").strip()
     if name_cn in {"预检供应商", "测试供应商", "占位供应商", "TTS开通供应商"}:
         return True
     values = [
         getattr(provider, "id", None),
         getattr(provider, "name", None),
         getattr(provider, "name_en", None),
+        getattr(provider, "name_cn", None),
         getattr(provider, "base_url", None),
         getattr(provider, "description", None),
     ]
-    text = " ".join(str(value or "").lower() for value in values)
+    normalized = " ".join(str(value or "").strip().lower() for value in values)
     return (
-        "preflight-provider-" in text
-        or "test-provider-" in text
-        or "tts-provider-" in text
-        or "placeholder-provider-" in text
+        str(getattr(provider, "id", None) or "").lower() in INTERNAL_PROVIDER_IDS
+        or any(part.startswith(INTERNAL_PROVIDER_PREFIXES) for part in normalized.split())
+        or "tts-provider-" in normalized
     )
 
 

@@ -88,6 +88,12 @@ export function isInternalTestModelConfig(config: Partial<SavedModelConfig> & Re
   );
 }
 
+export function isInternalProviderConfig(provider: { id?: string; name?: string; name_cn?: string }) {
+  const id = String(provider.id || '').toLowerCase();
+  const text = [provider.id, provider.name, provider.name_cn].filter(Boolean).join(' ').toLowerCase();
+  return id === 'deterministic-acceptance' || /(^|\s)(contract-|preflight-|test-provider-)/.test(text);
+}
+
 export function getModelCapabilities(configOrModel: { model_type?: string; model_capabilities?: string[]; capabilities?: string[] }): ModelCapability[] {
   const modelType = (configOrModel.model_type || '').toLowerCase();
   const capabilities = (configOrModel.model_capabilities || configOrModel.capabilities || []).map(item => String(item).toLowerCase());

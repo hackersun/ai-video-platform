@@ -109,6 +109,36 @@ async def test_llm_catalog_hides_preflight_test_provider_data() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_catalog_hides_contract_and_deterministic_providers() -> None:
+    provider_ids = {"deterministic-acceptance", "contract-text"}
+
+    async with AsyncSessionLocal() as db:
+        for provider_id in provider_ids:
+            db.add(
+                LLMProvider(
+                    id=provider_id,
+                    name=provider_id,
+                    name_cn=provider_id,
+                    base_url="https://example.invalid/internal",
+                    is_active=True,
+                )
+            )
+        await db.commit()
+
+    try:
+        response = TestClient(app).get("/api/v1/llm/providers")
+        assert response.status_code == 200
+        assert {item["id"] for item in response.json()}.isdisjoint(provider_ids)
+    finally:
+        async with AsyncSessionLocal() as db:
+            for provider_id in provider_ids:
+                provider = await db.get(LLMProvider, provider_id)
+                if provider is not None:
+                    await db.delete(provider)
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_llm_catalog_hides_internal_test_models_on_visible_provider() -> None:
     user_id = f"llm-catalog-visible-provider-user-{uuid4()}"
     model_id = f"internal-test-model-{uuid4()}"

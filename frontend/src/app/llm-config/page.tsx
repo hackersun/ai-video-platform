@@ -40,6 +40,7 @@ import {
   getDefaultConfigForCapability,
   getModelCapabilities,
   getModelCapability,
+  isInternalProviderConfig,
   isInternalTestModelConfig,
   modelStatusClass,
   modelStatusLabel,
@@ -318,9 +319,10 @@ export default function LLMConfigPage() {
       const res = await fetchWithAuth(`${API_BASE_URL}/llm/providers`);
       if (res.ok) {
         const data = await res.json();
-        setProviders(data);
-        if (data.length > 0 && !selectedProvider) {
-          setSelectedProvider(data[0].id);
+        const visibleProviders = data.filter((provider: Provider) => !isInternalProviderConfig(provider));
+        setProviders(visibleProviders);
+        if (visibleProviders.length > 0 && !selectedProvider) {
+          setSelectedProvider(visibleProviders[0].id);
         }
       }
     } catch (error) {
