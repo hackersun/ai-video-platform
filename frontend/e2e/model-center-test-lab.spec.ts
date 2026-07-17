@@ -10,9 +10,8 @@ const certification = {
 };
 const catalog = {
   items: [{
-    provider: { id: 'provider-1', code: 'volcengine', display_name: '火山引擎', provider_family: 'ark', is_builtin: true, enabled: true, revision: 1 },
-    profile: { id: 'profile-video', model_id: 'model-1', version: 1, api_model_id: 'seedance-1.5', driver_key: 'ark_video', capabilities: ['video_generation'], contract_version: 'v1', status: 'published', revision: 1 },
-    certification_level: 'contract',
+    provider_id: 'provider-1', api_model_id: 'seedance-1.5', profile_version_id: 'profile-video', legacy_model_id: null,
+    legacy_config_id: null, certification_status: 'contract', capabilities: ['video_generation'],
   }],
   meta: { page: 1, page_size: 20, total: 1 },
 };
@@ -40,6 +39,15 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('test lab exposes tiered certification and actionable sanitized failure evidence', async ({ page }) => {
+  const requests: Array<unknown> = [];
+  await page.route('**/api/v1/model-center/certifications', async (route) => {
+    requests.push(route.request().postDataJSON());
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      ...certification, id: 'run-queued', level: 'live', status: 'queued', actual_cost_rmb: '0.0000',
+      sanitized_evidence: { execution_mode: 'safe_intent_only', selected_shot_ids: ['shot-03', 'shot-07'] },
+    }) });
+  });
+  await page.route('**/api/v1/model-center/certifications/run-queued', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...certification, id: 'run-queued', status: 'queued' }) }));
   await page.goto('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
   await expect(page.getByRole('heading', { name: '契约认证' })).toBeVisible();
   await expect(page.getByText('provider_timeout')).toBeVisible();
@@ -51,10 +59,16 @@ test('test lab exposes tiered certification and actionable sanitized failure evi
   await page.getByLabel('操作原因').fill('验收关键镜头');
   await page.getByLabel('用户作用域').fill('sunqy');
   await page.getByLabel('生产方案版本').fill('recipe-v1');
-  await page.getByLabel('章节或运行上下文').fill('run-17');
+  await page.getByLabel('章节 ID').fill('chapter-4');
+  await page.getByLabel('运行 ID').fill('run-17');
   await page.getByLabel('选定镜头').fill('shot-03,shot-07');
   await page.getByLabel('预算上限').fill('10');
   await page.getByRole('button', { name: '提交真实验证' }).click();
   await expect(page.getByRole('dialog', { name: '真实费用确认' })).toContainText('本次会产生真实费用');
   await expect(page.getByRole('dialog', { name: '真实费用确认' }).getByRole('button', { name: '提交真实验证' })).toBeDisabled();
+  await page.getByRole('dialog', { name: '真实费用确认' }).getByLabel('本次会产生真实费用').check();
+  await page.getByRole('dialog', { name: '真实费用确认' }).getByRole('button', { name: '提交真实验证' }).click();
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]).toEqual({ profile_version_id: 'profile-video', connection_id: 'connection-video', level: 'live', reason: '验收关键镜头', user_scope: 'sunqy', recipe_version_id: 'recipe-v1', chapter_id: 'chapter-4', run_id: 'run-17', selected_shot_ids: ['shot-03', 'shot-07'], budget_ceiling_rmb: '10', retry_policy: 'never', storage_policy: 'qiniu_public', real_cost_acknowledged: true });
+  await expect(page).toHaveURL('/llm-config?section=test-lab&runId=run-queued&returnTo=%2Fstudio');
 });

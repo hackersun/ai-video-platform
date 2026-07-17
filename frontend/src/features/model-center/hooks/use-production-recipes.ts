@@ -21,6 +21,12 @@ export function useProductionRecipes(page = 1, pageSize = 20) {
       modelCenterMutationInvalidations.recipePublish,
     );
   }, []);
+  const validateRecipeVersion = useCallback(async (recipeVersionId: string) => {
+    return runModelCenterMutation(
+      () => modelCenterApi.validateRecipeVersion(recipeVersionId),
+      modelCenterMutationInvalidations.recipeCreate,
+    );
+  }, []);
 
-  return { ...query, createRecipe, publishRecipeVersion };
+  return { ...query, createRecipe, publishRecipeVersion, validateRecipeVersion };
 }

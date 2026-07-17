@@ -17,9 +17,8 @@ const certification = {
 };
 const catalog = {
   items: [{
-    provider: { id: 'provider-1', code: 'volcengine', display_name: '火山引擎', provider_family: 'ark', is_builtin: true, enabled: true, revision: 1 },
-    profile: { id: 'profile-1', model_id: 'model-1', version: 1, api_model_id: 'doubao-seedance-1-5-pro', driver_key: 'ark_video', capabilities: ['video_generation'], contract_version: 'v1', status: 'published', revision: 1 },
-    certification_level: 'connection',
+    provider_id: 'provider-1', api_model_id: 'doubao-seedance-1-5-pro', profile_version_id: 'profile-1', legacy_model_id: null,
+    legacy_config_id: null, certification_status: 'connection', capabilities: ['video_generation'],
   }],
   meta: { page: 1, page_size: 20, total: 1 },
 };
@@ -63,6 +62,7 @@ test('连接认证完成后会直接进入带运行证据的测试实验室，�
   await page.goto('/llm-config?section=connections&returnTo=%2Fstudio');
   await page.getByRole('button', { name: '测试连接' }).click();
   await expect(page).toHaveURL('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
+  await page.getByText('已脱敏响应证据').click();
   await expect(page.getByText('evidence-17')).toBeVisible();
   await expect(page.getByRole('link', { name: '返回原工作台' })).toHaveAttribute('href', '/studio');
 });

@@ -1,10 +1,5 @@
 import type { PromptProfileView } from '../types';
 
-const labels: Record<string, string> = {
-  system_contract: '系统约束', task_template: '任务模板', input_mapping: '输入映射', output_schema: '输出结构',
-  negative_constraints: '负向约束', model_family_overrides: '模型家族覆盖', validation_fixtures: '验证样例', release_notes: '发布说明',
-};
-
 export function PromptProfileDiff({ profile }: { profile: PromptProfileView }) {
-  return <dl className="grid gap-3 sm:grid-cols-2">{Object.entries(labels).map(([key, label]) => <div key={key} className="rounded-lg border border-white/10 bg-black/10 p-3"><dt className="text-xs text-slate-500">{label}</dt><dd className="mt-2 whitespace-pre-wrap break-words text-xs leading-5 text-slate-300">{typeof profile.content[key] === 'string' ? profile.content[key] : JSON.stringify(profile.content[key] ?? {}, null, 2)}</dd></div>)}</dl>;
+  return <dl className="grid gap-3 sm:grid-cols-2"><div className="rounded-lg border border-white/10 bg-black/10 p-3"><dt className="text-xs text-slate-500">任务类型</dt><dd className="mt-2 text-xs leading-5 text-slate-300">{profile.task}</dd></div><div className="rounded-lg border border-white/10 bg-black/10 p-3"><dt className="text-xs text-slate-500">当前头版本</dt><dd className="mt-2 text-xs leading-5 text-slate-300">v{profile.head_version ?? '—'} · {profile.status || '未创建'}</dd></div><div className="rounded-lg border border-white/10 bg-black/10 p-3 sm:col-span-2"><dt className="text-xs text-slate-500">版本正文</dt><dd className="mt-2 text-xs leading-5 text-slate-400">目录接口不返回历史提示词正文。编辑器仅提交本次明确变更的结构化字段，其余字段由服务端继承父版本。</dd></div></dl>;
 }

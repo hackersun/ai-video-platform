@@ -25,10 +25,12 @@ import type {
   ProductionRecipeInput,
   ProductionRecipeView,
   PromptProfileInput,
+  PromptProfileVersionInput,
   PromptProfileView,
   PublishInput,
   PublishResult,
   ResourceImpact,
+  RollbackInput,
 } from './types';
 
 function boundedInteger(value: number, fallback: number, maximum: number) {
@@ -191,28 +193,35 @@ export const modelCenterApi = {
     apiClient.request<PageResponse<ProductionRecipeView>>(pagePath('/model-center/recipes', page, pageSize)),
   createRecipe: (input: ProductionRecipeInput) =>
     apiClient.request<ProductionRecipeView>('/model-center/recipes', { method: 'POST', body: jsonBody(input) }),
+  validateRecipeVersion: (recipeVersionId: string) =>
+    apiClient.request<{ valid: boolean; errors: Array<{ code: string; message: string }> }>(`/model-center/recipe-versions/${recipeVersionId}/validate`, { method: 'POST' }),
   publishRecipeVersion: (recipeVersionId: string, input: PublishInput) =>
     apiClient.request<PublishResult>(`/model-center/recipe-versions/${recipeVersionId}/publish`, { method: 'POST', body: jsonBody(input) }),
   disableRecipeVersion: (recipeVersionId: string, input: PublishInput) =>
     apiClient.request<PublishResult>(`/model-center/recipe-versions/${recipeVersionId}/disable`, { method: 'POST', body: jsonBody(input) }),
-  rollbackRecipe: (recipeKey: string, input: PublishInput) =>
+  rollbackRecipe: (recipeKey: string, input: RollbackInput) =>
     apiClient.request<PublishResult>(`/model-center/recipes/${recipeKey}/rollback`, { method: 'POST', body: jsonBody(input) }),
 
   listPromptProfiles: (page = 1, pageSize = 20) =>
     apiClient.request<PageResponse<PromptProfileView>>(pagePath('/model-center/prompt-profiles', page, pageSize)),
   createPromptProfile: (input: PromptProfileInput) =>
     apiClient.request<PromptProfileView>('/model-center/prompt-profiles', { method: 'POST', body: jsonBody(input) }),
-  createPromptProfileVersion: (profileId: string, input: PromptProfileInput) =>
+  createPromptProfileVersion: (profileId: string, input: PromptProfileVersionInput) =>
     apiClient.request<PromptProfileView>(`/model-center/prompt-profiles/${profileId}/versions`, { method: 'POST', body: jsonBody(input) }),
   publishPromptProfileVersion: (versionId: string, input: PublishInput) =>
     apiClient.request<PublishResult>(`/model-center/prompt-profile-versions/${versionId}/publish`, { method: 'POST', body: jsonBody(input) }),
   disablePromptProfileVersion: (versionId: string, input: PublishInput) =>
     apiClient.request<PublishResult>(`/model-center/prompt-profile-versions/${versionId}/disable`, { method: 'POST', body: jsonBody(input) }),
-  rollbackPromptProfile: (profileId: string, input: PublishInput) =>
+  rollbackPromptProfile: (profileId: string, input: RollbackInput) =>
     apiClient.request<PublishResult>(`/model-center/prompt-profiles/${profileId}/rollback`, { method: 'POST', body: jsonBody(input) }),
 
   createCertification: (input: CertificationRunInput) =>
     apiClient.request<CertificationRun>('/model-center/certifications', { method: 'POST', body: jsonBody(input) }),
   getCertification: (runId: string) => apiClient.request<CertificationRun>(`/model-center/certifications/${runId}`),
-  getImpact: () => apiClient.request<ResourceImpact>('/model-center/impact'),
+  getImpact: (resourceType?: 'prompt_profile' | 'recipe', resourceId?: string) => {
+    const params = new URLSearchParams();
+    if (resourceType) params.set('resource_type', resourceType);
+    if (resourceId) params.set('resource_id', resourceId);
+    return apiClient.request<ResourceImpact>(`/model-center/impact${params.size ? `?${params.toString()}` : ''}`);
+  },
 };

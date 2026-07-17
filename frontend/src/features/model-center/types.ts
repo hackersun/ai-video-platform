@@ -127,9 +127,13 @@ export type ModelProfileVersionUpdateInput = ModelProfileVersionInput & {
 };
 
 export interface ModelCatalogView {
-  provider: ModelProviderView;
-  profile: ModelProfileVersionView;
-  certification_level: CertificationLevel;
+  provider_id: string;
+  api_model_id: string;
+  profile_version_id: string | null;
+  legacy_model_id: string | null;
+  legacy_config_id: string | null;
+  certification_status: string;
+  capabilities: ModelCapability[];
 }
 
 export interface ModelBindingView {
@@ -140,8 +144,8 @@ export interface ModelBindingView {
   capability: ModelCapability;
   profile_version_id: string;
   connection_id: string;
-  priority: number;
-  route_policy: string;
+  priority?: number;
+  route_policy?: string;
   is_active: boolean;
   revision: number;
 }
@@ -180,16 +184,40 @@ export interface ProductionRecipeInput {
 
 export interface PromptProfileView {
   id: string;
-  profile_key: string;
-  version: number;
-  status: ConfigurationState;
-  content: Record<string, unknown>;
-  revision: number;
+  key: string;
+  name: string;
+  task: string;
+  head_version_id: string | null;
+  head_version: number | null;
+  status: ConfigurationState | null;
 }
 
 export interface PromptProfileInput {
-  profile_key: string;
-  content: Record<string, unknown>;
+  key: string;
+  name: string;
+  task: string;
+  stage?: string | null;
+  system_contract: string;
+  task_template: string;
+  input_mapping: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  negative_constraints: string[];
+  model_family_overrides: Record<string, unknown>;
+  validation_fixtures: Array<Record<string, unknown>>;
+  release_notes: string;
+}
+
+export interface PromptProfileVersionInput {
+  expected_revision: number;
+  stage?: string | null;
+  system_contract?: string;
+  task_template?: string;
+  input_mapping?: Record<string, unknown>;
+  output_schema?: Record<string, unknown>;
+  negative_constraints?: string[];
+  model_family_overrides?: Record<string, unknown>;
+  validation_fixtures?: Array<Record<string, unknown>>;
+  release_notes?: string;
 }
 
 export interface CertificationRun {
@@ -209,7 +237,16 @@ export interface CertificationRunInput {
   profile_version_id: string;
   connection_id: string;
   level: Exclude<CertificationLevel, 'none'>;
-  reason?: string;
+  reason: string;
+  user_scope?: string;
+  recipe_version_id?: string;
+  chapter_id?: string;
+  run_id?: string;
+  selected_shot_ids?: string[];
+  budget_ceiling_rmb?: string;
+  retry_policy?: string;
+  storage_policy?: string;
+  real_cost_acknowledged?: boolean;
 }
 
 export interface ResourceImpact {
@@ -223,6 +260,10 @@ export interface ResourceImpact {
 export interface PublishInput {
   expected_revision: number;
   reason: string;
+}
+
+export interface RollbackInput extends PublishInput {
+  target_version_id: string;
 }
 
 export interface PublishResult {

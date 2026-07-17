@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 
 import { modelCenterApi } from '../api';
-import type { PromptProfileInput, PublishInput } from '../types';
+import type { PromptProfileInput, PromptProfileVersionInput, PublishInput, RollbackInput } from '../types';
 import { modelCenterMutationInvalidations } from './model-center-query-store';
 import { runModelCenterMutation } from './run-model-center-mutation';
 import { useModelCenterQuery } from './use-model-center-query';
@@ -21,6 +21,18 @@ export function usePromptProfiles(page = 1, pageSize = 20) {
       modelCenterMutationInvalidations.promptProfilePublish,
     );
   }, []);
+  const createPromptProfileVersion = useCallback(async (profileId: string, input: PromptProfileVersionInput) => {
+    return runModelCenterMutation(
+      () => modelCenterApi.createPromptProfileVersion(profileId, input),
+      modelCenterMutationInvalidations.promptProfileCreate,
+    );
+  }, []);
+  const rollbackPromptProfile = useCallback(async (profileId: string, input: RollbackInput) => {
+    return runModelCenterMutation(
+      () => modelCenterApi.rollbackPromptProfile(profileId, input),
+      modelCenterMutationInvalidations.promptProfilePublish,
+    );
+  }, []);
 
-  return { ...query, createPromptProfile, publishPromptProfileVersion };
+  return { ...query, createPromptProfile, createPromptProfileVersion, publishPromptProfileVersion, rollbackPromptProfile };
 }
