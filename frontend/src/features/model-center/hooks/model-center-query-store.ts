@@ -16,7 +16,7 @@ export const modelCenterMutationInvalidations = {
   connectionCreate: ['overview', 'connections'],
   connectionUpdate: ['overview', 'connections'],
   connectionTest: ['overview', 'connections'],
-  profilePublish: ['overview', 'prompt-profiles', 'bindings', 'recipes', 'impact'],
+  profilePublish: ['overview', 'catalog', 'bindings', 'recipes', 'impact'],
   bindingCreate: ['overview', 'bindings', 'recipes', 'impact'],
   bindingUpdate: ['overview', 'bindings', 'recipes', 'impact'],
   recipeCreate: ['overview', 'recipes', 'impact'],

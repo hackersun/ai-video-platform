@@ -2,10 +2,8 @@ import { useCallback } from 'react';
 
 import { modelCenterApi } from '../api';
 import type { CertificationRunInput } from '../types';
-import {
-  invalidateModelCenterQueries,
-  modelCenterMutationInvalidations,
-} from './model-center-query-store';
+import { modelCenterMutationInvalidations } from './model-center-query-store';
+import { runModelCenterMutation } from './run-model-center-mutation';
 import { useModelCenterQuery } from './use-model-center-query';
 
 export function useCertificationRun(runId?: string) {
@@ -15,9 +13,10 @@ export function useCertificationRun(runId?: string) {
   );
   const query = useModelCenterQuery('test-lab', request);
   const createCertification = useCallback(async (input: CertificationRunInput) => {
-    const certification = await modelCenterApi.createCertification(input);
-    invalidateModelCenterQueries(modelCenterMutationInvalidations.certificationRun);
-    return certification;
+    return runModelCenterMutation(
+      () => modelCenterApi.createCertification(input),
+      modelCenterMutationInvalidations.certificationRun,
+    );
   }, []);
 
   return { ...query, createCertification };

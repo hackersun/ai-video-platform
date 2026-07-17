@@ -4,16 +4,20 @@ import type {
   CertificationRun,
   CertificationRunInput,
   ModelBindingInput,
+  ModelBindingUpdateInput,
   ModelBindingView,
   ModelCatalogView,
   ModelCenterOverview,
   ModelConnectionInput,
+  ModelConnectionUpdateInput,
   ModelConnectionView,
   ModelDriverView,
   ModelProfileInput,
   ModelProfileVersionInput,
+  ModelProfileVersionUpdateInput,
   ModelProfileVersionView,
   ModelProviderInput,
+  ModelProviderUpdateInput,
   ModelProviderView,
   PageResponse,
   ProductionRecipeInput,
@@ -25,27 +29,81 @@ import type {
   ResourceImpact,
 } from './types';
 
+function boundedInteger(value: number, fallback: number, maximum: number) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(Math.floor(value), 1), maximum);
+}
+
 function pagePath(path: string, page = 1, pageSize = 20) {
-  return `${path}?page=${page}&page_size=${pageSize}`;
+  const safePage = boundedInteger(page, 1, Number.MAX_SAFE_INTEGER);
+  const safePageSize = boundedInteger(pageSize, 20, 100);
+  return `${path}?page=${safePage}&page_size=${safePageSize}`;
 }
 
 function jsonBody(input: object) {
   return JSON.stringify(input);
 }
 
+function record(value: unknown, label: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`无效的模型中心${label}响应`);
+  return Object.fromEntries(Object.entries(value));
+}
+
+function stringValue(value: Record<string, unknown>, key: string, label: string) {
+  if (typeof value[key] !== 'string') throw new Error(`无效的模型中心${label}响应`);
+  return value[key];
+}
+
+function nullableStringValue(value: Record<string, unknown>, key: string, label: string) {
+  if (value[key] === null) return null;
+  return stringValue(value, key, label);
+}
+
+function connectionView(value: unknown): ModelConnectionView {
+  const input = record(value, '连接');
+  if (typeof input.has_secret !== 'boolean' || typeof input.enabled !== 'boolean' || typeof input.revision !== 'number') {
+    throw new Error('无效的模型中心连接响应');
+  }
+  return {
+    id: stringValue(input, 'id', '连接'),
+    provider_id: stringValue(input, 'provider_id', '连接'),
+    name: stringValue(input, 'name', '连接'),
+    base_url: nullableStringValue(input, 'base_url', '连接'),
+    has_secret: input.has_secret,
+    secret_hint: nullableStringValue(input, 'secret_hint', '连接'),
+    secret_updated_at: nullableStringValue(input, 'secret_updated_at', '连接'),
+    enabled: input.enabled,
+    revision: input.revision,
+  };
+}
+
+function connectionPage(value: unknown): PageResponse<ModelConnectionView> {
+  const input = record(value, '连接列表');
+  const meta = record(input.meta, '连接列表分页');
+  if (!Array.isArray(input.items) || typeof meta.page !== 'number' ||
+      typeof meta.page_size !== 'number' || typeof meta.total !== 'number') {
+    throw new Error('无效的模型中心连接列表响应');
+  }
+  return {
+    items: input.items.map(connectionView),
+    meta: { page: meta.page, page_size: meta.page_size, total: meta.total },
+  };
+}
+
 export const modelCenterApi = {
   getOverview: () => apiClient.request<ModelCenterOverview>('/model-center/overview'),
-  listDrivers: () => apiClient.request<ModelDriverView[]>('/model-center/drivers'),
+  listDrivers: (page = 1, pageSize = 20) =>
+    apiClient.request<PageResponse<ModelDriverView>>(pagePath('/model-center/drivers', page, pageSize)),
   createProvider: (input: ModelProviderInput) =>
     apiClient.request<ModelProviderView>('/model-center/providers', { method: 'POST', body: jsonBody(input) }),
-  updateProvider: (providerId: string, input: Partial<ModelProviderInput>) =>
+  updateProvider: (providerId: string, input: ModelProviderUpdateInput) =>
     apiClient.request<ModelProviderView>(`/model-center/providers/${providerId}`, { method: 'PUT', body: jsonBody(input) }),
 
-  listConnections: (page = 1, pageSize = 20) =>
-    apiClient.request<PageResponse<ModelConnectionView>>(pagePath('/model-center/connections', page, pageSize)),
+  listConnections: async (page = 1, pageSize = 20) =>
+    connectionPage(await apiClient.request<unknown>(pagePath('/model-center/connections', page, pageSize))),
   createConnection: (input: ModelConnectionInput) =>
     apiClient.request<ModelConnectionView>('/model-center/connections', { method: 'POST', body: jsonBody(input) }),
-  updateConnection: (connectionId: string, input: ModelConnectionInput) =>
+  updateConnection: (connectionId: string, input: ModelConnectionUpdateInput) =>
     apiClient.request<ModelConnectionView>(`/model-center/connections/${connectionId}`, { method: 'PUT', body: jsonBody(input) }),
   testConnection: (connectionId: string) =>
     apiClient.request<CertificationRun>(`/model-center/connections/${connectionId}/test`, { method: 'POST' }),
@@ -56,7 +114,7 @@ export const modelCenterApi = {
     apiClient.request<ModelProfileVersionView>('/model-center/profiles', { method: 'POST', body: jsonBody(input) }),
   createProfileVersion: (profileId: string, input: ModelProfileVersionInput) =>
     apiClient.request<ModelProfileVersionView>(`/model-center/profiles/${profileId}/versions`, { method: 'POST', body: jsonBody(input) }),
-  updateProfileVersion: (profileVersionId: string, input: ModelProfileVersionInput) =>
+  updateProfileVersion: (profileVersionId: string, input: ModelProfileVersionUpdateInput) =>
     apiClient.request<ModelProfileVersionView>(`/model-center/profile-versions/${profileVersionId}`, { method: 'PUT', body: jsonBody(input) }),
   publishProfileVersion: (profileVersionId: string, input: PublishInput) =>
     apiClient.request<PublishResult>(`/model-center/profile-versions/${profileVersionId}/publish`, { method: 'POST', body: jsonBody(input) }),
@@ -69,7 +127,7 @@ export const modelCenterApi = {
     apiClient.request<PageResponse<ModelBindingView>>(pagePath('/model-center/bindings', page, pageSize)),
   createBinding: (input: ModelBindingInput) =>
     apiClient.request<ModelBindingView>('/model-center/bindings', { method: 'POST', body: jsonBody(input) }),
-  updateBinding: (bindingId: string, input: ModelBindingInput) =>
+  updateBinding: (bindingId: string, input: ModelBindingUpdateInput) =>
     apiClient.request<ModelBindingView>(`/model-center/bindings/${bindingId}`, { method: 'PUT', body: jsonBody(input) }),
 
   listRecipes: (page = 1, pageSize = 20) =>

@@ -44,9 +44,19 @@ export interface ModelConnectionInput {
   api_key?: string;
   api_secret?: string;
   enabled?: boolean;
-  expected_revision?: number;
-  reason?: string;
 }
+
+type ModelConnectionUpdateFields = {
+  name?: string;
+  base_url?: string | null;
+  enabled?: boolean;
+  expected_revision: number;
+};
+
+export type ModelConnectionUpdateInput =
+  | (ModelConnectionUpdateFields & { api_key?: never; api_secret?: never; reason?: string })
+  | (ModelConnectionUpdateFields & { api_key: string; api_secret?: string; reason: string })
+  | (ModelConnectionUpdateFields & { api_key?: string; api_secret: string; reason: string });
 
 export interface ModelProviderView {
   id: string;
@@ -64,9 +74,12 @@ export interface ModelProviderInput {
   provider_family: string;
   is_builtin?: boolean;
   enabled?: boolean;
-  expected_revision?: number;
-  reason?: string;
 }
+
+export type ModelProviderUpdateInput = Partial<ModelProviderInput> & {
+  expected_revision: number;
+  reason?: string;
+};
 
 export interface ModelDriverView {
   key: string;
@@ -106,9 +119,12 @@ export interface ModelProfileVersionInput {
   pricing?: Record<string, unknown>;
   prompt_profile_key?: string | null;
   contract_version: string;
-  expected_revision?: number;
-  reason?: string;
 }
+
+export type ModelProfileVersionUpdateInput = ModelProfileVersionInput & {
+  expected_revision: number;
+  reason?: string;
+};
 
 export interface ModelCatalogView {
   provider: ModelProviderView;
@@ -139,9 +155,12 @@ export interface ModelBindingInput {
   connection_id: string;
   priority?: number;
   route_policy?: string;
-  expected_revision?: number;
-  reason?: string;
 }
+
+export type ModelBindingUpdateInput = ModelBindingInput & {
+  expected_revision: number;
+  reason?: string;
+};
 
 export interface ProductionRecipeView {
   id: string;
@@ -157,8 +176,6 @@ export interface ProductionRecipeInput {
   recipe_key: string;
   name: string;
   spec: Record<string, unknown>;
-  expected_revision?: number;
-  reason?: string;
 }
 
 export interface PromptProfileView {
@@ -173,8 +190,6 @@ export interface PromptProfileView {
 export interface PromptProfileInput {
   profile_key: string;
   content: Record<string, unknown>;
-  expected_revision?: number;
-  reason?: string;
 }
 
 export interface CertificationRun {
