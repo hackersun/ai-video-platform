@@ -28,6 +28,18 @@ class DriverRegistry:
             raise DriverUnavailableError(key)
         return driver
 
+    def descriptions(self) -> tuple[dict[str, object], ...]:
+        """Return only safe, provider-neutral management fields."""
+        return tuple(
+            {
+                "key": key,
+                "capabilities": sorted(driver.capabilities),
+                "parameter_schema": {},
+                "contract_version": "driver-v1",
+            }
+            for key, driver in sorted(self._drivers.items())
+        )
+
 
 def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver] = ()) -> DriverRegistry:
     from app.features.model_drivers.adapters.dashscope_video import DashScopeVideoDriver
@@ -51,4 +63,8 @@ def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver]
     ])
 
 
-__all__ = ["DriverRegistry", "build_builtin_driver_registry"]
+def describe_installed_drivers() -> tuple[dict[str, object], ...]:
+    return build_builtin_driver_registry().descriptions()
+
+
+__all__ = ["DriverRegistry", "build_builtin_driver_registry", "describe_installed_drivers"]
