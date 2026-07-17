@@ -81,16 +81,27 @@ async def project_legacy_llm_models(
     db: AsyncSession, user_id: str, provider_id: str | None = None
 ) -> list[dict]:
     providers = {item.id: item for item in (await db.scalars(select(LLMProvider).where(LLMProvider.is_active == True))).all()}
-    models = list((await db.scalars(select(LLMModel).where(LLMModel.is_active == True))).all())
-    configs = list((await db.scalars(select(LLMConfig).where(LLMConfig.user_id == user_id, LLMConfig.is_active == True))).all())
-    configs_by_model = group_legacy_configs(configs)
+    requested_provider = providers.get(provider_id) if provider_id is not None else None
+    if requested_provider is not None and not is_product_visible_provider(requested_provider):
+        return []
+    model_query = select(LLMModel).where(LLMModel.is_active == True)
+    if provider_id is not None:
+        model_query = model_query.where(LLMModel.provider_id == provider_id)
+    models = list((await db.scalars(model_query)).all())
     visible_models = [
         model for model in models
-        if (provider_id is None or model.provider_id == provider_id)
-        and (provider := providers.get(model.provider_id)) is not None
+        if (provider := providers.get(model.provider_id)) is not None
         and is_product_visible_provider(provider)
         and is_product_visible_model(model)
     ]
+    if not visible_models:
+        return []
+    configs = list((await db.scalars(select(LLMConfig).where(
+        LLMConfig.user_id == user_id,
+        LLMConfig.is_active == True,
+        LLMConfig.model_id.in_([model.id for model in visible_models]),
+    ))).all())
+    configs_by_model = group_legacy_configs(configs)
     return [
         _legacy_model_response(model, configs_by_model.get(model.id, []))
         for model in dedupe_legacy_models(visible_models, configs_by_model)
@@ -140,22 +151,25 @@ async def maybe_log_shadow_catalog_comparison(
     legacy_models: list[dict],
     logger,
 ) -> None:
-    if os.getenv("MODEL_CENTER_CANONICAL_READS", "").strip().lower() != "shadow":
-        return
     try:
+        if os.getenv("MODEL_CENTER_CANONICAL_READS", "").strip().lower() != "shadow":
+            return
         comparison = await compare_legacy_and_canonical_catalogs(db, user_id, legacy_models)
-    except Exception:
-        logger.warning(
-            "model_center_catalog_shadow_failed",
-            extra={"model_center_shadow": {"status": "failed"}},
+        summary = comparison.sanitized_summary()
+        summary.pop("equivalent")
+        logger.info(
+            "model_center_catalog_shadow",
+            extra={"model_center_shadow": summary},
         )
+    except Exception:
+        try:
+            logger.warning(
+                "model_center_catalog_shadow_failed",
+                extra={"model_center_shadow": {"status": "failed"}},
+            )
+        except Exception:
+            pass
         return
-    summary = comparison.sanitized_summary()
-    summary.pop("equivalent")
-    logger.info(
-        "model_center_catalog_shadow",
-        extra={"model_center_shadow": summary},
-    )
 
 
 __all__ = [

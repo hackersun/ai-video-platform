@@ -512,6 +512,49 @@ async def test_default_endpoint_mode_adds_no_shadow_comparison_query(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_id", "seed_internal_provider", "expected_query_count"),
+    [
+        ("missing-provider", False, 2),
+        ("test-provider-query-short-circuit", True, 1),
+    ],
+)
+async def test_provider_filter_preserves_legacy_early_return_query_shape(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_id: str,
+    seed_internal_provider: bool,
+    expected_query_count: int,
+) -> None:
+    if seed_internal_provider:
+        db_session.add(LLMProvider(
+            id=provider_id, name=provider_id, name_cn="测试供应商",
+            base_url="https://example.invalid", is_active=True,
+        ))
+        await db_session.commit()
+
+    async def skip_default_seed(_db: AsyncSession) -> None:
+        return None
+
+    query_count = 0
+
+    def count_query(*_args) -> None:
+        nonlocal query_count
+        query_count += 1
+
+    monkeypatch.delenv("MODEL_CENTER_CANONICAL_READS", raising=False)
+    monkeypatch.setattr(llm_config, "ensure_default_models", skip_default_seed)
+    event.listen(db_session.bind.sync_engine, "before_cursor_execute", count_query)
+    try:
+        response = await llm_config.list_models(provider_id, db_session, "query-user")
+    finally:
+        event.remove(db_session.bind.sync_engine, "before_cursor_execute", count_query)
+
+    assert response == []
+    assert query_count == expected_query_count
+
+
+@pytest.mark.asyncio
 async def test_shadow_endpoint_logs_only_sanitized_summary_and_keeps_legacy_response(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
@@ -569,3 +612,37 @@ async def test_shadow_comparison_failure_is_sanitized_and_does_not_change_respon
     assert actual == expected
     assert record.model_center_shadow == {"status": "failed"}
     assert "sk-never-log-this" not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_point", ["summary", "success_log"])
+async def test_shadow_side_effect_exceptions_never_escape_legacy_endpoint(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+) -> None:
+    legacy = await seed_verified_llm_config(
+        db_session, provider="shadow-side-effect", model="shadow-side-effect-model",
+    )
+
+    async def skip_default_seed(_db: AsyncSession) -> None:
+        return None
+
+    def fail_side_effect(*_args, **_kwargs):
+        raise RuntimeError(f"{failure_point}-must-not-escape")
+
+    def fail_warning(*_args, **_kwargs):
+        raise RuntimeError("warning-must-not-escape")
+
+    monkeypatch.setenv("MODEL_CENTER_CANONICAL_READS", "shadow")
+    monkeypatch.setattr(llm_config, "ensure_default_models", skip_default_seed)
+    expected = await project_legacy_llm_models(db_session, legacy.user_id)
+    monkeypatch.setattr(llm_config.logger, "warning", fail_warning)
+    if failure_point == "summary":
+        monkeypatch.setattr(CatalogComparison, "sanitized_summary", fail_side_effect)
+    else:
+        monkeypatch.setattr(llm_config.logger, "info", fail_side_effect)
+
+    actual = await llm_config.list_models(None, db_session, legacy.user_id)
+
+    assert actual == expected
