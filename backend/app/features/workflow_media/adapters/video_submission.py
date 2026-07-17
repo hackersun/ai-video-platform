@@ -213,17 +213,14 @@ def _create_kwargs(command: VideoSubmissionCommand, content: dict) -> dict[str, 
             "message": "原生配音临时开关仅支持 Seedance 1.5 Pro",
             "model_id": model_id,
         })
-    values = {
-        "model": runtime.selected_model.get("model_endpoint_id")
+    return video_kernel.build_ark_video_create_kwargs(
+        model=runtime.selected_model.get("model_endpoint_id")
         or runtime.selected_model.get("api_model_id") or prepared.video_request.model,
-        "content": content["content"], "duration": prepared.video_request.duration,
-        "resolution": request.resolution, "camera_fixed": False,
-        "watermark": video_kernel.PROVIDER_VIDEO_WATERMARK_ENABLED,
-        "generate_audio": request.native_audio,
-    }
-    if prepared.video_seed is not None:
-        values["seed"] = prepared.video_seed
-    return values
+        content=content["content"], duration=prepared.video_request.duration,
+        resolution=request.resolution, camera_fixed=False,
+        watermark=video_kernel.PROVIDER_VIDEO_WATERMARK_ENABLED,
+        generate_audio=request.native_audio, seed=prepared.video_seed,
+    )
 
 
 async def _reserve(command: VideoSubmissionCommand, job_id: str, retry: bool) -> Optional[str]:
@@ -243,8 +240,8 @@ async def _retry_sensitive_prompt(
     content = _build_provider_content(command, data)
     reservation = await _reserve(command, job_id, True)
     try:
-        result = client.content_generation.tasks.create(
-            **{**_create_kwargs(command, content), "content": content["content"]}
+        result = video_kernel.submit_ark_video_task(
+            create_kwargs={**_create_kwargs(command, content), "content": content["content"]}, client=client,
         )
     except Exception as error:
         image_error = video_kernel.provider_image_url_error_message(error, data["provider_image_url"])
@@ -274,7 +271,9 @@ async def _submit_live(
     )
     reservation = await _reserve(command, job_id, False)
     try:
-        result = client.content_generation.tasks.create(**_create_kwargs(command, content))
+        result = video_kernel.submit_ark_video_task(
+            create_kwargs=_create_kwargs(command, content), client=client,
+        )
     except Exception as error:
         image_error = video_kernel.provider_image_url_error_message(error, data["provider_image_url"])
         text_error = provider_text_safety_error_message(error)

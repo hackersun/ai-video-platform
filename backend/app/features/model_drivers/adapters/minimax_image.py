@@ -9,9 +9,10 @@ class MiniMaxImageDriver:
     capabilities = frozenset({"image_generation"})
 
     async def test_connection(self, context):
+        prompt = str(getattr(context, "connection_params", {}).get("test_message") or "模型中心连接测试")
         return await connection_test(
-            lambda: self.submit(ImageCommand(prompt="模型中心连接测试"), context),
-            "MiniMax 图像模型连接成功",
+            lambda: self.submit(ImageCommand(prompt=prompt), context),
+            "MiniMax API 连接成功！",
         )
 
     async def submit(self, command, context):

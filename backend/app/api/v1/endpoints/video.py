@@ -65,6 +65,7 @@ from app.features.video_generation.public import (
     VideoJobSyncCommand,
     append_provider_image_note,
     build_video_context_metadata,
+    build_ark_video_create_kwargs,
     build_video_extra_data,
     build_video_consistency_package,
     collect_character_multiview_refs,
@@ -80,6 +81,7 @@ from app.features.video_generation.public import (
     resolve_video_model_config,
     resolve_video_seed,
     sync_video_job_and_shot,
+    submit_ark_video_task,
     video_model_metadata,
     video_prompt_parameters,
 )
@@ -716,18 +718,13 @@ async def generate_video(
         video_model = video_model_config.get("model_endpoint_id") or request.model
 
         # 调用SDK创建任务
-        create_kwargs = {
-            "model": video_model,
-            "content": provider_content["content"],
-            "duration": request.duration,
-            "resolution": request.resolution,
-            "camera_fixed": False,
-            "watermark": PROVIDER_VIDEO_WATERMARK_ENABLED,
-        }
-        if video_seed is not None:
-            create_kwargs["seed"] = video_seed
+        create_kwargs = build_ark_video_create_kwargs(
+            model=video_model, content=provider_content["content"], duration=request.duration,
+            resolution=request.resolution, camera_fixed=False,
+            watermark=PROVIDER_VIDEO_WATERMARK_ENABLED, seed=video_seed,
+        )
         try:
-            create_result = client.content_generation.tasks.create(**create_kwargs)
+            create_result = submit_ark_video_task(create_kwargs=create_kwargs, client=client)
         except Exception as exc:
             image_error = provider_image_url_error_message(exc, provider_image_url)
             if image_error:
@@ -749,7 +746,7 @@ async def generate_video(
                 )
                 retry_kwargs = {**create_kwargs, "content": fallback_content["content"]}
                 try:
-                    create_result = client.content_generation.tasks.create(**retry_kwargs)
+                    create_result = submit_ark_video_task(create_kwargs=retry_kwargs, client=client)
                 except Exception as retry_exc:
                     retry_image_error = provider_image_url_error_message(retry_exc, provider_image_url)
                     if retry_image_error:

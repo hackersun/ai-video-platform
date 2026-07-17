@@ -21,6 +21,8 @@ from app.features.model_drivers.domain import (
     DriverSubmission,
     DriverTestResult,
     ImageCommand,
+    MediaRenderCommand,
+    ObjectStorageCommand,
     SpeechCommand,
     TextCommand,
     VideoCommand,
@@ -168,6 +170,11 @@ def _command_limit_values(command: Command) -> dict[str, int]:
             "max_reference_videos": len(command.reference_videos),
             "max_reference_audios": len(command.reference_audios),
         }
+    if isinstance(command, MediaRenderCommand):
+        segments = command.manifest.get("segments") if isinstance(command.manifest, Mapping) else None
+        return {"max_segments": len(segments) if isinstance(segments, list) else 0}
+    if isinstance(command, ObjectStorageCommand):
+        return {"max_source_url_chars": len(command.source_url)}
     raise DriverCapabilityError("unknown", str(getattr(command, "capability", "unknown")))
 
 
@@ -177,6 +184,8 @@ def _command_capability(command: Command) -> str:
         ImageCommand: "image_generation",
         SpeechCommand: "speech_generation",
         VideoCommand: "video_generation",
+        MediaRenderCommand: "media_render",
+        ObjectStorageCommand: "object_storage",
     }.get(type(command))
     if expected is None or command.capability != expected:
         raise DriverCapabilityError("unknown", str(getattr(command, "capability", "unknown")))

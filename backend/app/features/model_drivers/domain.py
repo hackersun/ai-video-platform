@@ -44,7 +44,23 @@ class VideoCommand:
     params: Mapping[str, Any] = field(default_factory=dict)
 
 
-Command: TypeAlias = TextCommand | ImageCommand | SpeechCommand | VideoCommand
+@dataclass(frozen=True)
+class MediaRenderCommand:
+    capability: Literal["media_render"] = field(default="media_render", init=False)
+    manifest: Mapping[str, Any] = field(default_factory=dict)
+    output_dir: str = ""
+    burn_subtitles: bool = False
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ObjectStorageCommand:
+    capability: Literal["object_storage"] = field(default="object_storage", init=False)
+    source_url: str = ""
+    params: Mapping[str, Any] = field(default_factory=dict)
+
+
+Command: TypeAlias = TextCommand | ImageCommand | SpeechCommand | VideoCommand | MediaRenderCommand | ObjectStorageCommand
 
 
 @dataclass(frozen=True)
@@ -153,6 +169,8 @@ __all__ = [
     "DriverTestResult",
     "DriverUnavailableError",
     "ImageCommand",
+    "MediaRenderCommand",
+    "ObjectStorageCommand",
     "SpeechCommand",
     "TextCommand",
     "VideoCommand",

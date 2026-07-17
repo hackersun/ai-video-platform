@@ -104,3 +104,21 @@ async def test_minimax_image_driver_reuses_service_and_response_classifier(monke
     assert submission.status == "completed"
     assert submission.provider_task_id == "image-task-1"
     assert submission.output["image_urls"] == ["https://cdn.example.test/image.png"]
+
+
+@pytest.mark.asyncio
+async def test_minimax_image_connection_fails_without_artifact_or_task_id(monkeypatch) -> None:
+    async def fake_generate_image(_service, _prompt, **_kwargs):
+        return {}
+
+    monkeypatch.setattr("app.services.minimax_service.MiniMaxService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key",
+        base_url="https://minimax.example.test/v1",
+        profile=SimpleNamespace(api_model_id="image-01"),
+    )
+
+    result = await MiniMaxImageDriver().test_connection(context)
+
+    assert result.status == "failed"
+    assert result.sanitized_evidence == {"submission_status": "unknown"}

@@ -1,7 +1,7 @@
 """Qiniu Kodo configuration driver sharing media-delivery validation rules."""
 
-from app.features.model_drivers.adapters._shared import unsupported_poll, unsupported_submit
-from app.features.model_drivers.domain import DriverTestResult
+from app.features.model_drivers.adapters._shared import completed_output, unsupported_poll
+from app.features.model_drivers.domain import DriverResultError, DriverTestResult, ObjectStorageCommand
 
 
 def check_qiniu_config(
@@ -41,7 +41,17 @@ class QiniuKodoDriver:
         normalized = "connection_verified" if status == "success" else "failed"
         return DriverTestResult(normalized, message, {"bucket_configured": status == "success"})
 
-    async def submit(self, _command, _context):
-        return unsupported_submit()
+    async def submit(self, command: ObjectStorageCommand, context):
+        from app.services.media_delivery import upload_local_static_to_qiniu
+
+        params = dict(context.connection_params)
+        result = await upload_local_static_to_qiniu(
+            command.source_url, access_key=context.api_key, secret_key=context.api_secret,
+            public_base_url=str(params.get("public_base_url") or context.base_url or ""),
+            params=params, timeout=float(params.get("timeout") or 60),
+        )
+        if not result.get("provider_url"):
+            raise DriverResultError(str(result.get("omitted_reason") or "qiniu upload returned no provider URL"))
+        return completed_output({"status": "completed", **result})
 
     poll = staticmethod(unsupported_poll)

@@ -31,6 +31,8 @@ class DriverRegistry:
 
 def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver] = ()) -> DriverRegistry:
     from app.features.model_drivers.adapters.dashscope_video import DashScopeVideoDriver
+    from app.features.model_drivers.adapters.external_adapter import ExternalAdapterDriver
+    from app.features.model_drivers.adapters.legacy_text import LegacyTextDriver
     from app.features.model_drivers.adapters.local_ffmpeg import LocalFFmpegDriver
     from app.features.model_drivers.adapters.minimax_image import MiniMaxImageDriver
     from app.features.model_drivers.adapters.minimax_speech import MiniMaxSpeechDriver
@@ -44,6 +46,7 @@ def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver]
         MiniMaxTextDriver(), MiniMaxImageDriver(), MiniMaxSpeechDriver(),
         VolcanoArkImageDriver(), VolcanoArkVideoDriver(), VolcanoOpenSpeechDriver(),
         DashScopeVideoDriver(), LocalFFmpegDriver(), QiniuKodoDriver(),
+        LegacyTextDriver(), ExternalAdapterDriver(),
         *additional_drivers,
     ])
 

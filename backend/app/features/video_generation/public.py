@@ -17,7 +17,11 @@ from app.features.video_generation.application.model_config import (
     resolve_video_job_client_config,
     resolve_video_model_config,
 )
-from app.features.video_generation.adapters.ark import create_ark_client
+from app.features.video_generation.adapters.ark import (
+    build_ark_video_create_kwargs,
+    create_ark_client,
+    submit_ark_video_task,
+)
 from app.features.video_generation.adapters.media_delivery import resolve_provider_image_delivery
 from app.features.video_generation.constants import (
     MAX_PROVIDER_SEED,
@@ -59,6 +63,7 @@ __all__ = [
     "append_provider_image_note",
     "build_video_context_metadata",
     "build_video_extra_data",
+    "build_ark_video_create_kwargs",
     "create_ark_client",
     "provider_image_url_error_message",
     "resolve_provider_image_delivery",
@@ -67,6 +72,7 @@ __all__ = [
     "resolve_video_model_config",
     "resolve_video_seed",
     "sync_video_job_and_shot",
+    "submit_ark_video_task",
     "video_model_metadata",
     "video_prompt_parameters",
 ]

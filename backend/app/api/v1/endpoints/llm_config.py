@@ -7,8 +7,7 @@ from app.core.time_utils import utc_now
 from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
-import httpx
-import asyncio
+import httpx  # Compatibility alias for legacy tests; provider logic lives in model_drivers.
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -25,12 +24,9 @@ from app.core.model_registry import (
 from app.core.security import get_current_user_id
 from app.core.volcano_image_catalog import VOLCANO_IMAGE_MODEL_SEEDS
 from app.core.volcano_agent_plan_config import (
-    VOLCANO_AGENT_PLAN_BASE_URL,
     VOLCANO_AGENT_PLAN_MODELS,
     VOLCANO_AGENT_PLAN_PROVIDER,
-    VOLCANO_AGENT_PLAN_PROVIDER_ID,
 )
-from app.features.video_generation.public import PROVIDER_VIDEO_WATERMARK_ARG
 from app.features.model_config.credential_persistence import (
     apply_config_update,
     apply_create_or_upsert_config,
@@ -42,13 +38,19 @@ from app.features.model_config.public import (
     maybe_log_shadow_catalog_comparison,
     project_legacy_llm_models,
 )
-from app.features.model_drivers import execute_legacy_connection_test
+from app.features.model_drivers import (
+    execute_llm_connection_test,
+    resolve_published_driver_key,
+    test_minimax_api,
+    test_volcano_agent_plan_api,
+    test_volcano_api,
+)
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.services.deterministic_provider_fake import (
     deterministic_config_test_result,
     deterministic_provider_fake_enabled,
 )
-from app.services.volcano_speech_tts import configure_volcano_speech_endpoint, test_volcano_speech_connection
+from app.services.volcano_speech_tts import configure_volcano_speech_endpoint
 router = APIRouter(tags=["大模型配置"])
 logger = logging.getLogger(__name__)
 
@@ -1136,646 +1138,16 @@ async def ensure_default_models(db: AsyncSession) -> None:
         await db.commit()
 
 
-async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试火山引擎API，根据模型类型走不同端点"""
-    from app.core.volcano_config import VOLCANO_MODELS, get_endpoint_id
-    image_model_ids = {"Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite", "volcano-seedream-4.5", "volcano-seedream-5.0-lite"}
-    video_model_ids = {
-        "Doubao-Seedance-1.5-pro",
-        "Doubao-Seedance-1.0-pro-fast",
-        "Doubao-Seedance-2.0",
-        "Doubao-Seedance-2.0-fast",
-        "doubao-seedance-1-5-pro-251215",
-        "doubao-seedance-2-0-260128",
-        "doubao-seedance-2-0-fast-260128",
-        "volcano-seedance-1-5-pro",
-        "volcano-seedance-1-0-pro-fast",
-        "volcano-seedance-2-0",
-        "volcano-seedance-2-0-fast",
-    }
-
-    # 查找模型配置
-    model_config = {}
-    model_type = "text-generation"
-    for m in VOLCANO_MODELS:
-        if m["id"] == model_id:
-            model_config = m
-            model_type = m.get("type", "text-generation")
-            break
-    if model_type == "text-generation":
-        if model_id in image_model_ids:
-            model_type = "image-generation"
-        elif model_id in video_model_ids:
-            model_type = "video-generation"
-
-    # 解析实际调用的 model（图像/视频用 endpoint_id，文本用 model_id）
-    actual_model = get_endpoint_id(model_id)  # volcano_config 会正确解析
-
-    base_url = "https://ark.cn-beijing.volces.com/api/v3"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    if model_type == "video-generation":
-        url = f"{base_url}/contents/generations/tasks"
-        data = {
-            "model": actual_model,
-            "content": [
-                {"type": "text", "text": f"{message} --duration 4 --resolution 720p --camerafixed true --watermark {PROVIDER_VIDEO_WATERMARK_ARG}"}
-            ]
-        }
-    elif model_type == "image-generation":
-        # 图像生成模型 → POST /images/generations
-        url = f"{base_url}/images/generations"
-        # 最小像素 3686400，2048x2048=4194304 满足要求
-        data = {
-            "model": actual_model,
-            "prompt": message[:200],
-            "size": "2048x2048",  # 满足 min_pixels >= 3686400
-            "n": 1,
-            "response_format": "url"
-        }
-    else:
-        # 文本生成模型 → POST /chat/completions
-        url = f"{base_url}/chat/completions"
-        data = {
-            "model": actual_model,
-            "messages": [{"role": "user", "content": message}],
-            "max_tokens": 100
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                if model_type == "video-generation":
-                    task_id = result.get("id", "unknown")
-                    return {
-                        "success": True,
-                        "message": f"火山引擎视频模型 API 连接成功！任务ID: {task_id}",
-                        "response": f"任务已提交: {task_id}",
-                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                        "tokens_used": 0
-                    }
-                elif model_type == "image-generation":
-                    return {
-                        "success": True,
-                        "message": "火山引擎图像模型 API 连接成功！",
-                        "response": result.get("data", [{}])[0].get("url", "响应成功"),
-                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                        "tokens_used": 0
-                    }
-                else:
-                    return {
-                        "success": True,
-                        "message": "火山引擎 API 连接成功！",
-                        "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                        "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                    }
-            else:
-                try:
-                    err_json = response.json()
-                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-                except Exception:
-                    err_msg = response.text[:200]
-                return {
-                    "success": False,
-                    "message": f"[HTTP {response.status_code}] API错误: {err_msg}\n模型ID: {model_id} | 端点: {url}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": f"连接超时(30s)，请检查网络或API地址是否正确\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"连接失败，无法访问API地址: {e}\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-def _is_video_model_id(model_id: str) -> bool:
-    return any(key in model_id for key in ("seedance", "video"))
-
-
-def _is_image_model_id(model_id: str) -> bool:
-    return any(key in model_id for key in ("seedream", "image"))
-
-
-async def test_volcano_agent_plan_api(api_key: str, model_id: str, message: str) -> dict:
-    """Test Volcano Ark Agent Plan with the dedicated /api/plan/v3 endpoint."""
-    base_url = VOLCANO_AGENT_PLAN_BASE_URL
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-
-    if _is_video_model_id(model_id):
-        url = f"{base_url}/contents/generations/tasks"
-        method = "GET"
-        params = {"page_num": 1, "page_size": 1}
-        data = None
-    elif _is_image_model_id(model_id):
-        # Agent Plan image validation has no documented no-op endpoint. Use the
-        # read-only multimodal task list to verify the dedicated key/base URL
-        # without creating a billable image generation task.
-        url = f"{base_url}/contents/generations/tasks"
-        method = "GET"
-        params = {"page_num": 1, "page_size": 1}
-        data = None
-    else:
-        url = f"{base_url}/chat/completions"
-        method = "POST"
-        params = None
-        data = {
-            "model": model_id,
-            "messages": [{"role": "user", "content": message}],
-            "max_tokens": 100,
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            if method == "GET":
-                response = await client.get(url, params=params, headers=headers)
-            else:
-                response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                if _is_video_model_id(model_id):
-                    response_text = "Agent Plan 视频任务查询端点验证通过，未提交生成任务。"
-                    tokens_used = 0
-                elif _is_image_model_id(model_id):
-                    response_text = "Agent Plan 专属 Key 与 /api/plan/v3 验证通过，未提交图像生成任务。"
-                    tokens_used = 0
-                else:
-                    response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
-                    tokens_used = result.get("usage", {}).get("total_tokens", 0)
-                return {
-                    "success": True,
-                    "message": "火山方舟 Agent Plan API 连接成功！",
-                    "response": response_text,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": tokens_used,
-                }
-
-            try:
-                err_json = response.json()
-                err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-            except Exception:
-                err_msg = response.text[:200]
-            return {
-                "success": False,
-                "message": f"[HTTP {response.status_code}] Agent Plan API错误: {err_msg}\n端点: {url}",
-                "response": None,
-                "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                "tokens_used": 0,
-            }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": f"Agent Plan 连接超时(60s)，请检查网络或 API 地址\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 60000,
-            "tokens_used": 0,
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"Agent Plan 连接失败，无法访问 API 地址: {e}\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0,
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"Agent Plan 测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0,
-        }
-
-
-async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试阿里千问API"""
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
-                return {
-                    "success": True,
-                    "message": "阿里千问 API 连接成功！",
-                    "response": content,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) or result.get("usage", {}).get("input_tokens", 0) + result.get("usage", {}).get("output_tokens", 0)
-                }
-            else:
-                try:
-                    err_json = response.json()
-                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-                except Exception:
-                    err_msg = response.text[:200]
-                return {
-                    "success": False,
-                    "message": f"[HTTP {response.status_code}] API错误: {err_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": f"连接超时(30s)，请检查网络或API地址是否正确\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"连接失败，无法访问API地址: {e}\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试阿里百炼API (Anthropic 兼容格式)"""
-    url = "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-        "anthropic-version": "2023-06-01"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                contents = result.get("content", [])
-                content = next((c.get("text", "") for c in contents if c.get("type") == "text"), "响应成功")
-                return {
-                    "success": True,
-                    "message": "阿里百炼 API 连接成功！",
-                    "response": content[:500] if content else "响应成功",
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("output_tokens", 0)
-                }
-            else:
-                try:
-                    err_json = response.json()
-                    err_type = err_json.get("type", "unknown")
-                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-                    error_detail = f"[HTTP {response.status_code}] {err_type}: {err_msg}"
-                except Exception:
-                    error_detail = f"[HTTP {response.status_code}] {response.text[:200]}"
-                return {
-                    "success": False,
-                    "message": f"API错误: {error_detail}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时(60s)，请检查网络或API地址是否正确",
-            "response": None,
-            "response_time_ms": 60000,
-            "tokens_used": 0
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"连接失败，无法访问API地址: {e}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_baidu_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试百度文心一言API"""
-    # 百度千帆平台使用IAM认证或Access Token
-    # 兼容模式使用Access Token方式
-    url = "https://qianfan.baidubce.com/v2/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "message": "百度文心一言 API 连接成功！",
-                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                }
-            else:
-                error_data = response.json() if response.content else {}
-                error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(error_data)[:100]
-                return {
-                    "success": False,
-                    "message": f"API错误: {error_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时，请检查网络或API地址",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_openai_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试 OpenAI API"""
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "message": "OpenAI API 连接成功！",
-                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                }
-            else:
-                error_data = response.json() if response.content else {}
-                error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(response.text)[:100]
-                return {
-                    "success": False,
-                    "message": f"API错误: {error_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时，请检查网络或API地址",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试 MiniMax API，根据模型类型走不同端点"""
-    from app.core.minimax_config import DEFAULT_TTS_VOICE, MINIMAX_MODELS, get_minimax_base_url
-    from app.core.minimax_voice_contract import minimax_tts_verification_message
-    from app.services.minimax_errors import minimax_config_test_failure
-
-    # 查找模型配置（支持内部ID和API model_id两种匹配）
-    model_config = {}
-    model_type = "text-generation"
-    for m in MINIMAX_MODELS:
-        if m["id"] == model_id or m.get("api_model_id") == model_id:
-            model_config = m
-            model_type = m.get("type", "text-generation")
-            break
-
-    # 解析实际调用的 model（优先用 api_model_id）
-    actual_model = model_config.get("api_model_id", model_id) if model_config else model_id
-    base_url = get_minimax_base_url(api_key)
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    if model_type == "image-generation":
-        # 图像生成模型 → POST /v1/image_generation
-        url = f"{base_url}/image_generation"
-        data = {
-            "model": actual_model,
-            "prompt": message[:200],
-            "aspect_ratio": "1:1",
-            "n": 1,
-            "response_format": "url"
-        }
-    elif model_type == "tts":
-        # TTS模型 → POST /v1/t2a_v2
-        from app.services.minimax_tts_request import build_minimax_tts_request
-
-        request = build_minimax_tts_request(
-            model_id=actual_model, text=message[:50], voice_id=DEFAULT_TTS_VOICE, speed=1.0,
-        )
-        url = f"{base_url}{request.url_path}"
-        data = request.payload
-    else:
-        # 文本生成模型：M3 使用新端点，旧 MiniMax 文本模型保留 OpenAI-compatible 端点
-        if actual_model == "MiniMax-M3":
-            url = f"{base_url}/text/chatcompletion_v2"
-        else:
-            url = f"{base_url}/chat/completions"
-        data = {
-            "model": actual_model,
-            "messages": [{"role": "user", "content": message}],
-            "max_tokens": 100
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                if failure := minimax_config_test_failure(result, int(response.elapsed.total_seconds() * 1000)):
-                    return failure
-                response_text = ""
-                if model_type == "text-generation":
-                    choices = result.get("choices", [])
-                    if choices:
-                        response_text = choices[0].get("message", {}).get("content", "响应成功")
-                    else:
-                        response_text = str(result)[:100]
-                elif model_type == "image-generation":
-                    items = result.get("data", {}).get("items", [])
-                    if items:
-                        response_text = f"生成图像成功，URL: {items[0].get('url', '')[:80]}"
-                    else:
-                        response_text = f"图像生成响应: {str(result)[:100]}"
-                elif model_type == "tts":
-                    response_text = f"TTS响应: {str(result)[:100]}"
-                else:
-                    response_text = str(result)[:100]
-
-                return {
-                    "success": True,
-                    "message": minimax_tts_verification_message(actual_model) if model_type == "tts" else "MiniMax API 连接成功！",
-                    "response": response_text,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) if model_type == "text-generation" else 0
-                }
-            else:
-                error_msg = response.text[:150]
-                return {
-                    "success": False,
-                    "message": f"API错误 [{response.status_code}]: {error_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时，请检查网络或API地址",
-            "response": None,
-            "response_time_ms": 60000,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-_CONFIG_TEST_FACTORIES = {
-    ("volcano", "default"): lambda key, model, message, _base: test_volcano_api(key, model, message),
-    ("volcano", "speech"): lambda key, _model, message, base: test_volcano_speech_connection(key, base, message),
-    (VOLCANO_AGENT_PLAN_PROVIDER_ID, "default"): lambda key, model, message, _base: test_volcano_agent_plan_api(key, model, message),
-    ("qwen", "default"): lambda key, model, message, _base: test_qwen_api(key, model, message),
-    ("dashscope", "default"): lambda key, model, message, _base: test_qwen_api(key, model, message),
-    ("qianlian", "default"): lambda key, model, message, _base: test_qianlian_api(key, model, message),
-    ("baidu", "default"): lambda key, model, message, _base: test_baidu_api(key, model, message),
-    ("openai", "default"): lambda key, model, message, _base: test_openai_api(key, model, message),
-    ("minimax", "default"): lambda key, model, message, _base: test_minimax_api(key, model, message),
-}
-def _unsupported_config_test(provider_id: str) -> dict:
-    return {
-        "success": False, "message": f"不支持的提供商: {provider_id}", "response": None,
-        "response_time_ms": 0, "tokens_used": 0,
-    }
-
-
 async def _execute_config_test(
     provider_id: str, api_key: str, model_id: str, message: str,
-    *, category: str = "default", base_url: str = "",
+    *, category: str = "default", model_type: str | None = None,
+    driver_key: str | None = None, base_url: str = "", connection_params: dict | None = None,
 ) -> dict:
-    factory = _CONFIG_TEST_FACTORIES.get((provider_id, category))
-    factory = factory or _CONFIG_TEST_FACTORIES.get((provider_id, "default"))
-    if factory is None:
-        return _unsupported_config_test(provider_id)
-
-    async def legacy_test(_context):
-        return await factory(api_key, model_id, message, base_url)
-    return await execute_legacy_connection_test(provider_id, api_key, model_id, base_url, legacy_test)
+    effective_type = model_type or ("speech" if category == "speech" else "chat")
+    return await execute_llm_connection_test(
+        provider_id, api_key, model_id, message, model_type=effective_type,
+        driver_key=driver_key, base_url=base_url, connection_params=connection_params,
+    )
 
 
 # ============== API端点 ==============
@@ -1933,9 +1305,11 @@ async def test_api_connection(
     
     category = "speech" if model and model.model_type in ("tts", "audio", "speech") else "default"
     base_url = model.base_url if model and model.base_url else ""
+    driver_key = await resolve_published_driver_key(db, model.id if model else None)
     return await _execute_config_test(
         model_provider_id, request.api_key, model_id, request.message,
-        category=category, base_url=base_url,
+        category=category, model_type=model.model_type if model else None,
+        driver_key=driver_key, base_url=base_url,
     )
 
 
@@ -1998,9 +1372,12 @@ async def test_config(
     configured_base_url = configure_volcano_speech_endpoint(
         extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra,
     ) if category == "speech" else ""
+    driver_key = str(extra.get("driver_key") or "").strip() or await resolve_published_driver_key(db, model.id)
     test_result = await _execute_config_test(
         provider_id, api_key, model.model_id, request.message,
-        category=category, base_url=configured_base_url or "",
+        category=category, model_type=model.model_type, driver_key=driver_key,
+        base_url=configured_base_url or model.base_url or (provider.base_url if provider else "") or "",
+        connection_params=extra,
     )
     # 更新测试状态
     config.test_status = "success" if test_result["success"] else "failed"

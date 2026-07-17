@@ -12,6 +12,7 @@ from app.features.model_drivers import (
     DriverLimitError,
     DriverParameterError,
     DriverRegistrationError,
+    DriverResultError,
     DriverRegistry,
     DriverSchemaError,
     DriverSubmission,
@@ -24,6 +25,8 @@ from app.features.model_drivers import (
     execute_poll,
 )
 from app.features.model_drivers import registry as driver_registry
+from app.features.model_drivers import public as driver_public
+from app.features.model_drivers.adapters._shared import completed_output, connection_test
 
 
 def profile(
@@ -87,6 +90,37 @@ class QueuedTextDriver(EchoTextDriver):
 class SecretBearingObject:
     def __repr__(self):
         return "SecretBearingObject(top-secret)"
+
+
+@pytest.mark.asyncio
+async def test_connection_test_fails_closed_for_unknown_submission_status():
+    async def unknown_submission():
+        return DriverSubmission(status="unknown", provider_task_id=None, output={})
+
+    result = await connection_test(unknown_submission, "must not be used")
+
+    assert result.status == "failed"
+    assert result.sanitized_evidence == {"submission_status": "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_connection_test_preserves_legacy_response_summary_and_usage_count():
+    async def completed_submission():
+        return DriverSubmission(
+            status="completed", provider_task_id=None,
+            output={"text": "provider response", "usage_count": 7},
+        )
+
+    result = await connection_test(completed_submission, "ok")
+
+    assert result.sanitized_evidence["response"] == "provider response"
+    assert result.sanitized_evidence["usage_count"] == 7
+
+
+@pytest.mark.parametrize("provider_result", [{}, {"status": "mystery"}, {"status": "completed"}])
+def test_completed_output_rejects_results_without_accepted_status_or_recovery_evidence(provider_result):
+    with pytest.raises(DriverResultError, match="provider result"):
+        completed_output(provider_result)
 
 
 class ChangingReprObject:
@@ -309,6 +343,28 @@ def test_builtin_driver_registry_has_current_production_drivers(driver_key, capa
     driver = driver_registry.build_builtin_driver_registry().require(driver_key)
 
     assert capability in driver.capabilities
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "model_type", "expected"),
+    [
+        ("minimax", "chat", "minimax_text_v2"),
+        ("minimax", "image-generation", "minimax_image_v1"),
+        ("minimax", "tts", "minimax_speech_v2"),
+        ("volcano", "image-generation", "volcano_ark_image_v3"),
+        ("volcano", "video-generation", "volcano_ark_video_v3"),
+        ("volcano", "speech", "volcano_openspeech_v3"),
+        ("alibaba", "video-generation", "dashscope_video_v1"),
+    ],
+)
+def test_llm_connection_driver_selection_uses_builtin_keys(provider_id, model_type, expected):
+    assert driver_public.select_llm_connection_driver_key(provider_id, model_type) == expected
+
+
+def test_llm_connection_driver_selection_prefers_persisted_profile_key():
+    assert driver_public.select_llm_connection_driver_key(
+        "minimax", "image-generation", persisted_driver_key="volcano_ark_image_v3",
+    ) == "volcano_ark_image_v3"
 
 
 def test_driver_context_repr_excludes_decrypted_secrets():

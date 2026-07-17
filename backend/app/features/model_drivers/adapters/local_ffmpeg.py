@@ -1,9 +1,10 @@
 """Local FFmpeg availability driver."""
 
 import shutil
+from pathlib import Path
 
-from app.features.model_drivers.adapters._shared import unsupported_poll, unsupported_submit
-from app.features.model_drivers.domain import DriverTestResult
+from app.features.model_drivers.adapters._shared import completed_output, unsupported_poll
+from app.features.model_drivers.domain import DriverTestResult, MediaRenderCommand
 
 
 def check_local_ffmpeg(binary: str, which=shutil.which) -> tuple[str, str]:
@@ -22,7 +23,13 @@ class LocalFFmpegDriver:
         normalized = "connection_verified" if status == "success" else "failed"
         return DriverTestResult(normalized, message, {"binary": binary})
 
-    async def submit(self, _command, _context):
-        return unsupported_submit()
+    async def submit(self, command: MediaRenderCommand, _context):
+        from app.services.ffmpeg_local_renderer import render_workflow_package
+
+        result = await render_workflow_package(
+            dict(command.manifest), output_dir=Path(command.output_dir),
+            burn_subtitles=command.burn_subtitles,
+        )
+        return completed_output(result)
 
     poll = staticmethod(unsupported_poll)

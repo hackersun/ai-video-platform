@@ -139,18 +139,18 @@ def _qiniu_private_download_url(
     return f"{url_with_deadline}&token={access_key}:{encoded_sign}"
 
 
-async def _upload_local_static_to_qiniu(
+async def upload_local_static_to_qiniu(
     local_url: str,
     *,
-    config: ExternalAPIConfig,
+    access_key: str,
+    secret_key: str,
     public_base_url: str,
-    local_static_prefix: str,
-    public_static_prefix: str,
+    params: dict[str, Any],
+    timeout: float = 60,
 ) -> dict[str, Any]:
-    access_key = (config.get_api_key_decrypted() or "").strip()
-    secret_key = (config.get_api_secret_decrypted() or "").strip()
-    extra = config.extra_config or {}
-    bucket = str(extra.get("bucket") or extra.get("bucket_name") or "").strip()
+    access_key = str(access_key or "").strip()
+    secret_key = str(secret_key or "").strip()
+    bucket = str(params.get("bucket") or params.get("bucket_name") or "").strip()
     if not access_key or not secret_key or not bucket:
         return {
             "provider_url": None,
@@ -165,8 +165,8 @@ async def _upload_local_static_to_qiniu(
         }
     object_key = _static_object_key(
         local_url,
-        local_static_prefix=local_static_prefix,
-        public_static_prefix=public_static_prefix,
+        local_static_prefix=str(params.get("local_static_prefix") or "/static/"),
+        public_static_prefix=str(params.get("public_static_prefix") or "/static/"),
     )
     if not object_key:
         return {
@@ -174,10 +174,10 @@ async def _upload_local_static_to_qiniu(
             "omitted_reason": "对象存储配置无法映射当前本地静态资源路径",
         }
 
-    upload_url = str(extra.get("upload_url") or "https://upload.qiniup.com").strip()
+    upload_url = str(params.get("upload_url") or "https://upload.qiniup.com").strip()
     content_type = mimetypes.guess_type(local_path.name)[0] or "application/octet-stream"
     token = _qiniu_upload_token(access_key, secret_key, bucket, object_key)
-    async with httpx.AsyncClient(timeout=float(getattr(config, "timeout", None) or 60), follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         response = await client.post(
             upload_url,
             data={"token": token, "key": object_key},
@@ -186,12 +186,12 @@ async def _upload_local_static_to_qiniu(
         response.raise_for_status()
 
     public_url = f"{public_base_url.rstrip('/')}/{quote(object_key, safe='/-._~')}"
-    if extra.get("private_download") or extra.get("private_bucket"):
+    if params.get("private_download") or params.get("private_bucket"):
         public_url = _qiniu_private_download_url(
             public_url,
             access_key=access_key,
             secret_key=secret_key,
-            ttl_seconds=int(extra.get("download_url_ttl_seconds") or 3600),
+            ttl_seconds=int(params.get("download_url_ttl_seconds") or 3600),
         )
     return {
         "provider_url": public_url,
@@ -290,15 +290,11 @@ async def resolve_provider_media_url(
         }
 
     storage_provider = str(extra.get("storage_provider") or extra.get("provider") or "").strip().lower()
-    local_static_prefix = extra.get("local_static_prefix") or "/static/"
-    public_static_prefix = extra.get("public_static_prefix") or "/static/"
     if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
-        upload_result = await _upload_local_static_to_qiniu(
-            source_url,
-            config=config,
-            public_base_url=public_base_url,
-            local_static_prefix=local_static_prefix,
-            public_static_prefix=public_static_prefix,
+        upload_result = await upload_local_static_to_qiniu(
+            source_url, access_key=config.get_api_key_decrypted(),
+            secret_key=config.get_api_secret_decrypted(), public_base_url=public_base_url,
+            params=extra, timeout=float(getattr(config, "timeout", None) or 60),
         )
         provider_url = upload_result.get("provider_url")
         if not provider_url or not is_cloud_accessible_http_url(provider_url):
