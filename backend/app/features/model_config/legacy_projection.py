@@ -80,14 +80,15 @@ def _legacy_model_response(model: LLMModel, configs: list[LLMConfig]) -> dict:
 async def project_legacy_llm_models(
     db: AsyncSession, user_id: str, provider_id: str | None = None
 ) -> list[dict]:
-    providers = {item.id: item for item in (await db.scalars(select(LLMProvider).where(LLMProvider.is_active == True))).all()}
+    provider_result = await db.execute(select(LLMProvider).where(LLMProvider.is_active == True))
+    providers = {item.id: item for item in provider_result.scalars().all()}
     requested_provider = providers.get(provider_id) if provider_id is not None else None
     if requested_provider is not None and not is_product_visible_provider(requested_provider):
         return []
     model_query = select(LLMModel).where(LLMModel.is_active == True)
     if provider_id is not None:
         model_query = model_query.where(LLMModel.provider_id == provider_id)
-    models = list((await db.scalars(model_query)).all())
+    models = list((await db.execute(model_query)).scalars().all())
     visible_models = [
         model for model in models
         if (provider := providers.get(model.provider_id)) is not None
@@ -96,11 +97,11 @@ async def project_legacy_llm_models(
     ]
     if not visible_models:
         return []
-    configs = list((await db.scalars(select(LLMConfig).where(
+    configs = list((await db.execute(select(LLMConfig).where(
         LLMConfig.user_id == user_id,
         LLMConfig.is_active == True,
         LLMConfig.model_id.in_([model.id for model in visible_models]),
-    ))).all())
+    ))).scalars().all())
     configs_by_model = group_legacy_configs(configs)
     return [
         _legacy_model_response(model, configs_by_model.get(model.id, []))
@@ -122,7 +123,9 @@ def build_legacy_external_provider_response(provider: ExternalAPIProvider) -> di
 
 
 async def project_legacy_external_providers(db: AsyncSession) -> list[dict]:
-    providers = list((await db.scalars(select(ExternalAPIProvider).where(ExternalAPIProvider.is_active == True))).all())
+    providers = list((await db.execute(
+        select(ExternalAPIProvider).where(ExternalAPIProvider.is_active == True)
+    )).scalars().all())
     visible = select_legacy_external_providers(providers)
     return [build_legacy_external_provider_response(provider) for provider in visible]
 
