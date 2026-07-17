@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from dataclasses import replace
+from types import SimpleNamespace
 from sqlalchemy.exc import StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -470,6 +471,44 @@ async def test_bound_text_service_creates_distinct_snapshot_for_each_chat_call(
     assert first["execution_snapshot_id"] != second["execution_snapshot_id"]
     assert first_snapshot.recipe_version_id == second_snapshot.recipe_version_id == "recipe-v1"
     assert first_snapshot.prompt_profile_version_id == second_snapshot.prompt_profile_version_id == "prompt-v1"
+
+
+@pytest.mark.asyncio
+async def test_generate_novel_with_plan_persists_one_snapshot_per_real_chat_request(
+    db_session: AsyncSession,
+) -> None:
+    from sqlalchemy import select
+
+    from app.features.model_drivers import text_execution
+    from app.models.model_center import ModelExecutionSnapshot
+
+    binding = replace(_binding(), capability="text_generation", task="story_generation")
+    context = SimpleNamespace(
+        binding=binding, recipe_version_id="recipe-v1", prompt_profile_version_id="prompt-v1",
+    )
+
+    class DashScopeLikeService:
+        def __init__(self):
+            self._responses = iter(("章节规划", "小说正文"))
+
+        async def chat_completion(self, **_kwargs):
+            return {"choices": [{"message": {"content": next(self._responses)}}]}
+
+    adapter = text_execution.TextGenerationServiceAdapter(
+        DashScopeLikeService(),
+        snapshot_factory=text_execution._text_snapshot_factory(db_session, "user-1", context),
+    )
+    result = await adapter.generate_novel_with_plan("主题", "dashscope-model")
+    snapshots = list((await db_session.scalars(select(ModelExecutionSnapshot).where(
+        ModelExecutionSnapshot.user_id == "user-1",
+        ModelExecutionSnapshot.task == "story_generation",
+    ))).all())
+
+    assert result["plan"] == "章节规划"
+    assert result["content"] == "小说正文"
+    assert len({snapshot.id for snapshot in snapshots}) == 2
+    assert {snapshot.recipe_version_id for snapshot in snapshots} == {"recipe-v1"}
+    assert {snapshot.prompt_profile_version_id for snapshot in snapshots} == {"prompt-v1"}
 
 
 @pytest.mark.asyncio
