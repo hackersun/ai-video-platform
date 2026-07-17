@@ -66,6 +66,21 @@ def test_model_center_migration_is_sync_idempotent(tmp_path):
     engine.dispose()
 
 
+def test_model_center_migration_adds_connection_revision_to_existing_table(tmp_path):
+    from app.db_migrations.model_center import add_model_center_links
+
+    database_path = tmp_path / "legacy-connection.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE model_connections (id VARCHAR(36) PRIMARY KEY)"))
+
+    add_model_center_links(engine)
+    add_model_center_links(engine)
+
+    assert "revision" in _column_names(engine, "model_connections")
+    engine.dispose()
+
+
 def test_model_center_migration_is_async_idempotent(tmp_path):
     from app.db_migrations.model_center import add_model_center_links_async
 

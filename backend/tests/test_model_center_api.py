@@ -176,7 +176,8 @@ async def test_updates_require_expected_revision_and_transitions_require_reason(
         "/api/v1/model-center/connections/connection-1",
         json={"expected_revision": 1},
     )
-    assert metadata_only.status_code == 501
+    assert metadata_only.status_code == 200
+    assert metadata_only.json()["revision"] == 2
 
     blank_reason = await client.put(
         "/api/v1/model-center/connections/connection-1",
@@ -188,6 +189,8 @@ async def test_updates_require_expected_revision_and_transitions_require_reason(
 
 @pytest.mark.asyncio
 async def test_audited_actions_reject_whitespace_reason_without_creating_audit(client):
+    async with AsyncSessionLocal() as db:
+        before_count = await db.scalar(select(func.count()).select_from(ModelConfigAuditEvent))
     publish = await client.post(
         "/api/v1/model-center/recipe-versions/recipe-v1/publish",
         json={"expected_revision": 1, "reason": "   "},
@@ -202,15 +205,15 @@ async def test_audited_actions_reject_whitespace_reason_without_creating_audit(c
 
     async with AsyncSessionLocal() as db:
         audit_count = await db.scalar(select(func.count()).select_from(ModelConfigAuditEvent))
-    assert audit_count == 0
+    assert audit_count == before_count
 
 
 @pytest.mark.asyncio
-async def test_connection_test_without_body_returns_actionable_not_implemented(client):
-    response = await client.post("/api/v1/model-center/connections/connection-1/test")
-    assert response.status_code == 501
-    assert response.json()["detail"]["code"] == "operation_not_implemented"
-    assert response.json()["detail"]["action_code"] == "contact_operator_or_use_legacy_api"
+async def test_connection_test_for_missing_connection_returns_actionable_not_found(client):
+    response = await client.post("/api/v1/model-center/connections/missing-connection/test")
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "resource_not_found"
+    assert response.json()["detail"]["action_code"] == "refresh"
 
 
 @pytest.mark.asyncio
@@ -428,6 +431,110 @@ async def test_live_certification_persists_safe_intent_without_provider_executio
         assert run.actual_cost_rmb == 0
 
 
+@pytest.mark.asyncio
+async def test_legacy_plaintext_prompt_skill_creates_structured_draft_without_echoing_content(client):
+    response = await client.post(
+        "/api/v1/model-center/prompt-profiles/prompt-1/versions",
+        json={"expected_revision": 1, "values": {"release_notes": "migrate legacy skill"}},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == 2
+    assert "Write {{topic}}" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_prompt_publish_is_atomic_and_creates_one_audit_event(client):
+    created = await client.post(
+        "/api/v1/model-center/prompt-profiles",
+        json={
+            "key": "task16.race", "name": "Prompt Race", "task": "shot_video",
+            "system_contract": "Return structured output.", "task_template": "Create {{shot}}.",
+        },
+    )
+    assert created.status_code == 200
+    version_id = created.json()["head_version_id"]
+
+    responses = await asyncio.gather(
+        client.post(
+            f"/api/v1/model-center/prompt-profile-versions/{version_id}/publish",
+            json={"expected_revision": 1, "reason": "并发发布 A"},
+        ),
+        client.post(
+            f"/api/v1/model-center/prompt-profile-versions/{version_id}/publish",
+            json={"expected_revision": 1, "reason": "并发发布 B"},
+        ),
+    )
+    assert sorted(item.status_code for item in responses) == [200, 409]
+    assert next(item for item in responses if item.status_code == 409).json()["detail"]["code"] == "revision_conflict"
+    async with AsyncSessionLocal() as db:
+        audit_count = await db.scalar(select(func.count()).select_from(ModelConfigAuditEvent).where(
+            ModelConfigAuditEvent.resource_type == "prompt_profile",
+            ModelConfigAuditEvent.resource_id == created.json()["id"],
+            ModelConfigAuditEvent.action == "publish",
+        ))
+    assert audit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_connection_mutations_redact_secrets_and_queue_safe_test_intent(client):
+    created = await client.post(
+        "/api/v1/model-center/connections",
+        json={
+            "provider_id": "provider-1", "name": "Task 16 Connection", "api_key": "new-secret-key",
+            "reason": "保存新连接",
+        },
+    )
+    assert created.status_code == 200
+    payload = created.json()
+    assert payload["status"] == "draft"
+    assert payload["has_secret"] is True
+    assert payload["revision"] == 1
+    assert "new-secret-key" not in created.text
+
+    replacement = await client.put(
+        f"/api/v1/model-center/connections/{payload['id']}",
+        json={"expected_revision": 1, "api_key": "replacement-secret", "reason": "轮换凭证"},
+    )
+    assert replacement.status_code == 200
+    assert replacement.json()["revision"] == 2
+    assert "replacement-secret" not in replacement.text
+
+    metadata = await client.put(
+        f"/api/v1/model-center/connections/{payload['id']}",
+        json={"expected_revision": 2, "changes": {"name": "Task 16 Connection Updated"}},
+    )
+    assert metadata.status_code == 200
+    assert metadata.json()["revision"] == 3
+
+    tested = await client.post(f"/api/v1/model-center/connections/{payload['id']}/test")
+    assert tested.status_code == 200
+    assert tested.json()["status"] == "connection_verification_queued"
+    assert tested.json()["execution_mode"] == "safe_intent_only"
+    assert tested.json()["connection"]["revision"] == 4
+    assert "api_key" not in json.dumps(tested.json())
+
+
+@pytest.mark.asyncio
+async def test_recipe_binding_resolution_exposes_safe_effective_model_and_prompt_metadata(client):
+    response = await client.get("/api/v1/model-center/recipes/recipe-v1/binding-resolution")
+    assert response.status_code == 200
+    payload = response.json()
+    video = next(item for item in payload["stages"] if item["stage"] == "video")
+    assert video["binding_id"] == "binding-video"
+    assert video["profile"] == {
+        "id": "profile-video-v1", "api_model_id": "api-video", "version": 1,
+        "driver_key": "driver-video", "contract_version": "v1",
+    }
+    assert video["prompt_profile"] == {
+        "id": "prompt-v1", "key": "script", "version": 1,
+    }
+    assert video["latest_certification"]["status"] == "queued"
+    serialized = json.dumps(payload)
+    assert "secret-value" not in serialized
+    assert "Write {{topic}}" not in serialized
+
+
 def test_feature_api_does_not_import_legacy_endpoint_modules():
     api_root = Path(__file__).parents[1] / "app/features/model_config/api"
     violations = []
@@ -477,7 +584,7 @@ async def _seed_collection_rows(db: AsyncSession) -> None:
         PromptProfile(id="prompt-1", user_id=USER_ID, key="script", name="Script", task="script_generation"),
         PromptProfileVersion(
             id="prompt-v1", profile_id="prompt-1", version=1, content="Write {{topic}}",
-            variables={"topic": "story"}, routing={}, evaluation={}, status="draft", checksum="p" * 64,
+            variables={"topic": "story"}, routing={}, evaluation={}, status="published", checksum="p" * 64,
         ),
     ])
     await db.commit()
@@ -496,6 +603,7 @@ def _seed_binding(db: AsyncSession, stage: str, capability: str) -> None:
             id=version_id, model_id=model_id, version=1, api_model_id=f"api-{stage}",
             driver_key=f"driver-{stage}", capabilities=[capability, "native_audio"] if stage == "video" else [capability],
             input_contract={}, output_contract={}, parameter_schema={}, default_params={}, limits={}, pricing={},
+            prompt_profile_key="script" if stage == "video" else None,
             contract_version="v1", status="published", checksum=stage[0] * 64,
         ),
         ModelBinding(

@@ -9,6 +9,7 @@ from app.features.model_config.api import service
 from app.features.model_config.api.errors import raise_http, unsupported
 from app.features.model_config.api.schemas import (
     PublishRequest,
+    RecipeBindingResolutionResponse,
     PublishResponse,
     RecipeCreateRequest,
     RollbackRequest,
@@ -46,6 +47,19 @@ async def validate_recipe(
 ):
     try:
         return await service.validate_recipe_version(db, user_id=user_id, recipe_version_id=recipe_version_id)
+    except service.ManagementOperationError as error:
+        return raise_http(error)
+
+
+@router.get("/recipes/{recipe_version_id}/binding-resolution", response_model=RecipeBindingResolutionResponse)
+async def recipe_binding_resolution(
+    recipe_version_id: str,
+    db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
+):
+    try:
+        return await service.recipe_bindings_display(
+            db, user_id=user_id, recipe_version_id=recipe_version_id,
+        )
     except service.ManagementOperationError as error:
         return raise_http(error)
 

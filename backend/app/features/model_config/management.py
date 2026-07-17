@@ -21,6 +21,12 @@ from app.features.model_config.certification_repository import (
     load_certification_intent,
     validate_certification_target,
 )
+from app.features.model_config.connection_management_repository import (
+    create_connection as persist_connection,
+    queue_connection_test_intent,
+    update_connection_if_revision,
+)
+from app.features.model_config.binding_resolution_repository import recipe_binding_resolution
 from app.features.model_config.public import list_product_catalog
 from app.features.model_config.prompt_management_repository import (
     create_prompt_draft,
@@ -91,6 +97,55 @@ async def drivers_page(page: int, page_size: int) -> dict:
 
 async def connections_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     return await connection_page(db, user_id, page, page_size)
+
+
+def _connection_item(row) -> dict:
+    return {
+        "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
+        "has_secret": row.has_secret, "secret_hint": "****" if row.has_secret else None,
+        "secret_updated_at": row.secret_updated_at.isoformat() if row.secret_updated_at else None,
+        "revision": row.revision,
+    }
+
+
+async def create_connection(db: AsyncSession, *, user_id: str, request) -> dict:
+    async with db.begin():
+        row = await persist_connection(
+            db, user_id=user_id, provider_id=request.provider_id, name=request.name,
+            api_key=request.api_key, api_secret=request.api_secret, reason=request.reason,
+        )
+        if row is None:
+            raise ManagementOperationError("resource_not_found", "Provider was not found.", "refresh", 404)
+    return _connection_item(row)
+
+
+async def update_connection(db: AsyncSession, *, user_id: str, connection_id: str, request) -> dict:
+    secret_request = hasattr(request, "api_key") or hasattr(request, "api_secret")
+    row = await update_connection_if_revision(
+        db, connection_id=connection_id, user_id=user_id, expected_revision=request.expected_revision,
+        metadata=None if secret_request else request.changes,
+        api_key=getattr(request, "api_key", None), api_secret=getattr(request, "api_secret", None),
+        reason=getattr(request, "reason", None),
+    )
+    if row is None:
+        raise ManagementOperationError("revision_conflict", "Connection has changed or was not found.", "refresh_and_retry", 409)
+    await db.commit()
+    return _connection_item(row)
+
+
+async def test_connection(db: AsyncSession, *, user_id: str, connection_id: str) -> dict:
+    async with db.begin():
+        try:
+            result = await queue_connection_test_intent(db, connection_id=connection_id, user_id=user_id)
+        except ValueError as error:
+            raise ManagementOperationError("connection_secret_required", "Save a connection secret before testing.", "save_secret", 422) from error
+        if result is None:
+            raise ManagementOperationError("resource_not_found", "Connection was not found.", "refresh", 404)
+    row, audit_id = result
+    return {
+        "id": audit_id, "status": "connection_verification_queued", "execution_mode": "safe_intent_only",
+        "connection": _connection_item(row),
+    }
 
 
 async def catalog_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
@@ -193,6 +248,13 @@ async def validate_recipe_version(db: AsyncSession, *, user_id: str, recipe_vers
     binding_ids = {binding_id for _, binding_id in recipe_binding_references(row.spec)}
     errors = validate_recipe(row.spec, await load_recipe_binding_contracts(db, binding_ids), user_id=user_id)
     return {"valid": not errors, "errors": _recipe_errors(errors)}
+
+
+async def recipe_bindings_display(db: AsyncSession, *, user_id: str, recipe_version_id: str) -> dict:
+    result = await recipe_binding_resolution(db, user_id=user_id, recipe_version_id=recipe_version_id)
+    if result is None:
+        raise ManagementOperationError("resource_not_found", "Recipe version was not found.", "refresh", 404)
+    return result
 
 
 async def rollback_recipe(

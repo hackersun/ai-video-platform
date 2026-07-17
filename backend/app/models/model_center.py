@@ -115,6 +115,7 @@ class ModelConnection(Base):
     endpoint_overrides = Column(JSON, nullable=False, default=dict)
     connection_params = Column(JSON, nullable=False, default=dict)
     status = Column(String(30), nullable=False, default="draft", index=True)
+    revision = Column(Integer, nullable=False, default=1)
     tested_at = Column(DateTime)
     created_at = Column(DateTime, nullable=False, default=utc_now)
     updated_at = Column(DateTime, nullable=False, default=utc_now, onupdate=utc_now)

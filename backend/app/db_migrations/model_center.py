@@ -10,6 +10,7 @@ _LINK_COLUMNS = {
     "llm_configs": {"connection_id": "VARCHAR(36)"},
     "external_api_configs": {"connection_id": "VARCHAR(36)"},
     "prompt_skills": {"prompt_profile_version_id": "VARCHAR(36)"},
+    "model_connections": {"revision": "INTEGER NOT NULL DEFAULT 1"},
 }
 _VERSION_TABLES = (
     "model_profile_versions",

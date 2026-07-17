@@ -8,7 +8,7 @@ from hashlib import sha256
 import json
 from uuid import uuid4
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
@@ -35,7 +35,7 @@ def _checksum(values: dict) -> str:
 
 
 def _as_values(row: PromptProfileVersion) -> dict:
-    content = json.loads(row.content)
+    content = _structured_content(row.content)
     return {
         "stage": row.stage,
         "system_contract": content["system_contract"],
@@ -46,6 +46,24 @@ def _as_values(row: PromptProfileVersion) -> dict:
         "output_schema": deepcopy((row.evaluation or {}).get("output_schema", {})),
         "validation_fixtures": deepcopy((row.evaluation or {}).get("validation_fixtures", [])),
         "release_notes": str((row.evaluation or {}).get("release_notes", "")),
+    }
+
+
+def _structured_content(raw_content: str | None) -> dict:
+    """Convert pre-Model-Center PromptSkill text without exposing it in errors."""
+    try:
+        parsed = json.loads(raw_content or "")
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict) and all(
+        isinstance(parsed.get(field), str) and parsed[field].strip()
+        for field in ("system_contract", "task_template")
+    ):
+        return parsed
+    return {
+        "system_contract": "Legacy PromptSkill compatibility profile.",
+        "task_template": str(raw_content or "").strip() or "Complete the requested task.",
+        "negative_constraints": [],
     }
 
 
@@ -132,11 +150,14 @@ async def publish_prompt_draft(
     db: AsyncSession, *, candidate: PromptVersionRow, expected_version: int, reason: str,
     action: str = "publish", previous_version_id: str | None = None,
 ) -> tuple[PromptVersionRow, str] | None:
-    row = await db.get(PromptProfileVersion, candidate.id)
-    if row is None or row.status != "draft" or row.version != expected_version:
+    result = await db.execute(update(PromptProfileVersion).where(
+        PromptProfileVersion.id == candidate.id,
+        PromptProfileVersion.status == "draft",
+        PromptProfileVersion.version == expected_version,
+    ).values(status="published", published_at=utc_now()).returning(PromptProfileVersion.id))
+    if result.scalar_one_or_none() is None:
         return None
-    row.status = "published"
-    row.published_at = utc_now()
+    row = await db.get(PromptProfileVersion, candidate.id)
     audit = ModelConfigAuditEvent(
         id=str(uuid4()), user_id=candidate.user_id, resource_type="prompt_profile",
         resource_id=candidate.profile_id, action=action, from_version_id=previous_version_id,
@@ -184,4 +205,3 @@ async def prompt_impact(db: AsyncSession, *, user_id: str, profile_id: str | Non
         "affected_recipes": recipe_count, "affected_prompts": 1 if profile_key else 0,
         "affected_prompt_profiles": 1 if profile_key else 0,
     }
-

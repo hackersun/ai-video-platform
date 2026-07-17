@@ -37,6 +37,7 @@ class ConnectionItem(BaseModel):
     has_secret: bool
     secret_hint: str | None
     secret_updated_at: str | None
+    revision: int
 
 
 class CatalogItem(BaseModel):
@@ -82,6 +83,18 @@ class ConnectionCreateRequest(NonblankReasonRequest):
 
 class ConnectionMetadataUpdateRequest(RevisionedUpdateRequest):
     """A metadata-only update does not require a secret replacement reason."""
+
+    @field_validator("changes")
+    @classmethod
+    def only_safe_connection_metadata(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"name", "endpoint_overrides", "connection_params"}
+        unsupported = set(value) - allowed
+        if unsupported:
+            raise ValueError(f"unsupported connection metadata: {', '.join(sorted(unsupported))}")
+        serialized = str(value).lower()
+        if any(marker in serialized for marker in ("api_key", "api_secret", "authorization", "token")):
+            raise ValueError("connection metadata must not contain credentials")
+        return value
 
 
 class ConnectionSecretReplacementRequest(NonblankReasonRequest):
@@ -203,3 +216,42 @@ class CertificationRequest(NonblankReasonRequest):
         if missing:
             raise ValueError(f"live certification requires: {', '.join(missing)}")
         return self
+
+
+class ConnectionTestIntentResponse(BaseModel):
+    id: str
+    status: str
+    execution_mode: Literal["safe_intent_only"]
+    connection: ConnectionItem
+
+
+class EffectiveBindingProfileItem(BaseModel):
+    id: str
+    api_model_id: str
+    version: int
+    driver_key: str
+    contract_version: str
+
+
+class SelectedPromptProfileItem(BaseModel):
+    id: str
+    key: str
+    version: int
+
+
+class LatestCertificationItem(BaseModel):
+    level: str
+    status: str
+
+
+class RecipeStageBindingResolutionItem(BaseModel):
+    stage: str
+    binding_id: str
+    profile: EffectiveBindingProfileItem
+    prompt_profile: SelectedPromptProfileItem | None
+    latest_certification: LatestCertificationItem
+
+
+class RecipeBindingResolutionResponse(BaseModel):
+    recipe_version_id: str
+    stages: list[RecipeStageBindingResolutionItem]

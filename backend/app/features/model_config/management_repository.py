@@ -75,6 +75,7 @@ async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: 
         "has_secret": bool(row.api_key or row.api_secret),
         "secret_hint": "****" if row.api_key or row.api_secret else None,
         "secret_updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "revision": row.revision,
     } for row in rows]
     return _page(items, page, page_size, total)
 
