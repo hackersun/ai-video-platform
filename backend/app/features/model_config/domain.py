@@ -52,6 +52,7 @@ CAPABILITY_ALIASES: dict[str, ModelCapability] = {
     "text-to-image": "image_generation",
     "tts": "speech_generation",
     "audio": "speech_generation",
+    "speech-generation": "speech_generation",
     "text-to-speech": "speech_generation",
     "video": "video_generation",
     "video-generation": "video_generation",

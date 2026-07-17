@@ -32,6 +32,23 @@ def test_normalize_capabilities_accepts_canonical_ids_and_ignores_unknown_values
     ) == {"text_generation", "subtitle_generation", "object_storage"}
 
 
+@pytest.mark.parametrize(
+    "capability",
+    [
+        "text_generation",
+        "vision_analysis",
+        "image_generation",
+        "speech_generation",
+        "video_generation",
+        "subtitle_generation",
+        "media_render",
+        "object_storage",
+    ],
+)
+def test_normalize_capabilities_round_trips_every_canonical_id(capability):
+    assert normalize_capabilities(capability, []) == {capability}
+
+
 def test_profile_and_binding_contracts_are_immutable():
     profile = ModelProfileContract(
         profile_version_id="profile-v1",
