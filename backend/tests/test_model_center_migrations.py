@@ -7,104 +7,12 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from cryptography.fernet import Fernet
-from sqlalchemy import create_engine, delete, event, insert, inspect, text, update
-from sqlalchemy.exc import DBAPIError, IntegrityError, OperationalError
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy.orm import Session
 
-from app.core.database import Base
-from app.db_migrations.runner import register_production_models
-from app.models.model_center import ModelConnection, ModelProfileVersion, ProductionRecipeVersion
+from tests.model_center_helpers import create_model_center_engine
 
-
-MODEL_CENTER_TABLES = {
-    "model_providers",
-    "model_profiles",
-    "model_connections",
-    "model_profile_versions",
-    "model_bindings",
-    "production_recipe_versions",
-    "model_certification_runs",
-    "model_execution_snapshots",
-    "model_config_audit_events",
-}
-
-MODEL_CENTER_SCHEMA = {
-    "model_providers": {
-        "id": False, "code": False, "display_name": False, "provider_family": False,
-        "is_builtin": False, "enabled": False, "revision": False,
-        "created_at": False, "updated_at": False,
-    },
-    "model_profiles": {
-        "id": False, "provider_id": False, "profile_key": False, "display_name": False,
-        "enabled": False, "revision": False, "created_at": False, "updated_at": False,
-    },
-    "model_connections": {
-        "id": False, "user_id": False, "provider_id": False, "name": False,
-        "api_key": True, "api_secret": True, "endpoint_overrides": False,
-        "connection_params": False, "status": False, "tested_at": True,
-        "created_at": False, "updated_at": False,
-    },
-    "model_profile_versions": {
-        "id": False, "model_id": False, "version": False, "api_model_id": False,
-        "driver_key": False, "capabilities": False, "input_contract": False,
-        "output_contract": False, "parameter_schema": False, "default_params": False,
-        "limits": False, "pricing": False, "prompt_profile_key": True,
-        "contract_version": False, "status": False, "checksum": False, "created_at": False,
-    },
-    "model_bindings": {
-        "id": False, "user_id": False, "scope_type": False, "scope_id": False,
-        "task": False, "capability": False, "profile_version_id": False,
-        "connection_id": False, "priority": False, "route_policy": False,
-        "fallback_profile_version_ids": False, "version": False, "is_active": False,
-        "revision": False, "created_at": False, "updated_at": False,
-    },
-    "production_recipe_versions": {
-        "id": False, "user_id": False, "recipe_key": False, "name": False,
-        "version": False, "status": False, "spec": False, "checksum": False,
-        "revision": False, "created_at": False, "published_at": True,
-    },
-    "model_certification_runs": {
-        "id": False, "user_id": False, "profile_version_id": False,
-        "connection_id": False, "level": False, "status": False,
-        "request_fingerprint": False, "sanitized_evidence": False,
-        "estimated_cost_rmb": False, "actual_cost_rmb": False,
-        "created_at": False, "completed_at": True,
-    },
-    "model_execution_snapshots": {
-        "id": False, "user_id": False, "run_id": True, "job_id": True,
-        "task": False, "capability": False, "profile_version_id": False,
-        "connection_id": False, "binding_id": False, "binding_version": False,
-        "recipe_version_id": True, "prompt_profile_version_id": True,
-        "model_contract_version": False, "sanitized_params": False,
-        "checksum": False, "created_at": False,
-    },
-    "model_config_audit_events": {
-        "id": False, "user_id": False, "resource_type": False, "resource_id": False,
-        "action": False, "from_version_id": True, "to_version_id": True,
-        "reason": False, "sanitized_change_summary": False, "created_at": False,
-    },
-}
-
-MODEL_CENTER_UNIQUES = {
-    "model_providers": {frozenset({"code"})},
-    "model_profiles": {frozenset({"provider_id", "profile_key"})},
-    "model_connections": {frozenset({"user_id", "provider_id", "name"})},
-    "model_profile_versions": {frozenset({"model_id", "version"})},
-    "model_bindings": {
-        frozenset({"user_id", "scope_type", "scope_id", "task", "capability", "version"}),
-    },
-    "production_recipe_versions": {frozenset({"user_id", "recipe_key", "version"})},
-    "model_certification_runs": set(),
-    "model_execution_snapshots": set(),
-    "model_config_audit_events": set(),
-}
-
-MODEL_CONNECTION_CHECKS = {
-    "ck_model_connection_api_key_fernet",
-    "ck_model_connection_api_secret_fernet",
-}
 
 MODEL_CENTER_TRIGGER_NAMES = {
     "trg_model_profile_versions_published_update",
@@ -126,384 +34,14 @@ def _column_names(engine, table_name: str) -> set[str]:
     return {column["name"] for column in inspect(engine).get_columns(table_name)}
 
 
-def _unique_column_sets(inspector, table_name: str) -> set[frozenset[str]]:
-    constraints = {
-        frozenset(item["column_names"])
-        for item in inspector.get_unique_constraints(table_name)
-    }
-    indexes = {
-        frozenset(item["column_names"])
-        for item in inspector.get_indexes(table_name)
-        if item.get("unique")
-    }
-    return constraints | indexes
-
-
-def _create_model_center_engine(tmp_path, name: str):
-    engine = create_engine(f"sqlite:///{tmp_path / name}")
-    register_production_models()
-    Base.metadata.create_all(engine)
-    return engine
-
-
-def _create_protected_model_center_engine(tmp_path, name: str):
-    from app.db_migrations.model_center import add_model_center_links
-
-    engine = _create_model_center_engine(tmp_path, name)
-    add_model_center_links(engine)
-    return engine
-
-
-def _profile_version(**overrides) -> ModelProfileVersion:
-    values = {
-        "id": "profile-version-1", "model_id": "model-1", "version": 1,
-        "api_model_id": "api-model-v1", "driver_key": "driver-1",
-        "capabilities": ["video_generation"], "input_contract": {"prompt": "string"},
-        "output_contract": {"video_url": "string"}, "parameter_schema": {},
-        "default_params": {}, "limits": {}, "pricing": {},
-        "prompt_profile_key": "video.default", "contract_version": "v1",
-        "status": "draft", "checksum": "a" * 64,
-    }
-    values.update(overrides)
-    return ModelProfileVersion(**values)
-
-
-def _recipe_version(**overrides) -> ProductionRecipeVersion:
-    values = {
-        "id": "recipe-version-1", "user_id": "user-1", "recipe_key": "anime.default",
-        "name": "Anime Default", "version": 1, "status": "draft",
-        "spec": {"stages": ["storyboard"]}, "checksum": "a" * 64,
-    }
-    values.update(overrides)
-    return ProductionRecipeVersion(**values)
-
-
-def test_model_center_tables_are_created(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'model-center.db'}")
-
-    register_production_models()
-    Base.metadata.create_all(engine)
-
-    assert MODEL_CENTER_TABLES <= set(inspect(engine).get_table_names())
-    engine.dispose()
-
-
-def test_model_center_schema_matches_required_columns_nullability_and_uniques(tmp_path):
-    engine = _create_model_center_engine(tmp_path, "model-center-contract.db")
-    inspector = inspect(engine)
-
-    for table_name, expected_columns in MODEL_CENTER_SCHEMA.items():
-        actual_columns = {item["name"]: item["nullable"] for item in inspector.get_columns(table_name)}
-        assert actual_columns == expected_columns
-        assert _unique_column_sets(inspector, table_name) == MODEL_CENTER_UNIQUES[table_name]
-
-    assert {
-        item["name"] for item in inspector.get_check_constraints("model_connections")
-    } == MODEL_CONNECTION_CHECKS
-
-    engine.dispose()
-
-
-def test_model_connection_encrypts_credentials_before_persistence(tmp_path, monkeypatch):
-    from app.models import llm_config as crypto
-
-    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
-    engine = _create_model_center_engine(tmp_path, "encrypted-connection.db")
-    model_connection = ModelConnection(
-        id="connection-1", user_id="user-1", provider_id="provider-1", name="primary",
-    )
-
-    model_connection.set_api_key_encrypted("key-plaintext")
-    model_connection.set_api_secret_encrypted("secret-plaintext")
-    with Session(engine) as session:
-        session.add(model_connection)
-        session.commit()
-        session.refresh(model_connection)
-        assert model_connection.get_api_key_decrypted() == "key-plaintext"
-        assert model_connection.get_api_secret_decrypted() == "secret-plaintext"
-
+def _sqlite_trigger_names(engine) -> set[str]:
     with engine.connect() as connection:
-        stored = connection.execute(
-            text("SELECT api_key, api_secret FROM model_connections WHERE id = 'connection-1'")
-        ).mappings().one()
-    assert stored["api_key"] != "key-plaintext"
-    assert stored["api_secret"] != "secret-plaintext"
-    assert stored["api_key"].startswith("gAAAAA")
-    assert stored["api_secret"].startswith("gAAAAA")
-    engine.dispose()
-
-
-@pytest.mark.parametrize("field_name", ["api_key", "api_secret"])
-def test_model_connection_rejects_direct_plaintext_credentials(field_name, monkeypatch):
-    from app.models import llm_config as crypto
-
-    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
-    base_values = {
-        "id": "connection-plain", "user_id": "user-1",
-        "provider_id": "provider-1", "name": "primary",
-    }
-
-    with pytest.raises(ValueError, match="Fernet ciphertext"):
-        ModelConnection(**base_values, **{field_name: "plaintext-secret"})
-
-    model_connection = ModelConnection(**base_values)
-    encrypted = crypto.encrypt_key("backfilled-secret")
-    setattr(model_connection, field_name, encrypted)
-    assert getattr(model_connection, field_name) == encrypted
-    with pytest.raises(ValueError, match="Fernet ciphertext"):
-        setattr(model_connection, field_name, "updated-plaintext")
-
-
-@pytest.mark.parametrize("operation", ["insert", "update"])
-def test_model_connection_check_constraints_reject_bulk_plaintext(
-    tmp_path, monkeypatch, operation,
-):
-    from app.models import llm_config as crypto
-
-    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
-    engine = _create_model_center_engine(tmp_path, f"connection-check-{operation}.db")
-    encrypted = crypto.encrypt_key("valid-key")
-
-    with Session(engine) as session:
-        if operation == "insert":
-            statement = insert(ModelConnection).values(
-                id="bulk-connection", user_id="user-1", provider_id="provider-1",
-                name="bulk", api_key="plaintext-key",
+        return {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
             )
-        else:
-            session.execute(
-                insert(ModelConnection).values(
-                    id="bulk-connection", user_id="user-1", provider_id="provider-1",
-                    name="bulk", api_key=encrypted, api_secret=encrypted,
-                )
-            )
-            session.commit()
-            statement = update(ModelConnection).where(
-                ModelConnection.id == "bulk-connection"
-            ).values(api_secret="plaintext-secret")
-
-        with pytest.raises(IntegrityError, match="ck_model_connection_.*_fernet"):
-            session.execute(statement)
-            session.commit()
-        session.rollback()
-
-    engine.dispose()
-
-
-def test_model_connection_check_constraints_accept_bulk_encrypted_tokens(tmp_path, monkeypatch):
-    from app.models import llm_config as crypto
-
-    monkeypatch.setenv("FERNET_KEY", Fernet.generate_key().decode())
-    monkeypatch.setattr(crypto, "_fernet_cache", None)
-    engine = _create_model_center_engine(tmp_path, "connection-check-encrypted.db")
-    first_token = crypto.encrypt_key("first-secret")
-    second_token = crypto.encrypt_key("second-secret")
-
-    with Session(engine) as session:
-        session.execute(
-            insert(ModelConnection).values(
-                id="bulk-connection", user_id="user-1", provider_id="provider-1",
-                name="bulk", api_key=first_token, api_secret=first_token,
-            )
-        )
-        session.execute(
-            update(ModelConnection).where(ModelConnection.id == "bulk-connection").values(
-                api_key=second_token, api_secret=second_token,
-            )
-        )
-        session.commit()
-
-    with engine.connect() as connection:
-        stored = connection.execute(
-            text("SELECT api_key, api_secret FROM model_connections WHERE id = 'bulk-connection'")
-        ).one()
-    assert stored == (second_token, second_token)
-    engine.dispose()
-
-
-def test_model_connection_check_constraint_rejects_case_mismatched_fernet_prefix(tmp_path):
-    engine = _create_model_center_engine(tmp_path, "connection-check-prefix.db")
-
-    with Session(engine) as session:
-        with pytest.raises(IntegrityError, match="ck_model_connection_api_key_fernet"):
-            session.execute(
-                insert(ModelConnection).values(
-                    id="bulk-connection", user_id="user-1", provider_id="provider-1",
-                    name="bulk", api_key="gaaaaa" + "x" * 94,
-                )
-            )
-
-    engine.dispose()
-
-
-@pytest.mark.parametrize(
-    ("row_factory", "edit"),
-    [
-        (_profile_version, lambda row: setattr(row, "api_model_id", "mutated-model")),
-        (_recipe_version, lambda row: setattr(row, "spec", {"stages": ["mutated"]})),
-    ],
-)
-def test_published_versions_allow_publish_transition_but_reject_later_edits(
-    tmp_path, row_factory, edit,
-):
-    engine = _create_model_center_engine(tmp_path, f"append-only-{row_factory.__name__}.db")
-
-    with Session(engine, expire_on_commit=False) as session:
-        row = row_factory()
-        session.add(row)
-        session.commit()
-        row.status = "published"
-        session.commit()
-        edit(row)
-        with pytest.raises(ValueError, match="published version is append-only"):
-            session.commit()
-        session.rollback()
-
-    engine.dispose()
-
-
-@pytest.mark.parametrize(
-    ("row_factory", "edit"),
-    [
-        (_profile_version, lambda row: setattr(row, "api_model_id", "draft-model")),
-        (_recipe_version, lambda row: setattr(row, "spec", {"stages": ["draft-edit"]})),
-    ],
-)
-def test_draft_versions_allow_instance_edits_and_deletes(tmp_path, row_factory, edit):
-    engine = _create_model_center_engine(tmp_path, f"draft-delete-{row_factory.__name__}.db")
-
-    with Session(engine, expire_on_commit=False) as session:
-        row = row_factory()
-        session.add(row)
-        session.commit()
-        edit(row)
-        session.commit()
-        session.delete(row)
-        session.commit()
-        assert session.get(type(row), row.id) is None
-
-    engine.dispose()
-
-
-@pytest.mark.parametrize("row_factory", [_profile_version, _recipe_version])
-def test_published_versions_reject_instance_delete(tmp_path, row_factory):
-    engine = _create_model_center_engine(tmp_path, f"published-delete-{row_factory.__name__}.db")
-
-    with Session(engine, expire_on_commit=False) as session:
-        row = row_factory(status="published")
-        session.add(row)
-        session.commit()
-        session.delete(row)
-        with pytest.raises(ValueError, match="published version is append-only"):
-            session.commit()
-        session.rollback()
-        assert session.get(type(row), row.id) is not None
-
-    engine.dispose()
-
-
-@pytest.mark.parametrize(
-    ("row_factory", "field_name", "draft_value", "published_value"),
-    [
-        (_profile_version, "api_model_id", "draft-bulk", "published-bulk"),
-        (_recipe_version, "name", "Draft Bulk", "Published Bulk"),
-    ],
-)
-def test_sqlite_triggers_protect_bulk_update_mappings(
-    tmp_path, row_factory, field_name, draft_value, published_value,
-):
-    engine = _create_protected_model_center_engine(
-        tmp_path, f"bulk-mappings-{row_factory.__name__}.db",
-    )
-    model = type(row_factory())
-
-    with Session(engine) as session:
-        draft = row_factory(id="draft-version", version=1)
-        published = row_factory(id="published-version", version=2, status="published")
-        session.add_all([draft, published])
-        session.commit()
-        session.bulk_update_mappings(model, [{"id": draft.id, field_name: draft_value}])
-        session.commit()
-        assert getattr(session.get(model, draft.id), field_name) == draft_value
-
-        with pytest.raises(DBAPIError, match="published version is append-only"):
-            session.bulk_update_mappings(model, [{"id": published.id, field_name: published_value}])
-            session.commit()
-        session.rollback()
-
-    engine.dispose()
-
-
-@pytest.mark.parametrize(
-    ("row_factory", "operation"),
-    [
-        (_profile_version, "update"), (_profile_version, "delete"),
-        (_recipe_version, "update"), (_recipe_version, "delete"),
-    ],
-)
-def test_sqlite_triggers_allow_draft_and_reject_published_session_dml(
-    tmp_path, row_factory, operation,
-):
-    engine = _create_protected_model_center_engine(
-        tmp_path, f"session-{operation}-{row_factory.__name__}.db",
-    )
-    model = type(row_factory())
-
-    with Session(engine) as session:
-        draft = row_factory(id="draft-version", version=1)
-        published = row_factory(id="published-version", version=2, status="published")
-        session.add_all([draft, published])
-        session.commit()
-
-        if operation == "update":
-            draft_statement = update(model).where(model.id == draft.id).values(status="draft")
-            published_statement = update(model).where(model.id == published.id).values(status="disabled")
-        else:
-            draft_statement = delete(model).where(model.id == draft.id)
-            published_statement = delete(model).where(model.id == published.id)
-        session.execute(draft_statement)
-        session.commit()
-        with pytest.raises(DBAPIError, match="published version is append-only"):
-            session.execute(published_statement)
-            session.commit()
-        session.rollback()
-
-    engine.dispose()
-
-
-@pytest.mark.parametrize(
-    ("row_factory", "changes"),
-    [
-        (_profile_version, {"api_model_id": "api-model-v2"}),
-        (_recipe_version, {"spec": {"stages": ["storyboard", "render"]}}),
-    ],
-)
-def test_published_versions_create_unique_next_draft_rows(tmp_path, row_factory, changes):
-    engine = _create_model_center_engine(tmp_path, f"next-version-{row_factory.__name__}.db")
-
-    with Session(engine, expire_on_commit=False) as session:
-        published = row_factory(status="published")
-        session.add(published)
-        session.commit()
-        next_row = published.create_next_version(checksum="b" * 64, **changes)
-        assert next_row.id != published.id
-        assert next_row.version == published.version + 1
-        assert next_row.status == "draft"
-        assert next_row.checksum == "b" * 64
-        session.add(next_row)
-        session.commit()
-
-        duplicate = published.create_next_version(checksum="c" * 64, **changes)
-        assert duplicate.id != next_row.id
-        session.add(duplicate)
-        with pytest.raises(IntegrityError):
-            session.commit()
-        session.rollback()
-
-    engine.dispose()
+        }
 
 
 def test_model_center_migration_is_sync_idempotent(tmp_path):
@@ -544,21 +82,10 @@ def test_model_center_migration_is_async_idempotent(tmp_path):
     engine.dispose()
 
 
-def _sqlite_trigger_names(engine) -> set[str]:
-    with engine.connect() as connection:
-        return {
-            row[0]
-            for row in connection.execute(
-                text("SELECT name FROM sqlite_master WHERE type = 'trigger'")
-            )
-        }
-
-
 def test_model_center_sqlite_trigger_migration_is_sync_idempotent(tmp_path):
     from app.db_migrations.model_center import add_model_center_links
 
-    engine = _create_model_center_engine(tmp_path, "trigger-sync-idempotent.db")
-
+    engine = create_model_center_engine(tmp_path, "trigger-sync-idempotent.db")
     add_model_center_links(engine)
     add_model_center_links(engine)
 
@@ -570,7 +97,7 @@ def test_model_center_sqlite_trigger_migration_is_async_idempotent(tmp_path):
     from app.db_migrations.model_center import add_model_center_links_async
 
     database_path = tmp_path / "trigger-async-idempotent.db"
-    engine = _create_model_center_engine(tmp_path, database_path.name)
+    engine = create_model_center_engine(tmp_path, database_path.name)
     engine.dispose()
 
     async def migrate() -> None:
@@ -596,9 +123,13 @@ def test_postgresql_trigger_ddl_is_idempotent_and_schema_qualified():
     )
     ddl = "\n".join(str(statement) for statement in statements)
 
+    assert "pg_advisory_xact_lock(hashtext('model_center_version_guards'))" in ddl
     assert '"tenant_schema"."model_center_reject_published_mutation"' in ddl
     assert 'ON "tenant_schema"."model_profile_versions"' in ddl
     assert 'ON "tenant_schema"."production_recipe_versions"' in ddl
+    assert "namespace.nspname = 'tenant_schema'" in ddl
+    assert "target.relname = 'model_profile_versions'" in ddl
+    assert "target.relname = 'production_recipe_versions'" in ddl
     assert "IF NOT EXISTS" in ddl
     assert "BEFORE UPDATE OR DELETE" in ddl
     assert "OLD.status = 'published'" in ddl
@@ -702,5 +233,4 @@ def test_postgresql_duplicate_column_sqlstate_is_recognized():
     from app.db_migrations.model_center import _is_duplicate_column
 
     error = SimpleNamespace(orig=SimpleNamespace(sqlstate="42701"))
-
     assert _is_duplicate_column(error, "postgresql", "connection_id") is True
