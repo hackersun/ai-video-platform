@@ -1,131 +1,29 @@
 from __future__ import annotations
 
+import inspect
+from datetime import timedelta
 from types import SimpleNamespace
+from typing import get_type_hints
 
 import pytest
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import Base
 from app.core.time_utils import utc_now
+from app.features.model_config import bindings as binding_module
 from app.features.model_config.public import (
     ModelBindingError,
+    resolve_legacy_strategy_config_id,
     resolve_model_binding,
     resolve_retry_binding,
     route_policy_for,
 )
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
-from app.models.model_center import (
-    ModelBinding,
-    ModelConnection,
-    ModelProfile,
-    ModelProfileVersion,
-    ModelProvider,
+from app.models.model_center import ModelProfileVersion
+from tests.model_binding_test_support import (
+    db_session as db_session,
+    make_binding as _binding,
+    seed_profile as _seed_profile,
 )
-
-
-@pytest_asyncio.fixture()
-async def db_session() -> AsyncSession:
-    engine = create_async_engine(
-        "sqlite+aiosqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with factory() as session:
-        yield session
-    await engine.dispose()
-
-
-async def _seed_profile(
-    db: AsyncSession,
-    key: str,
-    *,
-    capabilities: tuple[str, ...] = ("video_generation",),
-    profile_status: str = "published",
-    connection_status: str = "connection_verified",
-) -> tuple[ModelProfileVersion, ModelConnection]:
-    provider_id = f"provider-{key}"
-    model_id = f"model-{key}"
-    version = ModelProfileVersion(
-        id=f"profile-{key}",
-        model_id=model_id,
-        version=1,
-        api_model_id=f"api-{key}",
-        driver_key=f"driver-{key}",
-        capabilities=list(capabilities),
-        input_contract={},
-        output_contract={},
-        parameter_schema={},
-        default_params={},
-        limits={},
-        pricing={},
-        contract_version="v1",
-        status=profile_status,
-        checksum=(key[0] if key else "a") * 64,
-    )
-    connection = ModelConnection(
-        id=f"connection-{key}",
-        user_id="user-1",
-        provider_id=provider_id,
-        name=f"connection-{key}",
-        status=connection_status,
-        tested_at=utc_now(),
-    )
-    db.add_all(
-        [
-            ModelProvider(
-                id=provider_id,
-                code=provider_id,
-                display_name=provider_id,
-                provider_family="test",
-                enabled=True,
-            ),
-            ModelProfile(
-                id=model_id,
-                provider_id=provider_id,
-                profile_key=key,
-                display_name=key,
-                enabled=True,
-            ),
-            version,
-            connection,
-        ]
-    )
-    await db.flush()
-    return version, connection
-
-
-def _binding(
-    key: str,
-    profile: ModelProfileVersion,
-    connection: ModelConnection,
-    *,
-    scope_type: str,
-    scope_id: str,
-    priority: int = 100,
-    version: int = 1,
-    route_policy: str = "single",
-    fallbacks: list[str] | None = None,
-) -> ModelBinding:
-    return ModelBinding(
-        id=f"binding-{key}",
-        user_id="user-1",
-        scope_type=scope_type,
-        scope_id=scope_id,
-        task="shot_video",
-        capability="video_generation",
-        profile_version_id=profile.id,
-        connection_id=connection.id,
-        priority=priority,
-        route_policy=route_policy,
-        fallback_profile_version_ids=fallbacks or [],
-        version=version,
-        is_active=True,
-    )
 
 
 @pytest.mark.asyncio
@@ -150,7 +48,13 @@ async def test_binding_precedence_is_request_series_project_user_system(
     for scope in scopes:
         profile, connection = await _seed_profile(db_session, scope)
         seeded[scope] = profile
-        db_session.add(_binding(scope, profile, connection, scope_type=scope, scope_id=scope_ids[scope]))
+        binding = _binding(
+            scope, profile, connection, scope_type=scope, scope_id=scope_ids[scope]
+        )
+        if scope == "system":
+            binding.user_id = "system"
+            connection.user_id = "system"
+        db_session.add(binding)
     request_profile, _ = await _seed_profile(db_session, "request")
     await db_session.commit()
 
@@ -305,6 +209,112 @@ async def test_system_binding_can_be_owned_by_the_system_scope(db_session: Async
 
     assert resolved.source_scope == "system"
     assert resolved.connection_id == connection.id
+
+
+@pytest.mark.asyncio
+async def test_tenant_owned_system_binding_cannot_override_trusted_system_binding(
+    db_session: AsyncSession,
+) -> None:
+    trusted_profile, trusted_connection = await _seed_profile(db_session, "trusted-system")
+    trusted_connection.user_id = "system"
+    trusted_binding = _binding(
+        "trusted-system",
+        trusted_profile,
+        trusted_connection,
+        scope_type="system",
+        scope_id="",
+        priority=100,
+    )
+    trusted_binding.user_id = "system"
+
+    attacker_profile, attacker_connection = await _seed_profile(db_session, "attacker-system")
+    attacker_connection.user_id = "attacker-user"
+    attacker_binding = _binding(
+        "attacker-system",
+        attacker_profile,
+        attacker_connection,
+        scope_type="system",
+        scope_id="",
+        priority=1,
+    )
+    attacker_binding.user_id = "attacker-user"
+    db_session.add_all([trusted_binding, attacker_binding])
+    await db_session.commit()
+
+    resolved = await resolve_model_binding(
+        db_session, user_id="victim-user", task="shot_video", capability="video_generation"
+    )
+
+    assert resolved.profile.profile_version_id == trusted_profile.id
+    assert resolved.connection_id == trusted_connection.id
+
+
+@pytest.mark.asyncio
+async def test_legacy_strategy_preserves_nullable_updated_at_sql_ordering(
+    db_session: AsyncSession,
+) -> None:
+    now = utc_now()
+    provider = LLMProvider(id="strategy-provider", name="volcano", is_active=True)
+    model = LLMModel(
+        id="strategy-model",
+        provider_id=provider.id,
+        model_id="doubao-seedance-2-0-fast-260128",
+        model_name="Strategy Video",
+        model_type="video",
+        capabilities=["text-to-video"],
+        is_active=True,
+    )
+    nonnull_config = LLMConfig(
+        id="nonnull-updated-config",
+        user_id="user-1",
+        model_id=model.id,
+        name="nonnull updated",
+        is_active=True,
+        is_default=False,
+        test_status="success",
+        tested_at=now,
+        created_at=now - timedelta(days=3),
+        updated_at=now - timedelta(days=2),
+    )
+    null_config = LLMConfig(
+        id="null-updated-config",
+        user_id="user-1",
+        model_id=model.id,
+        name="null updated",
+        is_active=True,
+        is_default=False,
+        test_status="success",
+        tested_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([provider, model, nonnull_config, null_config])
+    await db_session.flush()
+    null_config.updated_at = None
+    await db_session.commit()
+
+    resolved = await resolve_legacy_strategy_config_id(
+        db_session,
+        user_id="user-1",
+        binding_key="video.draft_fast",
+        explicit_config_id=None,
+    )
+
+    assert resolved["model_config_id"] == nonnull_config.id
+
+
+def test_bindings_module_does_not_own_orm_queries() -> None:
+    source = inspect.getsource(binding_module)
+
+    assert "db.get(" not in source
+    assert "from app.models" not in source
+    assert "import app.models" not in source
+
+
+def test_retry_binding_annotations_are_resolvable() -> None:
+    hints = get_type_hints(resolve_retry_binding)
+
+    assert hints["operation"] is object
 
 
 def test_route_policy_allows_only_confirmed_pre_submit_fallback() -> None:

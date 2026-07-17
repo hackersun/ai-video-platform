@@ -40,6 +40,20 @@ class BindingScope(str, Enum):
     SYSTEM = "system"
 
 
+SYSTEM_MODEL_BINDING_OWNER_ID = "system"
+SYSTEM_MODEL_BINDING_SCOPE_ID = ""
+
+
+def is_trusted_system_binding(
+    *, scope_type: str, owner_id: str, scope_id: str
+) -> bool:
+    return (
+        scope_type == BindingScope.SYSTEM.value
+        and owner_id == SYSTEM_MODEL_BINDING_OWNER_ID
+        and scope_id == SYSTEM_MODEL_BINDING_SCOPE_ID
+    )
+
+
 CAPABILITY_ALIASES: dict[str, ModelCapability] = {
     "chat": "text_generation",
     "completion": "text_generation",
@@ -110,5 +124,8 @@ __all__ = [
     "ModelProfileContract",
     "ProfileStatus",
     "ResolvedModelBinding",
+    "SYSTEM_MODEL_BINDING_OWNER_ID",
+    "SYSTEM_MODEL_BINDING_SCOPE_ID",
+    "is_trusted_system_binding",
     "normalize_capabilities",
 ]

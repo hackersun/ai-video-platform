@@ -6,10 +6,6 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.model_config.bindings import (
-    legacy_config_sort_key,
-    legacy_model_capabilities,
-)
 from app.features.model_config.repository import load_legacy_config_rows
 
 
@@ -65,15 +61,14 @@ async def resolve_legacy_strategy_config_id(
     eligible = [
         row
         for row in rows
-        if row[1].model_id in candidates
-        and "video_generation" in legacy_model_capabilities(row[1])
-        and ({row[2].id, row[2].name} & _LEGACY_VIDEO_PROVIDERS)
+        if row.api_model_id in candidates
+        and "video_generation" in row.capabilities
+        and ({row.provider_id, row.provider_name} & _LEGACY_VIDEO_PROVIDERS)
     ]
-    eligible.sort(key=legacy_config_sort_key)
     for model_id in candidates:
-        match = next((row for row in eligible if row[1].model_id == model_id), None)
+        match = next((row for row in eligible if row.api_model_id == model_id), None)
         if match is not None:
-            return _strategy_result(match[0].id, "strategy", candidates, model_id)
+            return _strategy_result(match.config_id, "strategy", candidates, model_id)
     return _strategy_result(None, "fallback", candidates, None)
 
 

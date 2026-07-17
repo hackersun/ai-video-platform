@@ -2,27 +2,31 @@
 
 from __future__ import annotations
 
-from typing import Literal, Mapping, TypedDict
+from typing import Literal, Mapping, Protocol, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.domain import (
+    BindingScope,
     ModelCapability,
     ModelProfileContract,
     ResolvedModelBinding,
-    normalize_capabilities,
+    SYSTEM_MODEL_BINDING_OWNER_ID,
+    is_trusted_system_binding,
 )
 from app.features.model_config.repository import (
+    BindingCandidate,
+    ConnectionRecord,
+    LegacyConfigCandidate,
     ModelConfigurationError,
+    ProfileOwnerState,
     VERIFIED_CONNECTION_STATUSES,
     load_binding_candidates,
+    load_connection,
     load_legacy_config_rows,
+    load_profile_owner_state,
     load_verified_connections,
     resolve_profile_version,
-)
-from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
-from app.models.model_center import (
-    ModelBinding, ModelConnection, ModelProfile, ModelProfileVersion, ModelProvider,
 )
 
 
@@ -36,6 +40,13 @@ class RoutePolicy(TypedDict):
     allow_pre_submit_fallback: bool
     allow_post_acceptance_fallback: Literal[False]
     retry_policy: Literal["never", "confirmed_pre_acceptance_only", "status_poll_only"]
+
+
+class RetryBinding(Protocol):
+    user_id: str
+    capability: ModelCapability
+    route_policy: str
+    fallback_profile_version_ids: list[str] | tuple[str, ...]
 
 def route_policy_for(policy: str) -> RoutePolicy:
     if policy == "pre_submit_fallback":
@@ -52,7 +63,7 @@ def route_policy_for(policy: str) -> RoutePolicy:
     }
 
 def _scope_matches(
-    binding: ModelBinding,
+    binding: BindingCandidate,
     scope: str,
     *,
     user_id: str,
@@ -66,15 +77,19 @@ def _scope_matches(
         return bool(expected) and binding.scope_id == expected
     if scope == "user":
         return binding.scope_id in {"", user_id}
-    return scope == "system" and binding.scope_id == ""
+    return scope == BindingScope.SYSTEM.value and is_trusted_system_binding(
+        scope_type=binding.scope_type,
+        owner_id=binding.user_id,
+        scope_id=binding.scope_id,
+    )
 
 def select_binding_candidate(
-    candidates: tuple[ModelBinding, ...],
+    candidates: tuple[BindingCandidate, ...],
     *,
     user_id: str,
     project_id: str | None,
     series_id: str | None,
-) -> ModelBinding | None:
+) -> BindingCandidate | None:
     for scope in SCOPE_PRECEDENCE[1:]:
         matches = [
             item for item in candidates
@@ -86,24 +101,10 @@ def select_binding_candidate(
             return min(matches, key=lambda item: (item.priority, -item.version, item.id))
     return None
 
-async def _ensure_profile_owners(
-    db: AsyncSession,
-    version: ModelProfileVersion,
-    provider_id: str,
-) -> None:
-    model = await db.get(ModelProfile, version.model_id)
-    if model is not None:
-        provider = await db.get(ModelProvider, provider_id)
-        if not model.enabled:
-            raise ModelBindingError("model_profile_disabled")
-        if provider is None or not provider.enabled:
-            raise ModelBindingError("model_provider_disabled")
-        return
-    legacy_model = await db.get(LLMModel, version.model_id)
-    legacy_provider = await db.get(LLMProvider, provider_id)
-    if legacy_model is None or not legacy_model.is_active:
+def _ensure_profile_owners(state: ProfileOwnerState) -> None:
+    if not state.model_exists or not state.model_enabled:
         raise ModelBindingError("model_profile_disabled")
-    if legacy_provider is None or not legacy_provider.is_active:
+    if not state.provider_exists or not state.provider_enabled:
         raise ModelBindingError("model_provider_disabled")
 
 async def _ensure_profile_available(
@@ -117,18 +118,18 @@ async def _ensure_profile_available(
         raise ModelBindingError(str(error)) from error
     if capability not in profile.capabilities:
         raise ModelBindingError("capability_mismatch")
-    version = await db.get(ModelProfileVersion, profile_version_id)
-    if version is None:
-        raise ModelBindingError("model_profile_not_published")
-    await _ensure_profile_owners(db, version, profile.provider_id)
+    state = await load_profile_owner_state(
+        db, profile_version_id=profile_version_id, provider_id=profile.provider_id
+    )
+    _ensure_profile_owners(state)
     return profile
 
 def _validate_connection(
-    connection: ModelConnection | None,
+    connection: ConnectionRecord | None,
     *,
     user_id: str,
     provider_id: str,
-) -> ModelConnection:
+) -> ConnectionRecord:
     if connection is None:
         raise ModelBindingError("connection_missing")
     if connection.user_id != user_id or connection.provider_id != provider_id:
@@ -142,7 +143,7 @@ async def _connection_for_profile(
     *,
     user_id: str,
     profile: ModelProfileContract,
-) -> ModelConnection:
+) -> ConnectionRecord:
     connections = await load_verified_connections(
         db, user_id=user_id, provider_id=profile.provider_id
     )
@@ -152,16 +153,23 @@ async def _connection_for_profile(
 
 async def hydrate_resolved_binding(
     db: AsyncSession,
-    binding: ModelBinding,
+    binding: BindingCandidate,
     *,
     user_id: str,
     task: str,
     capability: ModelCapability,
 ) -> ResolvedModelBinding:
     profile = await _ensure_profile_available(db, binding.profile_version_id, capability)
-    connection_user_id = binding.user_id if binding.scope_type == "system" else user_id
+    trusted_system = is_trusted_system_binding(
+        scope_type=binding.scope_type,
+        owner_id=binding.user_id,
+        scope_id=binding.scope_id,
+    )
+    if binding.scope_type == BindingScope.SYSTEM.value and not trusted_system:
+        raise ModelBindingError("untrusted_system_binding")
+    connection_user_id = SYSTEM_MODEL_BINDING_OWNER_ID if trusted_system else user_id
     connection = _validate_connection(
-        await db.get(ModelConnection, binding.connection_id),
+        await load_connection(db, binding.connection_id),
         user_id=connection_user_id,
         provider_id=profile.provider_id,
     )
@@ -170,26 +178,15 @@ async def hydrate_resolved_binding(
         binding_version=binding.version, source_scope=binding.scope_type,
     )
 
-def legacy_config_sort_key(
-    row: tuple[LLMConfig, LLMModel, LLMProvider],
-) -> tuple[int, float, str]:
-    config = row[0]
-    updated = config.updated_at or config.created_at
-    return (-int(bool(config.is_default)), -(updated.timestamp() if updated else 0), config.id)
-
-def legacy_model_capabilities(model: LLMModel) -> set[ModelCapability]:
-    return normalize_capabilities(model.model_type, model.capabilities or [])
-
-
 def _select_legacy_row(
-    rows: tuple[tuple[LLMConfig, LLMModel, LLMProvider], ...],
+    rows: tuple[LegacyConfigCandidate, ...],
     capability: ModelCapability,
     explicit_config_id: str | None,
-) -> tuple[LLMConfig, LLMModel, LLMProvider] | None:
-    eligible = [row for row in rows if capability in legacy_model_capabilities(row[1])]
+) -> LegacyConfigCandidate | None:
+    eligible = [row for row in rows if capability in row.capabilities]
     if explicit_config_id:
-        return next((row for row in eligible if row[0].id == explicit_config_id), None)
-    return min(eligible, key=legacy_config_sort_key) if eligible else None
+        return next((row for row in eligible if row.config_id == explicit_config_id), None)
+    return eligible[0] if eligible else None
 
 
 async def resolve_legacy_binding(
@@ -206,10 +203,9 @@ async def resolve_legacy_binding(
     if selected is None:
         code = "legacy_config_not_verified" if explicit_config_id else "model_binding_not_found"
         raise ModelBindingError(code)
-    config, model, _provider = selected
-    profile = await resolve_profile_version(db, legacy_model_id=model.id)
+    profile = await resolve_profile_version(db, legacy_model_id=selected.model_id)
     return ResolvedModelBinding(
-        task=task, capability=capability, profile=profile, connection_id=config.id,
+        task=task, capability=capability, profile=profile, connection_id=selected.config_id,
         binding_version=0, source_scope="request" if explicit_config_id else "legacy",
     )
 
@@ -268,8 +264,8 @@ async def resolve_model_binding(
 
 async def resolve_retry_binding(
     db: AsyncSession,
-    binding: ModelBinding,
-    operation: Any,
+    binding: RetryBinding,
+    operation: object,
 ) -> ModelProfileContract:
     value = (
         operation.get
@@ -294,6 +290,6 @@ async def resolve_retry_binding(
 
 __all__ = [
     "ModelBindingError", "RoutePolicy", "SCOPE_PRECEDENCE", "hydrate_resolved_binding",
-    "legacy_config_sort_key", "legacy_model_capabilities", "resolve_legacy_binding",
-    "resolve_model_binding", "resolve_retry_binding", "route_policy_for", "select_binding_candidate",
+    "resolve_legacy_binding", "resolve_model_binding", "resolve_retry_binding",
+    "route_policy_for", "select_binding_candidate",
 ]

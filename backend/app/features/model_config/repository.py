@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from dataclasses import dataclass
+
+from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.catalog import (
@@ -13,7 +15,14 @@ from app.features.model_config.catalog import (
     is_product_visible_provider,
     select_primary_legacy_config,
 )
-from app.features.model_config.domain import ModelProfileContract, normalize_capabilities
+from app.features.model_config.domain import (
+    BindingScope,
+    ModelCapability,
+    ModelProfileContract,
+    SYSTEM_MODEL_BINDING_OWNER_ID,
+    SYSTEM_MODEL_BINDING_SCOPE_ID,
+    normalize_capabilities,
+)
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.model_center import (
     ModelBinding,
@@ -26,6 +35,48 @@ from app.models.model_center import (
 
 
 VERIFIED_CONNECTION_STATUSES = frozenset({"connection_verified", "verified"})
+
+
+@dataclass(frozen=True)
+class BindingCandidate:
+    id: str
+    user_id: str
+    scope_type: str
+    scope_id: str
+    task: str
+    capability: ModelCapability
+    profile_version_id: str
+    connection_id: str
+    priority: int
+    route_policy: str
+    fallback_profile_version_ids: tuple[str, ...]
+    version: int
+
+
+@dataclass(frozen=True)
+class ConnectionRecord:
+    id: str
+    user_id: str
+    provider_id: str
+    status: str
+
+
+@dataclass(frozen=True)
+class LegacyConfigCandidate:
+    config_id: str
+    model_id: str
+    api_model_id: str
+    provider_id: str
+    provider_name: str
+    capabilities: frozenset[ModelCapability]
+
+
+@dataclass(frozen=True)
+class ProfileOwnerState:
+    model_exists: bool
+    model_enabled: bool
+    provider_exists: bool
+    provider_enabled: bool
 
 
 class ModelConfigurationError(ValueError):
@@ -114,16 +165,56 @@ async def load_binding_candidates(
     user_id: str,
     task: str,
     capability: str,
-) -> tuple[ModelBinding, ...]:
+) -> tuple[BindingCandidate, ...]:
     rows = await db.scalars(
         select(ModelBinding).where(
-            or_(ModelBinding.user_id == user_id, ModelBinding.scope_type == "system"),
+            or_(
+                and_(
+                    ModelBinding.user_id == user_id,
+                    ModelBinding.scope_type != BindingScope.SYSTEM.value,
+                ),
+                and_(
+                    ModelBinding.scope_type == BindingScope.SYSTEM.value,
+                    ModelBinding.user_id == SYSTEM_MODEL_BINDING_OWNER_ID,
+                    ModelBinding.scope_id == SYSTEM_MODEL_BINDING_SCOPE_ID,
+                ),
+            ),
             ModelBinding.task == task,
             ModelBinding.capability == capability,
             ModelBinding.is_active == True,
         )
     )
-    return tuple(rows.all())
+    return tuple(
+        BindingCandidate(
+            id=row.id,
+            user_id=row.user_id,
+            scope_type=row.scope_type,
+            scope_id=row.scope_id,
+            task=row.task,
+            capability=row.capability,
+            profile_version_id=row.profile_version_id,
+            connection_id=row.connection_id,
+            priority=row.priority,
+            route_policy=row.route_policy,
+            fallback_profile_version_ids=tuple(row.fallback_profile_version_ids or []),
+            version=row.version,
+        )
+        for row in rows.all()
+    )
+
+
+def _connection_record(connection: ModelConnection) -> ConnectionRecord:
+    return ConnectionRecord(
+        id=connection.id,
+        user_id=connection.user_id,
+        provider_id=connection.provider_id,
+        status=connection.status,
+    )
+
+
+async def load_connection(db: AsyncSession, connection_id: str) -> ConnectionRecord | None:
+    connection = await db.get(ModelConnection, connection_id)
+    return _connection_record(connection) if connection is not None else None
 
 
 async def load_verified_connections(
@@ -131,7 +222,7 @@ async def load_verified_connections(
     *,
     user_id: str,
     provider_id: str,
-) -> tuple[ModelConnection, ...]:
+) -> tuple[ConnectionRecord, ...]:
     rows = await db.scalars(
         select(ModelConnection)
         .where(
@@ -141,14 +232,37 @@ async def load_verified_connections(
         )
         .order_by(ModelConnection.id)
     )
-    return tuple(rows.all())
+    return tuple(_connection_record(row) for row in rows.all())
+
+
+async def load_profile_owner_state(
+    db: AsyncSession,
+    *,
+    profile_version_id: str,
+    provider_id: str,
+) -> ProfileOwnerState:
+    version = await db.get(ModelProfileVersion, profile_version_id)
+    if version is None:
+        return ProfileOwnerState(False, False, False, False)
+    model = await db.get(ModelProfile, version.model_id)
+    if model is not None:
+        provider = await db.get(ModelProvider, provider_id)
+        return ProfileOwnerState(True, model.enabled, provider is not None, bool(provider and provider.enabled))
+    legacy_model = await db.get(LLMModel, version.model_id)
+    legacy_provider = await db.get(LLMProvider, provider_id)
+    return ProfileOwnerState(
+        legacy_model is not None,
+        bool(legacy_model and legacy_model.is_active),
+        legacy_provider is not None,
+        bool(legacy_provider and legacy_provider.is_active),
+    )
 
 
 async def load_legacy_config_rows(
     db: AsyncSession,
     *,
     user_id: str,
-) -> tuple[tuple[LLMConfig, LLMModel, LLMProvider], ...]:
+) -> tuple[LegacyConfigCandidate, ...]:
     result = await db.execute(
         select(LLMConfig, LLMModel, LLMProvider)
         .join(LLMModel, LLMConfig.model_id == LLMModel.id)
@@ -160,8 +274,25 @@ async def load_legacy_config_rows(
             LLMModel.is_active == True,
             LLMProvider.is_active == True,
         )
+        .order_by(
+            desc(LLMConfig.is_default),
+            desc(LLMConfig.updated_at),
+            desc(LLMConfig.created_at),
+        )
     )
-    return tuple(result.all())
+    return tuple(
+        LegacyConfigCandidate(
+            config_id=config.id,
+            model_id=model.id,
+            api_model_id=model.model_id,
+            provider_id=provider.id,
+            provider_name=provider.name,
+            capabilities=frozenset(
+                normalize_capabilities(model.model_type, model.capabilities or [])
+            ),
+        )
+        for config, model, provider in result.all()
+    )
 
 
 def _certification_status(
@@ -278,11 +409,17 @@ async def list_product_catalog(db: AsyncSession, user_id: str) -> ProductCatalog
 
 
 __all__ = [
+    "BindingCandidate",
+    "ConnectionRecord",
+    "LegacyConfigCandidate",
     "ModelConfigurationError",
+    "ProfileOwnerState",
     "VERIFIED_CONNECTION_STATUSES",
     "build_legacy_profile_contract",
     "load_binding_candidates",
+    "load_connection",
     "load_legacy_config_rows",
+    "load_profile_owner_state",
     "load_verified_connections",
     "list_product_catalog",
     "load_published_profile",
