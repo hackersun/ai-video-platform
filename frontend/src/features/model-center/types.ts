@@ -214,8 +214,10 @@ export interface CertificationRunInput {
 
 export interface ResourceImpact {
   affected_bindings: number;
+  affected_profiles?: number;
   affected_recipes: number;
-  affected_prompt_profiles: number;
+  affected_prompts?: number;
+  affected_prompt_profiles?: number;
 }
 
 export interface PublishInput {
