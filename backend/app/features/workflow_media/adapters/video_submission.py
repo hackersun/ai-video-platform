@@ -30,10 +30,6 @@ from app.services.video_reference_adapter import (
     enrich_prompt_parameters_with_reference_contract,
 )
 
-
-SEEDANCE_NATIVE_AUDIO_MODEL_IDS = {"doubao-seedance-1-5-pro-251215"}
-
-
 @dataclass(frozen=True)
 class PreparedVideoSubmission:
     video_request: VideoGenerateRequest
@@ -87,7 +83,7 @@ def _reference_image_source(prepared: PreparedVideoSubmission) -> Optional[str]:
 def _validate_seedance_first_frame(command: VideoSubmissionCommand, *, image_count: int) -> None:
     model_id = command.runtime.selected_model.get("api_model_id") or command.prepared.video_request.model
     source = _reference_image_source(command.prepared)
-    if model_id in SEEDANCE_NATIVE_AUDIO_MODEL_IDS and image_count > 0 and source != "shot_image":
+    if model_id in video_kernel.SEEDANCE_NATIVE_AUDIO_MODEL_IDS and image_count > 0 and source != "shot_image":
         raise WorkflowMediaError(422, {
             "code": "seedance_first_frame_must_be_shot_image",
             "message": "Seedance 1.5 的单图输入会成为视频首帧；复合参考图不能直接用于首帧，请先为该镜头选择场景首帧后重试。",
@@ -207,7 +203,7 @@ def _record_reference_metadata(command: VideoSubmissionCommand, data: dict, cont
 def _create_kwargs(command: VideoSubmissionCommand, content: dict) -> dict[str, Any]:
     runtime, prepared, request = command.runtime, command.prepared, command.request
     model_id = runtime.selected_model.get("api_model_id") or prepared.video_request.model
-    if request.native_audio and model_id not in SEEDANCE_NATIVE_AUDIO_MODEL_IDS:
+    if request.native_audio and model_id not in video_kernel.SEEDANCE_NATIVE_AUDIO_MODEL_IDS:
         raise WorkflowMediaError(422, {
             "code": "native_audio_model_unsupported",
             "message": "原生配音临时开关仅支持 Seedance 1.5 Pro",

@@ -3,8 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.features.model_drivers import ImageCommand
+from app.features.model_drivers import DriverResultError, ImageCommand
 from app.features.model_drivers.adapters.minimax_image import MiniMaxImageDriver
+from app.features.model_drivers.adapters.volcano_ark_image import VolcanoArkImageDriver
 
 
 def _contract_module():
@@ -122,3 +123,36 @@ async def test_minimax_image_connection_fails_without_artifact_or_task_id(monkey
 
     assert result.status == "failed"
     assert result.sanitized_evidence == {"submission_status": "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_volcano_image_driver_normalizes_current_service_url_shape(monkeypatch) -> None:
+    async def fake_generate_image(_service, _prompt, **_kwargs):
+        return {"data": [{"url": "https://cdn.example.test/volcano.png"}]}
+
+    monkeypatch.setattr("app.services.volcano_service.VolcanoService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key",
+        base_url="https://ark.example.test/api/v3",
+        profile=SimpleNamespace(api_model_id="doubao-seedream-5-0-260128"),
+    )
+
+    submission = await VolcanoArkImageDriver().submit(ImageCommand(prompt="draw"), context)
+
+    assert submission.status == "completed"
+    assert submission.output["image_urls"] == ["https://cdn.example.test/volcano.png"]
+
+
+@pytest.mark.asyncio
+async def test_volcano_image_driver_keeps_empty_response_fail_closed(monkeypatch) -> None:
+    async def fake_generate_image(_service, _prompt, **_kwargs):
+        return {}
+
+    monkeypatch.setattr("app.services.volcano_service.VolcanoService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key", base_url="https://ark.example.test/api/v3",
+        profile=SimpleNamespace(api_model_id="doubao-seedream-5-0-260128"),
+    )
+
+    with pytest.raises(DriverResultError):
+        await VolcanoArkImageDriver().submit(ImageCommand(prompt="draw"), context)

@@ -27,6 +27,7 @@ from app.features.video_generation.constants import (
     MAX_PROVIDER_SEED,
     PROVIDER_VIDEO_WATERMARK_ARG,
     PROVIDER_VIDEO_WATERMARK_ENABLED,
+    SEEDANCE_NATIVE_AUDIO_MODEL_IDS,
     VIDEO_MODEL_ID,
 )
 from app.features.video_generation.domain.provider_contract import (
@@ -56,6 +57,7 @@ __all__ = [
     "MAX_PROVIDER_SEED",
     "PROVIDER_VIDEO_WATERMARK_ARG",
     "PROVIDER_VIDEO_WATERMARK_ENABLED",
+    "SEEDANCE_NATIVE_AUDIO_MODEL_IDS",
     "VIDEO_MODEL_ID",
     "VideoGenerateRequest",
     "VideoGenerationError",

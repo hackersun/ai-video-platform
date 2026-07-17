@@ -20,6 +20,13 @@ class VolcanoArkImageDriver:
         result = await VolcanoService(context.api_key, context.base_url).generate_image(
             command.prompt, model=context.profile.api_model_id, **dict(command.params)
         )
+        if isinstance(result, dict) and isinstance(result.get("data"), list):
+            image_urls = [
+                str(item["url"]) for item in result["data"]
+                if isinstance(item, dict) and item.get("url")
+            ]
+            if image_urls:
+                result = {**result, "image_urls": image_urls}
         return completed_output(result)
 
     poll = staticmethod(unsupported_poll)

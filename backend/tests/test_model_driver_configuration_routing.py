@@ -87,3 +87,34 @@ async def test_qiniu_external_config_test_executes_registered_qiniu_driver(monke
 
     assert called == {"driver_key": "qiniu_kodo_v1"}
     assert (status, message) == ("success", "七牛可用")
+
+
+@pytest.mark.asyncio
+async def test_config_test_provider_exception_preserves_safe_legacy_envelope(monkeypatch):
+    from app.api.v1.endpoints import llm_config
+
+    secret = "sk-private-config-secret"
+    prompt = "PRIVATE-PROMPT-MARKER"
+
+    async def leaking_submit(_driver, command, context):
+        raise RuntimeError(f"provider rejected {command.prompt} using {context.api_key}")
+
+    monkeypatch.setattr(
+        "app.features.model_drivers.adapters.minimax_image.MiniMaxImageDriver.submit",
+        leaking_submit,
+    )
+
+    result = await llm_config._execute_config_test(
+        "minimax", secret, "image-01", prompt,
+        model_type="image-generation", driver_key="minimax_image_v1",
+    )
+
+    assert result == {
+        "success": False,
+        "message": "供应商连接测试失败",
+        "response": None,
+        "response_time_ms": 0,
+        "tokens_used": 0,
+    }
+    assert prompt not in repr(result)
+    assert secret not in repr(result)

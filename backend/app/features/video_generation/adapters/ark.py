@@ -19,8 +19,10 @@ def build_ark_video_create_kwargs(
 ) -> dict:
     values = {
         "model": model, "content": content, "duration": duration, "resolution": resolution,
-        "camera_fixed": camera_fixed, "watermark": watermark, "generate_audio": generate_audio,
+        "camera_fixed": camera_fixed, "watermark": watermark,
     }
+    if generate_audio:
+        values["generate_audio"] = True
     if seed is not None:
         values["seed"] = seed
     return values

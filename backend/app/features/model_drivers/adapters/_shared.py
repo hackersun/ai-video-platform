@@ -37,7 +37,9 @@ async def connection_test(
     try:
         submission = await operation()
     except Exception as error:
-        return DriverTestResult("failed", str(error), {"provider_error_type": type(error).__name__})
+        return DriverTestResult(
+            "failed", "供应商连接测试失败", {"provider_error_type": type(error).__name__},
+        )
     evidence = {"submission_status": submission.status}
     if submission.status not in _ACCEPTED_SUBMISSION_STATUSES or not (
         submission.provider_task_id or submission.output

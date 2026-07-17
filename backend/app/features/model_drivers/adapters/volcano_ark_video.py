@@ -1,7 +1,15 @@
 """Volcano Ark video driver delegating to the production content/submission boundary."""
 
 from app.features.model_drivers.adapters._shared import completed_output, connection_test
-from app.features.model_drivers.domain import VideoCommand
+from app.features.model_drivers.domain import DriverResultError, VideoCommand
+
+
+def _provider_reference_limits(limits):
+    return {
+        "images": int(limits.get("max_reference_images", 0)),
+        "videos": int(limits.get("max_reference_videos", 0)),
+        "audios": int(limits.get("max_reference_audios", 0)),
+    }
 
 
 class VolcanoArkVideoDriver:
@@ -16,15 +24,16 @@ class VolcanoArkVideoDriver:
 
     async def submit(self, command, context):
         params = dict(command.params)
-        from app.features.video_generation.adapters import ark
-        from app.features.video_generation.constants import PROVIDER_VIDEO_WATERMARK_ENABLED
+        from app.features.video_generation import public as video_kernel
         from app.services.video_reference_adapter import build_video_provider_content
 
         duration = int(params.pop("duration", 5))
         resolution = str(params.pop("resolution", "720p"))
         camera_fixed = bool(params.pop("camera_fixed", False))
-        watermark = bool(params.pop("watermark", PROVIDER_VIDEO_WATERMARK_ENABLED))
+        watermark = bool(params.pop("watermark", video_kernel.PROVIDER_VIDEO_WATERMARK_ENABLED))
         seed = params.pop("seed", None)
+        if command.native_audio and context.profile.api_model_id not in video_kernel.SEEDANCE_NATIVE_AUDIO_MODEL_IDS:
+            raise DriverResultError("native audio is unsupported for the selected video model")
         reference_package = {
             "images": [{"url": url} for url in command.reference_images],
             "videos": [{"url": url} for url in command.reference_videos],
@@ -32,16 +41,17 @@ class VolcanoArkVideoDriver:
         }
         content = build_video_provider_content(
             final_prompt=command.prompt, duration=duration, resolution=resolution,
-            reference_package=reference_package, model_limits=dict(context.profile.limits),
+            reference_package=reference_package,
+            model_limits=_provider_reference_limits(context.profile.limits),
             model_id=context.profile.api_model_id, provider=context.profile.provider_id,
             camera_fixed=camera_fixed, watermark=watermark,
         )
-        create_kwargs = ark.build_ark_video_create_kwargs(
+        create_kwargs = video_kernel.build_ark_video_create_kwargs(
             model=context.profile.api_model_id, content=content["content"], duration=duration,
             resolution=resolution, camera_fixed=camera_fixed, watermark=watermark,
             generate_audio=command.native_audio, seed=seed,
         )
-        result = ark.submit_ark_video_task(
+        result = video_kernel.submit_ark_video_task(
             api_key=context.api_key, base_url=context.base_url, create_kwargs=create_kwargs,
         )
         task_id = getattr(result, "id", None) or (result.get("id") if isinstance(result, dict) else None)
