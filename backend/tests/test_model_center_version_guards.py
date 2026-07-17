@@ -6,6 +6,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db_migrations.model_center import add_model_center_links
+from app.models.model_center import ModelExecutionSnapshot
 from tests.model_center_helpers import (
     create_model_center_engine,
     profile_version,
@@ -175,6 +176,29 @@ def test_published_versions_create_unique_next_draft_rows(tmp_path, row_factory,
         assert duplicate.id != next_row.id
         session.add(duplicate)
         with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()
+    engine.dispose()
+
+
+@pytest.mark.parametrize("operation", ["update", "delete"])
+def test_execution_snapshot_trigger_rejects_bulk_mutation(tmp_path, operation):
+    engine = _create_protected_model_center_engine(tmp_path, f"snapshot-{operation}.db")
+    snapshot = ModelExecutionSnapshot(
+        id="snapshot-1", user_id="user-1", task="shot_video", capability="video_generation",
+        profile_version_id="profile-1", connection_id="connection-1", binding_id="binding-1",
+        binding_version=1, model_contract_version="v1", sanitized_params={}, checksum="a" * 64,
+    )
+    with Session(engine) as session:
+        session.add(snapshot)
+        session.commit()
+        statement = (
+            update(ModelExecutionSnapshot).where(ModelExecutionSnapshot.id == snapshot.id).values(task="changed")
+            if operation == "update" else
+            delete(ModelExecutionSnapshot).where(ModelExecutionSnapshot.id == snapshot.id)
+        )
+        with pytest.raises(DBAPIError, match="execution snapshots are append-only"):
+            session.execute(statement)
             session.commit()
         session.rollback()
     engine.dispose()

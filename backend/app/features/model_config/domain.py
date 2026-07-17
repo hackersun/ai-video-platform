@@ -156,6 +156,7 @@ class ResolvedModelBinding:
     binding_version: int
     source_scope: Literal["request", "series", "project", "user", "system", "legacy"]
     route_policy: str = "single"
+    binding_id: str | None = None
 
 
 __all__ = [

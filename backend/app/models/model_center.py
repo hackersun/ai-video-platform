@@ -278,6 +278,10 @@ class ModelExecutionSnapshot(Base):
     created_at = Column(DateTime, nullable=False, default=utc_now)
 
 
+def _reject_execution_snapshot_mutation(_mapper, _connection, _target) -> None:
+    raise ValueError("execution snapshots are append-only")
+
+
 class ModelConfigAuditEvent(Base):
     __tablename__ = "model_config_audit_events"
 
@@ -297,3 +301,5 @@ event.listen(ModelProfileVersion, "before_update", _reject_published_update)
 event.listen(ProductionRecipeVersion, "before_update", _reject_published_update)
 event.listen(ModelProfileVersion, "before_delete", _reject_published_delete)
 event.listen(ProductionRecipeVersion, "before_delete", _reject_published_delete)
+event.listen(ModelExecutionSnapshot, "before_update", _reject_execution_snapshot_mutation)
+event.listen(ModelExecutionSnapshot, "before_delete", _reject_execution_snapshot_mutation)

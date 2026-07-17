@@ -1,6 +1,7 @@
 """Submit one prepared separate-workflow video without persistence."""
 
 import os
+from dataclasses import replace
 from dataclasses import dataclass
 from typing import Any, Optional
 from uuid import uuid4
@@ -14,6 +15,7 @@ from app.features.model_drivers.public import (
     build_builtin_driver_registry,
     execute_generation,
 )
+from app.features.model_config.public import ExecutionSnapshotCommand, create_execution_snapshot
 from app.features.workflow_media.application.live_provider_attempts import (
     finish_live_provider_attempt,
     prepare_live_provider_attempt,
@@ -296,6 +298,7 @@ async def _retry_sensitive_prompt(
 
 async def _submit_live(
     command: VideoSubmissionCommand, data: dict, content: dict, job_id: str,
+    execution_snapshot_id: str | None = None,
 ) -> tuple[str, Optional[str], dict]:
     generation = command.runtime.selected_model.get("generation_context")
     if generation is not None and generation.driver_context.driver_key != "volcano_ark_video_v3":
@@ -303,7 +306,8 @@ async def _submit_live(
         try:
             submission = await execute_generation(
                 build_builtin_driver_registry(), _driver_video_command(command, content),
-                generation.driver_context,
+                replace(generation.driver_context, execution_snapshot_id=execution_snapshot_id)
+                if execution_snapshot_id else generation.driver_context,
             )
         except DriverError as error:
             await finish_live_provider_attempt(
@@ -352,9 +356,39 @@ async def _submit_live(
     return task_id, reservation, content
 
 
+async def _create_execution_snapshot(
+    command: VideoSubmissionCommand, content: dict, job_id: str,
+) -> str | None:
+    generation = command.runtime.selected_model.get("generation_context")
+    if generation is None:
+        return None
+    metadata = content.get("metadata") if isinstance(content, dict) else {}
+    snapshot = await create_execution_snapshot(
+        command.context.db,
+        ExecutionSnapshotCommand(
+            user_id=command.context.user_id,
+            run_id=getattr(command.context.series_run, "id", None),
+            job_id=job_id,
+            task=generation.binding.task,
+            capability=generation.binding.capability,
+            binding=generation.binding,
+            sanitized_params={
+                "duration": command.prepared.video_request.duration,
+                "resolution": command.request.resolution,
+                "native_audio": command.request.native_audio,
+                "reference_image_count": int((metadata or {}).get("image_count") or 0),
+                "reference_video_count": int((metadata or {}).get("video_count") or 0),
+                "reference_audio_count": int((metadata or {}).get("audio_count") or 0),
+                "seed": command.prepared.video_seed,
+            },
+        ),
+    )
+    return snapshot.id
+
+
 def _build_job(
     command: VideoSubmissionCommand, data: dict, job_id: str,
-    task_id: Optional[str], reservation: Optional[str],
+    task_id: Optional[str], reservation: Optional[str], execution_snapshot_id: str | None,
 ) -> VideoJob:
     context, runtime, prepared, shot = command.context, command.runtime, command.prepared, command.shot
     video_url = dev_video_url(job_id, duration_seconds=prepared.video_request.duration) if runtime.use_dev_video else None
@@ -379,6 +413,8 @@ def _build_job(
             "provider_task_id": task_id, "capability": "video",
             "operation_id": accounting.get("operation_id"),
         }}
+    if execution_snapshot_id:
+        job.extra_data = {**job.extra_data, "execution_snapshot_id": execution_snapshot_id}
     return job
 
 
@@ -389,8 +425,11 @@ async def submit_video(command: VideoSubmissionCommand) -> VideoSubmissionResult
     data = await _build_submission_data(command)
     content = _build_provider_content(command, data)
     job_id, reservation = str(uuid4()), None
+    execution_snapshot_id = await _create_execution_snapshot(command, content, job_id)
     task_id = f"dev-video-{job_id}" if command.runtime.use_dev_video else None
     if not command.runtime.use_dev_video:
-        task_id, reservation, content = await _submit_live(command, data, content, job_id)
-    job = _build_job(command, data, job_id, task_id, reservation)
+        task_id, reservation, content = await _submit_live(
+            command, data, content, job_id, execution_snapshot_id,
+        )
+    job = _build_job(command, data, job_id, task_id, reservation, execution_snapshot_id)
     return VideoSubmissionResult(job, command.runtime.use_dev_video, content)

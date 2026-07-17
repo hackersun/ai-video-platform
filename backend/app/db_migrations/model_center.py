@@ -61,6 +61,19 @@ def _sqlite_prompt_profile_parent_guard_statements():
     )
 
 
+def _sqlite_execution_snapshot_guard_statements():
+    return tuple(
+        text(
+            f"""CREATE TRIGGER IF NOT EXISTS trg_model_execution_snapshots_append_only_{operation}
+            BEFORE {operation.upper()} ON model_execution_snapshots
+            FOR EACH ROW BEGIN
+                SELECT RAISE(ABORT, 'execution snapshots are append-only');
+            END"""
+        )
+        for operation in ("update", "delete")
+    )
+
+
 def _postgresql_trigger_statements(schema_name: str, tables: tuple[str, ...]):
     schema = _quote_postgresql_identifier(schema_name)
     function_name = f'{schema}."model_center_reject_published_mutation"'
@@ -148,6 +161,44 @@ def _postgresql_prompt_profile_parent_guard_statements(schema_name: str):
     )
 
 
+def _postgresql_execution_snapshot_guard_statements(schema_name: str):
+    schema = _quote_postgresql_identifier(schema_name)
+    function_name = f'{schema}."model_center_reject_execution_snapshot_mutation"'
+    table = f'{schema}."model_execution_snapshots"'
+    statements = [
+        text(
+            f"""CREATE OR REPLACE FUNCTION {function_name}()
+            RETURNS trigger LANGUAGE plpgsql AS $model_center$
+            BEGIN
+                RAISE EXCEPTION 'execution snapshots are append-only' USING ERRCODE = '55000';
+            END;
+            $model_center$"""
+        )
+    ]
+    for operation in ("update", "delete"):
+        trigger_name = f"trg_model_execution_snapshots_append_only_{operation}"
+        statements.append(
+            text(
+                f"""DO $model_center$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_trigger AS trigger
+                        JOIN pg_class AS target ON target.oid = trigger.tgrelid
+                        JOIN pg_namespace AS namespace ON namespace.oid = target.relnamespace
+                        WHERE trigger.tgname = {_postgresql_literal(trigger_name)}
+                          AND target.relname = 'model_execution_snapshots'
+                          AND namespace.nspname = {_postgresql_literal(schema_name)}
+                    ) THEN
+                        CREATE TRIGGER {_quote_postgresql_identifier(trigger_name)} BEFORE {operation.upper()} ON {table}
+                        FOR EACH ROW EXECUTE FUNCTION {function_name}();
+                    END IF;
+                END;
+                $model_center$"""
+            )
+        )
+    return tuple(statements)
+
+
 def _version_guard_statements(bind):
     dialect_name = bind.dialect.name
     inspector = inspect(bind)
@@ -156,6 +207,8 @@ def _version_guard_statements(bind):
         statements = list(_sqlite_trigger_statements(tables))
         if inspector.has_table("prompt_profiles") and inspector.has_table("prompt_profile_versions"):
             statements.extend(_sqlite_prompt_profile_parent_guard_statements())
+        if inspector.has_table("model_execution_snapshots"):
+            statements.extend(_sqlite_execution_snapshot_guard_statements())
         return tuple(statements)
     if dialect_name == "postgresql":
         schema_name = inspector.default_schema_name or "public"
@@ -168,6 +221,8 @@ def _version_guard_statements(bind):
             and inspector.has_table("prompt_profile_versions", schema=schema_name)
         ):
             statements.extend(_postgresql_prompt_profile_parent_guard_statements(schema_name))
+        if inspector.has_table("model_execution_snapshots", schema=schema_name):
+            statements.extend(_postgresql_execution_snapshot_guard_statements(schema_name))
         return tuple(statements)
     return ()
 

@@ -58,12 +58,20 @@ from app.features.model_config.recipe_versions import (
     publish_recipe_version,
     update_recipe_version,
 )
+from app.features.model_config.snapshots import (
+    ExecutionSnapshotCommand,
+    UnsafeSnapshotError,
+    create_execution_snapshot,
+    load_execution_snapshot,
+    sanitize_snapshot_params,
+)
 
 __all__ = [
     "BindingScope",
     "CatalogComparison",
     "CertificationLevel",
     "GenerationContext",
+    "ExecutionSnapshotCommand",
     "ModelBindingError",
     "ModelConfigurationError",
     "ModelCapability",
@@ -79,10 +87,12 @@ __all__ = [
     "build_legacy_external_provider_response",
     "compare_legacy_and_canonical_catalogs",
     "create_recipe_version",
+    "create_execution_snapshot",
     "is_product_visible_external_provider",
     "is_product_visible_model",
     "is_product_visible_provider",
     "legacy_model_capability_group",
+    "load_execution_snapshot",
     "list_product_catalog",
     "maybe_log_shadow_catalog_comparison",
     "normalize_capabilities",
@@ -98,6 +108,8 @@ __all__ = [
     "route_policy_for",
     "select_legacy_external_providers",
     "stable_recipe_checksum",
+    "sanitize_snapshot_params",
+    "UnsafeSnapshotError",
     "update_recipe_version",
     "validate_recipe",
 ]

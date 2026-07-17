@@ -1,6 +1,6 @@
 """Submit and construct TTS jobs for separate workflow-media generation."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, Optional
 from uuid import uuid4
 
@@ -33,6 +33,7 @@ from app.features.model_drivers.public import (
     build_builtin_driver_registry,
     execute_generation,
 )
+from app.features.model_config.public import ExecutionSnapshotCommand, create_execution_snapshot
 from app.services.minimax_errors import MiniMaxProviderRejected
 
 
@@ -167,7 +168,10 @@ async def _resolve_voice(command: TTSSubmissionCommand, prepared: dict) -> _Voic
     return _VoiceInputs(resolved, lock, increment, route, dialogue)
 
 
-async def _call_provider(command: TTSSubmissionCommand, text: str, voice: str, speed: float) -> dict:
+async def _call_provider(
+    command: TTSSubmissionCommand, text: str, voice: str, speed: float,
+    execution_snapshot_id: str | None = None,
+) -> dict:
     model = command.preparation.selected_audio_model or {}
     generation = model.get("generation_context")
     if generation is not None:
@@ -179,7 +183,8 @@ async def _call_provider(command: TTSSubmissionCommand, text: str, voice: str, s
                     voice_id=voice,
                     params={**dict(generation.profile.default_params), "speed": speed},
                 ),
-                generation.driver_context,
+                replace(generation.driver_context, execution_snapshot_id=execution_snapshot_id)
+                if execution_snapshot_id else generation.driver_context,
             )
         except DriverError as error:
             raise WorkflowMediaError(422, str(error)) from error
@@ -207,6 +212,7 @@ async def _call_provider(command: TTSSubmissionCommand, text: str, voice: str, s
 
 async def _live_provider_result(
     command: TTSSubmissionCommand, job_id: str, text: str, voice: str, speed: float,
+    execution_snapshot_id: str | None = None,
 ) -> _ProviderResult:
     context, shot = command.context, command.shot
     reservation = await prepare_live_provider_attempt(
@@ -215,7 +221,7 @@ async def _live_provider_result(
         job_type="tts_job", job_id=job_id,
     )
     try:
-        result = await _call_provider(command, text, voice, speed)
+        result = await _call_provider(command, text, voice, speed, execution_snapshot_id)
     except MiniMaxProviderRejected as error:
         await finish_live_provider_attempt(
             context.db, context.series_run, reservation, submission_failed=True,
@@ -246,9 +252,10 @@ async def _live_provider_result(
 
 async def _submit_provider(
     command: TTSSubmissionCommand, job_id: str, text: str, voice: str, speed: float, duration: float,
+    execution_snapshot_id: str | None = None,
 ) -> _ProviderResult:
     if command.preparation.audio_api_key:
-        result = await _live_provider_result(command, job_id, text, voice, speed)
+        result = await _live_provider_result(command, job_id, text, voice, speed, execution_snapshot_id)
         return _ProviderResult(
             result.task_id, result.audio_url, result.duration or duration,
             result.status, result.progress, result.reservation_id,
@@ -273,10 +280,11 @@ def _generation_preflight(prepared: dict) -> Optional[dict]:
 
 def _job_extra(
     command: TTSSubmissionCommand, prepared: dict, voice: _VoiceInputs,
+    execution_snapshot_id: str | None = None,
 ) -> dict:
     request, model = command.request, command.preparation.selected_audio_model
     resolved = voice.resolved
-    return {
+    extra = {
         "model_config_id": request.audio_model_config_id,
         "api_model_id": model.get("model_id") if model else None,
         "provider_id": model.get("provider_id") if model else None,
@@ -294,6 +302,9 @@ def _job_extra(
             "story_bible_id": resolved.get("story_bible_id"),
         },
     }
+    if execution_snapshot_id:
+        extra["execution_snapshot_id"] = execution_snapshot_id
+    return extra
 
 
 def _add_live_accounting(
@@ -312,10 +323,14 @@ def _add_live_accounting(
 
 def _build_job(
     command: TTSSubmissionCommand, job_id: str, text: str, voice: _VoiceInputs,
-    provider: _ProviderResult, tts_voice: str,
+    provider: _ProviderResult, tts_voice: str, execution_snapshot_id: str | None = None,
 ) -> TTSJob:
     context, shot, model = command.context, command.shot, command.preparation.selected_audio_model
-    extra = _add_live_accounting(command, _job_extra(command, command.preparation.prepared_shots[shot.id], voice), provider)
+    extra = _add_live_accounting(
+        command,
+        _job_extra(command, command.preparation.prepared_shots[shot.id], voice, execution_snapshot_id),
+        provider,
+    )
     return TTSJob(
         id=job_id, user_id=context.user_id, project_id=_extra(shot).get("project_id"),
         workflow_id=context.workflow.id, task_id=provider.task_id, title=f"镜头{shot.shot_number} 配音",
@@ -329,6 +344,28 @@ def _build_job(
         status=provider.status, progress=provider.progress, audio_url=provider.audio_url,
         duration_seconds=provider.duration if provider.audio_url else None, extra_data=extra,
     )
+
+
+async def _create_execution_snapshot(
+    command: TTSSubmissionCommand, job_id: str, voice: str, speed: float,
+) -> str | None:
+    model = command.preparation.selected_audio_model or {}
+    generation = model.get("generation_context")
+    if generation is None:
+        return None
+    snapshot = await create_execution_snapshot(
+        command.context.db,
+        ExecutionSnapshotCommand(
+            user_id=command.context.user_id,
+            run_id=getattr(command.context.series_run, "id", None),
+            job_id=job_id,
+            task=generation.binding.task,
+            capability=generation.binding.capability,
+            binding=generation.binding,
+            sanitized_params={"voice_id": voice, "speed": speed},
+        ),
+    )
+    return snapshot.id
 
 
 async def submit_tts_for_shot(command: TTSSubmissionCommand) -> TTSSubmissionResult:
@@ -346,6 +383,9 @@ async def submit_tts_for_shot(command: TTSSubmissionCommand) -> TTSSubmissionRes
             if voice.dialogue_contract else subtitle) or subtitle
     duration = max(1.0, min(prepared["duration"], len(text) / 4.0 / max(speed, 0.1)))
     job_id = str(uuid4())
-    provider = await _submit_provider(command, job_id, text, tts_voice, speed, duration)
-    job = _build_job(command, job_id, text, voice, provider, tts_voice)
+    execution_snapshot_id = await _create_execution_snapshot(command, job_id, tts_voice, speed)
+    provider = await _submit_provider(
+        command, job_id, text, tts_voice, speed, duration, execution_snapshot_id,
+    )
+    job = _build_job(command, job_id, text, voice, provider, tts_voice, execution_snapshot_id)
     return TTSSubmissionResult(job, voice.lock_count_delta, voice.audio_route, voice.dialogue_contract)

@@ -23,6 +23,8 @@ MODEL_CENTER_TRIGGER_NAMES = {
     "trg_prompt_profile_versions_published_delete",
     "trg_prompt_profiles_published_history_update",
     "trg_prompt_profiles_published_history_delete",
+    "trg_model_execution_snapshots_append_only_update",
+    "trg_model_execution_snapshots_append_only_delete",
 }
 
 

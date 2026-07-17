@@ -182,7 +182,7 @@ async def hydrate_resolved_binding(
     return ResolvedModelBinding(
         task=task, capability=capability, profile=profile, connection_id=connection.id,
         binding_version=binding.version, source_scope=binding.scope_type,
-        route_policy=binding.route_policy,
+        route_policy=binding.route_policy, binding_id=binding.id,
     )
 
 def _select_legacy_row(
@@ -214,6 +214,7 @@ async def resolve_legacy_binding(
     return ResolvedModelBinding(
         task=task, capability=capability, profile=profile, connection_id=selected.config_id,
         binding_version=0, source_scope="request" if explicit_config_id else "legacy",
+        binding_id=f"legacy:{selected.config_id}",
     )
 
 
@@ -230,6 +231,7 @@ async def _resolve_explicit_profile(
     return ResolvedModelBinding(
         task=task, capability=capability, profile=profile, connection_id=connection.id,
         binding_version=0, source_scope="request",
+        binding_id=f"request:{profile.profile_version_id}:{connection.id}",
     )
 
 
