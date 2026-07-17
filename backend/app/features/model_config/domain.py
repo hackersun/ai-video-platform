@@ -42,6 +42,7 @@ class BindingScope(str, Enum):
 
 SYSTEM_MODEL_BINDING_OWNER_ID = "system"
 SYSTEM_MODEL_BINDING_SCOPE_ID = ""
+VERIFIED_CONNECTION_STATUSES = frozenset({"connection_verified", "verified"})
 
 
 def is_trusted_system_binding(
@@ -126,6 +127,7 @@ __all__ = [
     "ResolvedModelBinding",
     "SYSTEM_MODEL_BINDING_OWNER_ID",
     "SYSTEM_MODEL_BINDING_SCOPE_ID",
+    "VERIFIED_CONNECTION_STATUSES",
     "is_trusted_system_binding",
     "normalize_capabilities",
 ]

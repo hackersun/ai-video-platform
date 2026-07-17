@@ -39,6 +39,20 @@ from app.features.model_config.bindings import (
 from app.features.model_config.legacy_strategy_projection import (
     resolve_legacy_strategy_config_id,
 )
+from app.features.model_config.recipes import (
+    ProductionRecipeSpec,
+    RecipeBindingContract,
+    RecipeError,
+    RecipeStage,
+    RecipeValidationError,
+    stable_recipe_checksum,
+    validate_recipe,
+)
+from app.features.model_config.recipe_versions import (
+    create_recipe_version,
+    publish_recipe_version,
+    update_recipe_version,
+)
 
 __all__ = [
     "BindingScope",
@@ -49,10 +63,16 @@ __all__ = [
     "ModelCapability",
     "ModelProfileContract",
     "ProfileStatus",
+    "ProductionRecipeSpec",
+    "RecipeBindingContract",
+    "RecipeError",
+    "RecipeStage",
+    "RecipeValidationError",
     "ResolvedModelBinding",
     "RoutePolicy",
     "build_legacy_external_provider_response",
     "compare_legacy_and_canonical_catalogs",
+    "create_recipe_version",
     "is_product_visible_external_provider",
     "is_product_visible_model",
     "is_product_visible_provider",
@@ -62,10 +82,14 @@ __all__ = [
     "normalize_capabilities",
     "project_legacy_external_providers",
     "project_legacy_llm_models",
+    "publish_recipe_version",
     "resolve_profile_version",
     "resolve_model_binding",
     "resolve_legacy_strategy_config_id",
     "resolve_retry_binding",
     "route_policy_for",
     "select_legacy_external_providers",
+    "stable_recipe_checksum",
+    "update_recipe_version",
+    "validate_recipe",
 ]
