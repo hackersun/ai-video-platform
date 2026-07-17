@@ -741,12 +741,11 @@ class AssetGenerationService:
         self.user_id = user_id
         self.image_service: Optional[Any] = None
         self.provider_name = ""
-        self.model_id = ""
+        self.model_id, self.image_model_config_id = "", None
         self.last_prompt_routing: Dict[str, Any] = {}
         self.last_generation_failures: List[Asset] = []
         self.live_novel_id: Optional[str] = None
         self.last_live_accounting: Optional[Dict[str, Any]] = None
-
     @staticmethod
     def _prompt_skill_task_for_entity(entity_type: str) -> str:
         return {
@@ -786,6 +785,7 @@ class AssetGenerationService:
         self.image_service = create_image_generation_service(api_key or "", provider_name or "", base_url)
         self.provider_name = provider_name or ""
         self.model_id = model_id or ""
+        self.image_model_config_id = model_config_id
 
     async def _generate_asset_image_url(
         self,
@@ -842,7 +842,7 @@ class AssetGenerationService:
             num=1,
             size=size,
             aspect_ratio=aspect_ratio,
-            openai_size="1024x1024", db=self.db, user_id=self.user_id,
+            openai_size="1024x1024", db=self.db, user_id=self.user_id, config_id=self.image_model_config_id,
         )
         image_urls = extract_image_urls_from_provider_result(result)
         if reservation_id:

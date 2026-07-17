@@ -10,6 +10,7 @@ from app.features.model_drivers.domain import (
     DriverExecutionError,
     DriverLimitError,
     DriverParameterError,
+    DriverProfile,
     DriverRegistrationError,
     DriverResultError,
     DriverSchemaError,
@@ -47,7 +48,7 @@ from app.features.model_drivers.adapters.legacy_volcano_config import (
 __all__ = [
     "CapabilityDriver", "Command", "DriverCapabilityError", "DriverContext", "DriverContextError", "DriverError",
     "DriverExecutionError",
-    "DriverLimitError", "DriverParameterError", "DriverRegistrationError", "DriverRegistry",
+    "DriverLimitError", "DriverParameterError", "DriverProfile", "DriverRegistrationError", "DriverRegistry",
     "DriverResultError", "DriverSchemaError", "DriverSubmission", "DriverTestResult",
     "DriverUnavailableError", "ImageCommand", "MediaRenderCommand", "ObjectStorageCommand",
     "SpeechCommand", "TextCommand", "VideoCommand",

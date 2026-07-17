@@ -384,6 +384,7 @@ async def test_asset_generation_routes_through_binding_aware_image_submitter(
     service.image_service = object()
     service.provider_name = "minimax"
     service.model_id = "image-01"
+    service.image_model_config_id = "explicit-asset-image-config"
     captured = {}
 
     async def submit(_service, **kwargs):
@@ -401,6 +402,7 @@ async def test_asset_generation_routes_through_binding_aware_image_submitter(
     ) == "https://example.test/asset.png"
     assert captured["db"] is service.db
     assert captured["user_id"] == "asset-user"
+    assert captured["config_id"] == "explicit-asset-image-config"
 
 
 @pytest.mark.asyncio

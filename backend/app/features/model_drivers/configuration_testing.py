@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from sqlalchemy import desc, select
@@ -11,6 +11,23 @@ from app.features.model_drivers.domain import DriverContext, DriverTestResult
 from app.features.model_drivers.executor import execute_connection_test
 from app.features.model_drivers.registry import build_builtin_driver_registry
 from app.models.model_center import ModelProfileVersion
+
+
+@dataclass(frozen=True)
+class ConnectionTestProfile:
+    profile_version_id: str
+    provider_id: str
+    api_model_id: str
+    driver_key: str
+    capabilities: frozenset[str]
+    input_contract: Mapping[str, Any]
+    output_contract: Mapping[str, Any]
+    parameter_schema: Mapping[str, Any]
+    default_params: Mapping[str, Any]
+    limits: Mapping[str, Any]
+    pricing: Mapping[str, Any]
+    prompt_profile_key: str | None
+    contract_version: str
 
 
 _MODEL_TYPE_GROUPS = {
@@ -71,7 +88,7 @@ def build_connection_context(
     connection_params: Mapping[str, Any] | None = None,
 ) -> DriverContext:
     driver = build_builtin_driver_registry().require(driver_key)
-    profile = SimpleNamespace(
+    profile = ConnectionTestProfile(
         profile_version_id=f"config-test:{provider_id}:{model_id}", provider_id=provider_id,
         api_model_id=model_id, driver_key=driver_key, capabilities=driver.capabilities,
         input_contract={}, output_contract={}, parameter_schema={}, default_params={}, limits={}, pricing={},

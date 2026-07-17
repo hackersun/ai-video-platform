@@ -61,9 +61,18 @@ class ObjectStorageCommand:
 Command: TypeAlias = TextCommand | ImageCommand | SpeechCommand | VideoCommand | MediaRenderCommand | ObjectStorageCommand
 
 
+class DriverProfile(Protocol):
+    driver_key: str
+    capabilities: frozenset[str]
+    parameter_schema: Mapping[str, Any]
+    limits: Mapping[str, Any]
+    provider_id: str
+    api_model_id: str
+
+
 @dataclass(frozen=True)
 class DriverContext:
-    profile: Any
+    profile: DriverProfile
     driver_key: str
     connection_id: str | None
     secrets: Mapping[str, str] = field(default_factory=dict, repr=False)
@@ -160,6 +169,7 @@ __all__ = [
     "DriverExecutionError",
     "DriverLimitError",
     "DriverParameterError",
+    "DriverProfile",
     "DriverRegistrationError",
     "DriverResultError",
     "DriverSchemaError",
