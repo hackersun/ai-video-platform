@@ -8,6 +8,8 @@ API调用规范:
 - 视频模型: POST /contents/generations/tasks → model_id 传 ENDPOINT_ID
 """
 
+from app.core.volcano_image_catalog import SEEDREAM_50_PRO_API_MODEL_ID
+
 # ============== 全局配置 ==============
 
 VOLCANO_CONFIG = {
@@ -28,6 +30,7 @@ ENDPOINT_IDS = {
     # 图像生成模型
     "Doubao-Seedream-4.5":       "ep-20260320112226-rgndq",
     "Doubao-Seedream-5.0-lite":  "ep-20260320113731-jzjkn",
+    SEEDREAM_50_PRO_API_MODEL_ID: SEEDREAM_50_PRO_API_MODEL_ID,
     # 文本模型（部分需要）
     "Doubao-Seed-2.0-pro":       "ep-20260320111926-sn9tg",
     # 视频生成模型
@@ -110,6 +113,23 @@ VOLCANO_MODELS = [
         "version": "5.0-lite",
         "is_verified": True,
     },
+    {
+        "id": SEEDREAM_50_PRO_API_MODEL_ID,
+        "name": "Seedream 5.0 Pro",
+        "name_cn": "豆包 Seedream 5.0 Pro",
+        "type": "image-generation",
+        "endpoint": "/images/generations",
+        "api_model_id": SEEDREAM_50_PRO_API_MODEL_ID,
+        "capabilities": ["text-to-image", "image-to-image", "multi-reference", "sequential-images"],
+        "min_pixels": 0,
+        "supported_ratios": ["1:1", "16:9", "9:16", "4:3", "3:4", "21:9"],
+        "recommended_sizes": ["2K", "3K", "4K", "2048x2048"],
+        "cost_per_image": 0,
+        "description": "Seedream 5.0 非 Lite 旗舰模型，支持文生图、图像编辑、多参考图与组图生成",
+        "use_cases": ["角色形象", "场景图", "道具图", "高一致性参考资产"],
+        "version": "5.0-pro",
+        "is_verified": True,
+    },
 
     # ========== 视频生成模型 ==========
     {
@@ -187,9 +207,9 @@ VOLCANO_MODELS = [
 VOLCANO_USE_CASES = {
     "对话理解":    ["doubao-seed-1-8-251228"],
     "小说生成":    ["doubao-seed-1-8-251228"],
-    "图像生成":    ["Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
-    "角色形象":    ["Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
-    "场景参考图":  ["Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
+    "图像生成":    [SEEDREAM_50_PRO_API_MODEL_ID, "Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
+    "角色形象":    [SEEDREAM_50_PRO_API_MODEL_ID, "Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
+    "场景参考图":  [SEEDREAM_50_PRO_API_MODEL_ID, "Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite"],
     "视频生成":    ["Doubao-Seedance-2.0-fast", "Doubao-Seedance-2.0", "Doubao-Seedance-1.5-pro", "Doubao-Seedance-1.0-pro-fast"],
     "镜头视频":    ["Doubao-Seedance-2.0-fast", "Doubao-Seedance-2.0", "Doubao-Seedance-1.5-pro", "Doubao-Seedance-1.0-pro-fast"],
 }
@@ -198,7 +218,7 @@ VOLCANO_USE_CASES = {
 # ============== 默认模型 ==============
 
 DEFAULT_TEXT_MODEL   = "doubao-seed-1-8-251228"
-DEFAULT_IMAGE_MODEL  = "Doubao-Seedream-4.5"
+DEFAULT_IMAGE_MODEL  = SEEDREAM_50_PRO_API_MODEL_ID
 DEFAULT_VIDEO_MODEL  = "Doubao-Seedance-2.0-fast"
 
 

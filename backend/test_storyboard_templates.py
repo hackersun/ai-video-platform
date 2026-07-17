@@ -196,6 +196,28 @@ def test_script_storyboard_template_fallback_uses_scene_beats_not_format_lines(
         headers=auth_headers(user_id),
     )
     assert script_resp.status_code == 201
+    extracted_entities = client.post(
+        "/api/v1/story-bibles/entities/analyze",
+        json={
+            "script_id": script_resp.json()["id"],
+            "entity_types": ["character", "scene", "prop", "event"],
+            "persist": True,
+        },
+        headers=auth_headers(user_id),
+    )
+    assert extracted_entities.status_code == 200
+    production_entity_ids = [
+        item["id"] for item in extracted_entities.json()["entities"]
+        if item["name"] in {"林澈", "阿岚", "红灯"}
+    ]
+    assert {item["name"] for item in extracted_entities.json()["entities"] if item["id"] in production_entity_ids} >= {"林澈", "阿岚"}
+    approve_resp = client.post(
+        "/api/v1/story-bibles/entities/bulk-approve",
+        json={"entity_ids": production_entity_ids, "approved": True},
+        headers=auth_headers(user_id),
+    )
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["updated_count"] == len(production_entity_ids)
     with SyncSessionLocal() as session:
         for name in ("保留最后一句钩", "成为本场视觉钩", "形成下一集钩", "开场钩", "拉镜", "推镜", "镜"):
             session.add(
@@ -429,7 +451,6 @@ def test_system_template_override_is_listed_matched_and_used_for_generation(clie
     )
     assert chapter_resp.status_code == 201
     chapter_id = chapter_resp.json()["id"]
-
     match_resp = client.post(
         "/api/v1/storyboards/templates/match",
         json={"novel_id": novel_id, "chapter_id": chapter_id, "template_id": "opening-hook"},
@@ -1265,6 +1286,28 @@ def test_smart_storyboard_binds_entities_and_video_keeps_context(client: TestCli
     )
     assert chapter_resp.status_code == 201
     chapter_id = chapter_resp.json()["id"]
+    chapter_entities = client.post(
+        "/api/v1/story-bibles/entities/analyze",
+        json={
+            "chapter_id": chapter_id,
+            "entity_types": ["character", "scene", "prop", "event"],
+            "persist": True,
+        },
+        headers=auth_headers(user_id),
+    )
+    assert chapter_entities.status_code == 200
+    event_candidate = next(
+        item for item in chapter_entities.json()["entities"]
+        if item["entity_type"] == "event" and item["name"] == "失踪记忆重现"
+    )
+    assert event_candidate["is_approved"] is False
+    assert event_candidate["extra_data"]["lifecycle"]["status"] == "candidate"
+    approve_event = client.post(
+        f"/api/v1/story-bibles/entities/{event_candidate['id']}/promote",
+        json={"reason": "smart storyboard production reference"},
+        headers=auth_headers(user_id),
+    )
+    assert approve_event.status_code == 200
 
     storyboard_resp = client.post(
         "/api/v1/storyboards/generate-smart",

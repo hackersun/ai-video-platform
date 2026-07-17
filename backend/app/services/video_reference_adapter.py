@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from app.features.video_generation.constants import PROVIDER_VIDEO_WATERMARK_ENABLED
 from app.services.seedance_contract import get_seedance_contract
 
 
@@ -43,6 +44,16 @@ def _content_url(item: Any) -> Optional[str]:
     return str(url) if url else None
 
 
+def _is_provider_ready_item(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    return (
+        not item.get("canonical_asset_id")
+        or bool(item.get("provider_binding_id"))
+        or item.get("provider_reference_source") == "canonical_public_fallback"
+    )
+
+
 def _model_limit(model_limits: Optional[Dict[str, Any]], key: str, default: int) -> int:
     limits = model_limits if isinstance(model_limits, dict) else {}
     return _positive_int(limits.get(key), default)
@@ -73,8 +84,13 @@ def _limits_with_contract_caps(
 
 
 def _contract_metadata(contract: Any) -> Dict[str, Any]:
+    is_seedance_2 = contract.model_family == "seedance_2"
     return {
-        "contract_status": contract.status,
+        "contract_status": contract.status if is_seedance_2 else contract.contract_status,
+        "contract_version": contract.contract_version,
+        "verified_at": contract.verified_at,
+        "reference_limits": contract.reference_limits if is_seedance_2 else {},
+        "verification_gaps": list(contract.verification_gaps),
         "contract_model_family": contract.model_family,
         "contract_roles": {
             "image": contract.roles.image,
@@ -101,6 +117,21 @@ def apply_seedance_contract_limits(
     )
 
 
+def requires_provider_bindings(model_limits: Optional[Dict[str, Any]]) -> bool:
+    """Match the Production OS multi-reference binding boundary.
+
+    Legacy single-image models continue to use the existing media-delivery
+    fallback. A provider binding becomes mandatory only for a package that
+    exceeds that legacy shape.
+    """
+    limits = model_limits if isinstance(model_limits, dict) else {}
+    return (
+        _model_limit(limits, "images", 1) > 1
+        or _model_limit(limits, "videos", 0) > 0
+        or _model_limit(limits, "audios", 0) > 0
+    )
+
+
 def build_video_provider_content(
     *,
     final_prompt: str,
@@ -112,7 +143,7 @@ def build_video_provider_content(
     model_id: Optional[str] = None,
     provider: Optional[str] = None,
     camera_fixed: bool = False,
-    watermark: bool = True,
+    watermark: bool = PROVIDER_VIDEO_WATERMARK_ENABLED,
 ) -> Dict[str, Any]:
     """Build Ark content while preserving the legacy single-image shape."""
     package = reference_package if isinstance(reference_package, dict) else {}
@@ -126,9 +157,20 @@ def build_video_provider_content(
     video_limit = _model_limit(effective_limits, "videos", 0)
     audio_limit = _model_limit(effective_limits, "audios", 0)
     contract_metadata = _contract_metadata(contract)
-    package_images = [item for item in package.get("images") or [] if _content_url(item)]
-    package_videos = [item for item in package.get("videos") or [] if _content_url(item)]
-    package_audios = [item for item in package.get("audios") or [] if _content_url(item)]
+    raw_items = [
+        *[item for item in package.get("images") or [] if isinstance(item, dict)],
+        *[item for item in package.get("videos") or [] if isinstance(item, dict)],
+        *[item for item in package.get("audios") or [] if isinstance(item, dict)],
+    ]
+    unbound_canonical_reference_count = sum(
+        1 for item in raw_items
+        if item.get("canonical_asset_id")
+        and not item.get("provider_binding_id")
+        and item.get("provider_reference_source") != "canonical_public_fallback"
+    )
+    package_images = [item for item in package.get("images") or [] if _content_url(item) and _is_provider_ready_item(item)]
+    package_videos = [item for item in package.get("videos") or [] if _content_url(item) and _is_provider_ready_item(item)]
+    package_audios = [item for item in package.get("audios") or [] if _content_url(item) and _is_provider_ready_item(item)]
 
     if image_limit <= 0 and video_limit <= 0 and audio_limit <= 0:
         content = [
@@ -149,6 +191,7 @@ def build_video_provider_content(
                 "video_count": 0,
                 "audio_count": 0,
                 "dropped_image_count": len(package_images) + (1 if provider_image_url else 0),
+                **({"unbound_canonical_reference_count": unbound_canonical_reference_count} if unbound_canonical_reference_count else {}),
                 **contract_metadata,
             },
         }
@@ -201,6 +244,7 @@ def build_video_provider_content(
                 "image_count": len(images),
                 "video_count": len(videos),
                 "audio_count": len(audios),
+                **({"unbound_canonical_reference_count": unbound_canonical_reference_count} if unbound_canonical_reference_count else {}),
                 **contract_metadata,
             },
         }
@@ -226,6 +270,7 @@ def build_video_provider_content(
             "image_count": 1 if single_image_url else 0,
             "video_count": 0,
             "audio_count": 0,
+            **({"unbound_canonical_reference_count": unbound_canonical_reference_count} if unbound_canonical_reference_count else {}),
             **contract_metadata,
         },
     }
@@ -248,10 +293,23 @@ def build_reference_package_metadata(
         if isinstance(item, dict):
             items.append({"type": "audio", **item})
 
+    dropped_items = [item for item in package.get("dropped") or [] if isinstance(item, dict)]
+    canonical_asset_ids = list(dict.fromkeys(
+        str(item["canonical_asset_id"])
+        for item in [*items, *dropped_items]
+        if item.get("canonical_asset_id")
+    ))
+    provider_binding_ids = list(dict.fromkeys(
+        str(item["provider_binding_id"])
+        for item in items
+        if item.get("provider_binding_id")
+    ))
     return {
         **dict(provider_metadata or {}),
         "items": items,
-        "dropped": package.get("dropped") or [],
+        "dropped": dropped_items,
+        "canonical_asset_ids": canonical_asset_ids,
+        "provider_binding_ids": provider_binding_ids,
     }
 
 

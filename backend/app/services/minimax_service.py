@@ -30,16 +30,13 @@ from app.core.minimax_config import (
     DEFAULT_TTS_VOICE,
     TTS_VOICES,
 )
+from app.services.minimax_errors import MiniMaxProviderRejected, minimax_provider_rejection
+from app.services.minimax_tts_request import (
+    build_minimax_tts_request,
+    resolve_minimax_tts_model_id,
+)
 
 MINIMAX_VOICE_CLONE_MODEL = "speech-2.8-hd"
-
-
-def _normalize_tts_model_id(model: str) -> str:
-    """Convert local MiniMax catalog IDs to the API model ID used by /t2a_v2."""
-    model_config = get_minimax_model(model)
-    if model_config.get("type") == "tts" and model_config.get("api_model_id"):
-        return model_config["api_model_id"]
-    return model
 
 
 def _normalize_image_model_id(model: str) -> str:
@@ -51,16 +48,9 @@ def _normalize_image_model_id(model: str) -> str:
 
 
 def _raise_for_minimax_base_resp(result: Any, operation: str) -> None:
-    if not isinstance(result, dict):
-        return
-    base_resp = result.get("base_resp") or result.get("baseResponse")
-    if not isinstance(base_resp, dict):
-        return
-    status_code = base_resp.get("status_code")
-    if status_code in (None, 0, "0"):
-        return
-    message = base_resp.get("status_msg") or base_resp.get("message") or "未知错误"
-    raise Exception(f"MiniMax {operation}失败 [{status_code}]: {message}")
+    rejection = minimax_provider_rejection(result, operation)
+    if rejection:
+        raise rejection
 
 
 def _extract_file_id(result: Any) -> Optional[str]:
@@ -229,7 +219,7 @@ class MiniMaxService:
             "file_id": int(file_id) if str(file_id).isdigit() else file_id,
             "voice_id": voice_id,
             "text": text,
-            "model": _normalize_tts_model_id(model),
+            "model": resolve_minimax_tts_model_id(model),
             "accuracy": accuracy,
             "need_noise_reduction": need_noise_reduction,
             "need_volume_normalization": need_volume_normalization,
@@ -350,26 +340,17 @@ class MiniMaxService:
         模型: speech-2.6-hd, speech-2.6-turbo
         返回: 音频 URL 或 base64
         """
-        api_model = _normalize_tts_model_id(model)
-        speech_url = f"{self.base_url}/t2a_v2"
-        payload = {
-            "model": api_model,
-            "text": text,
-            "stream": False,
-            "output_format": output_format,
-            "voice_setting": {
-                "voice_id": voice_id,
-                "speed": speed,
-                "vol": vol,
-                "pitch": pitch,
-            },
-            "language_boost": language_boost,
-        }
-        payload.update(kwargs)
+        request = build_minimax_tts_request(
+            model_id=model, text=text, voice_id=voice_id, speed=speed,
+            vol=vol, pitch=pitch, output_format=output_format,
+            language_boost=language_boost, extra_params=kwargs,
+        )
+        api_model = request.payload["model"]
+        speech_url = f"{self.base_url}{request.url_path}"
 
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                speech_url, headers=self.headers, json=payload,
+                speech_url, headers=self.headers, json=request.payload,
                 timeout=aiohttp.ClientTimeout(total=60)
             ) as resp:
                 if resp.status != 200:

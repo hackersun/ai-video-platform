@@ -12,7 +12,11 @@ from app.api.v1.endpoints import (
     media, subtitles, short_video, production_control, graph, batch, templates, versions,
     consistency, studio, prompt_skills,
     production_cards, costs,
+    series_runs,
 )
+from app.features.series_anchor_generation.api import router as series_anchor_generation_router
+from app.features.series_run_recovery.api import router as series_run_recovery_router
+from app.features.assets.api import router as asset_maintenance_router
 
 api_router = APIRouter()
 
@@ -75,6 +79,7 @@ api_router.include_router(images.router, prefix="/images", tags=["图像生成"]
 
 # 资产库API
 api_router.include_router(assets.router, prefix="/assets", tags=["资产库"])
+api_router.include_router(asset_maintenance_router, prefix="", tags=["资产维护"])
 
 # 项目管理API
 api_router.include_router(projects.router, prefix="/projects", tags=["项目管理"])
@@ -123,3 +128,8 @@ api_router.include_router(prompt_skills.router, prefix="/prompt-skills", tags=["
 
 # 定稿卡聚合API
 api_router.include_router(production_cards.router, prefix="/production-cards", tags=["定稿卡"])
+
+# 整书持久化运行 API
+api_router.include_router(series_runs.router, prefix="", tags=["整书生产运行"])
+api_router.include_router(series_anchor_generation_router, prefix="", tags=["整书生产运行"])
+api_router.include_router(series_run_recovery_router, prefix="", tags=["整书生产恢复"])

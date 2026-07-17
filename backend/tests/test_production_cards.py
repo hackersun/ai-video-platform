@@ -395,6 +395,36 @@ def test_character_card_aggregates_views_voice_profile_state_usage_and_readiness
     assert gap_codes["view_missing:back"]["fix_url"].startswith("/assets?")
 
 
+def test_single_production_card_hides_candidate_entity(client: TestClient) -> None:
+    async def scenario() -> dict[str, str]:
+        user_id = f"cards-user-{uuid4().hex[:20]}"
+        novel_id = f"cards-novel-{uuid4()}"
+        entity_id = f"cards-candidate-{uuid4()}"
+        async with AsyncSessionLocal() as db:
+            db.add(Novel(id=novel_id, user_id=user_id, title="候选定稿卡小说"))
+            db.add(
+                StoryEntity(
+                    id=entity_id,
+                    user_id=user_id,
+                    novel_id=novel_id,
+                    entity_type="character",
+                    name="候选角色",
+                    extra_data={"lifecycle": {"status": "candidate"}},
+                )
+            )
+            await db.commit()
+        return {"user_id": user_id, "entity_id": entity_id}
+
+    fixture = _run(scenario())
+
+    response = client.get(
+        f"/api/v1/production-cards/entity/{fixture['entity_id']}",
+        headers=_auth_headers(fixture["user_id"]),
+    )
+
+    assert response.status_code == 404
+
+
 def test_scene_and_prop_cards_use_type_specific_required_views(client: TestClient) -> None:
     fixture = _run(_seed_scene_prop_fixture())
 

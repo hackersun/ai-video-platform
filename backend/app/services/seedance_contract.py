@@ -3,11 +3,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 
 OFFICIAL_SEEDANCE_SOURCES = [
     "https://www.volcengine.com/docs/82379/1520757",
 ]
+
+SEEDANCE_CONTRACT_VERSION = "seedance-2.0-ark-2026-07-11"
+REQUIRED_CONFIRMATION_EVIDENCE = (
+    "official_schema_url",
+    "official_schema_accessed_at",
+    "payload_contract_test",
+    "live_canary_job_id",
+    "pricing_url",
+    "failure_retry_evidence",
+)
+SEEDANCE_2_EVIDENCE: dict[str, object] = {
+    "official_schema_url": "https://www.volcengine.com/docs/82379/1520757",
+    "official_schema_accessed_at": "2026-07-11",
+    "payload_contract_test": (
+        "tests/test_reference_package.py::"
+        "test_provider_content_adapter_submits_multimodal_references"
+    ),
+    "live_canary_job_id": None,
+    "pricing_url": "https://www.volcengine.com/activity/seedance2",
+    "failure_retry_evidence": None,
+}
 
 SEEDANCE_2_MODEL_IDS = {
     "doubao-seedance-2-0-260128",
@@ -40,15 +62,50 @@ class SeedanceContract:
     pricing_status: str
     agent_plan_multireference: bool
     official_sources: list[str]
+    contract_version: str
+    verified_at: str | None
+    verification_gaps: list[str]
+
+    @property
+    def contract_status(self) -> str:
+        if self.model_family != "seedance_2":
+            return "unavailable"
+        return self.status
+
+    @property
+    def reference_limits(self) -> dict[str, int | bool]:
+        return {
+            "images": self.max_images,
+            "videos": self.max_videos,
+            "audios": self.max_audios,
+            "at_reference": self.at_reference_syntax is not None,
+            "native_audio": self.max_audios > 0,
+        }
 
 
-def _seedance_2_contract(model_id: str, provider: str) -> SeedanceContract:
+def contract_is_confirmed(evidence: Mapping[str, object] | None) -> bool:
+    values = evidence if isinstance(evidence, Mapping) else {}
+    return all(values.get(key) for key in REQUIRED_CONFIRMATION_EVIDENCE)
+
+
+def _verification_gaps(evidence: Mapping[str, object] | None) -> list[str]:
+    values = evidence if isinstance(evidence, Mapping) else {}
+    return [key for key in REQUIRED_CONFIRMATION_EVIDENCE if not values.get(key)]
+
+
+def _seedance_2_contract(
+    model_id: str,
+    provider: str,
+    evidence: Mapping[str, object] | None = None,
+) -> SeedanceContract:
     is_agent_plan = provider == "volcano_agent_plan"
+    resolved_evidence = dict(SEEDANCE_2_EVIDENCE if evidence is None else evidence)
+    confirmed = contract_is_confirmed(resolved_evidence)
     return SeedanceContract(
         model_id=model_id,
         provider=provider,
         model_family="seedance_2",
-        status="experimental",
+        status="confirmed" if confirmed else "experimental",
         roles=SeedanceReferenceRoles(
             image="reference_image",
             video="reference_video",
@@ -61,6 +118,13 @@ def _seedance_2_contract(model_id: str, provider: str) -> SeedanceContract:
         pricing_status="unconfirmed",
         agent_plan_multireference=False,
         official_sources=list(OFFICIAL_SEEDANCE_SOURCES),
+        contract_version=SEEDANCE_CONTRACT_VERSION,
+        verified_at=(
+            str(resolved_evidence["official_schema_accessed_at"])
+            if confirmed
+            else None
+        ),
+        verification_gaps=_verification_gaps(resolved_evidence),
     )
 
 
@@ -82,14 +146,27 @@ def _legacy_contract(model_id: str, provider: str) -> SeedanceContract:
         pricing_status="not_applicable",
         agent_plan_multireference=False,
         official_sources=[],
+        contract_version="legacy-single-reference-v1",
+        verified_at=None,
+        verification_gaps=["model_contract_not_registered"],
     )
 
 
-def get_seedance_contract(model_id: str | None, provider: str | None = None) -> SeedanceContract:
+def resolve_seedance_contract(
+    model_id: str | None,
+    provider: str | None = None,
+    *,
+    evidence: Mapping[str, object] | None = None,
+) -> SeedanceContract:
     resolved_model_id = (model_id or "").strip()
     resolved_provider = (provider or "volcano").strip()
 
     if resolved_model_id.lower() in SEEDANCE_2_MODEL_IDS:
-        return _seedance_2_contract(resolved_model_id, resolved_provider)
+        return _seedance_2_contract(resolved_model_id, resolved_provider, evidence)
 
     return _legacy_contract(resolved_model_id, resolved_provider)
+
+
+def get_seedance_contract(model_id: str | None, provider: str | None = None) -> SeedanceContract:
+    """Backward-compatible alias for callers using the original registry API."""
+    return resolve_seedance_contract(model_id, provider)

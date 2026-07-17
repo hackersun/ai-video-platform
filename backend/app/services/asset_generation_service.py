@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Dict, List, Optional, Any
 from uuid import uuid4
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,18 @@ from app.core.api_key_utils import create_image_generation_service, get_user_ima
 from app.core.dev_generation import dev_image_url, is_dev_mode
 from app.core.time_utils import utc_now
 from app.models.asset import Asset
+from app.models.series_production_run import SeriesProductionRun
+from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.services.live_canary_budget import (
+    bind_provider_operation_for_reservation,
+    link_provider_attempt,
+    prepare_provider_operation,
+    reconcile_reservation,
+    required_tested_at_for_run,
+    reserve_budget,
+    settle_synchronous_provider_operation,
+    validate_model_bindings,
+)
 from app.services.image_generation_pipeline import (
     call_image_generation_provider,
     missing_image_result_message,
@@ -34,7 +47,7 @@ from app.services.asset_visual_contract import build_visual_contract_from_story
 from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice as build_retry_prompt_advice
 from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
-from app.services.prompt_skill_service import apply_active_prompt_skill_template
+from app.services.prompt_template_router import select_prompt_skill_for_model
 
 
 IMAGE_STYLE_TEMPLATES: List[Dict[str, Any]] = [
@@ -729,7 +742,10 @@ class AssetGenerationService:
         self.image_service: Optional[Any] = None
         self.provider_name = ""
         self.model_id = ""
+        self.last_prompt_routing: Dict[str, Any] = {}
         self.last_generation_failures: List[Asset] = []
+        self.live_novel_id: Optional[str] = None
+        self.last_live_accounting: Optional[Dict[str, Any]] = None
 
     @staticmethod
     def _prompt_skill_task_for_entity(entity_type: str) -> str:
@@ -746,13 +762,18 @@ class AssetGenerationService:
         prompt: str,
         context: Optional[Dict[str, Any]] = None,
     ) -> str:
-        result = await apply_active_prompt_skill_template(
+        result = await select_prompt_skill_for_model(
             self.db,
-            self.user_id,
+            user_id=self.user_id,
             task=task,
+            provider_name=self.provider_name,
+            model_id=self.model_id,
+            model_capabilities=[],
+            output_contract="plain_text",
             internal_prompt=prompt,
             context=context or {},
         )
+        self.last_prompt_routing = {key: value for key, value in result.items() if key != "prompt"}
         return result["prompt"]
 
     async def configure_image_model(self, model_config_id: Optional[str] = None):
@@ -782,6 +803,37 @@ class AssetGenerationService:
                     raise
                 return dev_image_url(f"{prefix}-{uuid4().hex[:8]}", prompt[:24] or prefix)
 
+        live_run = None
+        reservation_id = None
+        if self.live_novel_id:
+            candidates = list((await self.db.scalars(select(SeriesProductionRun).where(
+                SeriesProductionRun.user_id == self.user_id,
+                SeriesProductionRun.novel_id == self.live_novel_id,
+                SeriesProductionRun.status == "media_running",
+            ))).all())
+            live_candidates = [row for row in candidates if (row.budget_policy or {}).get("live_canary") is True]
+            if len(live_candidates) > 1:
+                raise ValueError("ambiguous active live canary runs for asset novel")
+            candidate = live_candidates[0] if live_candidates else None
+            if candidate and (candidate.budget_policy or {}).get("live_canary") is True:
+                live_run = candidate
+                capabilities = (live_run.model_bindings or {}).get("capabilities") or {}
+                await validate_model_bindings(
+                    self.db,
+                    live_run,
+                    {name: str((capabilities.get(name) or {}).get("config_id") or "") for name in ("text", "image", "tts", "video")},
+                    required_tested_at=required_tested_at_for_run(live_run),
+                    freshness_seconds=900,
+                )
+                estimate = ((live_run.budget_policy or {}).get("estimates_rmb") or {}).get("image")
+                if estimate is None:
+                    raise ValueError("live canary has no trusted image estimate")
+                reservation_id = f"asset-image:{prefix}:{uuid4()}"
+                await prepare_provider_operation(
+                    self.db, live_run, capability="image", job_type="asset_image_operation",
+                    job_id=f"asset:{prefix}", reservation_id=reservation_id,
+                    estimate_rmb=Decimal(str(estimate)),
+                )
         result = await call_image_generation_provider(
             self.image_service,
             provider_name=self.provider_name,
@@ -793,10 +845,31 @@ class AssetGenerationService:
             openai_size="1024x1024",
         )
         image_urls = extract_image_urls_from_provider_result(result)
+        if reservation_id:
+            task_id = provider_task_id(result, provider_name=self.provider_name)
+            if not task_id and image_urls:
+                operation_id = live_run.cost_summary["reservations"][reservation_id].get("operation_id")
+                task_id = f"sync:{operation_id}"
+            asset_operation = None
+            if task_id:
+                asset_operation = await bind_provider_operation_for_reservation(
+                    self.db, live_run, reservation_id=reservation_id, provider_task_id=task_id
+                )
+            reservation = live_run.cost_summary["reservations"][reservation_id]
+            self.last_live_accounting = {
+                "series_run_id": live_run.id, "reservation_id": reservation_id,
+                "operation_id": reservation.get("operation_id"), "provider_task_id": task_id,
+                "capability": "image",
+            }
         image_url = image_urls[0] if image_urls else None
         if not image_url:
             task_id = provider_task_id(result, provider_name=self.provider_name)
             raise ValueError(missing_image_result_message(self.provider_name, task_id))
+        if reservation_id and asset_operation:
+            await settle_synchronous_provider_operation(
+                self.db, asset_operation,
+                provider_actual_rmb=result.get("actual_cost_rmb", result.get("cost_rmb")) if isinstance(result, dict) else None,
+            )
 
         return await persist_remote_media_url(
             image_url,
@@ -821,6 +894,7 @@ class AssetGenerationService:
         Returns:
             Dict包含 avatar(头像), full_body(全身), expressions(表情集), poses(姿态集)
         """
+        self.live_novel_id = novel_id
         results = {}
         base_context = {
             "entity_id": character_id,
@@ -858,7 +932,7 @@ class AssetGenerationService:
                 project_id=project_id,
                 novel_id=novel_id,
                 source_prompt=avatar_prompt,
-                generation_params={"asset_subtype": "avatar", "style": style},
+                generation_params={"asset_subtype": "avatar", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["avatar"] = avatar_asset
 
@@ -888,7 +962,7 @@ class AssetGenerationService:
                 project_id=project_id,
                 novel_id=novel_id,
                 source_prompt=full_body_prompt,
-                generation_params={"asset_subtype": "full_body", "style": style},
+                generation_params={"asset_subtype": "full_body", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["full_body"] = full_body_asset
 
@@ -921,7 +995,7 @@ class AssetGenerationService:
                 expressions=[
                     {"name": "happy", "description": "开心", "url": expressions_url},
                 ],
-                generation_params={"asset_subtype": "expressions", "style": style},
+                generation_params={"asset_subtype": "expressions", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["expressions"] = expressions_asset
 
@@ -954,7 +1028,7 @@ class AssetGenerationService:
                 poses=[
                     {"name": "standing", "description": "站立", "url": poses_url},
                 ],
-                generation_params={"asset_subtype": "poses", "style": style},
+                generation_params={"asset_subtype": "poses", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["poses"] = poses_asset
 
@@ -975,6 +1049,7 @@ class AssetGenerationService:
         Returns:
             Dict包含 main_scene(主场景), detail(细节图), effect(特效层)
         """
+        self.live_novel_id = novel_id
         results = {}
         base_context = {
             "entity_id": scene_id,
@@ -1011,7 +1086,7 @@ class AssetGenerationService:
                 project_id=project_id,
                 novel_id=novel_id,
                 source_prompt=main_prompt,
-                generation_params={"asset_subtype": "main_scene", "style": style},
+                generation_params={"asset_subtype": "main_scene", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["main_scene"] = main_asset
 
@@ -1040,7 +1115,7 @@ class AssetGenerationService:
                 project_id=project_id,
                 novel_id=novel_id,
                 source_prompt=detail_prompt,
-                generation_params={"asset_subtype": "detail", "style": style},
+                generation_params={"asset_subtype": "detail", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["detail"] = detail_asset
 
@@ -1061,6 +1136,7 @@ class AssetGenerationService:
         Returns:
             Dict包含 main(道具主图), detail(细节图)
         """
+        self.live_novel_id = novel_id
         results = {}
         base_context = {
             "entity_id": prop_id,
@@ -1097,7 +1173,7 @@ class AssetGenerationService:
                 project_id=project_id,
                 novel_id=novel_id,
                 source_prompt=main_prompt,
-                generation_params={"asset_subtype": "main", "style": style},
+                generation_params={"asset_subtype": "main", "style": style, "prompt_routing": self.last_prompt_routing},
             )
             results["main"] = main_asset
 
@@ -1123,6 +1199,7 @@ class AssetGenerationService:
         retry_feedback_advice: Optional[str] = None,
     ) -> Dict[str, Asset]:
         """Generate creator-facing multi-view assets for one story entity."""
+        self.live_novel_id = novel_id
         self.last_generation_failures = []
         preset = ASSET_VIEW_PRESETS.get(entity_type)
         if not preset:
@@ -1264,6 +1341,7 @@ class AssetGenerationService:
                     "prompt_hint": view.get("prompt_hint"),
                     "visual_contract": visual_contract,
                     "model_strategy": strategy,
+                    "prompt_routing": self.last_prompt_routing,
                     "provider_name": self.provider_name,
                     "model_id": self.model_id,
                     "anchor_view_key": resolved_anchor_view_key,
@@ -1490,6 +1568,9 @@ class AssetGenerationService:
         generation_params: Optional[Dict] = None,
     ) -> Asset:
         """创建资产记录"""
+        params = dict(generation_params or {})
+        if self.last_live_accounting:
+            params["live_canary_accounting"] = dict(self.last_live_accounting)
         asset = Asset(
             id=str(uuid4()),
             user_id=self.user_id,
@@ -1508,11 +1589,18 @@ class AssetGenerationService:
             source_prompt=source_prompt,
             expressions=expressions,
             poses=poses,
-            generation_params=generation_params,
+            generation_params=params,
         )
         self.db.add(asset)
+        if self.last_live_accounting and self.last_live_accounting.get("operation_id"):
+            operation = await self.db.get(
+                LiveCanaryProviderOperation, self.last_live_accounting["operation_id"]
+            )
+            if operation:
+                operation.artifact_id = asset.id
         await self.db.commit()
         await self.db.refresh(asset)
+        self.last_live_accounting = None
         return asset
 
     def _build_avatar_prompt(self, name: str, description: str, style: str) -> str:

@@ -81,7 +81,7 @@ def _video_job(user_id: str, shot_id: str, *, auto_check: bool) -> VideoJob:
 async def test_sync_video_job_auto_records_visual_consistency_when_enabled(
     db_session: AsyncSession,
 ) -> None:
-    from app.api.v1.endpoints.video import _sync_video_job_and_shot
+    from app.features.video_generation.public import VideoJobSyncCommand, sync_video_job_and_shot
 
     user_id = f"user-{uuid4()}"
     shot = _shot(user_id)
@@ -90,13 +90,9 @@ async def test_sync_video_job_auto_records_visual_consistency_when_enabled(
     db_session.add_all([shot, asset, job])
     await db_session.flush()
 
-    await _sync_video_job_and_shot(
-        db_session,
-        job,
-        "succeeded",
-        100,
-        "/static/generated/videos/shot.mp4",
-        None,
+    await sync_video_job_and_shot(
+        db_session, job,
+        VideoJobSyncCommand("succeeded", 100, "/static/generated/videos/shot.mp4", None),
     )
 
     assert job.extra_data["visual_consistency"]["score"] == 72
@@ -109,7 +105,7 @@ async def test_sync_video_job_auto_records_visual_consistency_when_enabled(
 async def test_sync_video_job_does_not_auto_record_visual_consistency_by_default(
     db_session: AsyncSession,
 ) -> None:
-    from app.api.v1.endpoints.video import _sync_video_job_and_shot
+    from app.features.video_generation.public import VideoJobSyncCommand, sync_video_job_and_shot
 
     user_id = f"user-{uuid4()}"
     shot = _shot(user_id)
@@ -118,13 +114,9 @@ async def test_sync_video_job_does_not_auto_record_visual_consistency_by_default
     db_session.add_all([shot, asset, job])
     await db_session.flush()
 
-    await _sync_video_job_and_shot(
-        db_session,
-        job,
-        "succeeded",
-        100,
-        "/static/generated/videos/shot.mp4",
-        None,
+    await sync_video_job_and_shot(
+        db_session, job,
+        VideoJobSyncCommand("succeeded", 100, "/static/generated/videos/shot.mp4", None),
     )
 
     assert "visual_consistency" not in job.extra_data

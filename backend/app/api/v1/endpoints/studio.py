@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models import Workflow
-from app.services.studio_actions import create_studio_review_run, list_studio_actions, list_studio_review_runs, run_studio_action
+from app.services.studio_actions import create_studio_review_run, list_studio_actions, list_studio_review_runs, resume_studio_orchestration, run_studio_action
 from app.services.studio_mode import policy_from_request
 from app.services.studio_snapshot import build_studio_snapshot
 from app.services.continuity_review_tasks import list_continuity_review_tasks
@@ -41,6 +41,16 @@ class StudioReviewRequest(BaseModel):
     mode: str = Field("production", pattern="^(test|production)$")
     allow_test_bypass: bool = False
     bypass_reason: Optional[str] = None
+
+
+@router.post("/workflows/{workflow_id}/orchestration/{task_id}/resume", response_model=Dict[str, Any])
+async def resume_workflow_studio_orchestration(
+    workflow_id: str,
+    task_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await resume_studio_orchestration(db, user_id, workflow_id, task_id=task_id)
 
 
 @router.get("/workflows/{workflow_id}/continuity-review-tasks", response_model=Dict[str, Any])

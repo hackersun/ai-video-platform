@@ -11,12 +11,14 @@ test.beforeEach(async ({ page }) => {
   const userId = `top-nav-user-${Date.now()}`;
   const token = devToken(userId);
   await page.addInitScript(({ authToken, authUserId }) => {
+    if (sessionStorage.getItem('top_nav_auth_seeded')) return;
     localStorage.setItem('auth_token', authToken);
     localStorage.setItem('user', JSON.stringify({
       id: authUserId,
       username: authUserId,
       email: `${authUserId}@example.test`,
     }));
+    sessionStorage.setItem('top_nav_auth_seeded', '1');
   }, { authToken: token, authUserId: userId });
 });
 
@@ -40,6 +42,30 @@ test('顶部导航突出工作室主线，并把专业工具收进专家菜单',
   await expect(page.getByRole('menuitem', { name: '提示词管理' })).toBeVisible();
   await page.getByRole('menuitem', { name: '提示词管理' }).click();
   await expect(page).toHaveURL(/\/prompt-skills$/);
+});
+
+test('登录后顶部导航提供账户设置和退出入口', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
+  });
+
+  await page.goto('/studio');
+  await page.waitForLoadState('networkidle');
+
+  await page.getByRole('button', { name: '账户菜单' }).click();
+  await expect(page.getByRole('menuitem', { name: '系统设置' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '个人资料' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '团队管理' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '退出登录' })).toBeVisible();
+
+  await page.getByRole('menuitem', { name: '个人资料' }).click();
+  await expect(page).toHaveURL(/\/settings\/profile$/);
+
+  await page.goto('/studio');
+  await page.getByRole('button', { name: '账户菜单' }).click();
+  await page.getByRole('menuitem', { name: '退出登录' }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.evaluate(() => localStorage.getItem('auth_token'))).resolves.toBeNull();
 });
 
 test('专家工具页面提示回到工作室统一管控', async ({ page }) => {

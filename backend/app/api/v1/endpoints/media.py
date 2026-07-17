@@ -17,7 +17,11 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.endpoints import subtitles as subtitle_api
-from app.api.v1.endpoints.video import VideoGenerateRequest, _resolve_video_lineage
+from app.features.video_generation.public import (
+    VideoGenerateRequest,
+    VideoGenerationError,
+    resolve_video_lineage,
+)
 from app.core.database import get_db
 from app.core.dev_generation import dev_audio_url, dev_video_url, is_dev_mode
 from app.core.model_registry import get_model, get_task_default
@@ -331,7 +335,10 @@ async def generate_media(
         story_bible_id=request.story_bible_id,
         use_consistency_context=request.use_consistency_context,
     )
-    lineage = await _resolve_video_lineage(db, user_id, lineage_request)
+    try:
+        lineage = await resolve_video_lineage(db, user_id, lineage_request)
+    except VideoGenerationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
     shot = lineage.get("shot")
     shot_extra = _json_dict(getattr(shot, "extra_data", None))
     model = _resolve_model_for_task(request.task_type, request.model_id)

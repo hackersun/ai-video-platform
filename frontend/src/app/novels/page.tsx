@@ -7,10 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { 
-  BookOpen, 
-  Plus, 
-  Edit2, 
+import {
+  BookOpen,
+  Plus,
+  Edit2,
   Trash2,
   Search,
   FileText,
@@ -22,7 +22,8 @@ import {
   AlertCircle,
   FileTextIcon,
   Upload,
-  CheckCircle
+  CheckCircle,
+  Sparkles
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -31,6 +32,7 @@ import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
 import { useToast } from '@/components/ui/toast';
 import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
+import { StoryWorkbenchPanel, getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import type { NovelProductionEntry } from '@/lib/studio-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -95,6 +97,7 @@ function NovelsContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedGenre, setSelectedGenre] = useState('全部');
   const [activeTab, setActiveTab] = useState('all');
+  const [selectedNovelId, setSelectedNovelId] = useState<string | null>(null);
   const [importTitle, setImportTitle] = useState('');
   const [importGenre, setImportGenre] = useState('');
   const [importJobId, setImportJobId] = useState('');
@@ -123,7 +126,7 @@ function NovelsContent() {
       }
       const data: ApiNovel[] = await response.json();
       if (productionEntriesRequestRef.current !== requestId) return;
-      
+
       // 转换API数据为前端格式
       const convertedNovels: Novel[] = data.map(n => ({
         id: n.id,
@@ -136,7 +139,7 @@ function NovelsContent() {
         createdAt: n.created_at?.split('T')[0] || new Date().toISOString().split('T')[0],
         updatedAt: n.updated_at?.split('T')[0] || new Date().toISOString().split('T')[0]
       }));
-      
+
       setNovels(convertedNovels);
       const ids = convertedNovels.map((item) => item.id);
       if (ids.length) {
@@ -186,6 +189,7 @@ function NovelsContent() {
     const matchesStatus = activeTab === 'all' || novel.status === activeTab;
     return matchesSearch && matchesGenre && matchesStatus;
   });
+  const selectedNovel = filteredNovels.find((novel) => novel.id === selectedNovelId) || filteredNovels[0] || null;
 
   // 删除小说
   const handleDelete = async (id: string) => {
@@ -193,7 +197,7 @@ function NovelsContent() {
       const response = await fetchWithAuth(`${API_BASE}/novels/${id}`, {
         method: 'DELETE'
       });
-      
+
       if (response.ok) {
         setNovels(novels.filter(n => n.id !== id));
         toast({ title: '删除成功', description: '小说已移除', type: 'success' });
@@ -218,7 +222,7 @@ function NovelsContent() {
           genre: novel.genre
         })
       });
-      
+
       if (response.ok) {
         await loadNovelsFromAPI();
       } else {
@@ -418,9 +422,9 @@ function NovelsContent() {
             <CardContent className="p-4 flex items-center gap-3">
               <AlertCircle className="w-5 h-5 text-red-400" />
               <span className="text-red-300">{error}</span>
-              <Button 
-                variant="outline" 
-                size="sm" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={loadNovelsFromAPI}
                 className="ml-auto border-red-500/50 text-red-400"
               >
@@ -442,98 +446,155 @@ function NovelsContent() {
 
             <TabsContent value={activeTab} className="mt-4">
               {filteredNovels.length > 0 ? (
-                <div className="grid gap-4">
-                  {filteredNovels.map((novel) => (
-                    <Card 
-                      key={novel.id} 
-                      className={`bg-white/5 border-white/10 hover:border-violet-500/30 transition-colors ${
-                        highlightId === novel.id ? 'ring-2 ring-violet-500' : ''
-                      }`}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-3">
-                              <BookOpen className="w-5 h-5 shrink-0 text-violet-400" />
-                              <h3 className="min-w-0 break-words text-lg font-semibold text-white">{novel.title}</h3>
-                              <span className={`px-2 py-0.5 rounded text-xs ${
-                                novel.status === 'completed' ? 'bg-green-500/20 text-green-400' :
-                                novel.status === 'writing' ? 'bg-blue-500/20 text-blue-400' :
-                                'bg-yellow-500/20 text-yellow-400'
-                              }`}>
-                                {STATUS_LABELS[novel.status]}
-                              </span>
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+                  <div className="grid gap-3">
+                    {filteredNovels.map((novel) => {
+                      const isSelected = selectedNovel?.id === novel.id;
+                      return (
+                        <Card
+                          key={novel.id}
+                          className={`bg-white/5 border-white/10 transition-colors ${
+                            highlightId === novel.id ? 'ring-2 ring-violet-500' : ''
+                          } ${isSelected ? 'border-violet-400/50 bg-violet-500/10' : 'hover:border-violet-500/30'}`}
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedNovelId(novel.id)}
+                                  className="block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500"
+                                  aria-label={`预览《${novel.title}》`}
+                                >
+                                  <div className="flex flex-wrap items-center gap-3">
+                                    <BookOpen className="w-5 h-5 shrink-0 text-violet-400" />
+                                    <h3 className="min-w-0 break-words text-lg font-semibold text-white">{novel.title}</h3>
+                                    <span className={`px-2 py-0.5 rounded text-xs ${
+                                      novel.status === 'completed' ? 'bg-green-500/20 text-green-400' :
+                                      novel.status === 'writing' ? 'bg-blue-500/20 text-blue-400' :
+                                      'bg-yellow-500/20 text-yellow-400'
+                                    }`}>
+                                      {STATUS_LABELS[novel.status]}
+                                    </span>
+                                  </div>
+                                  <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-white/60">{novel.description || '暂无简介'}</p>
+                                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-white/40">
+                                    <span className="flex items-center gap-1">
+                                      <FileText className="w-4 h-4" />
+                                      {novel.chapters} 章
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      <Users className="w-4 h-4" />
+                                      {novel.characters} 角色
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-4 h-4" />
+                                      更新于 {novel.updatedAt}
+                                    </span>
+                                  </div>
+                                </button>
+                                <div className="mt-3">
+                                  <NovelProductionEntryCard
+                                    entry={productionEntries[novel.id] || (productionEntriesLoaded ? null : undefined)}
+                                    failed={productionEntriesFailed}
+                                    novelId={novel.id}
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                                <Button asChild variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
+                                  <Link href={`/scripts?novel_id=${novel.id}`}>
+                                    <FileTextIcon className="w-4 h-4 mr-1" />
+                                    剧本
+                                  </Link>
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`查看《${novel.title}》`}
+                                  title="查看"
+                                  className="text-white/60 hover:text-white"
+                                  onClick={() => handleView(novel.id)}
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </Button>
+                                <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`编辑《${novel.title}》`} title="编辑">
+                                  <Link href={`/novels/${novel.id}`}>
+                                    <Edit2 className="w-4 h-4" />
+                                  </Link>
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`复制《${novel.title}》`}
+                                  title="复制"
+                                  className="text-white/60 hover:text-white"
+                                  onClick={() => handleDuplicate(novel)}
+                                >
+                                  <Copy className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  aria-label={`删除《${novel.title}》`}
+                                  title="删除"
+                                  className="text-white/60 hover:text-red-400"
+                                  onClick={() => setDeleteTarget(novel)}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
                             </div>
-                            <p className="mt-2 break-words text-white/60">{novel.description}</p>
-                            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-white/40">
-                              <span className="flex items-center gap-1">
-                                <FileText className="w-4 h-4" />
-                                {novel.chapters} 章
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Users className="w-4 h-4" />
-                                {novel.characters} 角色
-                              </span>
-                              <span className="flex items-center gap-1">
-                                <Clock className="w-4 h-4" />
-                                更新于 {novel.updatedAt}
-                              </span>
-                            </div>
-                            <div className="mt-3">
-                              <NovelProductionEntryCard
-                                entry={productionEntries[novel.id] || (productionEntriesLoaded ? null : undefined)}
-                                failed={productionEntriesFailed}
-                                novelId={novel.id}
-                              />
-                            </div>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                            <Button asChild variant="ghost" size="sm" className="text-blue-400 hover:text-blue-300">
-                              <Link href={`/scripts?novel_id=${novel.id}`}>
-                                <FileTextIcon className="w-4 h-4 mr-1" />
-                                剧本
-                              </Link>
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              aria-label={`查看《${novel.title}》`}
-                              title="查看"
-                              className="text-white/60 hover:text-white"
-                              onClick={() => handleView(novel.id)}
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                            <Button asChild variant="ghost" size="icon" className="text-white/60 hover:text-white" aria-label={`编辑《${novel.title}》`} title="编辑">
-                              <Link href={`/novels/${novel.id}`}>
-                                <Edit2 className="w-4 h-4" />
-                              </Link>
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              aria-label={`复制《${novel.title}》`}
-                              title="复制"
-                              className="text-white/60 hover:text-white"
-                              onClick={() => handleDuplicate(novel)}
-                            >
-                              <Copy className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              aria-label={`删除《${novel.title}》`}
-                              title="删除"
-                              className="text-white/60 hover:text-red-400"
-                              onClick={() => setDeleteTarget(novel)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+
+                  {selectedNovel && (
+                    <StoryWorkbenchPanel
+                      heading="作品预览"
+                      title={selectedNovel.title}
+                      subtitle={`${selectedNovel.genre || '未设置题材'} · ${STATUS_LABELS[selectedNovel.status] || selectedNovel.status}`}
+                      excerptLabel="小说简介"
+                      excerpt={getStoryExcerpt(selectedNovel.description, '暂无简介。建议先补充故事题材、主角、核心冲突和世界观。', 220)}
+                      metrics={[
+                        { label: '章节', value: `${selectedNovel.chapters} 章` },
+                        { label: '角色', value: `${selectedNovel.characters} 个` },
+                        { label: '更新', value: selectedNovel.updatedAt },
+                        { label: '状态', value: STATUS_LABELS[selectedNovel.status] || selectedNovel.status },
+                      ]}
+                      actions={(
+                        <>
+                          <Button asChild size="sm" className="justify-start bg-cyan-600 hover:bg-cyan-700">
+                            <Link href={`/novels/${selectedNovel.id}/asset-analysis`}>
+                              <Sparkles className="mr-2 h-4 w-4" />
+                              分析制作资产
+                            </Link>
+                          </Button>
+                          <Button asChild size="sm" variant="outline" className="justify-start border-white/20 text-white">
+                            <Link href={`/novels/${selectedNovel.id}/chapters`}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              预览和管理章节
+                            </Link>
+                          </Button>
+                          <Button asChild size="sm" variant="outline" className="justify-start border-white/20 text-white">
+                            <Link href={`/scripts?novel_id=${selectedNovel.id}`}>
+                              <FileTextIcon className="mr-2 h-4 w-4" />
+                              改编剧本
+                            </Link>
+                          </Button>
+                        </>
+                      )}
+                      footer={(
+                        <Button asChild className="w-full bg-violet-600 hover:bg-violet-700">
+                          <Link href={`/novels/${selectedNovel.id}`}>
+                            打开作品工作台
+                          </Link>
+                        </Button>
+                      )}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-12">

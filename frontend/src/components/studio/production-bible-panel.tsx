@@ -47,6 +47,9 @@ function EntityRow({
         <div className="mt-1 line-clamp-2 break-words text-xs leading-5 text-white/50">
           {item.description || textValue(item.visual_dna || item.voice || item.asset_count, '缺少描述')}
         </div>
+        {item.evidence ? (
+          <div className="mt-1 break-words text-xs leading-5 text-cyan-100/70">证据：{textValue(item.evidence)}</div>
+        ) : null}
       </div>
       <Button
         size="sm"

@@ -1,0 +1,32 @@
+{
+  "id": "golden-series-mist-lantern",
+  "title": "雾灯邮局",
+  "sanitized_test_fiction": true,
+  "asset_policy": "generated_test_assets_only",
+  "chapters": [
+    {"index": 1, "title": "无主来信"},
+    {"index": 2, "title": "雨巷铜铃"},
+    {"index": 3, "title": "旧站台"},
+    {"index": 4, "title": "逆风邮车"},
+    {"index": 5, "title": "缺页名册"},
+    {"index": 6, "title": "灯塔回声"},
+    {"index": 7, "title": "潮汐密码"},
+    {"index": 8, "title": "最后投递"},
+    {"index": 9, "title": "雾散之后"}
+  ],
+  "episodes": [
+    {"index": 1, "chapter_indices": [1, 2, 3], "required_dialogue": ["林澈：这封信没有寄件人。"], "quality_annotations": ["identity_lock", "subtitle_required"]},
+    {"index": 2, "chapter_indices": [4, 5, 6], "required_dialogue": ["苏晚：铜铃现在归我保管。"], "quality_annotations": ["prop_owner_change", "voice_lock"]},
+    {"index": 3, "chapter_indices": [7, 8, 9], "required_dialogue": ["林澈：我们把最后一封信送到了。"], "quality_annotations": ["no_future_leakage", "final_mp4_required"]}
+  ],
+  "approved_assets": [
+    {"id": "asset-lin-front", "kind": "character_front", "approval_status": "approved", "uri": "generated://golden/lin-front.png"},
+    {"id": "asset-su-front", "kind": "character_front", "approval_status": "approved", "uri": "generated://golden/su-front.png"},
+    {"id": "asset-copper-bell", "kind": "prop", "approval_status": "approved", "uri": "generated://golden/copper-bell.png"}
+  ],
+  "expected_state_events": [
+    {"episode": 1, "entity": "copper-bell", "state": {"owner": "lin"}},
+    {"episode": 2, "entity": "copper-bell", "state": {"owner": "su"}},
+    {"episode": 3, "entity": "mist-lighthouse", "state": {"lamp": "lit"}}
+  ]
+}

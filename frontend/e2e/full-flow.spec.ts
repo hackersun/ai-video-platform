@@ -55,6 +55,24 @@ async function apiGet(page: any, endpoint: string) {
   }, `${API_BASE}${endpoint}`);
 }
 
+async function apiPostResult(page: any, endpoint: string, body: any) {
+  return page.evaluate(async ({ url, payload }) => {
+    const token = localStorage.getItem('auth_token');
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+    });
+    return {
+      status: response.status,
+      data: await response.json().catch(() => ({})),
+    };
+  }, { url: `${API_BASE}${endpoint}`, payload: body });
+}
+
 async function apiPut(page: any, endpoint: string, body: any) {
   return page.evaluate(async ({ url, payload }) => {
     const token = localStorage.getItem('auth_token');
@@ -192,7 +210,7 @@ test('DEV_MODE novel to anime video flow is runnable from the frontend session',
   await page.goto('/jobs');
   await page.waitForLoadState('networkidle');
   await expect(page.getByRole('heading', { name: '任务队列' })).toBeVisible();
-  await expect(page.getByText(`E2E完整流程成片-${stamp}`)).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole('button', { name: `查看E2E完整流程成片-${stamp}详情` })).toBeVisible({ timeout: 10000 });
 });
 
 test('jobs page can cancel and archive a video task', async ({ page }) => {
@@ -216,16 +234,17 @@ test('jobs page can cancel and archive a video task', async ({ page }) => {
 
   await page.goto('/jobs');
   await page.waitForLoadState('networkidle');
-  await expect(page.getByText(taskTitle)).toBeVisible({ timeout: 10_000 });
+  const taskRow = page.getByRole('button', { name: `查看${taskTitle}详情` });
+  await expect(taskRow).toBeVisible({ timeout: 10_000 });
   await page.getByLabel(`取消${taskTitle}`).click();
   const cancelledJobCard = page.locator('div').filter({ hasText: taskTitle }).filter({ has: page.getByLabel(`删除归档${taskTitle}`) }).first();
   await expect(cancelledJobCard.locator('span').filter({ hasText: /^已取消$/ })).toBeVisible({ timeout: 10_000 });
 
   await page.getByLabel(`删除归档${taskTitle}`).click();
-  await expect(page.getByText(taskTitle)).toHaveCount(0, { timeout: 10_000 });
+  await expect(taskRow).toHaveCount(0, { timeout: 10_000 });
 });
 
-test('management pages can create and archive templates entities and publications', async ({ page }) => {
+test('management pages can archive templates and entities and reject preview-only publication', async ({ page }) => {
   const stamp = Date.now();
   await page.goto('/dashboard');
   await expect(page.locator('body')).toBeVisible();
@@ -262,35 +281,28 @@ test('management pages can create and archive templates entities and publication
   await page.getByRole('menuitem', { name: /删除/ }).click();
   await expect(page.getByText(entityName)).toHaveCount(0, { timeout: 10_000 });
 
-  const publishTitle = `E2E发布记录-${stamp}`;
+  const publishTitle = `E2E未渲染发布-${stamp}`;
   const synthesis = await apiPost(page, '/synthesis/create', {
     title: publishTitle,
     video_url: 'https://example.com/e2e-source.mp4',
     audio_url: 'https://example.com/e2e-audio.mp3',
   });
-  const publication = await apiPost(page, '/synthesis/publish', {
+  const publicationResult = await apiPostResult(page, '/synthesis/publish', {
     synthesis_job_id: synthesis.id,
     title: publishTitle,
     metadata: { channel: 'e2e' },
   });
-
-  await page.goto('/synthesis');
-  await expect(page.getByRole('heading', { name: '发布记录' })).toBeVisible({ timeout: 10_000 });
-  const publicationRow = page.getByTestId(`publication-row-${publication.id}`);
-  await expect(publicationRow).toContainText(publishTitle, { timeout: 10_000 });
-  await publicationRow.getByTitle('撤销发布').click();
-  await expect(page.getByText('已撤销')).toBeVisible({ timeout: 10_000 });
-  await page.getByTitle('归档发布记录').click();
-  await expect(page.getByTestId(`publication-row-${publication.id}`)).toHaveCount(0, { timeout: 10_000 });
+  expect(publicationResult.status).toBe(422);
+  expect(publicationResult.data.detail?.code).toBe('publication_not_ready');
 });
 
 test('quick start creates an editable first episode workspace', async ({ page }) => {
   test.setTimeout(60_000);
   const stamp = Date.now();
   await page.goto('/quick-start');
-  await expect(page.getByRole('heading', { name: '极速向导' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('heading', { name: '连续动漫向导' })).toBeVisible({ timeout: 10_000 });
 
-  await page.getByRole('button', { name: '生成首集工程' }).click();
+  await page.getByRole('button', { name: '生成第一集' }).click();
   await expect(page.getByText(/请先补齐：/)).toBeVisible();
   await page.getByPlaceholder('作品名').fill(`E2E极速向导-${stamp}`);
   await page.getByPlaceholder('故事梗概').fill('雨夜旧城中，少年追查一封会发光的密信，并发现自己能听见星辰回声。');
@@ -298,11 +310,11 @@ test('quick start creates an editable first episode workspace', async ({ page })
   await page.locator('input[type="number"]').fill('3');
   await page.getByRole('button', { name: '保存草稿' }).click();
   await expect(page.getByText(/草稿会自动保存在本机/)).toBeVisible();
-  await page.getByRole('button', { name: '生成首集工程' }).click();
+  await page.getByRole('button', { name: '生成第一集' }).click();
 
   await expect(page.getByRole('heading', { name: '已创建' })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('审核分镜')).toBeVisible();
-  await expect(page.getByText('进入工作流')).toBeVisible();
+  await expect(page.getByText('进入工作室')).toBeVisible();
   await expect(page.getByText('查看脚本')).toBeVisible();
 });
 
@@ -346,6 +358,68 @@ test('management pages can edit templates and entities', async ({ page }) => {
   await entityDialog.locator('textarea').first().fill('编辑后实体');
   await entityDialog.getByRole('button', { name: /^保存$/ }).click();
   await expect(page.getByText(`E2E已编辑实体-${stamp}`)).toBeVisible({ timeout: 10_000 });
+});
+
+test('script generation context keeps three previews visible per non-empty category', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+
+    if (path === '/api/v1/novels') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'novel-context', title: '雾港铜铃', genre: '悬疑' }]),
+      });
+      return;
+    }
+    if (path === '/api/v1/chapters/novel/novel-context') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([{ id: 'chapter-context', novel_id: 'novel-context', title: '第二章 暗巷回声', chapter_number: 2 }]),
+      });
+      return;
+    }
+    if (path === '/api/v1/scripts/generate-context/chapter-context') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          previous_chapter: { title: '第一章 雾中来信' },
+          next_chapter: { title: '第三章 灯塔真相' },
+          summary: {
+            counts: { characters: 1, scenes: 4, props: 4, events: 3, relationships: 1 },
+            characters: ['沈砚'],
+            scenes: ['雾港暗巷', '旧码头', '钟楼', '废弃仓库'],
+            props: ['铜铃', '密信', '煤油灯', '旧钥匙'],
+            events: ['暗巷遭遇', '密信转移', '铜铃示警'],
+          },
+        }),
+      });
+      return;
+    }
+    if (path === '/api/v1/scripts' && request.method() === 'GET') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+    if (path === '/api/v1/llm/configs') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+      return;
+    }
+
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+  });
+
+  await page.goto('/scripts?novel_id=novel-context&chapter_id=chapter-context');
+  await page.getByRole('button', { name: /AI生成剧本/ }).click();
+
+  const scenePreview = page.locator('div', { hasText: /^场景：/ });
+  const propPreview = page.locator('div', { hasText: /^道具：/ });
+  const eventPreview = page.locator('div', { hasText: /^事件：/ });
+  await expect(scenePreview).toContainText('雾港暗巷、旧码头、钟楼');
+  await expect(propPreview).toContainText('铜铃、密信、煤油灯');
+  await expect(eventPreview).toContainText('暗巷遭遇、密信转移、铜铃示警');
 });
 
 test('script generation shows chapter continuity context and consistency check', async ({ page }) => {
@@ -429,9 +503,9 @@ test('script generation shows chapter continuity context and consistency check',
   await expect(page.getByText(/事件\s+[1-9]\d*/)).toBeVisible();
   await expect(page.getByText(/关系\s+1/)).toBeVisible();
   await expect(page.locator('div', { hasText: /^人物：/ })).toContainText('沈砚');
-  await expect(page.locator('div', { hasText: /^场景\/道具\/事件：/ })).toContainText('雾港暗巷');
-  await expect(page.locator('div', { hasText: /^场景\/道具\/事件：/ })).toContainText('铜铃');
-  await expect(page.locator('div', { hasText: /^场景\/道具\/事件：/ })).toContainText('暗巷遭遇');
+  await expect(page.locator('div', { hasText: /^场景：/ })).toContainText('雾港暗巷');
+  await expect(page.locator('div', { hasText: /^道具：/ })).toContainText('铜铃');
+  await expect(page.locator('div', { hasText: /^事件：/ })).toContainText('暗巷遭遇');
 
   await page.getByRole('button', { name: '开始生成' }).click();
   await expect(page.getByText('生成结果')).toBeVisible({ timeout: 30_000 });
@@ -675,19 +749,22 @@ test('workflow page shows multi-shot continuous final video manifest', async ({ 
   await expect(page.getByText('查看成片清单')).toBeVisible();
   await expect(page.getByText('成片段落')).toBeVisible();
   await expect(page.getByText('渲染预检与执行')).toBeVisible();
+  await page.locator('select[title="渲染执行器"]').selectOption('ffmpeg_local');
 
   await page.getByRole('button', { name: /渲染预检/ }).click();
-  await expect(page.getByText('预检通过，可以生成本地渲染包。')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('预检通过，可以生成本地 FFmpeg 真实成片。')).toBeVisible({ timeout: 10_000 });
+  const preflight = await apiGet(page, `/workflow/${workflow.workflow_id}/render/preflight?synthesis_job_id=${synthesis.job_id}`);
+  expect(preflight.ready).toBe(true);
+  expect(preflight.blocking_issue_count).toBe(0);
 
-  await page.getByRole('button', { name: /生成渲染包|重新渲染/ }).click();
-  await expect(page.getByRole('button', { name: 'HTML 预览' })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole('button', { name: 'SRT 字幕' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '时间线 EDL' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '渲染清单' })).toBeVisible();
+  await page.getByRole('button', { name: /生成真实成片|重新生成真实成片/ }).click();
+  await expect(page.getByRole('link', { name: '打开真实 MP4' })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByRole('link', { name: '下载 MP4' })).toBeVisible();
 
   const renderedJob = await apiGet(page, `/synthesis/jobs/${synthesis.job_id}`);
   expect(renderedJob.render_status).toBe('rendered');
-  expect(renderedJob.preview_url).toContain('/static/exports/');
+  expect(renderedJob.output_url).toMatch(/\/static\/exports\/.+\.mp4$/);
+  expect(renderedJob.is_publishable).toBe(true);
   expect(renderedJob.srt_url).toContain('/static/exports/');
   expect(renderedJob.timeline_url).toContain('/static/exports/');
   expect(renderedJob.render_manifest_url).toContain('/static/exports/');
@@ -701,14 +778,24 @@ test('workflow page shows multi-shot continuous final video manifest', async ({ 
   expect(renderedStatusJob.timeline_url).toBe(renderedJob.timeline_url);
   expect(renderedStatusJob.render_manifest_url).toBe(renderedJob.render_manifest_url);
 
+  const publication = await apiPost(page, '/synthesis/publish', {
+    synthesis_job_id: synthesis.job_id,
+    title: `E2E连续成片发布-${stamp}`,
+    metadata: { channel: 'e2e' },
+  });
+  expect(publication.video_url).toBe(renderedJob.output_url);
+  expect(publication.metadata?.is_publishable).toBe(true);
+
   await page.goto('/synthesis');
   await expect(page.getByText('合成历史筛选')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId(`publication-row-${publication.id}`)).toContainText(`E2E连续成片发布-${stamp}`);
   await page.getByLabel('小说ID').fill(novel.id);
   await page.getByLabel('章节ID').fill(chapter.id);
   await page.getByLabel('渲染状态').selectOption('rendered');
   await page.getByRole('button', { name: '筛选历史' }).click();
-  await expect(page.getByText(`E2E连续成片-${stamp}`)).toBeVisible({ timeout: 10_000 });
-  await page.getByRole('button', { name: `预览 E2E连续成片-${stamp}` }).click();
+  const synthesisRow = page.getByTestId(`synthesis-job-row-${synthesis.job_id}`);
+  await expect(synthesisRow.getByText(`E2E连续成片-${stamp}`, { exact: true })).toBeVisible({ timeout: 10_000 });
+  await synthesisRow.getByRole('button', { name: `预览 E2E连续成片-${stamp}` }).click();
   await expect(page.getByTestId('synthesis-history-preview')).toBeVisible();
   await expect(page.getByRole('link', { name: '字幕 SRT' })).toBeVisible();
   await expect(page.getByRole('link', { name: '时间线' })).toBeVisible();
@@ -762,8 +849,11 @@ test('workflow page can batch generate direct audio video and render package', a
   await page.getByRole('button', { name: /生成连续成片/ }).click();
   await expect(page.getByText('连续成片清单已生成')).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: /渲染预检/ }).click();
-  await expect(page.getByText('预检通过，可以生成本地渲染包。')).toBeVisible({ timeout: 10_000 });
-  await page.getByRole('button', { name: /生成渲染包|重新渲染/ }).click();
+  await expect(page.getByText('预检通过，可以执行渲染。')).toBeVisible({ timeout: 10_000 });
+  const preflight = await apiGet(page, `/workflow/${workflow.workflow_id}/render/preflight`);
+  expect(preflight.ready).toBe(true);
+  expect(preflight.blocking_issue_count).toBe(0);
+  await page.getByRole('button', { name: /生成审阅包|重新生成审阅包/ }).click();
   await expect(page.getByRole('button', { name: 'HTML 预览' })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByRole('button', { name: 'SRT 字幕' })).toBeVisible();
 

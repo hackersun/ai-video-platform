@@ -17,19 +17,175 @@ from app.models import (
     Chapter,
     MediaGenerationJob,
     Novel,
+    ProductionStateEvent,
+    Publication,
     Script,
     Shot,
     StoryBible,
     StoryEntity,
     Storyboard,
+    SynthesisJob,
+    TTSJob,
     VideoJob,
     Workflow,
 )
 from app.services.production_bible import build_production_bible_summary
+from app.services.production_graph_service import analyze_state_change_impact, build_episode_state_snapshot, project_story_state
 from app.services.short_video_production import build_short_video_model_route
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 
 
 SERIES_PLAN_KEY = "series_plan"
+
+
+async def resolve_production_graph_artifact_impact(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    novel: Novel,
+    event: ProductionStateEvent,
+) -> Dict[str, Any]:
+    """Resolve downstream artifact lineage without mutating or committing."""
+    graph_impact = await analyze_state_change_impact(
+        db, user_id=user_id, novel_id=novel.id, event_id=event.id
+    )
+    series_plan = _json_dict(_json_dict(novel.extra_data).get(SERIES_PLAN_KEY))
+    episodes = [item for item in _json_list(series_plan.get("episodes")) if isinstance(item, dict)]
+    source_episode = event.episode_index or int(_json_dict(event.story_time).get("episode_index") or 0)
+    affected_episodes = set(graph_impact["affected_episode_indices"])
+    if source_episode:
+        affected_episodes.update(
+            int(item.get("episode_index") or item.get("episode_number") or 0)
+            for item in episodes
+            if int(item.get("episode_index") or item.get("episode_number") or 0) >= source_episode
+        )
+    affected_episodes.discard(0)
+    affected_chapter_ids = {
+        str(chapter_id)
+        for item in episodes
+        if int(item.get("episode_index") or item.get("episode_number") or 0) in affected_episodes
+        for chapter_id in _json_list(item.get("chapter_ids"))
+        if chapter_id
+    }
+    planned_workflow_ids = {
+        str(item.get("workflow_id"))
+        for item in episodes
+        if int(item.get("episode_index") or item.get("episode_number") or 0) in affected_episodes
+        and item.get("workflow_id")
+    }
+    workflows = list((await db.execute(
+        select(Workflow).where(Workflow.user_id == user_id, Workflow.novel_id == novel.id)
+    )).scalars().all())
+    affected_workflows = []
+    for workflow in workflows:
+        metadata = _json_dict(workflow.metadata_)
+        episode_index = int(metadata.get("episode_index") or metadata.get("episode_number") or 0)
+        if workflow.id in planned_workflow_ids or episode_index in affected_episodes or workflow.chapter_id in affected_chapter_ids:
+            affected_workflows.append(workflow)
+    workflow_ids = [item.id for item in affected_workflows]
+    storyboard_to_workflow = {item.storyboard_id: item.id for item in affected_workflows if item.storyboard_id}
+    storyboard_ids = list(storyboard_to_workflow)
+    shots = list((await db.execute(
+        select(Shot).where(Shot.user_id == user_id, Shot.storyboard_id.in_(storyboard_ids))
+    )).scalars().all()) if storyboard_ids else []
+
+    async def jobs(model):
+        if not workflow_ids:
+            return []
+        return list((await db.execute(
+            select(model).where(model.user_id == user_id, model.workflow_id.in_(workflow_ids))
+        )).scalars().all())
+
+    video_jobs = await jobs(VideoJob)
+    tts_jobs = await jobs(TTSJob)
+    media_jobs = await jobs(MediaGenerationJob)
+    synthesis_jobs = await jobs(SynthesisJob)
+    synthesis_ids = [item.id for item in synthesis_jobs]
+    publications = list((await db.execute(
+        select(Publication).where(Publication.user_id == user_id, Publication.synthesis_job_id.in_(synthesis_ids))
+    )).scalars().all()) if synthesis_ids else []
+    return {
+        **graph_impact,
+        "affected_episode_indices": sorted(affected_episodes),
+        "affected_workflow_ids": workflow_ids,
+        "affected_episode_contract_ids": [
+            str(_json_dict(_json_dict(item.metadata_).get("episode_contract")).get("contract_id"))
+            for item in affected_workflows
+            if _json_dict(_json_dict(item.metadata_).get("episode_contract")).get("contract_id")
+        ],
+        "affected_shot_ids": [item.id for item in shots],
+        "affected_shots": [
+            {
+                "id": item.id,
+                "review_url": f"/studio/shot-review?workflow_id={storyboard_to_workflow[item.storyboard_id]}&shot_id={item.id}",
+            }
+            for item in shots
+        ],
+        "affected_job_ids": {
+            "video": [item.id for item in video_jobs],
+            "tts": [item.id for item in tts_jobs],
+            "media": [item.id for item in media_jobs],
+            "synthesis": synthesis_ids,
+        },
+        "affected_publication_ids": [item.id for item in publications],
+    }
+
+
+async def mark_production_graph_artifact_impact(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    novel: Novel,
+    event: ProductionStateEvent,
+    commit: bool = True,
+) -> Dict[str, Any]:
+    impact = await resolve_production_graph_artifact_impact(db, user_id=user_id, novel=novel, event=event)
+    marker = {
+        "production_graph_status": "superseded_review_required",
+        "source_event_id": event.id,
+        "source_event_version": event.production_version,
+        "reason": "已批准的 Production Graph 变化影响现有制作产物，需要复审",
+        "marked_at": utc_now().isoformat(),
+    }
+    shots = list((await db.execute(select(Shot).where(Shot.id.in_(impact["affected_shot_ids"])))).scalars().all()) if impact["affected_shot_ids"] else []
+    for shot in shots:
+        extra = dict(shot.extra_data or {})
+        context = dict(extra.get("production_context") or {})
+        context.update({"review_state": "changes_requested", "production_graph_review": marker})
+        shot.extra_data = {**extra, "needs_review": True, "production_context": context}
+        flag_modified(shot, "extra_data")
+    for workflow in (
+        await db.execute(select(Workflow).where(Workflow.id.in_(impact["affected_workflow_ids"])))
+    ).scalars().all() if impact["affected_workflow_ids"] else []:
+        metadata = dict(workflow.metadata_ or {})
+        contract = dict(metadata.get("episode_contract") or {})
+        if contract:
+            contract.update({
+                "status": "superseded_review_required",
+                "superseded_by_event_id": event.id,
+                "superseded_by_production_version": event.production_version,
+            })
+            metadata["episode_contract"] = contract
+            workflow.metadata_ = metadata
+            flag_modified(workflow, "metadata_")
+    for model, key in ((VideoJob, "video"), (TTSJob, "tts"), (MediaGenerationJob, "media"), (SynthesisJob, "synthesis")):
+        ids = impact["affected_job_ids"][key]
+        if not ids:
+            continue
+        values = list((await db.execute(select(model).where(model.id.in_(ids)))).scalars().all())
+        for value in values:
+            value.extra_data = {**(value.extra_data or {}), **marker}
+            flag_modified(value, "extra_data")
+    if impact["affected_publication_ids"]:
+        publications = list((await db.execute(select(Publication).where(Publication.id.in_(impact["affected_publication_ids"])))).scalars().all())
+        for publication in publications:
+            publication.publication_metadata = {**(publication.publication_metadata or {}), **marker}
+            flag_modified(publication, "publication_metadata")
+    if commit:
+        await db.commit()
+    else:
+        await db.flush()
+    return impact
 
 
 def _json_dict(value: Any) -> Dict[str, Any]:
@@ -284,6 +440,53 @@ def _with_production_bible_summary(plan: Dict[str, Any], summary: Dict[str, Any]
     return enriched
 
 
+async def _with_production_graph_snapshots(
+    db: AsyncSession,
+    user_id: str,
+    novel_id: str,
+    plan: Dict[str, Any],
+) -> Dict[str, Any]:
+    enriched = dict(plan)
+    projection = await project_story_state(db, user_id=user_id, novel_id=novel_id)
+    episodes: List[Any] = []
+    for position, episode in enumerate(_json_list(plan.get("episodes"))):
+        if not isinstance(episode, dict):
+            episodes.append(episode)
+            continue
+        payload = _normalize_episode_contract(episode, position)
+        episode_index = int(payload["episode_index"])
+        opening = (
+            await build_episode_state_snapshot(
+                db,
+                user_id=user_id,
+                novel_id=novel_id,
+                episode_index=episode_index - 1,
+            )
+            if episode_index > 1
+            else {"state": {"entities": {}, "world": {}}, "applied_event_ids": []}
+        )
+        closing = await build_episode_state_snapshot(
+            db,
+            user_id=user_id,
+            novel_id=novel_id,
+            episode_index=episode_index,
+        )
+        payload["production_graph"] = {
+            "version": projection["through_version"],
+            "hash": projection["graph_hash"],
+            "status": closing["status"],
+            "opening_state": opening["state"],
+            "expected_closing_state": closing["state"],
+            "relevant_event_ids": closing["applied_event_ids"],
+            "unresolved_conflicts": closing["unresolved_conflicts"],
+        }
+        episodes.append(payload)
+    enriched["episodes"] = episodes
+    enriched["production_graph_version"] = projection["through_version"]
+    enriched["production_graph_hash"] = projection["graph_hash"]
+    return enriched
+
+
 def _episode_narrative(
     novel: Novel,
     chapters: List[Chapter],
@@ -329,7 +532,20 @@ async def get_series_plan(db: AsyncSession, user_id: str, novel_id: str) -> Dict
     if not plan:
         return plan
     summary = await build_production_bible_summary(db, user_id, novel_id)
-    return _with_production_bible_summary(plan, summary)
+    enriched = _with_production_bible_summary(plan, summary)
+    for episode in _json_list(enriched.get("episodes")):
+        chapter_ids = _json_list(episode.get("chapter_ids")) if isinstance(episode, dict) else []
+        if chapter_ids:
+            episode_summary = await build_production_bible_summary(
+                db, user_id, novel_id, as_of_chapter_id=str(chapter_ids[-1])
+            )
+            episode["production_bible_summary"] = _compact_production_bible_summary(episode_summary)
+    return await _with_production_graph_snapshots(
+        db,
+        user_id,
+        novel_id,
+        enriched,
+    )
 
 
 async def build_series_plan(
@@ -443,21 +659,17 @@ async def build_series_plan(
         if job.chapter_id:
             media_by_chapter[job.chapter_id].append(job)
 
-    entity_result = await db.execute(
-        select(StoryEntity).where(
-            and_(
-                StoryEntity.user_id == user_id,
-                StoryEntity.novel_id == novel_id,
-            )
-        )
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
     )
-    entities = list(entity_result.scalars().all())
     entities_by_chapter: Dict[str, List[StoryEntity]] = defaultdict(list)
     global_entities: List[StoryEntity] = []
     for entity in entities:
         if entity.chapter_id in chapter_ids:
             entities_by_chapter[entity.chapter_id].append(entity)
-        elif entity.novel_id == novel_id:
+        elif entity.novel_id == novel_id and bool(_json_dict(entity.attributes).get("is_global_fact")):
             global_entities.append(entity)
 
     workflow_result = await db.execute(
@@ -518,6 +730,9 @@ async def build_series_plan(
         )
         first_chapter = episode_chapters[0]
         last_chapter = episode_chapters[-1]
+        episode_bible_summary = await build_production_bible_summary(
+            db, user_id, novel_id, as_of_chapter_id=last_chapter.id
+        )
         workflow = next(
             (item for chapter_id in episode_chapter_ids for item in workflows_by_chapter.get(chapter_id, [])),
             None,
@@ -567,6 +782,7 @@ async def build_series_plan(
                     "completed_media": len(completed_videos) + len(completed_media),
                 },
                 "primary_chapter_id": first_chapter.id,
+                "production_bible_summary": _compact_production_bible_summary(episode_bible_summary),
                 "workflow_id": workflow.id if workflow else None,
             }
         )
@@ -599,6 +815,7 @@ async def build_series_plan(
         "episodes": episodes,
     }
     plan = _with_production_bible_summary(plan, production_bible_summary)
+    plan = await _with_production_graph_snapshots(db, user_id, novel.id, plan)
 
     if persist:
         extra_data = dict(_json_dict(novel.extra_data))

@@ -54,6 +54,8 @@ import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
 import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
+import { SeriesRunPanel } from '@/components/novels/series-run-panel';
+import { getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
@@ -131,6 +133,8 @@ interface StoryEntityCharacter {
 interface Script {
   id: string;
   title: string;
+  description?: string;
+  content?: string;
   genre?: string;
   status: string;
   chapter_id?: string;
@@ -454,6 +458,7 @@ export default function NovelDetailPage() {
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
   const [seriesPlan, setSeriesPlan] = useState<SeriesPlan | null>(null);
   const [productionEntry, setProductionEntry] = useState<NovelProductionEntry | null | undefined>(undefined);
+  const [entityReviewSummary, setEntityReviewSummary] = useState<any | null>(null);
   const [storyStateMachine, setStoryStateMachine] = useState<StoryStateMachine | null>(null);
   const [stateMachineIssues, setStateMachineIssues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -557,15 +562,17 @@ export default function NovelDetailPage() {
     setLoading(true);
     try {
       // 并行加载小说、章节、角色、剧本
-      const [novelRes, chaptersRes, charactersRes, storyEntityCharacters, scriptsRes, storyBibleRes, seriesPlanRes] = await Promise.all([
+      const [novelRes, chaptersRes, charactersRes, storyEntityCharacters, scriptsRes, storyBibleRes, seriesPlanRes, reviewSummary] = await Promise.all([
         fetchWithAuth(`${API_BASE}/novels/${novelId}`),
         fetchWithAuth(`${API_BASE}/chapters/novel/${novelId}`),
         fetchWithAuth(`${API_BASE}/characters?novel_id=${novelId}`),
         apiClient.getStoryEntities({ novel_id: novelId, entity_type: 'character', limit: 200 }).catch(() => []),
         fetchWithAuth(`${API_BASE}/scripts?novel_id=${novelId}`),
         fetchWithAuth(`${API_BASE}/story-bibles?novel_id=${novelId}`),
-        fetchWithAuth(`${API_BASE}/novels/${novelId}/series-plan`)
+        fetchWithAuth(`${API_BASE}/novels/${novelId}/series-plan`),
+        apiClient.getEntityReviewSummary({ novel_id: novelId }).catch(() => null)
       ]);
+      setEntityReviewSummary(reviewSummary || null);
       
       if (novelRes.ok) {
         const novelData = await novelRes.json();
@@ -1112,6 +1119,12 @@ export default function NovelDetailPage() {
   const novelDescription = novel.description?.trim()
     || '暂无小说简介。建议在“设置”中补充题材、主角、核心冲突和世界观，便于后续章节、剧本、分镜和视频生成保持一致。';
   const totalWordCount = chapters.reduce((sum, chapter) => sum + (chapter.word_count || 0), 0);
+  const firstReadableChapter = chapters.find((chapter) => chapter.content?.trim()) || chapters[0];
+  const readingPreview = getStoryExcerpt(
+    firstReadableChapter?.content || novel.description,
+    '暂无可预览正文。可以先创建章节，或用 AI 续写下一章生成可改编内容。',
+    280
+  );
   const overviewStats = [
     { label: '章节', value: chapters.length },
     { label: '角色', value: characters.length },
@@ -1144,6 +1157,12 @@ export default function NovelDetailPage() {
           
           {/* 快捷操作 */}
           <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Button asChild className="bg-cyan-600 hover:bg-cyan-700">
+              <Link href={`/novels/${novelId}/asset-analysis`}>
+                <Sparkles className="w-4 h-4 mr-2" />
+                AI 分析制作资产
+              </Link>
+            </Button>
             <Button 
               variant="outline" 
               className="border-violet-500/50"
@@ -1236,8 +1255,16 @@ export default function NovelDetailPage() {
                         </Badge>
                       ) : null}
                     </div>
-                    <h2 className="mt-3 text-lg font-semibold text-white">作品简介</h2>
-                    <p className="mt-2 max-w-4xl whitespace-pre-wrap break-words text-sm leading-7 text-white/68">
+                    <h2 className="mt-3 text-lg font-semibold text-white">作品阅读预览</h2>
+                    <div className="mt-2 rounded-lg border border-white/10 bg-black/15 p-3">
+                      <div className="mb-1 text-xs text-white/40">
+                        {firstReadableChapter ? `${firstReadableChapter.title} · 正文片段` : '简介片段'}
+                      </div>
+                      <p className="whitespace-pre-wrap break-words text-sm leading-7 text-white/68">
+                        {readingPreview}
+                      </p>
+                    </div>
+                    <p className="mt-3 max-w-4xl whitespace-pre-wrap break-words text-sm leading-7 text-white/55">
                       {novelDescription}
                     </p>
                   </div>
@@ -1256,12 +1283,32 @@ export default function NovelDetailPage() {
                   {overviewStats.map((item) => (
                     <div key={item.label} className="rounded-lg border border-white/10 bg-black/15 px-3 py-2">
                       <div className="text-xs text-white/40">{item.label}</div>
-                      <div className="mt-1 text-base font-semibold text-white">{item.label} {item.value}</div>
+                      <div className="mt-1 text-base font-semibold text-white">{item.value}</div>
                     </div>
                   ))}
                 </div>
 
-                <div className="grid gap-3 lg:grid-cols-3">
+                <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/[0.07] p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium text-cyan-50">
+                    <Sparkles className="h-4 w-4" />
+                    AI 下一步
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button asChild size="sm" className="bg-cyan-600 hover:bg-cyan-700">
+                      <Link href={`/novels/${novelId}/asset-analysis`}>
+                        分析制作资产
+                      </Link>
+                    </Button>
+                    <Button size="sm" variant="outline" className="border-white/20" onClick={() => setActiveTab('chapters')}>
+                      管理章节
+                    </Button>
+                    <Button size="sm" variant="outline" className="border-white/20" onClick={() => setActiveTab('scripts')}>
+                      核对剧本
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 lg:grid-cols-4">
                   <div className="rounded-lg bg-white/[0.04] p-3">
                     <div className="text-xs text-white/40">正文规模</div>
                     <div className="mt-1 text-sm font-medium text-white">{totalWordCount || 0} 字</div>
@@ -1278,6 +1325,16 @@ export default function NovelDetailPage() {
                       {chapters.length === 0 ? '先创建章节' : seriesPlan?.episodes?.length ? '按集推进制作' : '生成整书计划'}
                     </div>
                   </div>
+                  <Link href={`/novels/${novelId}/asset-analysis`} className="rounded-lg border border-cyan-400/20 bg-cyan-500/[0.08] p-3 transition-colors hover:bg-cyan-500/[0.12]">
+                    <div className="text-xs text-cyan-100/60">资产分析</div>
+                    <div className="mt-1 truncate text-sm font-medium text-cyan-50">
+                      {(entityReviewSummary?.candidate_count || 0) > 0
+                        ? `待审核 ${entityReviewSummary.candidate_count}`
+                        : (entityReviewSummary?.approved_count || 0) > 0
+                          ? `已定稿 ${entityReviewSummary.approved_count}`
+                          : '开始分析'}
+                    </div>
+                  </Link>
                 </div>
               </div>
             </div>
@@ -1511,6 +1568,12 @@ export default function NovelDetailPage() {
                               <div className="text-white/40 text-sm">
                                 {chapter.word_count || 0} 字 · {CHAPTER_STATUS_LABELS[chapter.status] || chapter.status || '草稿'}
                               </div>
+                              <div className="mt-2 rounded-md border border-white/10 bg-black/15 p-2">
+                                <div className="mb-1 text-xs text-white/35">正文预览</div>
+                                <p className="line-clamp-2 break-words text-sm leading-6 text-white/60">
+                                  {getStoryExcerpt(chapter.content, '这个章节还没有正文，可先用 AI 续写或进入编辑页补充。', 140)}
+                                </p>
+                              </div>
                             </div>
                           </Link>
                           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
@@ -1622,6 +1685,12 @@ export default function NovelDetailPage() {
                   </div>
                 ) : (
                   <>
+                    <SeriesRunPanel
+                      novelId={novelId}
+                      chapters={chapters}
+                      seriesPlan={seriesPlan}
+                      modelConfigs={modelConfigs}
+                    />
                     <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>
@@ -2088,15 +2157,21 @@ export default function NovelDetailPage() {
                     {scripts.map((script) => (
                       <div
                         key={script.id}
-                        className="flex items-center justify-between p-3 bg-white/5 rounded-lg hover:bg-white/10 transition-colors"
+                        className="flex flex-col gap-3 rounded-lg bg-white/5 p-3 transition-colors hover:bg-white/10 sm:flex-row sm:items-center sm:justify-between"
                       >
-                        <div>
+                        <div className="min-w-0 flex-1">
                           <div className="text-white font-medium">{script.title}</div>
                           <div className="text-white/40 text-sm">
                             {getGenreLabel(script.genre)} · {SCRIPT_STATUS_LABELS[script.status] || script.status || '草稿'}
                           </div>
+                          <div className="mt-2 rounded-md border border-white/10 bg-black/15 p-2">
+                            <div className="mb-1 text-xs text-white/35">剧本预览</div>
+                            <p className="line-clamp-2 break-words text-sm leading-6 text-white/60">
+                              {getStoryExcerpt(script.content || script.description, '这个剧本还没有正文，可从章节内容生成或进入剧本页补充。', 140)}
+                            </p>
+                          </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 sm:justify-end">
                           <Button asChild size="sm" variant="ghost" aria-label={`查看剧本 ${script.title}`} title="查看剧本">
                             <Link href={`/scripts/${script.id}`}>
                               <Eye className="w-4 h-4" />

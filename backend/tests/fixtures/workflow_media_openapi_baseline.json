@@ -1,0 +1,10 @@
+{
+  "canonicalization": "json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':'))",
+  "captured_from_workflow_sha256": "2e872edb8b13517a1635e4aad1c1aa906e06b5d7ec3510354684b070ce3ff30f",
+  "payload": {
+    "operation_fields": ["requestBody", "responses"],
+    "request_component": "WorkflowMediaBatchRequest",
+    "response_component": "WorkflowMediaBatchResponse"
+  },
+  "sha256": "dfef1ecbe6644d652c1c56e9503c1144b74054f81e5c791947b37ca3dca517b1"
+}

@@ -1,20 +1,24 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ReactNode } from 'react';
+import { ReactNode, Suspense } from 'react';
+import { StudioReturnDock, StudioTaskContext } from '@/components/studio/studio-return-dock';
 import { TopNavigation } from './top-navigation';
 
 interface MainLayoutProps {
   children: ReactNode;
+  wide?: boolean;
 }
 
-export function MainLayout({ children }: MainLayoutProps) {
+export function MainLayout({ children, wide = false }: MainLayoutProps) {
   return (
     <div className="min-h-screen">
       <TopNavigation />
-      <main className="mx-auto w-full max-w-7xl px-4 py-8 pt-24 sm:px-6">
+      <main className={`mx-auto w-full px-4 py-8 pt-24 ${wide ? 'max-w-[1480px] sm:px-8' : 'max-w-7xl sm:px-6'}`}>
+        <Suspense fallback={null}><StudioTaskContext /></Suspense>
         {children}
       </main>
+      <Suspense fallback={null}><StudioReturnDock /></Suspense>
     </div>
   );
 }

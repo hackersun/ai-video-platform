@@ -78,6 +78,37 @@ def _replace_regex_section(prompt: str, pattern: str, replacement: str, replacem
     return safe_prompt
 
 
+def _compact_novel_continuity_lock(prompt: str, replacements: List[Dict[str, str]]) -> str:
+    pattern = re.compile(
+        r"\n- 整部小说连续性锁:.*?(?=\n- 小说级系列种子:|\n- 章节连续性种子:|\n- 分镜派生种子:|\n- 参考图:|\n视频一致性约束:|\Z)",
+        flags=re.DOTALL,
+    )
+
+    def repl(match: re.Match[str]) -> str:
+        section = match.group(0)
+        markers: List[str] = []
+        previous_match = re.search(r"上一章承接：第[^章]+章《([^》]+)》", section)
+        if previous_match:
+            markers.append(f"上一章承接：{previous_match.group(1)}")
+        elif "上一章承接" in section:
+            markers.append("上一章承接")
+        if "上一章状态" in section:
+            markers.append("上一章状态")
+        if "当前章节" in section:
+            markers.append("当前章节")
+        if "当前章节状态" in section:
+            markers.append("当前章节状态")
+        if "下一章不可矛盾约束" in section:
+            markers.append("后续章节约束")
+        marker_note = f"；{'、'.join(markers)}已锁定" if markers else ""
+        return f"\n- 整部小说连续性锁: 保持角色外观、服装、场景光影、道具外观和画风连续{marker_note}。\n"
+
+    safe_prompt, count = pattern.subn(repl, prompt)
+    if count:
+        replacements.append({"source": "novel_continuity_lock_full_block", "target": "compact_novel_continuity_lock"})
+    return safe_prompt
+
+
 def _strip_provider_unnecessary_story_context(prompt: str, replacements: List[Dict[str, str]]) -> str:
     """Remove internal story-planning blocks that increase provider moderation risk."""
     safe_prompt = prompt
@@ -93,12 +124,7 @@ def _strip_provider_unnecessary_story_context(prompt: str, replacements: List[Di
         "\nStory Bible状态机: 内部状态已锁定；供应商提示词仅使用当前镜头视觉信息。\n",
         replacements,
     )
-    safe_prompt = _replace_regex_section(
-        safe_prompt,
-        r"\n- 整部小说连续性锁:.*?(?=\n- 小说级系列种子:|\n- 章节连续性种子:|\n- 分镜派生种子:|\n- 参考图:|\n视频一致性约束:|\Z)",
-        "\n- 整部小说连续性锁: 保持角色外观、服装、场景光影、道具外观和画风连续。\n",
-        replacements,
-    )
+    safe_prompt = _compact_novel_continuity_lock(safe_prompt, replacements)
     return safe_prompt
 
 
@@ -289,14 +315,17 @@ def _compact_provider_video_prompt(prompt: str, replacements: List[Dict[str, str
         "- 分辨率:",
         "- 参考图:",
         "- 参考图来源:",
+        "- 整部小说连续性锁:",
         "- 人物角色:",
         "- 角色视觉DNA锁:",
         "- 角色多视图参考:",
         "- 场景:",
         "- 道具:",
+        "- 字幕/对白:",
         "- 环境连续性:",
         "- 资产版本锁:",
         "- 小说级风格锁:",
+        "- 动漫连续性硬约束:",
     )
     for line in prompt.splitlines():
         if line.startswith(allowed_prefixes):

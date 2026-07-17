@@ -15,6 +15,7 @@ from app.core.time_utils import utc_now
 from app.models import Asset, Chapter, Novel, Script, Shot, StoryBible, StoryEntity, Storyboard, Workflow
 from app.services.default_anime_library import ensure_default_anime_assets
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 from app.services.story_prompt_context import compact_text, load_story_prompt_context
 
 
@@ -256,11 +257,13 @@ async def _load_entities(
 ) -> List[StoryEntity]:
     if not novel_id:
         return []
-    query = select(StoryEntity).where(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
-    if chapter_id:
-        query = query.where((StoryEntity.chapter_id == chapter_id) | (StoryEntity.chapter_id.is_(None)))
-    result = await db.execute(query.order_by(StoryEntity.entity_type, desc(StoryEntity.updated_at)))
-    return list(result.scalars().all())
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
+    return sorted(entities, key=lambda entity: (entity.entity_type or "", str(entity.updated_at or "")), reverse=True)
 
 
 def _entity_to_ref(entity: StoryEntity) -> Dict[str, Any]:

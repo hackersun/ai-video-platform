@@ -16,10 +16,14 @@ export function studioContextParams(
     snapshot?.story_context?.chapter?.id ||
     snapshot?.guidance?.breadcrumbs?.chapter_id ||
     '';
+  const scriptId = snapshot?.workflow?.script_id || snapshot?.story_context?.script?.id || '';
+  const storyboardId = snapshot?.workflow?.storyboard_id || snapshot?.story_context?.storyboard?.id || '';
 
   if (workflowId) params.set('workflow_id', workflowId);
   if (novelId) params.set('novel_id', novelId);
   if (chapterId) params.set('chapter_id', chapterId);
+  if (scriptId) params.set('script_id', scriptId);
+  if (storyboardId) params.set('storyboard_id', storyboardId);
 
   Object.entries(extra).forEach(([key, value]) => {
     if (value) params.set(key, value);
@@ -41,10 +45,22 @@ export function withStudioContext(
   const existingQuery = queryIndex >= 0 ? pathWithoutHash.slice(queryIndex + 1) : '';
   const params = new URLSearchParams(existingQuery);
 
-  studioContextParams(snapshot, extra).forEach((value, key) => {
-    params.set(key, value);
+  studioContextParams(snapshot).forEach((value, key) => {
+    if (!params.has(key)) params.set(key, value);
+  });
+  Object.entries(extra).forEach(([key, value]) => {
+    if (value) params.set(key, value);
   });
 
   const qs = params.toString();
   return `${basePath}${qs ? `?${qs}` : ''}${hash}`;
+}
+
+export function withStudioQuickAction(
+  path: string,
+  snapshot: StudioSnapshot | null,
+  extra: Record<string, string | undefined | null> = {}
+) {
+  const returnTo = withStudioContext('/studio', snapshot);
+  return withStudioContext(path, snapshot, { source: 'studio', return_to: returnTo, ...extra });
 }

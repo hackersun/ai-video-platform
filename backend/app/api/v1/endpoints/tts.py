@@ -22,6 +22,7 @@ from app.core.api_key_utils import get_user_api_key
 from app.core.dev_generation import dev_audio_url, dev_tts_audio_url, estimate_tts_duration_seconds, is_dev_mode
 from app.core.minimax_config import DEFAULT_TTS_VOICE
 from app.core.time_utils import utc_now
+from app.services.dialogue_parser import extract_character_from_text, parse_dialogue
 from app.services.consistency_context import build_consistency_prompt
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.models.tts_job import TTSJob
@@ -33,63 +34,12 @@ from app.services.minimax_service import MINIMAX_VOICE_CLONE_MODEL
 from app.services.volcano_speech_tts import configure_volcano_speech_endpoint
 
 router = APIRouter(tags=["语音合成"])
-
 STATIC_ROOT = Path(__file__).resolve().parents[4] / "static"
 VOICE_CLONE_DIR = STATIC_ROOT / "generated" / "voice-clones"
 VOICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 
 
 # ============== 辅助函数 ==============
-
-def extract_character_from_text(text: str) -> Optional[str]:
-    """
-    从文本中提取角色名。
-    支持格式: "角色名: 对话" 或 "角色名：对话" 或 "角色名说：" 等模式
-    """
-    if not text:
-        return None
-    patterns = [
-        r"([^\s：:]+)说[：:]",   # "张三说："
-        r"([^\s：:]+)道[：:]",     # "张三道："
-        r"([^\s：:]+)回答[：:]", # "张三回答："
-        r"([^\s：:]+)[：:]",      # "张三："
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip()
-    return None
-
-
-def parse_dialogue(dialogue: str) -> List[Dict[str, str]]:
-    """
-    解析多角色对话文本，返回分段列表。
-    支持格式: "角色名: 对话文本" 每行一个
-    返回: [{'character': '小明', 'text': '对话内容'}, ...]
-    """
-    if not dialogue:
-        return []
-    lines = dialogue.strip().split('\n')
-    segments = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        # 匹配 "角色名: 对话" 或 "角色名：对话"
-        match = re.match(r'^([^:：]+?)[:：]\s*(.+)$', line)
-        if match:
-            segments.append({
-                'character': match.group(1).strip(),
-                'text': match.group(2).strip()
-            })
-        else:
-            # 无角色名前缀，整段作为默认
-            segments.append({
-                'character': '',
-                'text': line
-            })
-    return segments
-
 
 def is_multi_character(segments: List[Dict]) -> bool:
     """判断是否为多角色对话"""

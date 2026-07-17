@@ -6,6 +6,7 @@ from app.core.time_utils import utc_now
 from datetime import datetime
 import hashlib
 import json
+import re
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -19,13 +20,38 @@ from app.core.api_key_utils import create_text_generation_service, get_user_text
 from app.core.database import get_db
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
-from app.models import Asset, Character, Chapter, Novel, Project, Script, Shot, StoryBible, StoryEntity
+from app.models import (
+    Asset,
+    Character,
+    Chapter,
+    Novel,
+    ProductionStateEvent,
+    Project,
+    Script,
+    Shot,
+    StoryBible,
+    StoryEntity,
+)
 from app.services.entity_extraction_service import (
     ENTITY_TYPES,
     build_story_bible_sections,
     extract_story_entities,
     normalize_extracted_entities,
 )
+from app.services.entity_chapter_provenance import attach_first_chapter_provenance
+from app.services.entity_review_service import (
+    EntityApprovalEvidenceError,
+    approve_review_entity,
+    entity_has_duplicate_risk,
+    get_entity_review_summary,
+    get_extraction_run_detail,
+    reject_review_entity,
+    run_candidate_entity_extraction,
+    suggest_entity_merges,
+)
+from app.services.entity_targeted_enrichment_service import enrich_target_entity
+from app.services.entity_extraction_schema import CanonicalEntityCandidate
+from app.services.entity_quality_service import score_entity_candidate
 from app.services.default_anime_library import ensure_default_story_entities
 from app.services.entity_impact_service import analyze_entity_change_impact, mark_entity_change_impact_for_review
 from app.services.continuity_review_tasks import (
@@ -35,12 +61,27 @@ from app.services.continuity_review_tasks import (
 )
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_blocks, apply_active_prompt_skill_template
+from app.services.prompt_template_router import select_prompt_skill_for_model
 from app.services.production_bible import approve_story_entity, build_production_bible_summary
+from app.services.production_graph_service import append_state_event, project_story_state
+from app.services.series_production import (
+    mark_production_graph_artifact_impact,
+    resolve_production_graph_artifact_impact,
+)
 from app.services.story_state_machine import (
     build_story_state_machine,
     check_story_state_machine,
     get_story_state_machine,
 )
+from app.services.story_entity_lifecycle import (
+    APPROVED,
+    get_entity_review_status,
+    is_entity_asset_generation_allowed,
+    is_entity_production_visible,
+    query_story_entities_for_production,
+    set_entity_review_status,
+)
+from app.services.story_entity_stats import production_entity_counts
 
 router = APIRouter(tags=["故事圣经"])
 
@@ -235,6 +276,51 @@ class EntityExtractionResponse(BaseModel):
     chapter_id: Optional[str]
     script_id: Optional[str] = None
     entities: List[StoryEntityResponse]
+
+
+class EntityCandidateAnalysisRequest(EntityExtractionRequest):
+    source_type: str = Field("novel", max_length=40)
+    source_id: Optional[str] = None
+    persist_rejected: bool = False
+    allow_auto_approve: bool = False
+
+
+class EntityReviewActionRequest(BaseModel):
+    reason: Optional[str] = None
+
+
+class EntityMergeSuggestionRequest(BaseModel):
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+
+
+class TargetedEntityEnrichmentRequest(BaseModel):
+    novel_id: Optional[str] = None
+    chapter_id: Optional[str] = None
+    script_id: Optional[str] = None
+    text: str = Field(..., min_length=1)
+    entity_type: str = Field(..., description="character/scene/prop/event")
+    entity_name: str = Field(..., min_length=1, max_length=200)
+    target_entity_id: Optional[str] = None
+    fields: List[str] = Field(default_factory=list)
+    mode: str = Field("preview", pattern="^(preview|merge_candidate|apply_to_candidate|apply_to_approved_requires_confirmation)$")
+    model_config_id: Optional[str] = None
+
+
+class ProductionGraphEventAppendRequest(BaseModel):
+    novel_id: str = Field(..., min_length=1)
+    chapter_id: Optional[str] = None
+    episode_index: Optional[int] = Field(None, ge=1)
+    entity_id: Optional[str] = None
+    event_type: str = Field(..., min_length=1, max_length=64)
+    story_time: Dict[str, Any] = Field(default_factory=dict)
+    production_time: Dict[str, Any] = Field(default_factory=dict)
+    before_state: Dict[str, Any] = Field(default_factory=dict)
+    after_state: Dict[str, Any] = Field(default_factory=dict)
+    evidence: Any = None
+    approval_status: str = Field("pending", pattern="^(pending|approved|rejected)$")
+    restore_version: Optional[int] = Field(None, ge=0)
 
 
 class ExtractedAssetResponse(BaseModel):
@@ -707,6 +793,25 @@ async def _resolve_extraction_text(
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="必须提供 novel_id、chapter_id、script_id 或 text")
 
 
+def _validated_evidence_span(text: str, item: dict[str, Any]) -> tuple[Optional[int], Optional[int], str]:
+    span = str(item.get("evidence_span") or item.get("evidence") or "")
+    start, end = item.get("char_start"), item.get("char_end")
+    if start is not None or end is not None:
+        if (
+            isinstance(start, int) and isinstance(end, int)
+            and 0 <= start <= end <= len(text)
+            and text[start:end] == span
+        ):
+            return start, end, "verified"
+        return None, None, "unmatched"
+    if not span:
+        return None, None, "unmatched"
+    matches = [match.start() for match in re.finditer(re.escape(span), text)]
+    if len(matches) == 1:
+        return matches[0], matches[0] + len(span), "verified"
+    return None, None, "ambiguous" if len(matches) > 1 else "unmatched"
+
+
 async def _extract_and_optionally_persist(
     db: AsyncSession,
     user_id: str,
@@ -729,39 +834,43 @@ async def _extract_and_optionally_persist(
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
-    if persist:
-        existing_query = select(StoryEntity).where(
-            StoryEntity.user_id == user_id,
-            StoryEntity.novel_id == novel_id if novel_id else StoryEntity.novel_id.is_(None),
-            StoryEntity.chapter_id == chapter_id if chapter_id else StoryEntity.chapter_id.is_(None),
-            StoryEntity.script_id == script_id if script_id else StoryEntity.script_id.is_(None),
-            StoryEntity.entity_type.in_(entity_types),
-        )
-        existing_entities = list((await db.execute(existing_query)).scalars().all())
-        existing_by_key = {
-            _entity_match_key(entity.entity_type, entity.name, entity.canonical_name): entity
-            for entity in existing_entities
+    chapter_number = None
+    if chapter_id:
+        chapter = await _get_chapter_or_404(db, chapter_id, user_id)
+        chapter_number = chapter.chapter_number
+    for item in extracted:
+        evidence = str(item.get("evidence_span") or item.get("evidence") or "")
+        start, end, span_status = _validated_evidence_span(text, item)
+        item["source_chapter_id"] = chapter_id
+        item["source_chapter_number"] = chapter_number
+        item["evidence_span"] = evidence
+        item["char_start"] = start
+        item["char_end"] = end
+        item.setdefault("extraction_model", "deterministic-v2")
+        item["extraction_config"] = {
+            **(item.get("extraction_config") if isinstance(item.get("extraction_config"), dict) else {}),
+            "span_status": span_status,
         }
-        entities: list[StoryEntity] = []
-        for item in extracted:
-            key = _entity_match_key(item["entity_type"], item.get("name"))
-            entity = existing_by_key.get(key)
-            if entity:
-                _apply_extracted_entity(entity, item)
-            else:
-                entity = _new_story_entity_from_extracted(
-                    user_id=user_id,
-                    novel_id=novel_id,
-                    chapter_id=chapter_id,
-                    script_id=script_id,
-                    item=item,
-                )
-                db.add(entity)
-            entities.append(entity)
-        await db.commit()
-        for entity in entities:
-            await db.refresh(entity)
-        return entities
+        item.setdefault("review_state", "candidate")
+    if novel_id and not chapter_id:
+        await attach_first_chapter_provenance(db, user_id=user_id, novel_id=novel_id, items=extracted)
+
+    if persist:
+        result = await run_candidate_entity_extraction(
+            db,
+            user_id=user_id,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            script_id=script_id,
+            source_type="script" if script_id else ("chapter" if chapter_id else "novel"),
+            source_id=script_id or chapter_id or novel_id,
+            text=text,
+            entity_types=entity_types,
+            model_config_id=model_config_id,
+            persist=True,
+            candidate_items=extracted,
+        )
+        return result["entities"]
 
     return [
         StoryEntity(
@@ -829,7 +938,8 @@ def _parse_entity_json(content: str) -> list[dict[str, Any]]:
         name = str(item.get("name") or item.get("title") or "").strip()
         if entity_type not in allowed or not name:
             continue
-        entities.append({
+        payload = dict(item)
+        payload.update({
             "entity_type": entity_type,
             "name": name[:200],
             "description": item.get("description") or item.get("evidence"),
@@ -839,6 +949,7 @@ def _parse_entity_json(content: str) -> list[dict[str, Any]]:
             "confidence": item.get("confidence") or 90,
             "source": "ai",
         })
+        entities.append(payload)
     return normalize_extracted_entities(entities)
 
 
@@ -847,13 +958,29 @@ def _entity_match_key(entity_type: str, name: Optional[str], canonical_name: Opt
     return f"{entity_type}:{clean_name}"
 
 
+def _extracted_entity_quality(item: dict[str, Any]) -> dict[str, Any]:
+    candidate = CanonicalEntityCandidate.model_validate(item)
+    return score_entity_candidate(candidate).model_dump()
+
+
 def _apply_extracted_entity(entity: StoryEntity, item: dict[str, Any]) -> None:
     attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+    semantic_attrs = {
+        "current_state": item.get("current_state") if isinstance(item.get("current_state"), dict) else {},
+        "known_to_characters": item.get("known_to_characters") if isinstance(item.get("known_to_characters"), list) else [],
+        "introduced_at": item.get("introduced_at") or item.get("source_chapter_number"),
+        "resolved_at": item.get("resolved_at"),
+        "source_chapter_number": item.get("source_chapter_number"),
+    }
+    if item.get("entity_type") == "event":
+        semantic_attrs["event"] = {key: item.get(key) for key in ("actor", "action", "object", "outcome")}
     entity.description = item.get("description") or entity.description
     entity.canonical_name = item.get("canonical_name") or entity.canonical_name
     entity.aliases = item.get("aliases") or entity.aliases or []
     existing_attrs = entity.attributes if isinstance(entity.attributes, dict) else {}
-    entity.attributes = {**existing_attrs, **attrs}
+    entity.attributes = {**existing_attrs, **attrs, **semantic_attrs}
+    entity.chapter_id = entity.chapter_id or item.get("source_chapter_id")
+    entity.first_seen_chapter_id = entity.first_seen_chapter_id or item.get("source_chapter_id") or entity.chapter_id
     entity.appearance = item.get("appearance") or attrs.get("appearance") or entity.appearance
     entity.visual_prompt = item.get("visual_prompt") or attrs.get("visual_prompt") or entity.visual_prompt
     entity.relations = item.get("relations") or attrs.get("relationships") or entity.relations or []
@@ -861,6 +988,22 @@ def _apply_extracted_entity(entity: StoryEntity, item: dict[str, Any]) -> None:
     entity.evidence = item.get("evidence") or entity.evidence
     entity.confidence = item.get("confidence") or entity.confidence or 100
     entity.source = item.get("source") or entity.source or "deterministic"
+    extra_data = dict(entity.extra_data) if isinstance(entity.extra_data, dict) else {}
+    extra_data["quality"] = _extracted_entity_quality(item)
+    extra_data["provenance"] = {
+        "source_chapter_id": item.get("source_chapter_id") or entity.chapter_id,
+        "source_chapter_number": item.get("source_chapter_number"),
+        "evidence_span": item.get("evidence_span") or item.get("evidence"),
+        "char_start": item.get("char_start"), "char_end": item.get("char_end"),
+        "extraction_model": item.get("extraction_model"),
+        "extraction_config": item.get("extraction_config") if isinstance(item.get("extraction_config"), dict) else {},
+        "review_state": item.get("review_state") or "candidate",
+    }
+    if item.get("future_intent") is not None:
+        extra_data["future_intent"] = item["future_intent"]
+    if item.get("foreshadowing") is not None:
+        extra_data["foreshadowing"] = item["foreshadowing"]
+    entity.extra_data = extra_data
     entity.version = int(entity.version or 1) + 1
     entity.updated_at = utc_now()
 
@@ -873,7 +1016,7 @@ def _new_story_entity_from_extracted(
     script_id: Optional[str],
     item: dict[str, Any],
 ) -> StoryEntity:
-    return StoryEntity(
+    entity = StoryEntity(
         id=str(uuid4()),
         user_id=user_id,
         novel_id=novel_id,
@@ -892,7 +1035,10 @@ def _new_story_entity_from_extracted(
         evidence=item.get("evidence"),
         confidence=item.get("confidence") or 100,
         source=item.get("source") or "deterministic",
+        extra_data={},
     )
+    _apply_extracted_entity(entity, item)
+    return entity
 
 
 async def _extract_story_entities_with_optional_ai(
@@ -922,6 +1068,10 @@ async def _extract_story_entities_with_optional_ai(
 - attributes: 对象，可包含人物关系、场景标签、道具状态、事件参与者等
 - evidence: 来自原文的依据
 - confidence: 0-100
+- event 必须额外包含 actor/action/object/outcome，四项均不可为空
+- evidence_span/char_start/char_end: 原文精确证据与字符偏移
+- current_state/known_to_characters/introduced_at/resolved_at: 当前已发生状态
+- future_intent/foreshadowing: 未来意图与伏笔，必须与当前状态分开
 
 分类规则：
 - character：明确命名的单个人物、妖兽、可持续追踪的个体，通常有动作、台词、身份或关系。
@@ -939,19 +1089,24 @@ async def _extract_story_entities_with_optional_ai(
 
 小说文本：
 {text[:30000]}"""
-            prompt_result = await apply_active_prompt_skill_template(
+            prompt_result = await select_prompt_skill_for_model(
                 db,
-                user_id,
+                user_id=user_id,
                 task="entity_extraction",
+                provider_name=provider_name,
+                model_id=model_id,
+                model_capabilities=[],
+                output_contract="json_array",
+                stage="analysis",
                 internal_prompt=prompt,
+                template_title="激活实体/资产抽取提示词模板",
+                internal_title="内部实体抽取规则",
                 context={
                     "source_content": text[:30000],
                     "entity_types": "、".join(sorted(requested)),
                     "allowed_entity_types": ", ".join(sorted(requested)),
                     "output_format": "JSON 数组",
                 },
-                template_title="激活实体/资产抽取提示词模板",
-                internal_title="内部实体抽取规则",
             )
             response = await service.safe_chat_completion(
                 model=model_id or "",
@@ -965,6 +1120,15 @@ async def _extract_story_entities_with_optional_ai(
             ai_entities = _parse_entity_json(response["choices"][0]["message"]["content"])
             ai_entities = [item for item in ai_entities if item["entity_type"] in requested]
             if ai_entities:
+                for item in ai_entities:
+                    item["source"] = "ai"
+                    item["extraction_model"] = model_id
+                    item["extraction_config"] = {
+                        **(item.get("extraction_config") if isinstance(item.get("extraction_config"), dict) else {}),
+                        "provider_name": provider_name,
+                        "model_config_id": model_config_id,
+                        "model_id": model_id,
+                    }
                 return ai_entities
         except HTTPException:
             if not is_dev_mode():
@@ -1251,6 +1415,8 @@ async def _create_assets_for_entities(
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的资产作用域")
     assets: list[Asset] = []
     for entity in entities:
+        if not is_entity_asset_generation_allowed(entity):
+            continue
         scope = _asset_scope_values_for_entity(entity, asset_scope)
         if asset_scope == "novel" and not scope["novel_id"]:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="小说资产作用域需要 novel_id")
@@ -1465,6 +1631,242 @@ async def extract_entities_and_assets(
     )
 
 
+@router.post("/entities/analyze", response_model=Dict[str, Any])
+async def analyze_entities_for_review(
+    request: EntityCandidateAnalysisRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    novel_id, chapter_id, script_id, text = await _resolve_extraction_text(
+        db, user_id, request.novel_id, request.chapter_id, request.script_id, request.text
+    )
+    try:
+        result = await run_candidate_entity_extraction(
+            db,
+            user_id=user_id,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            script_id=script_id,
+            source_type=request.source_type,
+            source_id=request.source_id or script_id or chapter_id or novel_id,
+            text=text,
+            entity_types=request.entity_types,
+            model_config_id=request.model_config_id,
+            persist=request.persist,
+            persist_rejected=request.persist_rejected,
+            allow_auto_approve=request.allow_auto_approve,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    return {
+        "run_id": result["run_id"],
+        "status": result["status"],
+        "novel_id": novel_id,
+        "chapter_id": chapter_id,
+        "script_id": script_id,
+        "stats": result["stats"],
+        "quality_summary": result["quality_summary"],
+        "prompt_routing": result.get("prompt_routing") or {},
+        "entities": [build_story_entity_response(entity) for entity in result["entities"]],
+        "mention_count": len(result["mentions"]),
+    }
+
+
+@router.get("/entities/runs/{run_id}", response_model=Dict[str, Any])
+async def get_entity_extraction_run(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        return await get_extraction_run_detail(db, user_id=user_id, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+
+@router.get("/entities/review-summary", response_model=Dict[str, Any])
+async def get_story_entity_review_summary(
+    novel_id: Optional[str] = Query(None),
+    chapter_id: Optional[str] = Query(None),
+    script_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    return await get_entity_review_summary(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        script_id=script_id,
+    )
+
+
+@router.post("/entities/merge-suggestions", response_model=Dict[str, Any])
+async def get_entity_merge_suggestions(
+    request: EntityMergeSuggestionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    suggestions = await suggest_entity_merges(
+        db,
+        user_id=user_id,
+        novel_id=request.novel_id,
+        chapter_id=request.chapter_id,
+        script_id=request.script_id,
+    )
+    return {"items": suggestions, "count": len(suggestions)}
+
+
+@router.post("/entities/enrich-target", response_model=Dict[str, Any])
+async def enrich_story_entity_target(
+    request: TargetedEntityEnrichmentRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    _validate_entity_type(request.entity_type)
+    scope = await _resolve_entity_scope(
+        db,
+        user_id,
+        novel_id=request.novel_id,
+        chapter_id=request.chapter_id,
+        script_id=request.script_id,
+    )
+    try:
+        return await enrich_target_entity(
+            db,
+            user_id=user_id,
+            novel_id=scope["novel_id"],
+            chapter_id=scope["chapter_id"],
+            script_id=scope["script_id"],
+            target_entity_id=request.target_entity_id,
+            text=request.text,
+            entity_type=request.entity_type,
+            entity_name=request.entity_name,
+            fields=request.fields,
+            mode=request.mode,
+            model_config_id=request.model_config_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
+def _production_graph_event_payload(event: ProductionStateEvent) -> Dict[str, Any]:
+    return {
+        "id": event.id,
+        "novel_id": event.novel_id,
+        "chapter_id": event.chapter_id,
+        "episode_index": event.episode_index,
+        "entity_id": event.entity_id,
+        "event_type": event.event_type,
+        "story_time": event.story_time or {},
+        "production_time": event.production_time or {},
+        "before_state": event.before_state or {},
+        "after_state": event.after_state or {},
+        "evidence": event.evidence,
+        "approval_status": event.approval_status,
+        "approved_by": event.approved_by,
+        "production_version": event.production_version,
+        "previous_event_hash": event.previous_event_hash,
+        "event_hash": event.event_hash,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+    }
+
+
+@router.post("/production-graph/events", response_model=Dict[str, Any], status_code=status.HTTP_201_CREATED)
+async def append_production_graph_event(
+    request: ProductionGraphEventAppendRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    novel = await _get_novel_or_404(db, request.novel_id, user_id)
+    try:
+        event = await append_state_event(
+            db,
+            user_id=user_id,
+            novel_id=request.novel_id,
+            chapter_id=request.chapter_id,
+            episode_index=request.episode_index,
+            entity_id=request.entity_id,
+            event_type=request.event_type,
+            story_time=request.story_time,
+            production_time=request.production_time,
+            before_state=request.before_state,
+            after_state=request.after_state,
+            evidence=request.evidence,
+            approval_status=request.approval_status,
+            approved_by=user_id if request.approval_status == "approved" else None,
+            restore_version=request.restore_version,
+            commit=False,
+        )
+        payload = _production_graph_event_payload(event)
+        if event.approval_status == "approved":
+            payload["impact"] = await mark_production_graph_artifact_impact(
+                db,
+                user_id=user_id,
+                novel=novel,
+                event=event,
+                commit=False,
+            )
+        await db.commit()
+        await db.refresh(event)
+        return payload
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.get("/production-graph/events", response_model=Dict[str, Any])
+async def list_production_graph_events(
+    novel_id: str = Query(...),
+    episode_index: Optional[int] = Query(None, ge=1),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    novel = await _get_novel_or_404(db, novel_id, user_id)
+    query = select(ProductionStateEvent).where(
+        ProductionStateEvent.user_id == user_id,
+        ProductionStateEvent.novel_id == novel_id,
+    )
+    if episode_index is not None:
+        query = query.where(ProductionStateEvent.episode_index == episode_index)
+    result = await db.execute(query.order_by(ProductionStateEvent.production_version.asc()))
+    items = [_production_graph_event_payload(event) for event in result.scalars().all()]
+    return {"novel_id": novel_id, "items": items, "count": len(items)}
+
+
+@router.get("/production-graph/project", response_model=Dict[str, Any])
+async def get_production_graph_projection(
+    novel_id: str = Query(...),
+    max_version: Optional[int] = Query(None, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    novel = await _get_novel_or_404(db, novel_id, user_id)
+    return await project_story_state(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        max_version=max_version,
+    )
+
+
+@router.get("/production-graph/events/{event_id}/impact", response_model=Dict[str, Any])
+async def get_production_graph_event_impact(
+    event_id: str,
+    novel_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    novel = await _get_novel_or_404(db, novel_id, user_id)
+    try:
+        event = await db.get(ProductionStateEvent, event_id)
+        if event is None or event.user_id != user_id or event.novel_id != novel_id:
+            raise ValueError("Production state event does not exist")
+        return await resolve_production_graph_artifact_impact(db, user_id=user_id, novel=novel, event=event)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+
 @router.get("/entities", response_model=List[StoryEntityResponse])
 async def list_story_entities(
     novel_id: Optional[str] = Query(None),
@@ -1509,7 +1911,7 @@ async def get_story_entity_stats(
     allowed_scopes = {"global", "novel", "chapter", "script"}
     if scope and scope not in allowed_scopes:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="不支持的实体作用域")
-    query = select(StoryEntity.entity_type, func.count(StoryEntity.id)).where(StoryEntity.user_id == user_id)
+    query = select(StoryEntity).where(StoryEntity.user_id == user_id)
     query = _apply_story_entity_scope_filters(
         query,
         novel_id=novel_id,
@@ -1517,11 +1919,8 @@ async def get_story_entity_stats(
         script_id=script_id,
         scope=scope,
     )
-    result = await db.execute(query.group_by(StoryEntity.entity_type))
-    counts = {entity_type: 0 for entity_type in sorted(ENTITY_TYPES)}
-    for entity_type, count in result.all():
-        counts[str(entity_type)] = int(count or 0)
-    return StoryEntityStatsResponse(total=sum(counts.values()), counts=counts)
+    result = await db.execute(query)
+    return StoryEntityStatsResponse(**production_entity_counts(result.scalars().all(), ENTITY_TYPES))
 
 
 @router.get("/entities/production-pack/{novel_id}", response_model=ProductionPackResponse)
@@ -1531,12 +1930,12 @@ async def get_story_production_pack(
     user_id: str = Depends(get_current_user_id),
 ):
     await _get_novel_or_404(db, novel_id, user_id)
-    result = await db.execute(
-        select(StoryEntity)
-        .where(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
-        .order_by(StoryEntity.entity_type, StoryEntity.updated_at)
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
     )
-    entities = list(result.scalars().all())
+    entities = sorted(entities, key=lambda entity: (entity.entity_type or "", str(entity.updated_at or "")))
     characters = [entity for entity in entities if entity.entity_type == "character"]
     scenes = [entity for entity in entities if entity.entity_type == "scene"]
     props = [entity for entity in entities if entity.entity_type == "prop"]
@@ -1686,9 +2085,32 @@ async def bulk_action_story_entities(
             continue
 
         if request.action == "approve":
-            entity.is_approved = request.approved if request.approved is not None else True
-            entity.updated_at = utc_now()
-            updated_entities.append(entity)
+            should_approve = request.approved if request.approved is not None else True
+            if should_approve and await entity_has_duplicate_risk(db, user_id=user_id, entity=entity):
+                skipped.append(
+                    BulkSkippedItem(
+                        id=entity.id,
+                        reason="存在高重复风险，不能批量定稿",
+                        repair_action="先查看合并建议并执行合并或单条确认",
+                    )
+                )
+                continue
+            try:
+                reviewed = (
+                    await approve_review_entity(db, user_id=user_id, entity_id=entity.id, reason="bulk approve")
+                    if should_approve
+                    else await reject_review_entity(db, user_id=user_id, entity_id=entity.id, reason="bulk reject")
+                )
+            except EntityApprovalEvidenceError as exc:
+                skipped.append(
+                    BulkSkippedItem(
+                        id=entity.id,
+                        reason=str(exc),
+                        repair_action="补充原文证据后再定稿",
+                    )
+                )
+                continue
+            updated_entities.append(reviewed)
             continue
 
         if request.action == "set_tags":
@@ -1765,8 +2187,6 @@ async def reextract_story_entities(
     }
 
     deleted_count = 0
-    updated_entities: list[StoryEntity] = []
-    created_entities: list[StoryEntity] = []
     skipped: list[BulkSkippedItem] = []
     warnings: list[str] = []
     allow_test_override = request.allow_test_override and is_dev_mode()
@@ -1804,6 +2224,7 @@ async def reextract_story_entities(
         existing_by_key = {}
 
     requested_types = set(request.entity_types)
+    candidate_items: list[dict[str, Any]] = []
     for item in extracted:
         if item["entity_type"] not in requested_types:
             continue
@@ -1812,38 +2233,41 @@ async def reextract_story_entities(
         if existing and request.mode == "append":
             skipped.append(BulkSkippedItem(id=existing.id, reason="同名实体已存在", repair_action="如需刷新内容，请使用覆盖更新模式"))
             continue
-        if existing and request.mode == "overwrite":
-            _apply_extracted_entity(existing, item)
-            updated_entities.append(existing)
-            continue
-        entity = _new_story_entity_from_extracted(
-            user_id=user_id,
-            novel_id=novel_id,
-            chapter_id=chapter_id,
-            script_id=script_id,
-            item=item,
-        )
-        db.add(entity)
-        created_entities.append(entity)
+        candidate_items.append(item)
 
-    await db.commit()
-    for entity in [*updated_entities, *created_entities]:
-        await db.refresh(entity)
+    if deleted_count:
+        await db.commit()
+
+    extraction = await run_candidate_entity_extraction(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        script_id=script_id,
+        source_type="script" if script_id else ("chapter" if chapter_id else "novel"),
+        source_id=script_id or chapter_id or novel_id,
+        text=text,
+        entity_types=request.entity_types,
+        model_config_id=request.model_config_id,
+        persist=True,
+        candidate_items=candidate_items,
+    )
+    resulting_entities = extraction["entities"]
 
     assets: list[Asset] = []
-    if request.create_assets and (updated_entities or created_entities):
-        assets = await _create_assets_for_entities(db, user_id, [*updated_entities, *created_entities], request.asset_scope)
+    if request.create_assets and resulting_entities:
+        assets = await _create_assets_for_entities(db, user_id, resulting_entities, request.asset_scope)
 
     return EntityBulkActionResponse(
         novel_id=novel_id,
         chapter_id=chapter_id,
         script_id=script_id,
-        updated_count=len(updated_entities),
+        updated_count=extraction["stats"]["updated"],
         deleted_count=deleted_count,
-        created_count=len(created_entities),
+        created_count=extraction["stats"]["created"],
         skipped=skipped,
         warnings=warnings,
-        entities=[build_story_entity_response(entity) for entity in [*updated_entities, *created_entities]],
+        entities=[build_story_entity_response(entity) for entity in resulting_entities],
         assets=[_build_extracted_asset_response(asset) for asset in assets],
     )
 
@@ -1865,7 +2289,9 @@ async def create_story_entity(
 
     entity_data = request.model_dump()
     entity_data.update(scope)
+    entity_data["source"] = "manual"
     entity = StoryEntity(id=str(uuid4()), user_id=user_id, **entity_data)
+    set_entity_review_status(entity, APPROVED, changed_by=user_id, reason="manual create")
     db.add(entity)
     await db.commit()
     await db.refresh(entity)
@@ -1880,6 +2306,36 @@ async def approve_entity(
     user_id: str = Depends(get_current_user_id),
 ):
     return await approve_story_entity(db, user_id, entity_id, request.approved, request.approval_note)
+
+
+@router.post("/entities/{entity_id}/promote", response_model=Dict[str, Any])
+async def promote_entity_candidate(
+    entity_id: str,
+    request: EntityReviewActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        entity = await approve_review_entity(db, user_id=user_id, entity_id=entity_id, reason=request.reason)
+    except EntityApprovalEvidenceError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {"entity": build_story_entity_response(entity), "review_status": get_entity_review_status(entity)}
+
+
+@router.post("/entities/{entity_id}/reject", response_model=Dict[str, Any])
+async def reject_entity_candidate(
+    entity_id: str,
+    request: EntityReviewActionRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        entity = await reject_review_entity(db, user_id=user_id, entity_id=entity_id, reason=request.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    return {"entity": build_story_entity_response(entity), "review_status": get_entity_review_status(entity)}
 
 
 @router.get("/entities/{entity_id}/impact", response_model=Dict[str, Any])
@@ -2144,6 +2600,7 @@ class EntityBulkApproveRequest(BaseModel):
 class EntityBulkApproveResponse(BaseModel):
     updated_count: int
     approved_entities: List[StoryEntityResponse]
+    skipped: List[BulkSkippedItem] = Field(default_factory=list)
 
 
 @router.post("/entities/bulk-approve", response_model=EntityBulkApproveResponse)
@@ -2153,12 +2610,37 @@ async def bulk_approve_story_entities(
     user_id: str = Depends(get_current_user_id),
 ):
     updated_entities: List[StoryEntity] = []
+    skipped: List[BulkSkippedItem] = []
 
     for entity_id in request.entity_ids:
-        entity = await _get_story_entity_or_404(db, entity_id, user_id)
-        entity.is_approved = request.approved
-        entity.updated_at = utc_now()
-        updated_entities.append(entity)
+        try:
+            entity = await _get_story_entity_or_404(db, entity_id, user_id)
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_404_NOT_FOUND:
+                skipped.append(BulkSkippedItem(id=entity_id, reason="实体不存在", repair_action="刷新实体库后重新选择"))
+                continue
+            raise
+        if request.approved and await entity_has_duplicate_risk(db, user_id=user_id, entity=entity):
+            skipped.append(
+                BulkSkippedItem(
+                    id=entity.id,
+                    reason="存在高重复风险，不能批量定稿",
+                    repair_action="先查看合并建议并执行合并或单条确认",
+                )
+            )
+            continue
+        try:
+            reviewed = (
+                await approve_review_entity(db, user_id=user_id, entity_id=entity.id, reason="bulk approve")
+                if request.approved
+                else await reject_review_entity(db, user_id=user_id, entity_id=entity.id, reason="bulk reject")
+            )
+        except EntityApprovalEvidenceError as exc:
+            skipped.append(
+                BulkSkippedItem(id=entity.id, reason=str(exc), repair_action="补充原文证据后再定稿")
+            )
+            continue
+        updated_entities.append(reviewed)
 
     await db.commit()
     for entity in updated_entities:
@@ -2167,6 +2649,7 @@ async def bulk_approve_story_entities(
     return EntityBulkApproveResponse(
         updated_count=len(updated_entities),
         approved_entities=[build_story_entity_response(e) for e in updated_entities],
+        skipped=skipped,
     )
 
 
@@ -2189,7 +2672,12 @@ async def generate_story_bible_from_novel(
         True,
         model_config_id=request.model_config_id,
     )
-    sections = build_story_bible_sections(_entity_dicts(entities))
+    production_entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+    )
+    sections = build_story_bible_sections(_entity_dicts(production_entities))
     story_bible = StoryBible(
         id=str(uuid4()),
         user_id=user_id,
@@ -2203,7 +2691,11 @@ async def generate_story_bible_from_novel(
         prop_rules=sections["prop_rules"],
         event_timeline=sections["event_timeline"],
         negative_prompt=request.negative_prompt,
-        extra_data={"generated_from": "novel", "entity_count": len(entities)},
+        extra_data={
+            "generated_from": "novel",
+            "entity_count": len(production_entities),
+            "candidate_count": sum(not is_entity_production_visible(entity) for entity in entities),
+        },
     )
     db.add(story_bible)
     await db.commit()
@@ -2247,7 +2739,13 @@ async def sync_story_bible_from_chapter(
     entities = await _extract_and_optionally_persist(
         db, user_id, chapter.novel_id, chapter.id, None, chapter.content or "", sorted(ENTITY_TYPES), True
     )
-    sections = build_story_bible_sections(_entity_dicts(entities))
+    production_entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=chapter.novel_id,
+        chapter_id=chapter.id,
+    )
+    sections = build_story_bible_sections(_entity_dicts(production_entities))
 
     # 合并新规则
     story_bible.character_rules = _merge_rules(story_bible.character_rules or [], sections["character_rules"])
@@ -2292,7 +2790,10 @@ async def sync_story_bible_from_chapter(
     extra_data = dict(story_bible.extra_data or {})
     extra_data["last_synced_chapter_id"] = chapter.id
     extra_data["last_synced_chapter_number"] = chapter.chapter_number
-    extra_data["last_sync_entity_count"] = len(entities)
+    extra_data["last_sync_entity_count"] = len(production_entities)
+    extra_data["last_sync_candidate_count"] = sum(
+        not is_entity_production_visible(entity) for entity in entities
+    )
     existing_conflicts = extra_data.get("conflicts", [])
     extra_data["conflicts"] = existing_conflicts + conflicts
     story_bible.extra_data = extra_data

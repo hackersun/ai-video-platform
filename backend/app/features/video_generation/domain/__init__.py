@@ -1,0 +1,1 @@
+"""Video generation domain rules."""

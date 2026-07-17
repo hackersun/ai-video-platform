@@ -347,6 +347,8 @@ def test_story_bible_generate_sync_and_consistency(client: TestClient) -> None:
     assert bible["novel_id"] == novel_id
     assert any(item["name"] == "林舟" for item in bible["character_rules"])
     assert any(item["name"] == "玄都城" for item in bible["scene_rules"])
+    assert bible["extra_data"]["candidate_count"] >= 1
+    assert not any(item.get("title") == "林舟发现玄都城爆发灵潮" for item in bible["event_timeline"])
     assert bible["extra_data"]["state_machine"]["summary"]["characters"] >= 1
     assert bible["extra_data"]["state_machine"]["summary"]["scenes"] >= 1
 
@@ -372,6 +374,8 @@ def test_story_bible_generate_sync_and_consistency(client: TestClient) -> None:
     synced = sync_resp.json()
     assert any(item["name"] == "沈眠" for item in synced["character_rules"])
     assert synced["extra_data"]["last_synced_chapter_id"] == second_chapter_id
+    assert synced["extra_data"]["last_sync_candidate_count"] >= 1
+    assert not any(item.get("title") == "沈眠遭遇伏击" for item in synced["event_timeline"])
 
     consistent_resp = client.post(
         "/api/v1/story-bibles/check-consistency",
@@ -379,7 +383,9 @@ def test_story_bible_generate_sync_and_consistency(client: TestClient) -> None:
         headers=auth_headers(user_id),
     )
     assert consistent_resp.status_code == 200
-    assert consistent_resp.json()["issue_count"] == 0
+    consistency = consistent_resp.json()
+    assert consistency["issue_count"] >= 1
+    assert any(issue["entity_type"] == "event" for issue in consistency["issues"])
 
     drift_resp = client.post(
         "/api/v1/story-bibles/check-consistency",

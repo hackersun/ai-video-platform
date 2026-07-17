@@ -818,6 +818,9 @@ def init_db():
     from app.models.version import Version, VersionRule
     from app.models.studio_review import StudioRepairAction, StudioReviewRun
     from app.models.prompt_skill import PromptSkill
+    from app.db_migrations.runner import register_production_models, run_schema_migrations
+
+    register_production_models()
 
     Base.metadata.create_all(bind=sync_engine)
     print("✅ 数据库表创建成功！")
@@ -835,6 +838,7 @@ def init_db():
     migrate_add_project_id_fields()
     migrate_add_publication_fields()
     migrate_add_version_tables()
+    run_schema_migrations(sync_engine)
 
 
 def migrate_add_version_tables():
@@ -919,6 +923,12 @@ async def init_db_async():
     from app.models.version import Version, VersionRule
     from app.models.studio_review import StudioRepairAction, StudioReviewRun
     from app.models.prompt_skill import PromptSkill
+    from app.db_migrations.runner import (
+        register_production_models,
+        run_schema_migrations_async,
+    )
+
+    register_production_models()
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -937,6 +947,7 @@ async def init_db_async():
     await migrate_add_project_id_fields_async()
     await migrate_add_publication_fields_async()
     await migrate_add_version_tables_async()
+    await run_schema_migrations_async(engine)
 
 
 async def migrate_add_version_tables_async():

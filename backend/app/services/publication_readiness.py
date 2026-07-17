@@ -30,6 +30,14 @@ def evaluate_publication_readiness(
     output_kind = extra.get("output_kind")
     issues: List[Dict[str, Any]] = []
 
+    if extra.get("production_graph_status") == "superseded_review_required":
+        issues.append({
+            "code": "production_graph_superseded",
+            "message": "Production Graph 已变更，该成片需要复审或重新生成后才能再次发布",
+            "source_event_id": extra.get("source_event_id"),
+            "source_event_version": extra.get("source_event_version"),
+        })
+
     if render_backend == "local_artifact_package" or output_kind == "preview_package":
         issues.append({
             "code": "preview_package_not_publishable",

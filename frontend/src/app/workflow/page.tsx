@@ -572,11 +572,11 @@ function WorkflowPageContent() {
   // 初始化工作流
   useEffect(() => {
     const urlWorkflowId = searchParams.get('workflow_id');
+    const requestedStep = WORKFLOW_STEPS.findIndex((step) => step.id === searchParams.get('step')); if (requestedStep >= 0) setCurrentStep(requestedStep);
     if (urlWorkflowId && workflowId !== urlWorkflowId) {
       setWorkflowId(urlWorkflowId);
     }
   }, [searchParams, workflowId]);
-
   // 定期刷新状态
   useEffect(() => {
     if (workflowId) {

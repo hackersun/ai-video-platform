@@ -4,15 +4,18 @@ Deterministic story entity extraction.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Any
+from app.services.entity_evidence_contract import attach_chapter_evidence_contracts
 
 ENTITY_TYPES = {"character", "scene", "prop", "event"}
 
 CHARACTER_RE = re.compile(r"(?:角色|人物|主角|配角)[:：]\s*([^\n，。；;]+)")
 SCENE_RE = re.compile(r"(?:场景|地点|场地)[:：]\s*([^\n，。；;]+)")
 PROP_RE = re.compile(r"(?:道具|物品|装备)[:：]\s*([^\n，。；;]+)")
-EVENT_RE = re.compile(r"(?:事件|剧情|发生)[:：]\s*([^\n，。；;]+)")
+EVENT_RE = re.compile(r"(?:事件|剧情|发生)[:：]\s*([^\n。；;]+)")
 EXPLICIT_CHARACTER_RE = re.compile(
     r"(?:角色|人物|主角|配角)[:：]\s*([^\n，。；;]+)|"
     r"([\u4e00-\u9fff]{2,4})[：:][“\"']|"
@@ -370,6 +373,8 @@ def _is_production_copy_prop_name(name: str) -> bool:
         return True
     if _looks_like_person_name_misread_as_prop(text):
         return True
+    if re.match(r"^[\u4e00-\u9fff]{2,4}(?:在|从|向|把|将)[\u4e00-\u9fff]{2,}", text):
+        return True
     if text in NON_PROP_WORDS:
         return True
     if text.endswith("钩") and _contains_any(text, NON_PROP_HOOK_MARKERS):
@@ -579,6 +584,8 @@ def _infer_entity_type(
         return None
     if declared_type == "character" and _is_event_like_name(name):
         return "event"
+    if declared_type == "event":
+        return "event"
     has_character_context = (
         _endswith_any(name, CHARACTER_TITLE_SUFFIXES)
         or (
@@ -598,7 +605,7 @@ def _infer_entity_type(
         return "scene"
     if has_character_context:
         return "character"
-    if declared_type == "event" or _contains_any(context, EVENT_CONTEXT_CUES):
+    if _contains_any(context, EVENT_CONTEXT_CUES):
         return "event"
     if declared_type == "character":
         return None
@@ -628,11 +635,21 @@ def _append_normalized_entity(
                 seen.add(key)
                 return
         if existing_name in entity["name"] and len(entity["name"]) > len(existing_name):
+            existing_desc = str(existing.get("description") or "")
+            entity_desc = str(entity.get("description") or "")
+            if existing_desc.startswith("文本标注") and not entity_desc.startswith("文本标注"):
+                return
             seen.discard((existing["entity_type"], existing_name))
             normalized[index] = entity
             seen.add(key)
             return
         if entity["name"] in existing_name:
+            existing_desc = str(existing.get("description") or "")
+            entity_desc = str(entity.get("description") or "")
+            if entity_desc.startswith("文本标注") and not existing_desc.startswith("文本标注"):
+                seen.discard((existing["entity_type"], existing_name))
+                normalized[index] = entity
+                seen.add(key)
             return
     normalized.append(entity)
     seen.add(key)
@@ -670,7 +687,8 @@ def normalize_extracted_entities(
                 _looks_like_chinese_person_name(cleaned_name) or _endswith_any(cleaned_name, CHARACTER_TITLE_SUFFIXES)
             ):
                 continue
-            if inferred_type == "prop" and _is_production_copy_prop_name(cleaned_name):
+            explicit_prop_label = declared_type == "prop" and str(item.get("description") or "").startswith("文本标注道具")
+            if inferred_type == "prop" and _is_production_copy_prop_name(cleaned_name) and not explicit_prop_label:
                 continue
             attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
             if inferred_type != declared_type:
@@ -679,7 +697,8 @@ def normalize_extracted_entities(
                     "classification_corrected_from": declared_type,
                     "classification_reason": "规则校正：名称、描述和原文证据更符合当前实体类型",
                 }
-            description = item.get("description") or item.get("evidence")
+            description = (None if attrs.get("description_semantics_version") == "system_boilerplate_v1"
+                           else item.get("description") or item.get("evidence"))
             evidence = item.get("evidence") or item.get("description")
             attrs = _ensure_production_attributes(
                 inferred_type,
@@ -691,13 +710,35 @@ def normalize_extracted_entities(
             entity = {
                 "entity_type": inferred_type,
                 "name": cleaned_name[:200],
+                "canonical_name": str(item.get("canonical_name") or cleaned_name)[:200],
                 "description": description,
                 "aliases": item.get("aliases") if isinstance(item.get("aliases"), list) else [],
                 "attributes": attrs,
                 "evidence": evidence,
+                "evidence_span": item.get("evidence_span") or evidence,
+                "source_chapter_id": item.get("source_chapter_id"),
+                "source_chapter_index": item.get("source_chapter_index"),
+                "source_chapter_number": item.get("source_chapter_number") or item.get("source_chapter_index"),
+                "char_start": item.get("char_start"),
+                "char_end": item.get("char_end"),
                 "confidence": item.get("confidence") or 90,
                 "source": item.get("source") or "deterministic",
+                "extraction_model": item.get("extraction_model") or "deterministic-v2",
+                "extraction_config": item.get("extraction_config") if isinstance(item.get("extraction_config"), dict) else {},
+                "review_state": item.get("review_state") or "candidate",
+                "current_state": item.get("current_state") if isinstance(item.get("current_state"), dict) else {},
+                "known_to_characters": item.get("known_to_characters") if isinstance(item.get("known_to_characters"), list) else [],
+                "introduced_at": item.get("introduced_at") or item.get("source_chapter_number") or item.get("source_chapter_index"),
+                "resolved_at": item.get("resolved_at"),
             }
+            if item.get("future_intent") is not None:
+                entity["future_intent"] = item.get("future_intent")
+            if item.get("foreshadowing") is not None:
+                entity["foreshadowing"] = item.get("foreshadowing")
+            if inferred_type == "event":
+                inferred_event = _event_structure(cleaned_name, evidence)
+                for field in ("actor", "action", "object", "outcome"):
+                    entity[field] = item.get(field) or inferred_event[field]
             _append_normalized_entity(normalized, entity, seen)
     return normalized
 
@@ -710,6 +751,7 @@ def _add_entity(
     description: str,
     evidence: str,
 ) -> None:
+    character_boilerplate = {"规则识别人物", "规则识别人物动作", "规则识别人物描述"}
     for cleaned in _split_entity_names(name):
         if not cleaned:
             continue
@@ -717,13 +759,15 @@ def _add_entity(
         if key in seen:
             continue
         seen.add(key)
+        is_character_boilerplate = entity_type == "character" and description in character_boilerplate
         entities.append(
             {
                 "entity_type": entity_type,
                 "name": cleaned[:200],
-                "description": description[:500] if description else None,
+                "description": None if is_character_boilerplate else description[:500] if description else None,
                 "aliases": [],
-                "attributes": {},
+                "attributes": ({"extraction_notes": [description], "description_semantics_version": "system_boilerplate_v1"}
+                               if is_character_boilerplate else {}),
                 "evidence": evidence[:500] if evidence else None,
                 "confidence": 100,
                 "source": "deterministic",
@@ -731,7 +775,36 @@ def _add_entity(
         )
 
 
-def extract_story_entities(text: str, requested_types: set[str] | None = None) -> list[dict[str, Any]]:
+def _event_structure(name: str, evidence: str | None) -> dict[str, str | None]:
+    text = _clean_name(re.sub(r"^(?:事件|剧情|发生)[:：]\s*", "", evidence or name))
+    match = re.match(
+        r"(?P<actor>[\u4e00-\u9fff]{2,4}?)(?P<action>发现|遭遇|决定|逃离|抵达|打开|关闭|拿起|触发|击败|救出)(?P<object>[^，。；;]{1,24})(?:[，,；;](?P<outcome>.+))?",
+        text,
+    )
+    if not match:
+        action = next((marker for marker in (*EVENT_LIKE_MARKERS, "开启", "显现", "停止") if marker in text), "发生")
+        before, _, after = text.partition(action)
+        return {
+            "actor": before.strip() or "叙事环境",
+            "action": action,
+            "object": after.strip() or name,
+            "outcome": "状态发生变化",
+        }
+    return {
+        "actor": match.group("actor"),
+        "action": match.group("action"),
+        "object": match.group("object").strip(),
+        "outcome": (match.group("outcome") or "事件发生").strip(),
+    }
+
+
+def extract_story_entities(
+    text: str,
+    requested_types: set[str] | None = None,
+    *,
+    source_chapter_id: str | None = None,
+    source_chapter_index: int | None = None,
+) -> list[dict[str, Any]]:
     """Extract entities with stable local rules for DEV_MODE and tests."""
     requested = requested_types or ENTITY_TYPES
     unknown = requested - ENTITY_TYPES
@@ -825,7 +898,57 @@ def extract_story_entities(text: str, requested_types: set[str] | None = None) -
             if any(marker in sentence for marker in ("发现", "遭遇", "决定", "战斗", "逃离", "抵达", "失踪", "爆发", "响", "打开", "求救", "关门", "闪过", "传来")):
                 _add_entity(entities, seen, "event", sentence[:40], "规则识别事件", sentence)
 
-    return normalize_extracted_entities(entities, requested)
+    for entity in entities:
+        entity["source_chapter_id"] = source_chapter_id
+        entity["source_chapter_index"] = source_chapter_index
+        raw_evidence = str(entity.get("evidence") or entity.get("name") or "")
+        raw_evidence = re.sub(r"^(?:角色|人物|主角|配角|场景|地点|场地|道具|物品|装备|事件|剧情|发生)[:：]\s*", "", raw_evidence)
+        entity["evidence_span"] = raw_evidence.strip(" ：:，。；;、“”\"'\t\n")
+    normalized = normalize_extracted_entities(entities, requested)
+    if source_chapter_id and source_chapter_index:
+        attach_chapter_evidence_contracts(normalized, content=source_text, chapter_id=source_chapter_id)
+    if source_chapter_id and source_chapter_index:
+        from app.services.dialogue_lineage_service import extract_explicit_dialogue
+        dialogue = extract_explicit_dialogue(source_text)
+        for entity in normalized:
+            matches = [item for item in dialogue if item["speaker"] == entity.get("name")]
+            if entity.get("entity_type") != "character" or len(matches) != 1:
+                continue
+            line = matches[0]
+            start, end = [int(value) for value in line["source_span"]]
+            proof = {
+                "chapter_id": source_chapter_id, "chapter_order": int(source_chapter_index),
+                "content_sha256": hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
+                "span_start": start, "span_end": end, "speaker": line["speaker"],
+                "speaker_text": source_text[start:end], "quote_text": line["spoken_text"],
+                "parser": "explicit_dialogue", "evidence_version": "deterministic_dialogue_v1",
+            }
+            proof["evidence_sha256"] = hashlib.sha256(json.dumps(
+                proof, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")).hexdigest()
+            entity["attributes"] = {**(entity.get("attributes") or {}), "deterministic_dialogue_evidence": [proof]}
+    return normalized
+
+
+def extract_story_entities_with_quality(
+    text: str,
+    requested_types: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Extract entities and attach deterministic quality metadata.
+
+    This keeps the legacy extraction shape intact while giving the V2 review
+    pipeline a stable quality gate to decide candidate/reject behavior.
+    """
+    from app.services.entity_extraction_schema import CanonicalEntityCandidate
+    from app.services.entity_quality_service import score_entity_candidate
+
+    annotated: list[dict[str, Any]] = []
+    for entity in extract_story_entities(text, requested_types):
+        item = dict(entity)
+        candidate = CanonicalEntityCandidate.model_validate(item)
+        item["quality"] = score_entity_candidate(candidate).model_dump()
+        annotated.append(item)
+    return annotated
 
 
 def build_story_bible_sections(entities: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

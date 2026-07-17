@@ -7,6 +7,19 @@ import asyncio
 from app.core.database import AsyncSessionLocal
 from app.models.shot import Shot
 from app.models.asset import Asset
+from app.services.live_canary_budget import settle_provider_operation
+
+
+async def _settle_shot_accounting(session, shot: Shot, task_id: str, status: str, actual_rmb=None) -> None:
+    accounting = (shot.extra_data or {}).get("live_canary_image_accounting") if isinstance(shot.extra_data, dict) else None
+    if not isinstance(accounting, dict) or not accounting.get("operation_id"):
+        return
+    await settle_provider_operation(
+        session, operation_id=accounting["operation_id"], user_id=shot.user_id,
+        run_id=accounting["series_run_id"], reservation_id=accounting["reservation_id"],
+        capability="image", job_id=shot.id, provider_task_id=task_id,
+        provider_status=status, actual_rmb=actual_rmb,
+    )
 
 
 async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
@@ -39,6 +52,10 @@ async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
 
                     shot = await session.get(Shot, shot_id)
                     if shot:
+                        await _settle_shot_accounting(
+                            session, shot, task_id, "succeeded",
+                            status_result.get("actual_cost_rmb", status_result.get("cost_rmb")),
+                        )
                         try:
                             from app.services.media_persistence import persist_remote_media_url
 
@@ -83,6 +100,7 @@ async def poll_and_update_shot_image(shot_id: str, task_id: str, user_id: str):
                 elif status == "failed":
                     shot = await session.get(Shot, shot_id)
                     if shot:
+                        await _settle_shot_accounting(session, shot, task_id, "failed")
                         shot.image_status = "failed"
                         await session.commit()
                     return

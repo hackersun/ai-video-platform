@@ -50,7 +50,8 @@ def test_provider_video_prompt_strips_internal_story_timeline_blocks() -> None:
     assert "档案" not in safe_prompt
     assert "当前镜头" in safe_prompt
     assert "反向运转" in safe_prompt
-    assert "整部小说连续性锁" not in safe_prompt
+    assert "整部小说连续性锁" in safe_prompt
+    assert "保持角色外观" in safe_prompt
 
 
 def test_provider_video_prompt_compacts_asset_locks_and_removes_local_paths() -> None:

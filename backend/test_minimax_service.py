@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 
 from app.services.minimax_service import MiniMaxService
+from app.services.minimax_errors import MiniMaxProviderRejected
 
 
 class _FakeResponse:
@@ -41,6 +43,22 @@ class _FakeSession:
         self._captured["data"] = data
         self._captured["timeout"] = timeout
         return _FakeResponse(self._payload)
+
+
+def test_tts_base_response_rejection_has_typed_provider_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.services.minimax_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {"base_resp": {"status_code": 2054, "status_msg": "voice id not exist"}}, {},
+        ),
+    )
+
+    with pytest.raises(MiniMaxProviderRejected) as caught:
+        asyncio.run(MiniMaxService("api-key").text_to_speech(
+            text="验收", model="speech-2.6-hd", voice_id="invalid-voice",
+        ))
+
+    assert caught.value.status_code == "2054"
 
 
 def test_tts_parses_data_audio_url(monkeypatch) -> None:

@@ -14,16 +14,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dev_generation import is_dev_mode
+from app.core.model_registry import get_model_reference_limits
 from app.core.security import get_current_user_id
 from app.models.asset import Asset, AssetCategory
 from app.models.asset import DEFAULT_CATEGORIES
 from app.models.project import Project
-from app.models import Chapter, Novel, Script, StoryEntity
+from app.models import Chapter, Novel, ProviderAssetBinding, Script, StoryEntity
 from app.models.character import Character
 from app.services.default_anime_library import ensure_default_anime_assets
 from app.services.asset_generation_service import AssetGenerationService, get_asset_view_presets, get_image_style_templates
 from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice
 from app.services.media_persistence import persist_uploaded_media_bytes
+from app.services.media_delivery import is_cloud_accessible_http_url
+from app.services.provider_asset_binding_service import (
+    ProviderBindingError,
+    invalidate_provider_binding,
+    upsert_provider_binding,
+    verify_provider_binding,
+)
+from app.services.story_entity_lifecycle import (
+    is_entity_asset_generation_allowed,
+    query_story_entities_for_assets,
+)
+from app.services.video_reference_adapter import apply_seedance_contract_limits, requires_provider_bindings
 
 router = APIRouter(tags=["资产库"])
 
@@ -289,6 +302,51 @@ class AssetBulkActionResponse(BaseModel):
     skipped: List[BulkSkippedItem] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
     assets: List[AssetResponse] = Field(default_factory=list)
+
+
+class ProviderBindingCreateRequest(BaseModel):
+    provider_id: str = Field(..., min_length=1, max_length=64)
+    model_id: str = Field(..., min_length=1, max_length=128)
+    binding_kind: str = Field("reference_image", min_length=1, max_length=64)
+    asset_version: Optional[int] = Field(None, ge=1)
+    provider_asset_id: Optional[str] = None
+    public_url: Optional[str] = None
+    checksum: Optional[str] = None
+    verify: bool = True
+
+
+class ProviderBindingResponse(BaseModel):
+    id: str
+    asset_id: str
+    asset_version: int
+    provider_id: str
+    model_id: str
+    binding_kind: str
+    provider_asset_id: Optional[str] = None
+    public_url: Optional[str] = None
+    checksum: Optional[str] = None
+    upload_status: str
+    verified: bool
+    is_active: bool
+    invalidation_reason: Optional[str] = None
+
+
+class AssetBindingHealthItem(BaseModel):
+    asset_id: str
+    asset_version: int
+    canonical_ready: bool
+    binding_required: bool = True
+    binding_ready: bool
+    binding_id: Optional[str] = None
+    upload_status: Optional[str] = None
+    invalidation_reason: Optional[str] = None
+
+
+class AssetBindingHealthResponse(BaseModel):
+    provider_id: str
+    model_id: str
+    binding_kind: str
+    assets: List[AssetBindingHealthItem]
 
 
 async def ensure_default_categories(db: AsyncSession) -> None:
@@ -759,6 +817,8 @@ async def generate_entity_view_assets(
     entity = entity_result.scalar_one_or_none()
     if not entity:
         raise HTTPException(status_code=404, detail="实体不存在")
+    if not is_entity_asset_generation_allowed(entity):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="候选实体需先审核通过后才能生成资产")
     if entity.entity_type not in {"character", "scene", "prop"}:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持角色、场景、道具生成多视图资产")
     entity_view_keys(entity.entity_type, request.view_keys)
@@ -935,24 +995,33 @@ async def reextract_assets(
             script_id=request.script_id,
         )
 
-    conditions = [StoryEntity.user_id == user_id, StoryEntity.entity_type.in_(entity_types)]
     if request.entity_ids:
-        conditions.append(StoryEntity.id.in_(request.entity_ids))
+        entity_result = await db.execute(
+            select(StoryEntity)
+            .where(
+                StoryEntity.user_id == user_id,
+                StoryEntity.id.in_(request.entity_ids),
+                StoryEntity.entity_type.in_(entity_types),
+            )
+            .order_by(StoryEntity.entity_type, StoryEntity.name)
+            .limit(request.limit)
+        )
+        entities = [
+            entity
+            for entity in entity_result.scalars().all()
+            if is_entity_asset_generation_allowed(entity)
+        ]
     else:
-        if request.script_id:
-            conditions.append(StoryEntity.script_id == request.script_id)
-        elif request.chapter_id:
-            conditions.append(StoryEntity.chapter_id == request.chapter_id)
-        elif request.novel_id:
-            conditions.append(StoryEntity.novel_id == request.novel_id)
-
-    entity_result = await db.execute(
-        select(StoryEntity)
-        .where(and_(*conditions))
-        .order_by(StoryEntity.entity_type, StoryEntity.name)
-        .limit(request.limit)
-    )
-    entities = list(entity_result.scalars().all())
+        entities = await query_story_entities_for_assets(
+            db,
+            user_id=user_id,
+            novel_id=request.novel_id,
+            chapter_id=request.chapter_id,
+            script_id=request.script_id,
+            entity_types=entity_types,
+            limit=request.limit,
+        )
+        entities = sorted(entities, key=lambda entity: (entity.entity_type or "", entity.name or ""))
     if not entities:
         return AssetBulkActionResponse(
             skipped=[
@@ -1073,6 +1142,187 @@ async def reextract_assets(
         warnings=warnings,
         assets=[build_asset_response(asset) for asset in generated_assets],
     )
+
+
+def _provider_binding_response(binding: ProviderAssetBinding) -> ProviderBindingResponse:
+    return ProviderBindingResponse(
+        id=binding.id,
+        asset_id=binding.asset_id,
+        asset_version=binding.asset_version,
+        provider_id=binding.provider_id,
+        model_id=binding.model_id,
+        binding_kind=binding.binding_kind,
+        provider_asset_id=binding.provider_asset_id,
+        public_url=binding.public_url,
+        checksum=binding.checksum,
+        upload_status=binding.upload_status,
+        verified=binding.verified_at is not None and binding.upload_status == "ready" and binding.is_active,
+        is_active=binding.is_active,
+        invalidation_reason=binding.invalidation_reason,
+    )
+
+
+@router.get("/bindings/health", response_model=AssetBindingHealthResponse)
+async def get_asset_binding_health(
+    asset_ids: List[str] = Query(..., min_length=1),
+    provider_id: str = Query(..., min_length=1),
+    model_id: str = Query(..., min_length=1),
+    binding_kind: str = Query("reference_image"),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Report canonical and selected-model readiness without provider calls."""
+    asset_result = await db.execute(
+        select(Asset).where(Asset.id.in_(asset_ids), Asset.user_id == user_id)
+    )
+    assets = {asset.id: asset for asset in asset_result.scalars().all()}
+    binding_result = await db.execute(
+        select(ProviderAssetBinding).where(
+            ProviderAssetBinding.asset_id.in_(asset_ids),
+            ProviderAssetBinding.provider_id == provider_id,
+            ProviderAssetBinding.model_id == model_id,
+            ProviderAssetBinding.binding_kind == binding_kind,
+            ProviderAssetBinding.is_active.is_(True),
+        )
+    )
+    bindings = {
+        (binding.asset_id, binding.asset_version): binding
+        for binding in binding_result.scalars().all()
+    }
+    reference_limits = apply_seedance_contract_limits(
+        get_model_reference_limits(model_id),
+        model_id=model_id,
+        provider=provider_id,
+    )
+    binding_required = requires_provider_bindings(reference_limits)
+    health: list[AssetBindingHealthItem] = []
+    for asset_id in asset_ids:
+        asset = assets.get(asset_id)
+        if not asset:
+            continue
+        version = asset.version or 1
+        binding = bindings.get((asset.id, version))
+        binding_ready = bool(
+            binding
+            and binding.verified_at is not None
+            and binding.upload_status == "ready"
+            and (binding.provider_asset_id or binding.public_url)
+        )
+        health.append(AssetBindingHealthItem(
+            asset_id=asset.id,
+            asset_version=version,
+            canonical_ready=bool(asset.is_active and asset.is_locked and asset.is_final and (asset.url or asset.thumbnail_url)),
+            binding_required=binding_required,
+            binding_ready=binding_ready if binding_required else True,
+            binding_id=binding.id if binding else None,
+            upload_status=binding.upload_status if binding else None,
+            invalidation_reason=binding.invalidation_reason if binding else None,
+        ))
+    return AssetBindingHealthResponse(
+        provider_id=provider_id,
+        model_id=model_id,
+        binding_kind=binding_kind,
+        assets=health,
+    )
+
+
+@router.post("/{asset_id}/bindings", response_model=ProviderBindingResponse, status_code=status.HTTP_201_CREATED)
+async def create_asset_provider_binding(
+    asset_id: str,
+    request: ProviderBindingCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Create a model binding without treating client references as verification evidence."""
+    asset = await db.scalar(select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id))
+    if not asset:
+        raise HTTPException(status_code=404, detail="资产不存在")
+    asset_version = request.asset_version or asset.version or 1
+    if asset_version != (asset.version or 1):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="资产版本已变化，请刷新后重新绑定")
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    checksum = params.get("checksum") or params.get("content_checksum") or params.get("sha256")
+    public_url = request.public_url
+    provider_asset_id = request.provider_asset_id
+    trusted_dev_fixture = False
+    if is_dev_mode() and not public_url and not provider_asset_id:
+        public_url = f"https://dev.invalid/provider-bindings/{asset.id}/v{asset_version}"
+        trusted_dev_fixture = True
+    elif not public_url and is_cloud_accessible_http_url(asset.url):
+        public_url = asset.url
+    if not public_url and not provider_asset_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="当前环境需要供应商资产 ID 或可公开访问的 URL",
+        )
+    binding = await upsert_provider_binding(
+        db,
+        asset_id=asset.id,
+        asset_version=asset_version,
+        provider_id=request.provider_id,
+        model_id=request.model_id,
+        binding_kind=request.binding_kind,
+        provider_asset_id=provider_asset_id,
+        public_url=public_url,
+        checksum=str(checksum) if checksum else None,
+        upload_status="ready" if trusted_dev_fixture else "pending",
+    )
+    try:
+        if trusted_dev_fixture:
+            binding = await verify_provider_binding(
+                db,
+                binding.id,
+                expected_checksum=str(checksum) if checksum else None,
+            )
+    except ProviderBindingError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    await db.commit()
+    return _provider_binding_response(binding)
+
+
+@router.post("/{asset_id}/bindings/{binding_id}/verify", response_model=ProviderBindingResponse)
+async def verify_asset_provider_binding(
+    asset_id: str,
+    binding_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    asset = await db.scalar(select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id))
+    binding = await db.get(ProviderAssetBinding, binding_id)
+    if not asset or not binding or binding.asset_id != asset.id:
+        raise HTTPException(status_code=404, detail="供应商绑定不存在")
+    trusted_dev_url = f"https://dev.invalid/provider-bindings/{asset.id}/v{binding.asset_version}"
+    if not is_dev_mode() or binding.provider_asset_id or binding.public_url != trusted_dev_url:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="客户端不能声明供应商绑定已验证；请等待服务端上传、解析器或供应商响应完成验证",
+        )
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    checksum = params.get("checksum") or params.get("content_checksum") or params.get("sha256")
+    try:
+        binding = await verify_provider_binding(db, binding.id, expected_checksum=str(checksum) if checksum else None)
+    except ProviderBindingError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
+    await db.commit()
+    return _provider_binding_response(binding)
+
+
+@router.post("/{asset_id}/bindings/{binding_id}/invalidate", response_model=ProviderBindingResponse)
+async def invalidate_asset_provider_binding(
+    asset_id: str,
+    binding_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    asset = await db.scalar(select(Asset).where(Asset.id == asset_id, Asset.user_id == user_id))
+    binding = await db.get(ProviderAssetBinding, binding_id)
+    if not asset or not binding or binding.asset_id != asset.id:
+        raise HTTPException(status_code=404, detail="供应商绑定不存在")
+    binding = await invalidate_provider_binding(db, binding.id, reason="user_invalidated")
+    await db.commit()
+    return _provider_binding_response(binding)
 
 
 @router.get("/{asset_id}", response_model=AssetResponse)

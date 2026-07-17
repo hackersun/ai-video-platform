@@ -27,7 +27,9 @@ from app.services.story_prompt_context import (
     compact_text,
     load_story_prompt_context,
 )
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 from app.services.chapter_naming import format_chapter_label, normalize_duplicate_chapter_label_text
+from app.services.episode_production_service import create_script_record
 from app.api.v1.endpoints.dashboard import log_activity
 
 router = APIRouter(tags=["剧本管理"])
@@ -401,11 +403,17 @@ async def load_story_entities_for_scope(
     novel_id: str,
     chapter_id: Optional[str] = None,
 ) -> list[StoryEntity]:
-    query = select(StoryEntity).where(
-        and_(StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id)
+    entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
     )
-    result = await db.execute(query.order_by(StoryEntity.entity_type, desc(StoryEntity.updated_at)))
-    return list(result.scalars().all())
+    recent_first = sorted(
+        entities,
+        key=lambda entity: entity.updated_at or entity.created_at or datetime.min,
+        reverse=True,
+    )
+    return sorted(recent_first, key=lambda entity: entity.entity_type or "")
 
 
 def _priority_sort_entities(items: list[StoryEntity], priority_text: str) -> list[StoryEntity]:
@@ -1322,8 +1330,8 @@ async def create_script(
         novel_title = novel.title
     extra_data = {"chapter_id": chapter_id} if chapter_id else {}
 
-    db_script = Script(
-        id=str(uuid4()),
+    db_script = await create_script_record(
+        db,
         user_id=user_id,
         novel_id=novel_id,
         chapter_id=chapter_id,
@@ -1333,10 +1341,8 @@ async def create_script(
         genre=script.genre,
         style=script.style,
         duration=script.duration,
-        status="draft",
         extra_data=extra_data,
     )
-    db.add(db_script)
     await db.commit()
     await db.refresh(db_script)
 

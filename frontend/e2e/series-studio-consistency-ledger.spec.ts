@@ -116,6 +116,7 @@ test('consistency ledger shows score and repair actions', async ({ page }) => {
   });
 
   await page.goto('/studio?workflow_id=wf-ledger');
+  await page.getByRole('tab', { name: '复审' }).click();
 
   const panel = page.getByTestId('consistency-ledger-panel');
   await expect(panel.getByText('一致性评分')).toBeVisible();

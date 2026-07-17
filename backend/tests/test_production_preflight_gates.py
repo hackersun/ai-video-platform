@@ -126,6 +126,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=character_entity_id,
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="character",
                 name="沈砚",
                 description="黑发青年，灰蓝长衫",
@@ -139,6 +141,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=f"scene-{uuid4()}",
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="scene",
                 name="旧码头",
                 description="冷雾弥漫的木质码头",
@@ -152,6 +156,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=f"prop-{uuid4()}",
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="prop",
                 name="铜铃",
                 description="关键线索道具",
@@ -165,6 +171,8 @@ async def _seed_workflow_with_shot(*, user_id: str, image_url: str | None = None
                 id=f"event-{uuid4()}",
                 user_id=user_id,
                 novel_id=novel_id,
+                chapter_id=chapter_id,
+                first_seen_chapter_id=chapter_id,
                 entity_type="event",
                 name="追查铜铃",
                 description="沈砚在旧码头发现铜铃线索",
@@ -461,7 +469,7 @@ def test_production_video_unsafe_skip_does_not_bypass_hard_preflight(
         (),
         {"content_generation": type("Content", (), {"tasks": FakeTasks()})()},
     )()
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: fake_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: fake_client)
 
     with TestClient(app) as test_client:
         response = test_client.post(
@@ -513,7 +521,7 @@ def test_production_video_preflight_uses_resolved_model_config_when_request_omit
         (),
         {"content_generation": type("Content", (), {"tasks": FakeTasks()})()},
     )()
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: fake_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: fake_client)
 
     with TestClient(app) as test_client:
         response = test_client.post(
@@ -564,7 +572,7 @@ def test_production_video_unsafe_skip_checks_shot_local_reference_image(
         (),
         {"content_generation": type("Content", (), {"tasks": FakeTasks()})()},
     )()
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: fake_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: fake_client)
 
     with TestClient(app) as test_client:
         response = test_client.post(

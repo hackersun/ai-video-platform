@@ -15,7 +15,7 @@ test.beforeEach(async ({ page }) => {
 
 test('asset wizard shows story contract controls and strict-mode review results', async ({ page }) => {
   const novel = { id: 'novel-1', title: '雨巷旧邮局' };
-  const entity = { id: 'scene-1', name: '旧邮局', entity_type: 'scene', description: '1980年代雨夜旧邮局' };
+  const entity = { id: 'scene-1', name: '旧邮局', entity_type: 'scene', description: '1980年代雨夜旧邮局', lifecycle_status: 'approved', active_asset_count: 1 };
   const generatedAsset = {
     id: 'asset-layout',
     category: 'scene',
@@ -50,6 +50,7 @@ test('asset wizard shows story contract controls and strict-mode review results'
 
   await page.route('**/api/v1/novels**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([novel]) }));
   await page.route('**/api/v1/story-bibles/entities**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([entity]) }));
+  await page.route('**/api/v1/asset-maintenance/entity-options**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([entity]) }));
   await page.route('**/api/v1/assets/categories', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{ id: 'scene', name: 'scene', name_cn: '场景' }]) }));
   await page.route('**/api/v1/projects**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) }));
   await page.route('**/api/v1/chapters/**', async (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) }));
@@ -109,6 +110,7 @@ test('asset wizard shows story contract controls and strict-mode review results'
   releaseRegenerateResponse?.();
   await expect(retryButton).toBeEnabled();
 
+  await page.getByRole('button', { name: '生成设置' }).click();
   await page.getByLabel('一致性模式').selectOption('strict');
   const [generateRequest] = await Promise.all([
     page.waitForRequest((request) => request.url().includes('/api/v1/assets/generate-entity-views') && request.method() === 'POST'),

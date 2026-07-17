@@ -14,9 +14,10 @@ from uuid import uuid4
 
 import aiohttp
 
+from app.core.volcano_voice_contract import DEFAULT_VOLCANO_TTS_VOICE
 
 DEFAULT_RESOURCE_ID = "seed-tts-2.0"
-DEFAULT_VOICE = "zh_female_vv_uranus_bigtts"
+DEFAULT_VOICE = DEFAULT_VOLCANO_TTS_VOICE
 SUCCESS_CODES = {0, 20000000}
 LEGACY_VOICE_ALIASES = {
     "female_nvsheng": DEFAULT_VOICE,

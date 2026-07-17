@@ -106,6 +106,7 @@ test('production bible panel exposes required continuity sections', async ({ pag
   });
 
   await page.goto('/studio?workflow_id=wf-production-bible');
+  await page.getByRole('tab', { name: '设定' }).click();
 
   const panel = page.getByTestId('production-bible-panel');
   await expect(panel.getByText('Production Bible')).toBeVisible();

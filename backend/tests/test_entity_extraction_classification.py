@@ -1,6 +1,32 @@
 from app.services.entity_extraction_service import extract_story_entities
 
 
+def test_chapter_owned_extraction_emits_stable_story_lock_evidence_contract():
+    content = "沈砚抵达雾港，拿起铜铃。"
+    entities = extract_story_entities(
+        content, {"character", "scene", "prop"},
+        source_chapter_id="chapter-1", source_chapter_index=1,
+    )
+
+    assert entities
+    for entity in entities:
+        contract = entity["attributes"]["evidence_contract"]
+        start, end = contract["source_span"]
+        assert contract["status"] == "verified"
+        assert contract["chapter_id"] == "chapter-1"
+        assert content[start:end]
+        assert len(contract["content_hash"]) == 64
+        assert contract["parser_version"] == "deterministic-extraction-v2"
+
+
+def test_rule_character_boilerplate_is_evidence_not_identity_description():
+    entities = extract_story_entities("沈砚抵达雾港。沈砚说：立刻撤离。", {"character"})
+    shen_yan = next(item for item in entities if item["name"] == "沈砚")
+    assert shen_yan["description"] is None
+    assert shen_yan["attributes"]["extraction_notes"]
+    assert shen_yan["evidence"]
+
+
 def _names_by_type(entities):
     grouped = {}
     for entity in entities:
@@ -115,6 +141,60 @@ def test_extraction_does_not_promote_shot_prompt_copy_into_fake_scene_or_prop():
     assert "暗巷" in by_type.get("scene", set())
     assert "这一刻重新指向林" not in by_type.get("scene", set())
     assert "推向林澈与铜铃" not in by_type.get("prop", set())
+
+
+def test_explicit_scene_label_wins_over_long_context_noise():
+    text = "主角追查一封来自旧邮局的密信。角色：沈砚。场景：旧邮局。道具：铜铃。沈砚在旧邮局听见铜铃声。"
+
+    entities = extract_story_entities(text, {"scene"})
+
+    names = _names_by_type(entities).get("scene", set())
+    assert "旧邮局" in names
+    assert "角追查一封来自旧邮局" not in names
+
+
+def test_subject_predicate_fragment_is_not_promoted_to_prop():
+    entities = extract_story_entities(
+        "沈砚在废弃灯塔里发现旧铜铃。沈砚在废弃灯下停住脚步。",
+        {"prop"},
+    )
+
+    names = _names_by_type(entities).get("prop", set())
+    assert "旧铜铃" in names
+    assert "沈砚在废弃灯" not in names
+    assert all(not name.startswith("沈砚在") for name in names)
+
+
+def test_explicit_prop_label_is_kept_for_review_even_when_name_looks_like_phrase():
+    entities = extract_story_entities("道具：爱在黎明破晓前海报。", {"prop"})
+
+    assert "爱在黎明破晓前海报" in _names_by_type(entities).get("prop", set())
+
+
+def test_extracted_event_has_actor_action_object_outcome_and_provenance():
+    entities = extract_story_entities(
+        "事件：沈砚打开旧铜铃，密门因此显现。",
+        {"event"},
+        source_chapter_id="chapter-2",
+        source_chapter_index=2,
+    )
+
+    event = next(item for item in entities if item["entity_type"] == "event")
+    assert event["actor"] == "沈砚"
+    assert event["action"] == "打开"
+    assert event["object"] == "旧铜铃"
+    assert event["outcome"] == "密门因此显现"
+    assert event["evidence_span"] == "沈砚打开旧铜铃，密门因此显现"
+    assert event["source_chapter_id"] == "chapter-2"
+    assert event["source_chapter_index"] == 2
+
+
+def test_every_extracted_event_keeps_complete_event_shape():
+    events = extract_story_entities("事件：宗门试炼开启。远处钟声响起。", {"event"})
+
+    assert events
+    for event in events:
+        assert all(event[field] for field in ("actor", "action", "object", "outcome"))
 
 
 def test_fog_port_story_extracts_production_entities_without_dialogue_fragments():

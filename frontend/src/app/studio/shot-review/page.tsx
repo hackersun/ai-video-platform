@@ -9,10 +9,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { HistoryReferencePackageEvidence } from '@/components/production/history-preflight-evidence';
+import { QualityGatePanel } from '@/components/studio/quality-gate-panel';
 import apiClient, { WorkflowRenderArtifacts, WorkflowShotReviewItem, WorkflowShotReviewResponse } from '@/lib/api-client';
 import { resumeEpisodePreviewFromConcatenate } from '@/lib/episode-preview-production';
+import type { QualityGateSummary } from '@/lib/studio-types';
 
-const API_ROOT = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1').replace(/\/api\/v1\/?$/, '');
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_ROOT = API_BASE.replace(/\/api\/v1\/?$/, '');
 
 function mediaUrl(value?: string | null) {
   if (!value) return '';
@@ -134,15 +137,22 @@ function ShotCard({
   selected,
   target,
   onSelectedChange,
+  repairLoading,
+  onQualityRepair,
+  onQualityEvaluate,
 }: {
   shot: WorkflowShotReviewItem;
   selected: boolean;
   target: boolean;
   onSelectedChange: (checked: boolean) => void;
+  repairLoading?: boolean;
+  onQualityRepair: (shotId: string, issueCode: string) => void;
+  onQualityEvaluate: (shotId: string) => void;
 }) {
   const isFailed = shot.status === 'failed';
   const waiting = isShotWaiting(shot.status);
   const video = mediaUrl(shot.video_url);
+  const qualityGate = (shot as WorkflowShotReviewItem & { quality_gate?: QualityGateSummary }).quality_gate;
 
   return (
     <Card
@@ -229,6 +239,14 @@ function ShotCard({
             ) : null}
           </div>
         </div>
+        <QualityGatePanel
+          qualityGate={qualityGate}
+          shotId={shot.shot_id}
+          shotNumber={shot.shot_number}
+          loading={repairLoading}
+          onRepair={onQualityRepair}
+          onEvaluate={onQualityEvaluate}
+        />
       </CardContent>
     </Card>
   );
@@ -340,6 +358,58 @@ function ShotReviewContent() {
     }
   };
 
+  const runQualityRepair = async (shotId: string, issueCode: string) => {
+    const actionKey = `quality-${shotId}`;
+    setActionLoading(actionKey);
+    setError(null);
+    setMessage('');
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${API_BASE}/workflow/${workflowId}/quality/repair`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ shot_id: shotId, issue_code: issueCode }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.detail || '最小返修失败');
+      setMessage(`已完成最小返修；未改动 ${(result.unchanged_artifact_ids || []).length} 个无关任务`);
+      await loadReview();
+    } catch (err: any) {
+      setError(err?.message || '最小返修失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const runQualityEvaluation = async (shotId: string) => {
+    const actionKey = `quality-${shotId}`;
+    setActionLoading(actionKey);
+    setError(null);
+    setMessage('');
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${API_BASE}/workflow/${workflowId}/quality/evaluate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ shot_id: shotId }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : '质量评估失败');
+      setMessage(result.ready ? '六维质量评估通过' : `六维质量评估发现 ${(result.blockers || []).length} 个阻断`);
+      await loadReview();
+    } catch (err: any) {
+      setError(err?.message || '质量评估失败');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#10131a] text-white">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
@@ -438,6 +508,9 @@ function ShotReviewContent() {
                 selected={selectedIds.includes(shot.shot_id)}
                 target={targetShotId === shot.shot_id}
                 onSelectedChange={(checked) => toggleShot(shot.shot_id, checked)}
+                repairLoading={actionLoading === `quality-${shot.shot_id}`}
+                onQualityRepair={runQualityRepair}
+                onQualityEvaluate={runQualityEvaluation}
               />
             ))}
             {!data.shots.length ? (

@@ -14,6 +14,8 @@ from app.models import (
     Clip,
     MediaGenerationJob,
     Novel,
+    ProductionStateEvent,
+    QualityEvaluation,
     Script,
     Shot,
     StoryBible,
@@ -29,8 +31,9 @@ from app.services.studio_guidance import build_studio_guidance
 from app.services.studio_mode import StudioModePolicy, apply_mode_policy
 from app.services.story_state_machine import get_story_state_machine
 from app.services.production_bible import build_production_bible_summary
+from app.services.production_graph_service import project_story_state
 from app.services.consistency_ledger_service import build_consistency_ledger
-from app.services.series_production import get_series_plan
+from app.services.series_production import get_series_plan, resolve_production_graph_artifact_impact
 from app.services.series_studio_flags import series_studio_contract
 
 
@@ -290,6 +293,78 @@ def _story_bible_payload(story_bible: Optional[StoryBible]) -> Dict[str, Any]:
     }
 
 
+async def _production_graph_payload(
+    db: AsyncSession,
+    user_id: str,
+    novel_id: Optional[str],
+) -> Dict[str, Any]:
+    if not novel_id:
+        return {}
+    novel = await _get_or_none(db, Novel, novel_id, user_id)
+    if novel is None:
+        return {}
+    result = await db.execute(
+        select(ProductionStateEvent)
+        .where(
+            ProductionStateEvent.user_id == user_id,
+            ProductionStateEvent.novel_id == novel_id,
+        )
+        .order_by(ProductionStateEvent.production_version.desc())
+        .limit(100)
+    )
+    events = sorted(result.scalars().all(), key=lambda event: event.production_version)
+    projection = await project_story_state(db, user_id=user_id, novel_id=novel_id)
+    if not events:
+        return {
+            "novel_id": novel_id,
+            "version": 0,
+            "hash": projection["graph_hash"],
+            "current_state": {"entities": {}, "world": {}},
+            "story_order": [],
+            "production_revisions": [],
+        }
+    items: List[Dict[str, Any]] = []
+    for event in events:
+        impact = await resolve_production_graph_artifact_impact(
+            db, user_id=user_id, novel=novel, event=event
+        )
+        items.append(
+            {
+                "id": event.id,
+                "event_type": event.event_type,
+                "entity_id": event.entity_id,
+                "episode_index": event.episode_index,
+                "story_time": _json_dict(event.story_time),
+                "production_time": _json_dict(event.production_time),
+                "before_state": _json_dict(event.before_state),
+                "after_state": _json_dict(event.after_state),
+                "approval_status": event.approval_status,
+                "production_version": event.production_version,
+                "event_hash": event.event_hash,
+                "affected_episode_indices": impact["affected_episode_indices"],
+                "affected_entity_ids": impact["affected_entity_ids"],
+                "affected_shots": impact["affected_shots"],
+                "created_at": _dt(event.created_at),
+            }
+        )
+    story_order = sorted(
+        items,
+        key=lambda item: (
+            int(_json_dict(item.get("story_time")).get("episode_index") or item.get("episode_index") or 0),
+            int(_json_dict(item.get("story_time")).get("sequence") or 0),
+            int(item.get("production_version") or 0),
+        ),
+    )
+    return {
+        "novel_id": novel_id,
+        "version": projection["through_version"],
+        "hash": projection["graph_hash"],
+        "current_state": projection["state"],
+        "story_order": story_order,
+        "production_revisions": items,
+    }
+
+
 def _shot_payload(shot: Shot) -> Dict[str, Any]:
     extra = _json_dict(shot.extra_data)
     production_context = _json_dict(extra.get("production_context"))
@@ -448,7 +523,13 @@ async def _load_jobs(db: AsyncSession, user_id: str, workflow: Workflow) -> Dict
             for job in tts_jobs
         ],
         "synthesis_jobs": [
-            {"id": job.id, "status": job.status, "output_url": job.output_url, "created_at": _dt(job.created_at)}
+            {
+                "id": job.id,
+                "status": job.status,
+                "output_url": job.output_url,
+                "is_publishable": _json_dict(job.extra_data).get("is_publishable") is True,
+                "created_at": _dt(job.created_at),
+            }
             for job in synthesis_jobs
         ],
         "media_jobs": [
@@ -459,11 +540,42 @@ async def _load_jobs(db: AsyncSession, user_id: str, workflow: Workflow) -> Dict
                 "status": job.status,
                 "output_video_url": job.output_video_url,
                 "output_audio_url": job.output_audio_url,
+                "output_manifest_url": job.output_manifest_url,
                 "created_at": _dt(job.created_at),
                 **_job_strategy_summary(job),
             }
             for job in media_jobs
         ],
+    }
+
+
+async def _load_quality_evaluation(db: AsyncSession, user_id: str, workflow_id: str) -> Dict[str, Any]:
+    result = await db.execute(
+        select(QualityEvaluation)
+        .join(Workflow, QualityEvaluation.workflow_id == Workflow.id)
+        .where(Workflow.user_id == user_id, QualityEvaluation.workflow_id == workflow_id)
+        .order_by(desc(QualityEvaluation.evaluated_at), desc(QualityEvaluation.created_at))
+    )
+    latest_by_dimension: Dict[tuple[str, str], QualityEvaluation] = {}
+    for row in result.scalars().all():
+        latest_by_dimension.setdefault((str(row.artifact_id), str(row.dimension)), row)
+    by_artifact: Dict[str, List[QualityEvaluation]] = {}
+    for (artifact_id, _), row in latest_by_dimension.items():
+        by_artifact.setdefault(artifact_id, []).append(row)
+    if not by_artifact:
+        return {}
+    rows = max(
+        by_artifact.values(),
+        key=lambda items: max(item.evaluated_at for item in items),
+    )
+    return {
+        "artifact_id": str(rows[0].artifact_id),
+        "evaluation_ids": [str(row.id) for row in rows],
+        "dimensions": [str(row.dimension) for row in rows],
+        "score": round(min(float(row.score) for row in rows), 2),
+        "blocking": any(bool(row.blocking) or row.severity == "blocking" for row in rows),
+        "warning_count": sum(row.severity == "warning" for row in rows),
+        "evaluated_at": max(row.evaluated_at for row in rows).isoformat(),
     }
 
 
@@ -580,6 +692,7 @@ async def build_studio_snapshot(
     shots = [_shot_payload(shot) for shot in await _load_shots(db, user_id, workflow.storyboard_id)]
     assets = await _load_assets(db, user_id, project_id=workflow.project_id, novel_id=workflow.novel_id)
     jobs = await _load_jobs(db, user_id, workflow)
+    quality_evaluation = await _load_quality_evaluation(db, user_id, workflow.id)
     timeline = await _load_timeline(db, user_id, workflow.project_id)
     metadata = workflow.metadata_ if isinstance(workflow.metadata_, dict) else {}
     metadata = _merge_latest_production_strategy(metadata)
@@ -590,7 +703,9 @@ async def build_studio_snapshot(
         else None
     )
     if production_bible_summary is None and workflow.novel_id:
-        production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
+        production_bible_summary = await build_production_bible_summary(
+            db, user_id, workflow.novel_id, as_of_chapter_id=workflow.chapter_id
+        )
     series_plan = {}
     if workflow.novel_id:
         series_plan = _series_plan_with_current_episode(
@@ -598,12 +713,21 @@ async def build_studio_snapshot(
             workflow.chapter_id,
         )
     episode_contract = metadata.get("episode_contract") if isinstance(metadata.get("episode_contract"), dict) else None
+    production_graph = await _production_graph_payload(db, user_id, workflow.novel_id)
     consistency_ledger = build_consistency_ledger(
         shots,
         episode_contract or {},
         [*_json_list(jobs.get("video_jobs")), *_json_list(jobs.get("media_jobs"))],
     )
     raw_issues = _build_issues(workflow=workflow, story_bible=story_bible, shots=shots, jobs=jobs)
+    if quality_evaluation and quality_evaluation.get("blocking"):
+        raw_issues.append(_issue("quality_blocker", "最新六维质量评估存在阻断项。"))
+    elif quality_evaluation and quality_evaluation.get("warning_count"):
+        raw_issues.append(_issue(
+            "quality_warning",
+            f"最新六维质量评估包含 {quality_evaluation['warning_count']} 个可确认警告。",
+            severity="confirmable",
+        ))
     policy_result = apply_mode_policy(raw_issues, mode_policy or StudioModePolicy())
     actions = _unique_actions(policy_result["issues"])
 
@@ -637,7 +761,9 @@ async def build_studio_snapshot(
         "production_bible_summary": production_bible_summary,
         "series_plan": series_plan,
         "episode_contract": episode_contract,
+        "production_graph": production_graph,
         "consistency_ledger": consistency_ledger,
+        "quality_evaluation": quality_evaluation,
         "state_machine": state_machine,
         "production": {
             "shot_count": len(shots),
@@ -680,5 +806,38 @@ async def build_studio_snapshot(
         issues=payload["issues"],
         actions=payload["actions"],
         mode_policy=payload["mode_policy"],
+        episode_contract=payload["episode_contract"] or {},
+        production_graph=payload["production_graph"] or {},
+        assets=payload["assets"] or {},
+        jobs=payload["jobs"] or {},
+        consistency_ledger=payload["consistency_ledger"] or {},
+        orchestration=_json_dict(
+            metadata.get("studio_orchestration") or metadata.get("episode_preview_orchestration")
+        ),
+        quality_evaluation=payload["quality_evaluation"] or {},
     )
+    payload["stage_gate"] = {
+        key: payload["guidance"].get(key)
+        for key in (
+            "current_stage",
+            "stages",
+            "blockers",
+            "confirmable_warnings",
+            "completed_evidence",
+            "recommended_action",
+            "orchestration_resume",
+        )
+    }
+    recommended_code = _json_dict(payload["guidance"].get("recommended_action")).get("code")
+    if recommended_code:
+        payload["actions"] = [item for item in payload["actions"] if item.get("code") != recommended_code]
+        payload["issues"] = [
+            {
+                **item,
+                "repair_action": None
+                if _json_dict(item.get("repair_action")).get("code") == recommended_code
+                else item.get("repair_action"),
+            }
+            for item in payload["issues"]
+        ]
     return payload

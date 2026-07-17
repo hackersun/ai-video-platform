@@ -1,5 +1,6 @@
 import asyncio
 
+from app.services.minimax_errors import minimax_provider_rejection
 from app.services.image_generation_pipeline import call_image_generation_provider, provider_task_id
 from app.services.image_prompt_policy import GLOBAL_IMAGE_NEGATIVE_CONSTRAINT
 
@@ -8,8 +9,29 @@ def test_minimax_trace_id_is_not_treated_as_image_task_id() -> None:
     assert provider_task_id({"id": "trace-only"}, provider_name="minimax") is None
 
 
+def test_minimax_official_generation_id_is_preserved() -> None:
+    result = {
+        "id": "generation-1",
+        "data": {"image_urls": []},
+        "metadata": {"success_count": "0", "failed_count": "1"},
+        "base_resp": {"status_code": 0, "status_msg": "success"},
+    }
+
+    assert provider_task_id(result, provider_name="minimax") == "generation-1"
+
+
 def test_minimax_real_task_id_is_preserved() -> None:
     assert provider_task_id({"id": "trace-id", "task_id": "task-1"}, provider_name="minimax") == "task-1"
+
+
+def test_minimax_business_rejection_request_id_is_not_a_provider_task() -> None:
+    rejection = minimax_provider_rejection({
+        "id": "request-trace-only",
+        "base_resp": {"status_code": 1008, "status_msg": "invalid request"},
+    }, "image generation")
+
+    assert rejection is not None
+    assert rejection.provider_task_id is None
 
 
 def test_volcano_id_is_still_treated_as_task_id() -> None:

@@ -1,8 +1,7 @@
 'use client';
 
-import { FileCheck2, LockKeyhole, RefreshCw } from 'lucide-react';
+import { LockKeyhole } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { EpisodeContract } from '@/lib/studio-types';
 
@@ -13,8 +12,6 @@ function shortHash(value?: string) {
 
 export function EpisodeContractPanel({
   contract,
-  loading,
-  onLock,
 }: {
   contract?: EpisodeContract | null;
   loading?: boolean;
@@ -34,10 +31,7 @@ export function EpisodeContractPanel({
             </CardTitle>
             <div className="mt-1 text-sm text-white/55">锁定本集使用的风格、实体、声线和检查项。</div>
           </div>
-          <Button onClick={onLock} disabled={loading} size="sm" className="w-fit gap-2">
-            {contract?.contract_id ? <RefreshCw className="h-4 w-4" /> : <FileCheck2 className="h-4 w-4" />}
-            {contract?.contract_id ? '重新锁定剧集合约' : '锁定剧集合约'}
-          </Button>
+          <Badge variant="outline" className="w-fit border-white/15 text-white/60">专家明细 · 主动作位于顶部</Badge>
         </div>
       </CardHeader>
       <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

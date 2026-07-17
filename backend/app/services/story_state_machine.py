@@ -21,6 +21,9 @@ from app.core.time_utils import utc_now
 from app.models import Chapter, Novel, StoryBible, StoryEntity
 from app.services.consistency_context import _is_noise_story_entity
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
+from app.services.chapter_fact_timeline import project_entities_as_of_chapter, project_entity_fact
+from app.services.story_entity_lifecycle import query_story_entities_for_production
+from app.services.production_graph_service import project_story_state
 
 
 STATE_MACHINE_KEY = "state_machine"
@@ -72,6 +75,7 @@ async def _load_novel(db: AsyncSession, user_id: str, novel_id: str) -> Novel:
 
 
 def _entity_payload(entity: StoryEntity) -> Dict[str, Any]:
+    fact = project_entity_fact(entity)
     return {
         "id": entity.id,
         "entity_type": entity.entity_type,
@@ -81,6 +85,10 @@ def _entity_payload(entity: StoryEntity) -> Dict[str, Any]:
         "attributes": _json_dict(entity.attributes),
         "evidence": entity.evidence,
         "source": entity.source or "manual",
+        "current_state": fact["current_state"],
+        "known_to_characters": fact["known_to_characters"],
+        "introduced_at": fact["introduced_at"],
+        "resolved_at": fact["resolved_at"],
     }
 
 
@@ -153,6 +161,17 @@ def _group_entities_for_chapter(
         _append_best_entity_payload(grouped, index_by_key, item)
 
     return grouped
+
+
+def _chapter_entity_projections(
+    entities: List[StoryEntity], chapters: List[Chapter]
+) -> Dict[str, List[StoryEntity]]:
+    return {
+        chapter.id: project_entities_as_of_chapter(
+            entities, chapters, chapter_number=chapter.chapter_number, strict=True
+        )
+        for chapter in chapters
+    }
 
 
 def _character_state(entity: Dict[str, Any], chapter: Chapter) -> Dict[str, Any]:
@@ -469,6 +488,8 @@ async def build_story_state_machine(
     story_bible_id: str,
     novel_id: Optional[str] = None,
     persist: bool = True,
+    chapter_ids: Optional[List[str]] = None,
+    approved_only: bool = False,
 ) -> Dict[str, Any]:
     story_bible = await _load_story_bible(db, user_id, story_bible_id)
     resolved_novel_id = novel_id or story_bible.novel_id
@@ -482,29 +503,44 @@ async def build_story_state_machine(
         .order_by(Chapter.chapter_number, Chapter.created_at)
     )
     chapters = list(chapter_result.scalars().all())
+    if chapter_ids is not None:
+        chapter_order = {chapter_id: index for index, chapter_id in enumerate(chapter_ids)}
+        chapters = sorted(
+            [chapter for chapter in chapters if chapter.id in chapter_order],
+            key=lambda chapter: chapter_order[chapter.id],
+        )
+        if len(chapters) != len(chapter_ids):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="状态机章节边界不完整")
     if not chapters:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="小说没有章节，无法生成状态机")
 
-    entity_result = await db.execute(
-        select(StoryEntity)
-        .where(
-            StoryEntity.user_id == user_id,
-            StoryEntity.novel_id == novel.id,
-        )
-        .order_by(StoryEntity.chapter_id, StoryEntity.entity_type, StoryEntity.updated_at)
+    production_entities = await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel.id,
+        entity_types=ENTITY_TYPES,
     )
-    entities = [entity for entity in entity_result.scalars().all() if not _is_noise_story_entity(entity)]
+    entities = sorted(
+        [
+            entity for entity in production_entities
+            if not _is_noise_story_entity(entity)
+            and (
+                not approved_only
+                or (
+                    bool(entity.is_approved)
+                    and bool(_json_dict(entity.attributes).get("approval_record"))
+                )
+            )
+        ],
+        key=lambda entity: (
+            entity.chapter_id or "",
+            entity.entity_type or "",
+            entity.updated_at or entity.created_at,
+        ),
+    )
 
     known = {(entity.entity_type, entity.name, entity.chapter_id) for entity in entities}
     extracted_by_chapter: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    for chapter in chapters:
-        extracted = extract_story_entities(chapter.content or "", set(ENTITY_TYPES))
-        for item in extracted:
-            key_exact = (item.get("entity_type"), item.get("name"), chapter.id)
-            key_global = (item.get("entity_type"), item.get("name"), None)
-            if key_exact in known or key_global in known:
-                continue
-            extracted_by_chapter[chapter.id].append(_extracted_payload(item, chapter))
 
     current_characters: Dict[str, Dict[str, Any]] = {}
     current_scenes: Dict[str, Dict[str, Any]] = {}
@@ -516,9 +552,21 @@ async def build_story_state_machine(
     chapter_snapshots: List[Dict[str, Any]] = []
     event_counter = 1
     event_prop_issues: List[Dict[str, Any]] = []
+    projected_by_chapter = _chapter_entity_projections(entities, chapters)
 
     for chapter in chapters:
-        grouped = _group_entities_for_chapter(entities, extracted_by_chapter, chapter)
+        extracted = [] if approved_only else extract_story_entities(
+            chapter.content or "",
+            set(ENTITY_TYPES),
+            source_chapter_id=chapter.id,
+            source_chapter_index=chapter.chapter_number,
+        )
+        for item in extracted:
+            key_exact = (item.get("entity_type"), item.get("name"), chapter.id)
+            key_global = (item.get("entity_type"), item.get("name"), None)
+            if key_exact not in known and key_global not in known:
+                extracted_by_chapter[chapter.id].append(_extracted_payload(item, chapter))
+        grouped = _group_entities_for_chapter(projected_by_chapter[chapter.id], extracted_by_chapter, chapter)
 
         for entity in grouped.get("character", []):
             state = _character_state(entity, chapter)
@@ -603,6 +651,7 @@ async def build_story_state_machine(
     )
 
     generated_at = utc_now().isoformat()
+    production_graph = await project_story_state(db, user_id=user_id, novel_id=novel.id)
     state_machine = {
         "version": 1,
         "story_bible_id": story_bible.id,
@@ -639,6 +688,7 @@ async def build_story_state_machine(
             "场景时间、天气、光影和空间布局变化必须保留转场或时间跳跃说明。",
         ],
         "issues": issues,
+        "production_graph": production_graph,
     }
     state_machine["episode_states"] = _episode_states(novel, state_machine)
 

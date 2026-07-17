@@ -1960,7 +1960,9 @@ async def generate_script_storyboard_template_fallback(
         script_scene_beats,
         source_title=script_title,
     )
-    shots_data = prepare_storyboard_shots_for_production(shots_data)
+    # Script template fallback should preserve the requested/scene shot count;
+    # segmented TTS can still split multi-speaker dialogue later if needed.
+    shots_data = dedupe_repeated_shot_dialogues(shots_data)
 
     storyboard_title = f"{script_title} - 分镜"
     title_index = 2
@@ -2240,7 +2242,10 @@ async def generate_storyboard(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"AI生成分镜失败: {str(e)}"
     )
-    shots_data = prepare_storyboard_shots_for_production(shots_data)
+    if request.shot_count is not None:
+        shots_data = dedupe_repeated_shot_dialogues(shots_data)
+    else:
+        shots_data = prepare_storyboard_shots_for_production(shots_data)
 
     now = utc_now()
     storyboard_title = f"{script_title} - 分镜"
@@ -2421,7 +2426,10 @@ async def generate_smart_storyboard(
 
             if not is_dev_mode():
                 raise HTTPException(status_code=500, detail=f"AI细化分镜失败: {str(exc)}")
-    shots_data = prepare_storyboard_shots_for_production(shots_data)
+    if request.shot_count is not None:
+        shots_data = dedupe_repeated_shot_dialogues(shots_data)
+    else:
+        shots_data = prepare_storyboard_shots_for_production(shots_data)
 
     if source_script:
         script_id = source_script.id

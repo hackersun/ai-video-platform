@@ -39,6 +39,7 @@ from app.services.media_persistence import audit_media_url, persist_remote_media
 from app.services.production_bible import build_production_bible_summary, build_production_snapshot
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
 from app.services.short_video_production import build_shot_production_contract, persist_contract_to_shot
+from app.services.story_entity_lifecycle import query_story_entities_for_production
 
 
 PRODUCTION_PACK_KEY = "production_pack"
@@ -108,15 +109,12 @@ async def _assets_for_novel(db: AsyncSession, user_id: str, novel_id: str) -> Li
 
 
 async def _entities_for_novel(db: AsyncSession, user_id: str, novel_id: str) -> List[StoryEntity]:
-    result = await db.execute(
-        select(StoryEntity)
-        .where(
-            StoryEntity.user_id == user_id,
-            or_(StoryEntity.novel_id == novel_id, StoryEntity.novel_id.is_(None)),
-        )
-        .order_by(StoryEntity.created_at)
+    return await query_story_entities_for_production(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        include_global_novel_entities=True,
     )
-    return list(result.scalars().all())
 
 
 async def _shots_for_workflow(db: AsyncSession, user_id: str, workflow: Workflow) -> List[Shot]:
@@ -358,7 +356,9 @@ async def apply_asset_locks_to_workflow(
         "lock_count": pack["summary"]["lock_count"],
         "applied_shot_count": len(updated),
     }
-    production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
+    production_bible_summary = await build_production_bible_summary(
+        db, user_id, workflow.novel_id, as_of_chapter_id=workflow.chapter_id
+    )
     metadata["production_snapshot"] = build_production_snapshot(
         production_bible_summary,
         reason="asset_locks_applied",
@@ -597,7 +597,9 @@ async def refresh_workflow_production_contracts(
         metadata = dict(_json_dict(workflow.metadata_))
         production_bible_summary = None
         if workflow.novel_id:
-            production_bible_summary = await build_production_bible_summary(db, user_id, workflow.novel_id)
+            production_bible_summary = await build_production_bible_summary(
+                db, user_id, workflow.novel_id, as_of_chapter_id=workflow.chapter_id
+            )
         metadata["production_contracts"] = {
             "refreshed_at": utc_now().isoformat(),
             "refreshed_count": len(refreshed),

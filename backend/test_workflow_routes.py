@@ -5,6 +5,7 @@ Workflow route tests for TTS and synthesis.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,7 +14,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
-from app.models import Asset, StoryEntity
+from app.models import Asset, Novel, Project, Script, StoryEntity
+from app.models.series_production_run import SeriesProductionRun
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.shot import Shot
@@ -21,6 +23,8 @@ from app.models.synthesis_job import SynthesisJob
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
 from app.models.workflow import Workflow
+from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.core.time_utils import utc_now
 from app.api.v1.endpoints.workflow import _dialogue_sync_diagnostics
 from init_db import init_db
 from main import app
@@ -35,6 +39,217 @@ def _init_database() -> None:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("DEV_MODE", "true")
     return TestClient(app)
+
+
+def test_series_run_workflow_media_requires_passed_preflight(client: TestClient) -> None:
+    user_id, novel_id, run_id, workflow_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Novel(id=novel_id, user_id=user_id, title="门禁测试小说"))
+            session.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="shots_ready", current_episode_number=1,
+                requested_stages=["media"], model_bindings={}, budget_policy={}, cost_summary={},
+                gate_summary={}, run_metadata={}, episodes=[], version=1,
+            ))
+            session.add(Workflow(
+                id=workflow_id, user_id=user_id, novel_id=novel_id, title="整书第一集",
+                metadata_={"series_run_id": run_id, "episode_number": 1},
+            ))
+            await session.commit()
+
+    asyncio.run(_seed())
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first"},
+        headers={"Authorization": f"Bearer {user_id}"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "series_run_media_preflight_required"
+
+
+def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, novel_id, script_id, storyboard_id, shot_id, workflow_id, run_id = (str(uuid4()) for _ in range(7))
+    bindings = {}
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(Novel(id=novel_id, user_id=user_id, title="live image order"))
+            from app.models.storyboard import Storyboard
+            db.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="live script", content="live"))
+            db.add(Storyboard(id=storyboard_id, script_id=script_id, user_id=user_id, novel_id=novel_id, title="live", content={}))
+            db.add(Shot(id=shot_id, user_id=user_id, storyboard_id=storyboard_id, shot_number=1, prompt="live shot"))
+            db.add(Workflow(id=workflow_id, user_id=user_id, novel_id=novel_id, storyboard_id=storyboard_id, title="live", metadata_={"series_run_id": run_id}))
+            for capability, tags, model_type in (
+                ("text", ["chat"], "chat"), ("image", ["text-to-image"], "image-generation"),
+                ("tts", ["text-to-speech"], "tts"), ("video", ["text-to-video"], "video-generation"),
+            ):
+                provider = LLMProvider(id=str(uuid4()), name=f"live-{capability}-{uuid4()}", is_active=True)
+                model = LLMModel(id=str(uuid4()), provider_id=provider.id, model_id=f"api-{capability}", model_name=capability, model_type=model_type, capabilities=tags, is_active=True)
+                config = LLMConfig(id=str(uuid4()), user_id=user_id, model_id=model.id, name=capability, api_key="opaque", is_active=True, test_status="success", tested_at=utc_now())
+                db.add_all([provider, model, config]); bindings[capability] = config.id
+            db.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1", idempotency_key=str(uuid4()),
+                status="media_running", requested_stages=["media"],
+                model_bindings={"capabilities": {name: {"config_id": value} for name, value in bindings.items()}},
+                budget_policy={"live_canary": True, "max_rmb": "5.00", "estimates_rmb": {"image": "1.00"}},
+                cost_summary={}, gate_summary={}, run_metadata={},
+                episodes=[{"episode_number": 1, "canonical_ids": {"workflow_id": workflow_id, "shot_ids": [shot_id]}}], version=1,
+                created_at=utc_now() - timedelta(seconds=1),
+            ))
+            await db.commit()
+
+    asyncio.run(_seed())
+
+    async def _config(*args, **kwargs):
+        return "opaque", "synthetic", "api-image", None
+
+    async def _provider(*args, **kwargs):
+        async with AsyncSessionLocal() as db:
+            operation = await db.scalar(select(LiveCanaryProviderOperation).where(LiveCanaryProviderOperation.job_id == shot_id))
+            assert operation is not None and operation.status == "reserved" and operation.provider_task_id is None
+            run = await db.get(SeriesProductionRun, run_id)
+            assert run.cost_summary["reserved_rmb"] == "1.00"
+        return {"task_id": "mock-image-task", "data": [{"url": "/static/generated/mock-live.png"}]}
+
+    monkeypatch.setattr("app.api.v1.endpoints.shots.get_user_image_model_config", _config)
+    monkeypatch.setattr("app.api.v1.endpoints.shots.create_image_generation_service", lambda *args: object())
+    monkeypatch.setattr("app.api.v1.endpoints.shots.call_image_generation_provider", _provider)
+    response = client.post(f"/api/v1/shots/{shot_id}/generate-image", json={"style": "anime"}, headers=_auth_headers(user_id))
+    assert response.status_code == 200, response.text
+
+    async def _assert_terminal() -> None:
+        async with AsyncSessionLocal() as db:
+            operation = await db.scalar(select(LiveCanaryProviderOperation).where(LiveCanaryProviderOperation.job_id == shot_id))
+            run = await db.get(SeriesProductionRun, run_id)
+            assert operation.status == "reconciled" and operation.provider_task_id == "mock-image-task"
+            assert run.cost_summary["spent_rmb"] == "1.00" and run.cost_summary["reserved_rmb"] == "0.00"
+    asyncio.run(_assert_terminal())
+
+
+def test_live_project_image_without_novel_id_still_requires_canonical_shot(client: TestClient) -> None:
+    user_id, project_id, novel_id, run_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as db:
+            db.add(Project(id=project_id, user_id=user_id, name="live project"))
+            db.add(Novel(id=novel_id, user_id=user_id, project_id=project_id, title="live project novel"))
+            db.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="media_running", requested_stages=["media"],
+                model_bindings={}, budget_policy={"live_canary": True, "max_rmb": "5.00"},
+                cost_summary={}, gate_summary={}, run_metadata={}, episodes=[], version=1,
+            ))
+            await db.commit()
+
+    asyncio.run(_seed())
+    response = client.post(
+        "/api/v1/images/generate",
+        json={"prompt": "must not call provider", "project_id": project_id},
+        headers=_auth_headers(user_id),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "live_canary_shot_context_required"
+
+
+def test_series_run_workflow_media_rechecks_fresh_snapshot_before_provider_call(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, novel_id, run_id, workflow_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Novel(id=novel_id, user_id=user_id, title="新鲜门禁测试"))
+            session.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="media_running", current_episode_number=1,
+                requested_stages=["media"], model_bindings={}, budget_policy={}, cost_summary={},
+                gate_summary={"media_preflight": {"ready": True, "snapshot_hash": "old"}},
+                run_metadata={"media_preflight": {"ready": True, "snapshot_hash": "old"}},
+                episodes=[{"episode_number": 1, "canonical_ids": {"workflow_id": workflow_id}}], version=1,
+            ))
+            session.add(Workflow(
+                id=workflow_id, user_id=user_id, novel_id=novel_id, title="已通过旧门禁",
+                metadata_={
+                    "series_run_id": run_id,
+                    "episode_contract": {"contract_id": "stable-contract", "status": "locked", "snapshot_hash": "old"},
+                },
+            ))
+            await session.commit()
+
+    async def _fresh(*_args, **_kwargs):
+        return {"ready": True, "snapshot_hash": "fresh", "issues": []}
+
+    asyncio.run(_seed())
+    monkeypatch.setattr("app.features.workflow_media.application.load_context.evaluate_media_preflight", _fresh)
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first"},
+        headers={"Authorization": f"Bearer {user_id}"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["snapshot_changed"] is True
+
+    async def _load_contract():
+        async with AsyncSessionLocal() as session:
+            value = await session.get(Workflow, workflow_id)
+            return value.metadata_["episode_contract"]
+
+    contract = asyncio.run(_load_contract())
+    assert contract["contract_id"] == "stable-contract"
+    assert contract["status"] == "superseded_review_required"
+    assert contract["superseded_reason"] == "input_snapshot_changed"
+
+
+def test_series_run_workflow_persists_fresh_not_ready_even_when_hash_is_unchanged(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, novel_id, run_id, workflow_id = (str(uuid4()) for _ in range(4))
+
+    async def _seed() -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(Novel(id=novel_id, user_id=user_id, title="同hash失败门禁"))
+            session.add(SeriesProductionRun(
+                id=run_id, user_id=user_id, novel_id=novel_id, series_plan_version="v1",
+                idempotency_key=str(uuid4()), status="media_running", current_episode_number=1,
+                requested_stages=["media"], model_bindings={}, budget_policy={}, cost_summary={},
+                gate_summary={"media_preflight": {"ready": True, "snapshot_hash": "same"}},
+                run_metadata={}, episodes=[{"canonical_ids": {"workflow_id": workflow_id}}], version=1,
+            ))
+            session.add(Workflow(
+                id=workflow_id, user_id=user_id, novel_id=novel_id, title="待废弃contract",
+                metadata_={
+                    "series_run_id": run_id,
+                    "episode_contract": {"contract_id": "same-contract", "snapshot_hash": "same", "status": "locked"},
+                },
+            ))
+            await session.commit()
+
+    async def _fresh(*_args, **_kwargs):
+        return {"ready": False, "snapshot_hash": "same", "codes": ["state_machine_blocking"], "issues": [{"code": "state_machine_blocking"}]}
+
+    asyncio.run(_seed())
+    monkeypatch.setattr("app.features.workflow_media.application.load_context.evaluate_media_preflight", _fresh)
+    response = client.post(
+        f"/api/v1/workflow/{workflow_id}/generate-media-batch",
+        json={"strategy": "direct_av_first"}, headers={"Authorization": f"Bearer {user_id}"},
+    )
+    assert response.status_code == 409
+
+    async def _load():
+        async with AsyncSessionLocal() as session:
+            run = await session.get(SeriesProductionRun, run_id)
+            workflow = await session.get(Workflow, workflow_id)
+            return run.gate_summary["media_preflight"], workflow.metadata_["episode_contract"]
+
+    gate, contract = asyncio.run(_load())
+    assert gate["ready"] is False
+    assert contract["status"] == "superseded_review_required"
 
 
 @pytest.fixture()
@@ -827,7 +1042,7 @@ def test_video_job_includes_workflow_lineage_fields(client: TestClient, monkeypa
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     shot_id, storyboard_id, script_id = _create_shot(client, "video-lineage-user")
 
@@ -876,7 +1091,7 @@ def test_video_generation_passes_seed_and_sdk_parameters(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-seed-user"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
@@ -901,7 +1116,7 @@ def test_video_generation_passes_seed_and_sdk_parameters(
     assert captured["resolution"] == "1080p"
     assert captured["seed"] == 4242
     assert captured["camera_fixed"] is False
-    assert captured["watermark"] is True
+    assert captured["watermark"] is False
     assert "--resolution 1080p" in captured["content"][-1]["text"]
 
     job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
@@ -931,7 +1146,7 @@ def test_video_generation_uses_selected_video_model_config_metadata(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-selected-model-user"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
@@ -984,7 +1199,7 @@ def test_video_generation_skips_local_reference_image_for_provider(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-local-image-user"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
@@ -1065,7 +1280,7 @@ def test_video_generation_maps_local_reference_image_through_public_storage(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-public-storage-user"
     storage_config_id = _create_public_storage_config(client, user_id)
@@ -1120,7 +1335,7 @@ def test_video_generation_records_multiview_refs_but_sends_single_provider_image
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-multiview-single-image-user"
     novel_resp = client.post(
@@ -1235,7 +1450,7 @@ def test_video_generation_accepts_seedance_20_fast_model(client: TestClient, mon
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-seedance-20-fast-user"
     create_resp = client.post(
@@ -1281,7 +1496,7 @@ def test_video_generation_submits_seedance20_reference_package_content(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     shot_id, _storyboard_id, _script_id = _create_shot(client, user_id)
@@ -1341,7 +1556,7 @@ def test_video_generation_accepts_volcano_agent_plan_video_model(client: TestCli
         captured_client["base_url"] = base_url
         return _FakeArkClient()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", _fake_create_ark_client)
 
     user_id = "video-agent-plan-user"
     create_resp = client.post(
@@ -1385,7 +1600,7 @@ def test_video_job_infers_full_lineage_from_chapter_shot(client: TestClient, mon
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = "video-full-lineage-user"
     novel_id = _create_novel(client, user_id)
@@ -2069,7 +2284,7 @@ def test_workflow_media_batch_separate_video_tts_uses_selected_models(
             "status": "succeeded",
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
     monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
 
     user_id = uuid4().hex
@@ -2190,7 +2405,7 @@ def test_workflow_media_batch_requires_explicit_real_tts_config_before_video_sub
         assert api_key == "sk-volcano"
         return _FakeArkClient()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -2290,7 +2505,7 @@ def test_workflow_media_batch_tts_uses_story_bible_character_voice(
             "status": "succeeded",
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
     monkeypatch.setattr("app.services.minimax_service.MiniMaxService.text_to_speech", _fake_tts)
 
     user_id = uuid4().hex
@@ -2983,7 +3198,7 @@ def test_non_dev_workflow_media_batch_blocks_unverified_video_model_before_jobs(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     headers = _signed_auth_headers(user_id)
@@ -3151,7 +3366,7 @@ def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -3247,7 +3462,7 @@ def test_workflow_media_batch_sanitizes_provider_video_prompt(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -3356,7 +3571,7 @@ def test_workflow_media_batch_skips_local_reference_image_for_provider(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -3462,7 +3677,7 @@ def test_workflow_media_batch_maps_local_reference_image_through_public_storage(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     storage_config_id = _create_public_storage_config(client, user_id)
@@ -3553,7 +3768,7 @@ def test_workflow_media_batch_submits_seedance20_reference_package_content(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -3628,7 +3843,7 @@ def test_workflow_media_batch_keeps_legacy_single_image_reference_content(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     video_config_id = _insert_model_config(
@@ -4739,7 +4954,7 @@ def test_final_quality_seedance20_blocks_insufficient_reference_package(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     asset_locks = [
@@ -4809,7 +5024,7 @@ def test_final_quality_legacy_video_model_allows_single_reference_view(
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
 
     user_id = uuid4().hex
     asset_locks = [
@@ -4942,7 +5157,7 @@ def test_final_quality_separate_video_tts_uses_provider_default_voice_lock(
             "status": "succeeded",
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", _fake_create_ark_client)
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
     monkeypatch.setattr("app.services.volcano_service.VolcanoService.text_to_speech", _fake_volcano_tts)
 
     user_id = f"final-provider-voice-{uuid4().hex[:15]}"
@@ -5298,9 +5513,9 @@ def test_production_native_audio_route_does_not_require_tts_api_key(
             "blocking_issue_count": 0,
         }
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.features.video_generation.public.create_ark_client", lambda *_: _FakeArkClient())
     monkeypatch.setattr(
-        "app.api.v1.endpoints.workflow.build_generation_context_package",
+            "app.features.workflow_media.application.prepare_separate_media.build_generation_context_package",
         _fake_generation_context_package,
     )
 

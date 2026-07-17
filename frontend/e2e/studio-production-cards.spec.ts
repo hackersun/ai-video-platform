@@ -99,17 +99,21 @@ test('studio production cards show readiness gaps and repair links', async ({ pa
   await page.goto('/studio/cards?novel_id=novel-1');
 
   await expect(page.getByRole('heading', { name: '定稿卡' })).toBeVisible();
-  await expect(page.getByText('就绪 1')).toBeVisible();
-  await expect(page.getByText('待补齐 1')).toBeVisible();
-  await expect(page.getByRole('heading', { name: '孙剑' })).toBeVisible();
-  await expect(page.getByText('完整度 62%')).toBeVisible();
-  await expect(page.getByText('缺少背面定稿图')).toBeVisible();
-  await expect(page.getByRole('link', { name: '去资产库补齐' }).first()).toHaveAttribute(
+  const readyMetric = page.locator('header').getByText('终稿就绪', { exact: true }).locator('..');
+  await expect(readyMetric).toContainText('1');
+  const incompleteMetric = page.locator('header').getByText('待补齐', { exact: true }).locator('..');
+  await expect(incompleteMetric).toContainText('1');
+  const sunCard = page.getByTestId('production-card-char-1');
+  await expect(sunCard.getByText('孙剑', { exact: true })).toBeVisible();
+  await expect(sunCard).toContainText('完整度 62%');
+  await expect(sunCard.getByText('缺少背面定稿图')).toBeVisible();
+  await expect(sunCard.getByRole('link', { name: '去资产库补齐' }).first()).toHaveAttribute(
     'href',
     '/assets?novel_id=novel-1&entity_type=character&entity_id=char-1&view_key=back&action=generate-missing&source=production-card'
   );
-  await expect(page.getByText('云端车站')).toBeVisible();
-  await expect(page.getByText('终稿就绪')).toBeVisible();
+  const sceneCard = page.getByTestId('production-card-scene-1');
+  await expect(sceneCard.getByText('云端车站', { exact: true })).toBeVisible();
+  await expect(sceneCard.getByText('终稿就绪', { exact: true })).toBeVisible();
 
   await expect(page.getByLabel('最低出镜次数')).toHaveValue('2');
   await page.getByLabel('最低出镜次数').fill('3');

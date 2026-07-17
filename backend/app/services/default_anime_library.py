@@ -841,6 +841,7 @@ async def ensure_default_anime_assets(db: AsyncSession, user_id: str) -> int:
             select(Asset.id).where(
                 Asset.user_id == user_id,
                 Asset.source_url == source_key,
+                Asset.name == item["name"],
             ).limit(1)
         )
         if result.scalar():

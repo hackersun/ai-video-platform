@@ -4,16 +4,19 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
+  ArrowRight,
+  BadgeCheck,
+  CheckCircle,
+  Film,
+  Loader2,
+  Lock,
+  ShieldCheck,
   Sparkles,
   User,
-  Lock,
-  Loader2,
-  CheckCircle,
+  Workflow,
   XCircle,
-  ArrowRight,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -57,119 +60,189 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-violet-900/20 to-gray-900 flex items-center justify-center p-4">
-      {/* 背景装饰 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl" />
-      </div>
+    <main className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.08)_1px,transparent_1px)] bg-[size:42px_42px]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgba(15,23,42,0.62),rgba(15,23,42,0.94)_48%,rgba(2,6,23,1)),radial-gradient(circle_at_20%_12%,rgba(20,184,166,0.18),transparent_30%),radial-gradient(circle_at_82%_18%,rgba(245,158,11,0.1),transparent_24%)]" />
 
-      <div className="w-full max-w-md relative z-10">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 mb-4">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center">
-              <Sparkles className="w-6 h-6 text-white" />
+      <div className="relative mx-auto grid min-h-screen w-full max-w-7xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
+        <section className="hidden border-r border-white/10 px-10 py-8 lg:flex lg:flex-col lg:justify-between">
+          <Link href="/" className="inline-flex w-fit items-center gap-3" aria-label="AI视频平台">
+            <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-white/15 bg-white/10">
+              <Sparkles className="h-5 w-5 text-cyan-200" aria-hidden="true" />
+            </span>
+            <span className="text-xl font-semibold text-white">AI视频平台</span>
+          </Link>
+
+          <div className="max-w-2xl">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-sm font-medium text-cyan-100">
+              <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+              AI 动漫制作工作台
             </div>
-            <span className="text-2xl font-bold text-white">AI视频平台</span>
+            <h1 className="text-4xl font-semibold leading-tight text-white">
+              从小说进入角色、分镜与视频生产
+            </h1>
+            <p className="mt-4 max-w-xl text-base leading-7 text-slate-300">
+              登录后继续管理小说章节、角色资产、提示词技能与生产任务，让创作流程保持一致、可核对、可追踪。
+            </p>
+
+            <div className="mt-8 grid grid-cols-3 gap-3">
+              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+                <User className="mb-3 h-5 w-5 text-cyan-200" aria-hidden="true" />
+                <div className="text-sm font-semibold text-white">角色资产</div>
+                <div className="mt-1 text-xs leading-5 text-slate-400">人物设定与一致性</div>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+                <Workflow className="mb-3 h-5 w-5 text-amber-200" aria-hidden="true" />
+                <div className="text-sm font-semibold text-white">剧本分镜</div>
+                <div className="mt-1 text-xs leading-5 text-slate-400">章节改编与镜头拆解</div>
+              </div>
+              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+                <Film className="mb-3 h-5 w-5 text-violet-200" aria-hidden="true" />
+                <div className="text-sm font-semibold text-white">视频生成</div>
+                <div className="mt-1 text-xs leading-5 text-slate-400">镜头预览与任务跟踪</div>
+              </div>
+            </div>
           </div>
-          <p className="text-white/60">欢迎回来，继续创作之旅</p>
-        </div>
 
-        <Card className="bg-white/5 border-white/10 backdrop-blur">
-          <CardHeader>
-            <CardTitle className="text-white text-center text-xl">用户登录</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* 用户名 */}
-              <div>
-                <label className="block text-sm text-white/80 mb-2">用户名</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                  <Input
-                    type="text"
-                    placeholder="请输入用户名"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
-                  />
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm text-slate-300">
+            <BadgeCheck className="mt-0.5 h-4 w-4 text-emerald-300" aria-hidden="true" />
+            <span>登录状态会沿用现有工作台权限与任务上下文</span>
+            <BadgeCheck className="mt-0.5 h-4 w-4 text-emerald-300" aria-hidden="true" />
+            <span>进入后可继续使用 AI 辅助抽取、剧本编写与分镜生产</span>
+          </div>
+        </section>
+
+        <section className="flex min-h-screen items-center justify-center px-4 py-8 sm:px-6 lg:px-10">
+          <div className="w-full max-w-md space-y-5">
+            <div className="lg:hidden">
+              <Link href="/" className="mb-5 inline-flex items-center gap-3" aria-label="AI视频平台">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 bg-white/10">
+                  <Sparkles className="h-5 w-5 text-cyan-200" aria-hidden="true" />
+                </span>
+                <span className="text-lg font-semibold text-white">AI视频平台</span>
+              </Link>
+              <div className="inline-flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-sm font-medium text-cyan-100">
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                AI 动漫制作工作台
+              </div>
+            </div>
+
+            <div
+              data-testid="login-form-panel"
+              className="rounded-lg border border-white/[0.12] bg-slate-900/90 p-5 shadow-2xl shadow-black/30 backdrop-blur sm:p-6"
+            >
+              <div className="mb-6">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.08] px-3 py-1.5 text-xs font-medium text-slate-300">
+                  <Lock className="h-3.5 w-3.5 text-emerald-300" aria-hidden="true" />
+                  安全登录
                 </div>
+                <h2 className="text-2xl font-semibold text-white">用户登录</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-400">
+                  继续处理小说、角色资产与视频生产任务。
+                </p>
               </div>
 
-              {/* 密码 */}
-              <div>
-                <label className="block text-sm text-white/80 mb-2">密码</label>
-                <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-                  <Input
-                    type="password"
-                    placeholder="请输入密码"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
-                  />
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="username" className="mb-2 block text-sm font-medium text-slate-200">
+                    用户名
+                  </label>
+                  <div className="relative">
+                    <User className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <Input
+                      id="username"
+                      type="text"
+                      placeholder="请输入用户名"
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoComplete="username"
+                      className="h-12 border-white/10 bg-white/[0.06] pl-10 text-white placeholder:text-slate-500 focus-visible:ring-cyan-300"
+                    />
+                  </div>
                 </div>
-              </div>
 
-              {/* 错误提示 */}
-              {error && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                  <XCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-                  <span className="text-red-400 text-sm">{error}</span>
+                <div>
+                  <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-200">
+                    密码
+                  </label>
+                  <div className="relative">
+                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <Input
+                      id="password"
+                      type="password"
+                      placeholder="请输入密码"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="current-password"
+                      className="h-12 border-white/10 bg-white/[0.06] pl-10 text-white placeholder:text-slate-500 focus-visible:ring-cyan-300"
+                    />
+                  </div>
                 </div>
-              )}
 
-              {/* 成功提示 */}
-              {success && (
-                <div className="flex items-center gap-2 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-                  <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
-                  <span className="text-green-400 text-sm">{success}</span>
-                </div>
-              )}
-
-              {/* 提交按钮 */}
-              <Button
-                type="submit"
-                disabled={isLoading}
-                className="w-full bg-violet-600 hover:bg-violet-700 h-11"
-              >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    登录中...
-                  </>
-                ) : (
-                  <>
-                    登录
-                    <ArrowRight className="w-4 h-4 ml-2" />
-                  </>
+                {error && (
+                  <div
+                    role="alert"
+                    className="flex items-start gap-2 rounded-lg border border-red-400/20 bg-red-500/10 p-3"
+                  >
+                    <XCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-300" />
+                    <span className="text-sm leading-5 text-red-200">{error}</span>
+                  </div>
                 )}
-              </Button>
-            </form>
 
-            {/* 注册链接 */}
-            <div className="mt-6 text-center">
-              <p className="text-white/60 text-sm">
-                还没有账号？{' '}
-                <Link href="/register" className="text-violet-400 hover:text-violet-300">
-                  立即注册
+                {success && (
+                  <div
+                    role="status"
+                    className="flex items-start gap-2 rounded-lg border border-emerald-400/20 bg-emerald-500/10 p-3"
+                  >
+                    <CheckCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-300" />
+                    <span className="text-sm leading-5 text-emerald-100">{success}</span>
+                  </div>
+                )}
+
+                <Button
+                  type="submit"
+                  disabled={isLoading}
+                  className="h-12 w-full bg-cyan-400 text-slate-950 shadow-lg shadow-cyan-950/30 hover:bg-cyan-300"
+                >
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      登录中...
+                    </>
+                  ) : (
+                    <>
+                      登录
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </>
+                  )}
+                </Button>
+              </form>
+
+              <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-5 text-center text-sm text-slate-400">
+                <p>
+                  还没有账号？{' '}
+                  <Link href="/register" className="font-medium text-cyan-200 hover:text-cyan-100">
+                    立即注册
+                  </Link>
+                </p>
+                <Link href="/forgot-password" className="font-medium text-slate-300 hover:text-white">
+                  忘记密码？
                 </Link>
-              </p>
-              <Link href="/forgot-password" className="mt-3 inline-block text-sm text-white/50 hover:text-white">
-                忘记密码？
+              </div>
+            </div>
+
+            <div className="text-center">
+              <Link
+                href="/"
+                className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white"
+              >
+                <ArrowRight className="h-4 w-4 rotate-180" aria-hidden="true" />
+                返回首页
               </Link>
             </div>
-          </CardContent>
-        </Card>
-
-        {/* 返回首页 */}
-        <div className="mt-4 text-center">
-          <Link href="/" className="text-white/40 hover:text-white/60 text-sm">
-            ← 返回首页
-          </Link>
-        </div>
+          </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 }

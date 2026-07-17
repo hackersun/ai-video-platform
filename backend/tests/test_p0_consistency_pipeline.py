@@ -108,7 +108,7 @@ def test_fallback_entities_include_all_reasonable_matches_instead_of_2_1_1_1_cap
 
 
 def test_collect_character_multiview_refs_from_locked_assets():
-    from app.api.v1.endpoints.video import _collect_character_multiview_refs
+    from app.features.video_generation.public import collect_character_multiview_refs
 
     character_refs = [{"character_id": "char-1", "name": "萧炎"}]
     assets = [
@@ -153,7 +153,7 @@ def test_collect_character_multiview_refs_from_locked_assets():
         ),
     ]
 
-    refs = _collect_character_multiview_refs(assets, character_refs)
+    refs = collect_character_multiview_refs(assets, character_refs)
 
     assert [(item["asset_id"], item["view_angle"]) for item in refs] == [
         ("asset-front", "front"),

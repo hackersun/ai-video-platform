@@ -33,6 +33,8 @@ def test_model_registry_exposes_task_defaults(client: TestClient) -> None:
     payload = response.json()
     tasks = {item["task"]: item for item in payload["task_defaults"]}
     assert tasks["novel_generation"]["default_model"]["modality"] == "text"
+    assert tasks["character_image"]["default_model"]["api_model_id"] == "doubao-seedream-5-0-260128"
+    assert tasks["scene_reference_image"]["default_model"]["api_model_id"] == "doubao-seedream-5-0-260128"
     assert tasks["shot_video"]["default_model"]["modality"] == "video"
     assert tasks["shot_video"]["default_model"]["api_model_id"] == "doubao-seedance-2-0-260128"
     assert tasks["tts_dialogue"]["default_model"]["modality"] == "audio"
@@ -121,7 +123,7 @@ def test_workflow_status_returns_only_bound_jobs(client: TestClient, monkeypatch
     class _FakeArkClient:
         content_generation = _FakeContentGeneration()
 
-    monkeypatch.setattr("app.api.v1.endpoints.video._create_ark_client", lambda *_: _FakeArkClient())
+    monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
     unbound_resp = client.post(
         "/api/v1/video/generate",

@@ -10,6 +10,7 @@ sys.path.insert(0, '.')
 from app.core.database import sync_engine
 from sqlalchemy.orm import Session
 from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_MODELS, VOLCANO_AGENT_PLAN_PROVIDER
+from app.core.volcano_image_catalog import VOLCANO_IMAGE_MODEL_SEEDS
 from app.models.llm_config import LLMProvider, LLMModel
 
 
@@ -205,24 +206,10 @@ def init_llm_providers_and_models():
             "description": "火山引擎高质量视频生成模型"
         },
         # 火山引擎 - 图像模型
-        {
-            "id": "volcano-seedream-4-5",
-            "provider_id": "volcano",
-            "model_id": "Doubao-Seedream-4.5",
-            "model_name": "Doubao-Seedream-4.5",
-            "model_name_cn": "豆包Seedream-4.5",
-            "model_type": "image",
-            "capabilities": ["text-to-image", "image-to-image"],
-            "context_window": 0,
-            "max_tokens": 0,
-            "input_cost_per_1k": 0,
-            "output_cost_per_1k": 0,
-            "supports_streaming": False,
-            "supports_function_calling": False,
-            "is_recommended": True,
-            "is_active": True,
-            "description": "豆包高质量图像生成模型"
-        },
+        *[
+            {key: value for key, value in model.items() if key not in {"endpoint_id", "release_date"}}
+            for model in VOLCANO_IMAGE_MODEL_SEEDS
+        ],
         
         # 百炼 - 文本模型
         {

@@ -3,6 +3,7 @@
 """
 
 from app.core.time_utils import utc_now
+import json
 from uuid import uuid4
 from typing import Optional, List
 from datetime import datetime
@@ -29,7 +30,13 @@ from app.services.image_generation_pipeline import (
 from app.services.image_prompt_policy import append_global_image_constraints
 from app.services.image_result_parser import extract_image_urls_from_provider_result
 from app.services.media_persistence import persist_remote_media_url
-from app.models import Character, ImageJob, Shot
+from app.models import Character, ImageJob, Novel, Shot, StoryBible
+from app.models.series_production_run import SeriesProductionRun
+from app.features.workflow_media.public import prepare_live_provider_attempt, resolve_live_series_run_for_shot
+from app.api.v1.workflow_media_transport import workflow_media_result
+from app.services.live_canary_budget import link_provider_attempt
+from app.services.live_canary_budget import bind_provider_operation_for_reservation
+from app.services.live_canary_budget import settle_synchronous_provider_operation
 
 router = APIRouter(tags=["图像生成"])
 
@@ -137,9 +144,12 @@ async def generate_image(
     支持模型:
     - Doubao-Seedream-4.5
     - Doubao-Seedream-5.0-lite
+    - doubao-seedream-5-0-260128（Seedream 5.0 Pro）
 
     会创建ImageJob记录并返回job_id用于后续查询。
     """
+    shot = None
+    character = None
     # 验证 shot_id 关联（如果提供）
     if request.shot_id:
         shot_result = await db.execute(
@@ -152,17 +162,60 @@ async def generate_image(
                 detail="镜头不存在"
             )
 
-    # 验证 character_id 关联（如果提供）
+    # Load every server-owned association before resolving live membership.
+    requested_character_ids = {str(value) for value in request.character_ids}
     if request.character_id:
-        char_result = await db.execute(
-            select(Character).where(Character.id == request.character_id, Character.user_id == user_id)
-        )
-        character = char_result.scalar_one_or_none()
+        requested_character_ids.add(request.character_id)
+    characters = list((await db.scalars(select(Character).where(
+        Character.id.in_(requested_character_ids), Character.user_id == user_id,
+    ))).all()) if requested_character_ids else []
+    if request.character_id:
+        character = next((item for item in characters if item.id == request.character_id), None)
         if character is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="角色不存在"
-            )
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="角色不存在")
+
+    if not request.shot_id:
+        related_novel_ids: set[str] = set()
+        if request.novel_id:
+            owned_novel = await db.scalar(select(Novel.id).where(Novel.id == request.novel_id, Novel.user_id == user_id))
+            if owned_novel:
+                related_novel_ids.add(str(owned_novel))
+        related_novel_ids.update(str(item.novel_id) for item in characters if item.novel_id)
+        if request.story_bible_id:
+            bible = await db.scalar(select(StoryBible).where(
+                StoryBible.id == request.story_bible_id, StoryBible.user_id == user_id,
+            ))
+            if bible and bible.novel_id:
+                related_novel_ids.add(str(bible.novel_id))
+        if request.project_id:
+            project_novels = list((await db.scalars(select(Novel.id).where(
+                Novel.project_id == request.project_id, Novel.user_id == user_id,
+            ))).all())
+            related_novel_ids.update(str(value) for value in project_novels)
+            project_bibles = list((await db.scalars(select(StoryBible).where(
+                StoryBible.project_id == request.project_id, StoryBible.user_id == user_id,
+            ))).all())
+            related_novel_ids.update(str(item.novel_id) for item in project_bibles if item.novel_id)
+            project_characters = list((await db.scalars(select(Character).where(
+                Character.project_id == request.project_id, Character.user_id == user_id,
+            ))).all())
+            related_novel_ids.update(str(item.novel_id) for item in project_characters if item.novel_id)
+        active_runs = list((await db.scalars(select(SeriesProductionRun).where(
+            SeriesProductionRun.user_id == user_id,
+            SeriesProductionRun.novel_id.in_(related_novel_ids),
+            SeriesProductionRun.status == "media_running",
+        ))).all()) if related_novel_ids else []
+        live_runs = [row for row in active_runs if (row.budget_policy or {}).get("live_canary") is True]
+        if len(live_runs) > 1:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "code": "live_canary_image_context_ambiguous",
+                "message": "image associations resolve to multiple active live runs",
+            })
+        if live_runs:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail={
+                "code": "live_canary_shot_context_required",
+                "message": "live series image generation must be bound to a canonical shot",
+            })
 
     if not is_dev_mode() and not request.use_consistency_context and not request.unsafe_skip_consistency_preflight:
         raise HTTPException(
@@ -258,6 +311,14 @@ async def generate_image(
             )
         job.model = model_id
 
+        live_run = await workflow_media_result(
+            resolve_live_series_run_for_shot(db, user_id=user_id, shot=shot)
+        ) if shot else None
+        live_reservation = await workflow_media_result(prepare_live_provider_attempt(
+            db, live_run, capability="image",
+            reservation_id=f"{job.id}:image:{uuid4()}",
+            job_type="image_job", job_id=job.id,
+        ))
         result = await call_image_generation_provider(
             service,
             provider_name=provider_name,
@@ -271,7 +332,32 @@ async def generate_image(
 
         # 解析返回结果：兼容 data:[{url}]、data:{image_urls:[]}、images/local_urls 等结构
         job.task_id = provider_task_id(result, provider_name=provider_name)
-        image_urls = extract_image_urls_from_provider_result(result)
+        returned_image_urls = extract_image_urls_from_provider_result(result)
+        if live_reservation and not job.task_id and returned_image_urls:
+            operation_id = live_run.cost_summary["reservations"][live_reservation].get("operation_id")
+            job.task_id = f"sync:{operation_id}"
+        image_operation = None
+        if live_reservation and job.task_id:
+            image_operation = await bind_provider_operation_for_reservation(
+                db, live_run, reservation_id=live_reservation, provider_task_id=job.task_id
+            )
+        if live_reservation:
+            linkage = {
+                "series_run_id": live_run.id, "reservation_id": live_reservation,
+                "provider_task_id": job.task_id, "capability": "image",
+                "operation_id": (live_run.cost_summary["reservations"][live_reservation]).get("operation_id"),
+            }
+            job.cost = json.dumps(linkage, sort_keys=True)
+            await link_provider_attempt(
+                db, live_run, reservation_id=live_reservation,
+                provider_task_id=job.task_id, job_id=job.id, capability="image",
+            )
+        image_urls = returned_image_urls
+        if image_operation and image_urls:
+            await settle_synchronous_provider_operation(
+                db, image_operation,
+                provider_actual_rmb=result.get("actual_cost_rmb", result.get("cost_rmb")) if isinstance(result, dict) else None,
+            )
 
         if not image_urls:
             # 更新job为失败状态
@@ -346,6 +432,11 @@ async def list_image_models():
                 "id": "Doubao-Seedream-5.0-lite",
                 "name": "豆包-图片-5.0-lite",
                 "description": "轻量级图片生成模型，速度更快"
+            },
+            {
+                "id": "doubao-seedream-5-0-260128",
+                "name": "豆包 Seedream 5.0 Pro",
+                "description": "非 Lite 旗舰生图模型，支持多参考图和组图生成"
             }
         ]
     }

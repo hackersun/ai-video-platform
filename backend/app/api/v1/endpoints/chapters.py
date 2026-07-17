@@ -22,12 +22,14 @@ from app.services.entity_extraction_service import (
     build_story_bible_sections,
     extract_story_entities,
 )
+from app.services.story_entity_lifecycle import set_entity_review_status
 from app.services.ai_generation_feedback import build_ai_generation_feedback
 from app.services.story_prompt_context import (
     build_chapter_continuity_block,
     load_story_prompt_context,
 )
 from app.services.chapter_naming import format_chapter_label
+from app.services.chapter_story_context import persist_chapter_story_context
 
 router = APIRouter(tags=["章节管理"])
 
@@ -494,17 +496,6 @@ async def generate_chapter_text(
     return content, metadata
 
 
-def _merge_rules(existing: list[dict[str, Any]], incoming: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged = list(existing or [])
-    names = {item.get("name") or item.get("title") for item in merged if isinstance(item, dict)}
-    for item in incoming:
-        key = item.get("name") or item.get("title")
-        if key and key not in names:
-            merged.append(item)
-            names.add(key)
-    return merged
-
-
 async def persist_story_context_from_chapter(
     db: AsyncSession,
     user_id: str,
@@ -513,78 +504,9 @@ async def persist_story_context_from_chapter(
     *,
     metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Persist extracted entities and merge them into existing Story Bibles."""
-    try:
-        extracted = extract_story_entities(chapter.content or "")
-    except ValueError:
-        extracted = []
-
-    existing_result = await db.execute(
-        select(StoryEntity).where(
-            and_(
-                StoryEntity.user_id == user_id,
-                StoryEntity.novel_id == novel.id,
-                StoryEntity.chapter_id == chapter.id,
-            )
-        )
+    return await persist_chapter_story_context(
+        db, user_id, novel, chapter, extractor=extract_story_entities, metadata=metadata,
     )
-    existing_entities = {
-        (entity.entity_type, entity.name): entity for entity in existing_result.scalars().all()
-    }
-
-    entity_dicts: list[dict[str, Any]] = []
-    for item in extracted:
-        key = (item["entity_type"], item["name"])
-        entity = existing_entities.get(key)
-        if entity:
-            entity.description = item.get("description")
-            entity.aliases = item.get("aliases") or []
-            entity.attributes = item.get("attributes") or {}
-            entity.evidence = item.get("evidence")
-            entity.confidence = item.get("confidence") or 100
-            entity.source = item.get("source") or "deterministic"
-        else:
-            entity = StoryEntity(
-                id=str(uuid.uuid4()),
-                user_id=user_id,
-                novel_id=novel.id,
-                chapter_id=chapter.id,
-                entity_type=item["entity_type"],
-                name=item["name"],
-                description=item.get("description"),
-                aliases=item.get("aliases") or [],
-                attributes=item.get("attributes") or {},
-                evidence=item.get("evidence"),
-                confidence=item.get("confidence") or 100,
-                source=item.get("source") or "deterministic",
-            )
-            db.add(entity)
-        entity_dicts.append(
-            {
-                "id": entity.id,
-                "entity_type": entity.entity_type,
-                "name": entity.name,
-                "description": entity.description,
-                "evidence": entity.evidence,
-            }
-        )
-
-    story_bibles = await get_story_bibles_for_novel(db, novel.id, user_id)
-    sections = build_story_bible_sections(entity_dicts)
-    for story_bible in story_bibles:
-        story_bible.character_rules = _merge_rules(story_bible.character_rules or [], sections["character_rules"])
-        story_bible.scene_rules = _merge_rules(story_bible.scene_rules or [], sections["scene_rules"])
-        story_bible.prop_rules = _merge_rules(story_bible.prop_rules or [], sections["prop_rules"])
-        story_bible.event_timeline = _merge_rules(story_bible.event_timeline or [], sections["event_timeline"])
-        extra_data = dict(story_bible.extra_data or {})
-        extra_data["last_synced_chapter_id"] = chapter.id
-        extra_data["last_sync_entity_count"] = len(entity_dicts)
-        story_bible.extra_data = extra_data
-
-    result = {"entity_count": len(entity_dicts), "story_bible_count": len(story_bibles)}
-    if metadata is not None:
-        metadata.update(result)
-    return result
 
 
 async def refresh_novel_word_count(db: AsyncSession, novel: Novel, user_id: str) -> None:

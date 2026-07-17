@@ -286,13 +286,38 @@ def test_extract_script_entities_creates_scoped_assets_and_supports_scope_change
     assert payload["chapter_id"] == chapter_id
     assert payload["script_id"] == script_id
     assert len(payload["entities"]) >= 4
-    assert len(payload["assets"]) == len(payload["entities"])
+    assert payload["assets"] == []
+    assert all(item["is_approved"] is False for item in payload["entities"])
+    assert {item["extra_data"]["lifecycle"]["status"] for item in payload["entities"]} == {"candidate"}
     assert {item["script_id"] for item in payload["entities"]} == {script_id}
-    assert all(asset["entity_id"] for asset in payload["assets"])
-    assert {asset["script_id"] for asset in payload["assets"]} == {script_id}
+
+    approve_resp = client.post(
+        "/api/v1/story-bibles/entities/bulk-approve",
+        json={"entity_ids": [item["id"] for item in payload["entities"]], "approved": True},
+        headers=_auth_headers(user_id),
+    )
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["updated_count"] == len(payload["entities"])
+
+    approved_extract_resp = client.post(
+        "/api/v1/story-bibles/entities/extract-assets",
+        json={
+            "script_id": script_id,
+            "entity_types": ["character", "scene", "prop", "event"],
+            "persist_entities": True,
+            "create_assets": True,
+            "asset_scope": "entity",
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert approved_extract_resp.status_code == 200
+    approved_payload = approved_extract_resp.json()
+    assert len(approved_payload["assets"]) == len(approved_payload["entities"])
+    assert all(asset["entity_id"] for asset in approved_payload["assets"])
+    assert {asset["script_id"] for asset in approved_payload["assets"]} == {script_id}
 
     entity_id = payload["entities"][0]["id"]
-    asset_id = payload["assets"][0]["id"]
+    asset_id = approved_payload["assets"][0]["id"]
 
     script_entities_resp = client.get(
         f"/api/v1/story-bibles/entities?script_id={script_id}&scope=script",

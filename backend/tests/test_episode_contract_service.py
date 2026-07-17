@@ -13,6 +13,7 @@ import app.models  # noqa: F401 - ensure all SQLAlchemy models are registered
 from app.core.database import Base
 from app.models import Asset, Novel, StoryBible, StoryEntity, Workflow
 from app.services.episode_contract_service import lock_episode_contract, stable_hash
+from app.services.production_graph_service import append_state_event
 
 
 @pytest_asyncio.fixture()
@@ -279,3 +280,79 @@ async def test_lock_episode_contract_raises_400_without_novel_id(db_session: Asy
 
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail == "工作流没有绑定小说"
+
+
+@pytest.mark.asyncio
+async def test_lock_episode_contract_stores_versioned_graph_opening_and_closing_state(
+    db_session: AsyncSession,
+    seeded_workflow: Workflow,
+) -> None:
+    seeded_workflow.metadata_ = {**(seeded_workflow.metadata_ or {}), "episode_index": 2}
+    await db_session.commit()
+    first = await append_state_event(
+        db_session,
+        user_id=seeded_workflow.user_id,
+        novel_id=seeded_workflow.novel_id,
+        episode_index=1,
+        entity_id="prop-bell",
+        event_type="prop_owner_changed",
+        story_time={"episode_index": 1, "sequence": 1},
+        production_time={"stage": "script"},
+        before_state={},
+        after_state={"owner": "character-shen"},
+        approval_status="approved",
+        approved_by=seeded_workflow.user_id,
+    )
+    second = await append_state_event(
+        db_session,
+        user_id=seeded_workflow.user_id,
+        novel_id=seeded_workflow.novel_id,
+        episode_index=2,
+        entity_id="prop-bell",
+        event_type="prop_owner_changed",
+        story_time={"episode_index": 2, "sequence": 1},
+        production_time={"stage": "review"},
+        before_state={"owner": "character-shen"},
+        after_state={"owner": "character-lin"},
+        approval_status="approved",
+        approved_by=seeded_workflow.user_id,
+    )
+
+    contract = await lock_episode_contract(db_session, seeded_workflow.user_id, seeded_workflow.id)
+
+    assert contract["episode_index"] == 2
+    assert contract["production_graph_version"] == 2
+    assert len(contract["production_graph_hash"]) == 64
+    assert contract["opening_state"]["entities"]["prop-bell"]["owner"] == "character-shen"
+    assert contract["expected_closing_state"]["entities"]["prop-bell"]["owner"] == "character-lin"
+    assert contract["relevant_event_ids"] == [first.id, second.id]
+
+
+@pytest.mark.asyncio
+async def test_lock_episode_contract_rejects_unresolved_production_graph_conflicts(
+    db_session: AsyncSession,
+    seeded_workflow: Workflow,
+) -> None:
+    seeded_workflow.metadata_ = {**(seeded_workflow.metadata_ or {}), "episode_index": 2}
+    await db_session.commit()
+    await append_state_event(
+        db_session,
+        user_id=seeded_workflow.user_id,
+        novel_id=seeded_workflow.novel_id,
+        episode_index=2,
+        entity_id="prop-bell",
+        event_type="prop_owner_changed",
+        story_time={"episode_index": 2, "sequence": 1},
+        production_time={"stage": "review"},
+        before_state={"owner": "character-missing"},
+        after_state={"owner": "character-lin"},
+        approval_status="approved",
+        approved_by=seeded_workflow.user_id,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await lock_episode_contract(db_session, seeded_workflow.user_id, seeded_workflow.id)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["code"] == "production_graph_conflicted"
+    assert exc_info.value.detail["unresolved_conflicts"]

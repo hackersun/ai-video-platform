@@ -9,7 +9,6 @@ composition logic.
 from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, Optional
-from uuid import uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, desc, or_, select
@@ -18,10 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.model_registry import get_task_default
 from app.core.time_utils import utc_now
 from app.models import Character, Project, Script, Shot, StoryBible, StoryEntity, Storyboard
-from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
+from app.services.entity_extraction_service import ENTITY_TYPES
+from app.services.entity_review_service import run_candidate_entity_extraction
 from app.services.entity_ref_normalizer import normalize_entity_refs
 from app.services.prompt_composer import compose_generation_prompt
 from app.services.prompt_skill_service import active_prompt_skill_entries
+from app.services.story_entity_lifecycle import query_story_entities_for_prompt_context
 
 
 def _compact_ids(values: Iterable[Optional[str]]) -> List[str]:
@@ -259,50 +260,33 @@ async def load_or_extract_story_entities(
     if not novel_id and not chapter_id:
         return []
 
-    query = select(StoryEntity).where(StoryEntity.user_id == user_id)
-    if novel_id:
-        query = query.where(StoryEntity.novel_id == novel_id)
-    if chapter_id:
-        query = query.where(or_(StoryEntity.chapter_id == chapter_id, StoryEntity.chapter_id.is_(None)))
-    result = await db.execute(query.order_by(desc(StoryEntity.updated_at)))
-    entities = list(result.scalars().all())
+    entities = await query_story_entities_for_prompt_context(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
 
     if not persist_missing or not text:
         return entities
 
-    known = {(entity.entity_type, entity.name) for entity in entities}
-    try:
-        extracted = extract_story_entities(text, set(ENTITY_TYPES))
-    except ValueError:
-        extracted = []
-
-    created: List[StoryEntity] = []
-    for item in extracted:
-        key = (item["entity_type"], item["name"])
-        if key in known:
-            continue
-        entity = StoryEntity(
-            id=str(uuid4()),
-            user_id=user_id,
-            novel_id=novel_id,
-            chapter_id=chapter_id,
-            entity_type=item["entity_type"],
-            name=item["name"],
-            description=item.get("description"),
-            aliases=item.get("aliases") or [],
-            attributes=item.get("attributes") or {},
-            evidence=item.get("evidence"),
-            confidence=item.get("confidence") or 100,
-            source=item.get("source") or "deterministic",
-        )
-        db.add(entity)
-        created.append(entity)
-        known.add(key)
-
-    if created:
-        await db.flush()
-        entities.extend(created)
-    return entities
+    await run_candidate_entity_extraction(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+        source_type="chapter" if chapter_id else "novel",
+        source_id=chapter_id or novel_id,
+        text=text,
+        entity_types=sorted(ENTITY_TYPES),
+        persist=True,
+    )
+    return await query_story_entities_for_prompt_context(
+        db,
+        user_id=user_id,
+        novel_id=novel_id,
+        chapter_id=chapter_id,
+    )
 
 
 async def build_shot_entity_context(

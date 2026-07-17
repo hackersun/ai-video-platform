@@ -47,6 +47,8 @@ npm-debug.log*
 /output/playwright/
 /output/live-anime/
 /frontend/test-results/
+/frontend/.next-playwright*/
+/frontend/.next-verify/
 /test-results/
 *.tsbuildinfo
 

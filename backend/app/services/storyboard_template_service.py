@@ -723,6 +723,11 @@ def _sanitize_narration_clause(value: str) -> str:
     return text.strip(" ，。！？；:：") or (value or "").strip()
 
 
+def _is_inscription_or_text_beat(value: str) -> bool:
+    text = value or ""
+    return bool(re.search(r"(?:刻着|写着|标着|显示|字幕|屏幕|纸上|信上|牌匾).*?[“\"']", text))
+
+
 def _select_template_dialogue_speaker(
     *,
     beat: str,
@@ -788,6 +793,8 @@ def _build_template_dialogue(
         return f"（旁白）{_with_sentence_punctuation(_sanitize_narration_clause(beat_clause))}"
 
     if dialogue_role == "角色":
+        if _is_inscription_or_text_beat(beat):
+            return f"（旁白）{_with_sentence_punctuation(_sanitize_narration_clause(beat_clause))}"
         speaker = _select_template_dialogue_speaker(
             beat=beat,
             characters=characters,

@@ -34,7 +34,7 @@
 - Produces: `resolve_model_execution_contract(provider_id: str, api_model_id: str, capability: str) -> ModelExecutionContract`.
 - Consumes: existing model registry and Seedance contract facts only; it does not import API endpoints or provider SDKs.
 
-- [ ] **Step 1: Write failing contract tests**
+- [x] **Step 1: Write failing contract tests**
 
 ```python
 def test_known_versions_get_stable_contracts():
@@ -55,13 +55,13 @@ def test_unknown_model_is_fail_closed():
     assert contract.reference_limits == {"images": 0, "videos": 0, "audios": 0}
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cd backend && python3 -m pytest -q tests/test_model_execution_contract.py`
 
 Expected: import failure because the feature does not exist.
 
-- [ ] **Step 3: Implement immutable domain values and explicit registry entries**
+- [x] **Step 3: Implement immutable domain values and explicit registry entries**
 
 ```python
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ class ModelExecutionContract:
 
 Unknown combinations return a conservative contract with no references and no retry.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run: `cd backend && python3 -m pytest -q tests/test_model_execution_contract.py`
 
@@ -103,7 +103,7 @@ Expected: all tests pass.
 - Produces: `build_minimax_tts_request(...) -> MiniMaxTTSRequest` with `contract_version`, `url_path`, `payload`, and `safe_evidence()`.
 - Consumes: normalized API model id and the approved voice chosen by the run.
 
-- [ ] **Step 1: Write failing parity and redaction tests**
+- [x] **Step 1: Write failing parity and redaction tests**
 
 ```python
 def test_config_and_production_use_identical_tts_payload_contract():
@@ -120,13 +120,13 @@ def test_config_and_production_use_identical_tts_payload_contract():
 
 Extend the provider-rejection test to require `stage`, `cost_state`, `safe_retry`, `retry_scope`, and allowed actions.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cd backend && python3 -m pytest -q tests/test_minimax_tts_request_contract.py tests/test_tts_provider_rejection.py`
 
 Expected: missing request builder and missing recovery fields.
 
-- [ ] **Step 3: Implement one request builder and replace both hand-built payloads**
+- [x] **Step 3: Implement one request builder and replace both hand-built payloads**
 
 ```python
 request = build_minimax_tts_request(
@@ -140,7 +140,7 @@ response = await client.post(f"{base_url}{request.url_path}", json=request.paylo
 
 The LLM configuration test passes the exact approved voice and uses the same builder. Production catches `MiniMaxProviderRejected`, releases confirmed pre-acceptance reservation, and returns a secret-safe recovery descriptor.
 
-- [ ] **Step 4: Run GREEN and related TTS regression**
+- [x] **Step 4: Run GREEN and related TTS regression**
 
 Run: `cd backend && python3 -m pytest -q tests/test_minimax_tts_request_contract.py tests/test_tts_provider_rejection.py tests/test_separate_media_submission_order.py test_minimax_service.py`
 
@@ -163,7 +163,7 @@ Expected: all tests pass and video submission remains blocked after TTS rejectio
 - Produces: `GET /series-runs/{run_id}/recovery` and `POST /series-runs/{run_id}/recovery/actions/{action_code}`.
 - Consumes: owned run, provider operations, cost summary and current model-binding snapshots.
 
-- [ ] **Step 1: Write failing recovery-policy tests**
+- [x] **Step 1: Write failing recovery-policy tests**
 
 ```python
 def test_confirmed_rejection_allows_failed_stage_retry():
@@ -181,17 +181,17 @@ def test_uncertain_operation_never_offers_resubmit(status):
 
 Add API ownership and stale-binding tests. `retry_failed_stage` initially returns a validated retry intent and updates no provider state; actual resubmission remains the existing Generate Selected action after the user changes/revalidates bindings.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cd backend && python3 -m pytest -q tests/test_series_run_recovery.py`
 
 Expected: missing recovery feature/routes.
 
-- [ ] **Step 3: Implement pure recovery policy, read aggregation and validated action acknowledgement**
+- [x] **Step 3: Implement pure recovery policy, read aggregation and validated action acknowledgement**
 
 The API handler stays below 60 lines and calls the application service. It returns only identifiers, stages, accounting values and allowed actions.
 
-- [ ] **Step 4: Run GREEN and budget regressions**
+- [x] **Step 4: Run GREEN and budget regressions**
 
 Run: `cd backend && python3 -m pytest -q tests/test_series_run_recovery.py tests/test_live_canary_budget.py tests/test_tts_provider_rejection.py`
 
@@ -212,7 +212,7 @@ Expected: all tests pass; no operation is submitted by recovery tests.
 - Binding snapshots add `contract_version`, `prompt_profile`, and `verification_status` without removing existing fields.
 - Prompt routing returns the existing result plus `model_contract_version` and persists no prompt text in recovery evidence.
 
-- [ ] **Step 1: Write failing additive snapshot and routing tests**
+- [x] **Step 1: Write failing additive snapshot and routing tests**
 
 ```python
 assert snapshot["tts"]["contract_version"] == "minimax.tts.v2.v1"
@@ -220,17 +220,17 @@ assert routing["model_contract_version"] == "minimax.text.m3.v1"
 assert routing["fallback_reason"] in {None, "internal_prompt_fallback", "task_only_template"}
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cd backend && python3 -m pytest -q tests/test_model_execution_contract.py tests/test_prompt_template_router.py tests/test_series_run_live_preflight_plan.py`
 
 Expected: additive fields absent.
 
-- [ ] **Step 3: Compose the contract registry into bindings and prompt routing**
+- [x] **Step 3: Compose the contract registry into bindings and prompt routing**
 
 Do not copy model capability rules into frontend or endpoints. Keep current response fields intact.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 Run the same command and expect all tests to pass.
 
@@ -252,7 +252,7 @@ Run the same command and expect all tests to pass.
 - `useSeriesRunRecovery(runId)` loads the backend descriptor and executes only returned actions.
 - `RecoveryCard` receives data/actions and owns no retry-policy rules.
 
-- [ ] **Step 1: Add failing Playwright assertions**
+- [x] **Step 1: Add failing Playwright assertions**
 
 The deterministic failure fixture must render:
 
@@ -268,17 +268,17 @@ The deterministic failure fixture must render:
 
 It must not render a resubmit button for `unknown_manual_reconcile`. Add an assertion that displayed spent cost uses `spent_rmb` even when legacy `actual_rmb` is `0`.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `cd frontend && npm run e2e:four-chapter:direct -- --grep "recovery"`
 
 Expected: recovery card and truthful cost assertions fail.
 
-- [ ] **Step 3: Implement feature-local API/hook/component and integrate the compatibility view**
+- [x] **Step 3: Implement feature-local API/hook/component and integrate the compatibility view**
 
 The cost badges read `spent_rmb`, `reserved_rmb`, and preflight projected increment. Paid retry confirmation states capability, shot and estimated new cost.
 
-- [ ] **Step 4: Run GREEN, typecheck and build**
+- [x] **Step 4: Run GREEN, typecheck and build**
 
 Run:
 
@@ -305,7 +305,7 @@ Expected: all commands pass.
 - The live manifest records contract versions and prompt-routing metadata, never prompt text.
 - A confirmed TTS rejection proves the recovery card and stops without video submission; it is not automatically retried.
 
-- [ ] **Step 1: Run complete deterministic gates**
+- [x] **Step 1: Run complete deterministic gates**
 
 ```bash
 cd backend && python3 -m pytest -q \
@@ -319,17 +319,16 @@ cd backend && python3 -m pytest -q \
 cd ../frontend && npm run typecheck && NEXT_DIST_DIR=.next-provider-recovery npm run build
 ```
 
-- [ ] **Step 2: Run deterministic four-chapter frontend acceptance**
+- [x] **Step 2: Run deterministic four-chapter frontend acceptance**
 
 Run: `npm run verify:four-chapter`
 
 Expected: four chapters, two cross-episode anchors, reference evidence, recovery UI and no external provider calls.
 
-- [ ] **Step 3: Re-read the live authorization and run one live Wave 1**
+- [x] **Step 3: Re-read the live authorization and run one live Wave 1**
 
 Use `sunqy`, RMB 10, two anchors, no automatic retries, isolated DB and Qiniu public delivery. A new paid retry after any fail-closed stop requires a new explicit authorization.
 
-- [ ] **Step 4: Export and report evidence**
+- [x] **Step 4: Export and report evidence**
 
 Report per capability: provider/model/contract version, task/operation status, cost, prompt routing mode, reference binding, media artifacts and six-dimensional evaluation boundary. Mark unconfigured providers as “adapter-ready, live-unverified”.
-

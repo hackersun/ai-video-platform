@@ -15,6 +15,11 @@ from app.core.minimax_config import DEFAULT_TTS_VOICE
 from app.core.model_registry import get_model_generation_limits
 from app.core.security import get_current_user_id
 from app.models import BatchJob, BatchJobItem, LLMConfig, LLMModel, Shot, Storyboard, VideoJob, Workflow
+from app.features.workflow_media.public import (
+    WorkflowVoiceCommand,
+    resolve_workflow_tts_voice,
+)
+from app.api.v1.workflow_media_transport import workflow_media_result
 
 router = APIRouter(tags=["批量任务"])
 
@@ -318,19 +323,12 @@ async def _execute_tts_batch_item(
         )
         workflow = workflow_result.scalar_one_or_none()
         if workflow:
-            from app.api.v1.endpoints.workflow import _resolve_tts_voice_for_workflow_shot
-
-            resolved_voice = await _resolve_tts_voice_for_workflow_shot(
-                db,
-                user_id,
-                workflow,
-                shot,
-                shot.dialogue or "",
-                default_voice=voice_model,
-                default_speed=speed,
+            resolved_voice = await workflow_media_result(resolve_workflow_tts_voice(
+                WorkflowVoiceCommand(
+                db, user_id, workflow, shot, shot.dialogue or "", voice_model, speed,
                 requested_story_bible_id=story_bible_id,
                 use_story_bible_voice=True,
-            )
+            )))
             voice_model = resolved_voice.get("voice") or voice_model
             speed = float(resolved_voice.get("speed") or speed)
             story_bible_id = resolved_voice.get("story_bible_id") or story_bible_id
@@ -404,7 +402,8 @@ async def _execute_video_batch_item(
     item.error_message = None
     await db.commit()
 
-    from app.api.v1.endpoints.video import VideoGenerateRequest, generate_video
+    from app.features.video_generation.public import VideoGenerateRequest
+    from app.api.v1.endpoints.video import generate_video
 
     extra_data = job.extra_data if isinstance(job.extra_data, dict) else {}
     prompt = shot.prompt or shot.visual_description or "shot video"

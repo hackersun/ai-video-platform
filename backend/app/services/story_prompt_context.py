@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Chapter, Character, Novel, Script, StoryBible, StoryEntity
 from app.services.image_prompt_policy import GLOBAL_IMAGE_NEGATIVE_CONSTRAINT
 from app.services.entity_extraction_service import ENTITY_TYPES, extract_story_entities
+from app.services.story_entity_lifecycle import query_story_entities_for_prompt_context
 from app.services.story_state_machine import format_state_machine_summary
 
 
@@ -223,16 +224,15 @@ async def load_story_prompt_context(
 
     entity_group = {"characters": [], "scenes": [], "props": [], "events": []}
     if novel_id:
-        entity_filters = [StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id]
-        if chapter_id:
-            entity_filters.append(or_(StoryEntity.chapter_id == chapter_id, StoryEntity.chapter_id.is_(None)))
-        entity_result = await db.execute(
-            select(StoryEntity)
-            .where(and_(*entity_filters))
-            .order_by(desc(StoryEntity.updated_at))
-            .limit(80)
+        entities = await query_story_entities_for_prompt_context(
+            db,
+            user_id=user_id,
+            novel_id=novel_id,
+            chapter_id=chapter_id,
+            script_id=script_id,
+            limit=80,
         )
-        entity_group = _group_entities(entity_result.scalars().all())
+        entity_group = _group_entities(entities)
 
         character_result = await db.execute(
             select(Character)

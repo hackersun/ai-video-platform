@@ -3,13 +3,14 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { MainLayout } from '@/components/layout/main-layout';
 import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { StoryWorkbenchPanel, getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import { useToast } from '@/components/ui/toast';
 import {
   BookOpen,
@@ -261,6 +262,11 @@ export default function ChapterDetailPage() {
   }
 
   const wordCount = content.replace(/\s/g, '').length;
+  const contentPreview = getStoryExcerpt(
+    content,
+    '这个章节还没有正文，适合先用 AI 根据小说简介、前后章节和 Story Bible 生成本章内容。',
+    280
+  );
 
   return (
     <MainLayout>
@@ -310,150 +316,141 @@ export default function ChapterDetailPage() {
           </div>
         </div>
 
-        {/* AI辅助写作 */}
-        <Card className="bg-violet-500/5 border-violet-500/20">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-violet-300 text-base flex items-center gap-2">
-              <Sparkles className="w-4 h-4" />
-              AI智能编写
-              {isGenerating && <Loader2 className="w-4 h-4 animate-spin ml-2" />}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-[1fr_160px] gap-3">
-              <Input
-                value={aiInstruction}
-                onChange={(e) => setAiInstruction(e.target.value)}
-                placeholder="补充要求，例如：强化主角动机、保持雨夜场景、结尾承接下一章"
-                className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
-              />
-              <Input
-                type="number"
-                min={300}
-                max={8000}
-                value={targetWordCount}
-                onChange={(e) => setTargetWordCount(Math.max(300, Math.min(8000, parseInt(e.target.value) || 1800)))}
-                className="bg-white/10 border-white/20 text-white"
-                title="目标字数"
-              />
-            </div>
-            <ModelCapabilitySelector
-              capability="text"
-              configs={modelConfigs}
-              value={textModelConfigId}
-              onChange={setTextModelConfigId}
-              disabled={isGenerating || saving}
-              title="章节写作模型"
-              description="智能编写、续写和润色会使用文本生成能力，并自动承接全书设定、前后章节和实体上下文。"
-              compact
-            />
-            <div className="flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-violet-500/50 text-violet-300 hover:bg-violet-500/10"
-                onClick={() => setShowRewriteConfirm(true)}
-                disabled={isGenerating || saving}
-              >
-                {isGenerating ? (
-                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                ) : (
-                  <Sparkles className="w-4 h-4 mr-1" />
-                )}
-                智能编写
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-blue-500/50 text-blue-300 hover:bg-blue-500/10"
-                onClick={() => runChapterAI('extend')}
-                disabled={isGenerating || saving}
-              >
-                {isGenerating ? (
-                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4 mr-1" />
-                )}
-                续写内容
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-green-500/50 text-green-300 hover:bg-green-500/10"
-                onClick={() => runChapterAI('polish')}
-                disabled={isGenerating || saving}
-              >
-                {isGenerating ? (
-                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                ) : (
-                  <Sparkles className="w-4 h-4 mr-1" />
-                )}
-                润色内容
-              </Button>
-            </div>
-            <p className="text-xs text-white/40">
-              AI 会读取小说简介、前后章节、Story Bible 以及已抽取的人物、场景、道具、事件；生成后立即保存并同步一致性上下文。
-            </p>
-          </CardContent>
-        </Card>
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+          <Card className="bg-white/5 border-white/10">
+            <CardContent className="space-y-4 p-4 sm:p-6">
+              <div>
+                <label className="text-white/80 mb-2 block">章节标题</label>
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="输入章节标题"
+                  className="bg-white/10 border-white/20 text-white text-lg"
+                />
+              </div>
 
-        {/* 章节内容编辑 */}
-        <Card className="bg-white/5 border-white/10">
-          <CardContent className="space-y-4 p-4 sm:p-6">
-            <div>
-              <label className="text-white/80 mb-2 block">章节标题</label>
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="输入章节标题"
-                className="bg-white/10 border-white/20 text-white text-lg"
-              />
-            </div>
+              <div>
+                <label className="text-white/80 mb-2 block">章节内容</label>
+                <Textarea
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder="开始创作您的章节内容…"
+                  className="min-h-[clamp(460px,62vh,820px)] resize-y bg-white/10 border-white/20 text-base leading-7 text-white"
+                />
+                <p className="mt-2 text-xs text-white/40">
+                  左侧保留完整正文编辑，右侧可以快速核对预览、继续写作或进入剧本生成。
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
-            <div>
-              <label className="text-white/80 mb-2 block">章节内容</label>
-              <Textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="开始创作您的章节内容…"
-                className="min-h-[clamp(420px,58vh,760px)] resize-y bg-white/10 border-white/20 text-base leading-7 text-white"
-              />
-              <p className="mt-2 text-xs text-white/40">
-                长章节可直接在页面滚动，也可以拖动正文框右下角调整写作区高度。
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* 底部快捷操作 */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="bg-gradient-to-br from-violet-600/20 to-purple-600/20 border-violet-500/30 cursor-pointer hover:border-violet-500/50 transition-colors">
-            <Link href={`/novels/${novelId}`}>
-              <CardContent className="p-4 text-center">
-                <BookOpen className="w-8 h-8 mx-auto mb-2 text-violet-400" />
-                <div className="text-white font-medium">返回小说</div>
-                <div className="text-white/60 text-sm">查看小说详情</div>
-              </CardContent>
-            </Link>
-          </Card>
-          <Card className="bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border-blue-500/30 cursor-pointer hover:border-blue-500/50 transition-colors">
-            <Link href={`/characters?novel_id=${novelId}`}>
-              <CardContent className="p-4 text-center">
-                <Users className="w-8 h-8 mx-auto mb-2 text-blue-400" />
-                <div className="text-white font-medium">角色管理</div>
-                <div className="text-white/60 text-sm">管理小说角色</div>
-              </CardContent>
-            </Link>
-          </Card>
-          <Card className="bg-gradient-to-br from-green-600/20 to-emerald-600/20 border-green-500/30 cursor-pointer hover:border-green-500/50 transition-colors">
-            <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapterId}`}>
-              <CardContent className="p-4 text-center">
-                <Film className="w-8 h-8 mx-auto mb-2 text-green-400" />
-                <div className="text-white font-medium">基于本章创作</div>
-                <div className="text-white/60 text-sm">生成分镜剧本</div>
-              </CardContent>
-            </Link>
-          </Card>
+          <StoryWorkbenchPanel
+            heading="章节阅读预览"
+            description="先核对本章正文和生产状态，再让 AI 继续补写、润色或改编成剧本。"
+            title={title || chapter.title || '未命名章节'}
+            subtitle={novel ? `《${novel.title}》 · 第 ${chapter.chapter_number} 章` : `第 ${chapter.chapter_number} 章`}
+            excerptLabel="正文预览"
+            excerpt={contentPreview}
+            metrics={[
+              { label: '字数', value: `${wordCount} 字` },
+              { label: '状态', value: hasChanges ? '未保存' : (chapter.status || '草稿') },
+            ]}
+            actions={
+              <>
+                <Input
+                  value={aiInstruction}
+                  onChange={(e) => setAiInstruction(e.target.value)}
+                  placeholder="补充要求，例如：强化主角动机、保持雨夜场景、结尾承接下一章"
+                  className="bg-white/10 border-white/20 text-white placeholder:text-white/40"
+                />
+                <Input
+                  type="number"
+                  min={300}
+                  max={8000}
+                  value={targetWordCount}
+                  onChange={(e) => setTargetWordCount(Math.max(300, Math.min(8000, parseInt(e.target.value) || 1800)))}
+                  className="bg-white/10 border-white/20 text-white"
+                  title="目标字数"
+                />
+                <ModelCapabilitySelector
+                  capability="text"
+                  configs={modelConfigs}
+                  value={textModelConfigId}
+                  onChange={setTextModelConfigId}
+                  disabled={isGenerating || saving}
+                  title="章节写作模型"
+                  description="智能编写、续写和润色会使用文本生成能力，并自动承接全书设定、前后章节和实体上下文。"
+                  compact
+                />
+                <div className="grid gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-violet-500/50 text-violet-300 hover:bg-violet-500/10"
+                    onClick={() => setShowRewriteConfirm(true)}
+                    disabled={isGenerating || saving}
+                  >
+                    {isGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4 mr-1" />
+                    )}
+                    智能编写本章
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-blue-500/50 text-blue-300 hover:bg-blue-500/10"
+                    onClick={() => runChapterAI('extend')}
+                    disabled={isGenerating || saving}
+                  >
+                    {isGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <RefreshCw className="w-4 h-4 mr-1" />
+                    )}
+                    续写内容
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="border-green-500/50 text-green-300 hover:bg-green-500/10"
+                    onClick={() => runChapterAI('polish')}
+                    disabled={isGenerating || saving}
+                  >
+                    {isGenerating ? (
+                      <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4 mr-1" />
+                    )}
+                    润色内容
+                  </Button>
+                </div>
+              </>
+            }
+            footer={
+              <div className="grid gap-2">
+                <Button asChild variant="outline" size="sm" className="justify-start border-white/20">
+                  <Link href={`/novels/${novelId}`}>
+                    <BookOpen className="w-4 h-4 mr-2" />
+                    返回作品工作台
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="sm" className="justify-start border-blue-500/40 text-blue-200">
+                  <Link href={`/characters?novel_id=${novelId}`}>
+                    <Users className="w-4 h-4 mr-2" />
+                    核对角色资产
+                  </Link>
+                </Button>
+                <Button asChild size="sm" className="justify-start bg-green-600 hover:bg-green-700">
+                  <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapterId}`}>
+                    <Film className="w-4 h-4 mr-2" />
+                    生成剧本
+                  </Link>
+                </Button>
+              </div>
+            }
+          />
         </div>
       </div>
       <ConfirmDialog

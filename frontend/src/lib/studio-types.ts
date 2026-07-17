@@ -10,6 +10,13 @@ export type StudioWorkflowOption = {
   novel_id?: string | null;
   chapter_id?: string | null;
   storyboard_id?: string | null;
+  current_step?: number;
+  completed_steps?: number[];
+  video_job_ids?: string[];
+  tts_job_ids?: string[];
+  synthesis_job_ids?: string[];
+  metadata?: Record<string, any>;
+  updated_at?: string;
 };
 
 export type StudioIssue = {
@@ -49,7 +56,7 @@ export type StudioGuidedAction = StudioAction & {
 };
 
 export type StudioGuidanceStage = {
-  id: 'content' | 'bible' | 'episode' | 'draft' | 'review' | string;
+  id: 'facts' | 'assets' | 'episode_contract' | 'draft' | 'review' | 'final' | 'render' | 'publish' | string;
   label: string;
   status: 'ready' | 'working' | 'blocked' | string;
   description?: string;
@@ -60,6 +67,7 @@ export type StudioGuidance = {
   readiness_score?: number;
   current_stage?: string;
   next_action?: StudioGuidedAction | null;
+  recommended_action?: StudioGuidedAction | null;
   stages?: StudioGuidanceStage[];
   blocker_count?: number;
   mode?: StudioRunMode | string;
@@ -69,6 +77,26 @@ export type StudioGuidance = {
     workflow_id?: string | null;
   };
   secondary_actions?: StudioAction[];
+  blockers?: StudioIssue[];
+  confirmable_warnings?: StudioIssue[];
+  completed_evidence?: Array<{
+    stage: string;
+    evidence_id?: string | null;
+    evidence_ids?: string[];
+    evaluation_ids?: string[];
+    hash?: string | null;
+    job_id?: string | null;
+    artifact_id?: string | null;
+    score?: number | null;
+  }>;
+  orchestration_resume?: {
+    task_id?: string;
+    status?: string;
+    failed_stage?: string;
+    completed_stages?: string[];
+    error_message?: string | null;
+    safe_retry?: boolean;
+  };
 };
 
 export type NovelProductionEntry = {
@@ -161,6 +189,39 @@ export type EpisodeContract = {
   style_lock?: Record<string, any>;
   entity_locks?: Array<Record<string, any>>;
   required_checks?: string[];
+  episode_index?: number;
+  production_graph_version?: number;
+  production_graph_hash?: string;
+  opening_state?: Record<string, unknown>;
+  expected_closing_state?: Record<string, unknown>;
+  relevant_event_ids?: string[];
+};
+
+export type ProductionGraphEvent = {
+  id: string;
+  event_type?: string;
+  entity_id?: string | null;
+  episode_index?: number | null;
+  story_time?: Record<string, unknown>;
+  production_time?: Record<string, unknown>;
+  before_state?: Record<string, unknown>;
+  after_state?: Record<string, unknown>;
+  approval_status?: string;
+  production_version?: number;
+  event_hash?: string;
+  affected_episode_indices?: number[];
+  affected_entity_ids?: string[];
+  affected_shots?: Array<{ id: string; review_url: string }>;
+  created_at?: string | null;
+};
+
+export type ProductionGraph = {
+  novel_id?: string;
+  version?: number;
+  hash?: string | null;
+  current_state?: Record<string, unknown>;
+  story_order?: ProductionGraphEvent[];
+  production_revisions?: ProductionGraphEvent[];
 };
 
 export type ConsistencyLedger = {
@@ -183,6 +244,8 @@ export type StudioSnapshot = {
   series_plan?: SeriesPlan | null;
   episode_contract?: EpisodeContract | null;
   consistency_ledger?: ConsistencyLedger | null;
+  production_graph?: ProductionGraph | null;
+  stage_gate?: Pick<StudioGuidance, 'current_stage' | 'stages' | 'blockers' | 'confirmable_warnings' | 'completed_evidence' | 'recommended_action' | 'orchestration_resume'>;
   workflow?: {
     id?: string;
     title?: string;
@@ -245,8 +308,12 @@ export type StudioSnapshot = {
   shots?: Array<{
     id: string;
     shot_number?: number;
+    duration?: number;
     prompt?: string;
     dialogue?: string;
+    image_url?: string | null;
+    video_status?: string;
+    audio_status?: string;
     asset_lock_count?: number;
     entity_ref_count?: number;
     quality_report?: Record<string, any>;
@@ -287,6 +354,9 @@ export type StudioSnapshot = {
       created_at?: string | null;
       updated_at?: string | null;
     }>;
+    tts_jobs?: Array<{ id?: string; status?: string; created_at?: string | null }>;
+    synthesis_jobs?: Array<{ id?: string; status?: string; output_url?: string | null; is_publishable?: boolean }>;
+    media_jobs?: Array<{ id?: string; status?: string }>;
   };
   timeline?: {
     id?: string;
@@ -306,4 +376,33 @@ export type StudioSnapshot = {
     bypassed_issue_count?: number;
     bypass_audit?: Record<string, any> | null;
   };
+};
+
+export type QualityGateDimension = {
+  id?: string;
+  dimension: 'narrative_truth' | 'character_visual' | 'scene_prop_state' | 'motion_camera' | 'voice_lipsync' | 'delivery_integrity';
+  expected_state?: Record<string, any>;
+  observed_state?: Record<string, any>;
+  evidence?: Record<string, any>;
+  score?: number;
+  confidence?: number;
+  severity?: 'pass' | 'warning' | 'blocking';
+  blocking?: boolean;
+  artifact_id?: string;
+};
+
+export type QualityGateSummary = {
+  ready: boolean;
+  overall_readiness: 'ready' | 'warning' | 'blocked';
+  dimensions: QualityGateDimension[];
+  blockers?: Array<{ code: string; dimension?: string; artifact_id?: string }>;
+  warnings?: Array<{ code: string; dimension?: string; artifact_id?: string }>;
+  suggested_repair?: {
+    issue_code: string;
+    actions: string[];
+    affected_artifact_ids: string[];
+    cost_risk?: { cost?: string; risk?: string; scope?: string };
+    available?: boolean;
+    navigation_url?: string | null;
+  } | null;
 };

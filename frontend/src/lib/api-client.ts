@@ -4,6 +4,7 @@
  */
 
 import type { NovelProductionEntry } from './studio-types';
+import { formatSafeApiErrorDetail } from './safe-api-error.mjs';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 
@@ -14,6 +15,81 @@ const TOKEN_KEY = 'auth_token';
 type ApiError = {
   detail?: any;
   message?: string;
+};
+
+export type SeriesRunEpisode = {
+  episode_number: number;
+  chapter_ids: string[];
+  stage: string;
+  blocker?: string | { code?: string; message?: string } | null;
+  canonical_ids?: Record<string, any>;
+};
+
+export type SeriesProductionRun = {
+  id: string;
+  novel_id: string;
+  status: string;
+  current_episode_number: number;
+  episodes: SeriesRunEpisode[];
+  model_bindings: Record<string, any>;
+  budget_policy: Record<string, any>;
+  cost_summary: Record<string, any>;
+  gate_summary: Record<string, any>;
+  run_metadata: Record<string, any>;
+  version: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AnchorShotRecommendation = {
+  shot_id: string;
+  episode_number: number;
+  shot_number: number;
+  dimensions: string[];
+  reason: string;
+};
+
+export type LivePreflightPlan = {
+  run_id: string; ready: boolean;
+  blockers: Array<{ code: string; message: string; shot_id?: string }>;
+  blocker_codes: string[];
+  hard_preflight: Record<string, any>;
+  anchor_dialogue_contracts: Array<{ shot_id: string; episode_number: number; dialogue: string; speaker?: string | null; requires_tts: boolean; audio_route?: string; contract_hash: string }>;
+  cost_breakdown: Array<{ capability: string; quantity: number; unit_estimate_rmb: string; subtotal_rmb: string; source: string }>;
+  budget: { maximum_rmb: string; spent_rmb: string; reserved_rmb: string; remaining_rmb: string; projected_increment_rmb: string; projected_total_rmb: string };
+  voice_options: VoiceOptions | null;
+};
+
+export type VoiceSelection = {
+  config_id: string; db_model_id: string; api_model_id: string; provider_id: string;
+  tested_at: string; voice_id: string; version: number; selection_hash: string;
+};
+
+export type VoiceOptions = {
+  config_id: string; model_id: string; provider_id: string; tested_at: string;
+  options: Array<{ voice_id: string; label: string }>;
+  selection?: VoiceSelection | null;
+};
+
+export type ReferencePreparation = {
+  run_id: string; asset_id: string; asset_version: number; provider_binding_id: string;
+  roles: string[]; status: string; idempotent: boolean; resumed: boolean;
+  operation: { id: string; status: string; provider_task_id?: string | null; reservation_id: string; actual_rmb?: string | null; cost_source?: string | null };
+  artifact: { id: string; url: string; checksum: string; layout_evidence: Record<string, any>; width: number; height: number; byte_size: number };
+};
+
+export type AnchorGenerationResponse = {
+  status: 'provider_pending' | 'provider_ready' | 'completed' | 'failed';
+  selected_shot_ids: string[];
+  workflow_batches: any[];
+  quality_results: Array<{ shot_id: string; artifact_id?: string; evaluation_ids?: string[]; ready?: boolean; overall_readiness: string }>;
+  video_job_ids?: string[];
+  tts_job_ids?: string[];
+  media_job_ids?: string[];
+  pending_video_job_ids?: string[];
+  pending_tts_job_ids?: string[];
+  failed_video_job_ids?: string[];
+  failed_tts_job_ids?: string[];
 };
 
 type TTSJob = {
@@ -250,6 +326,24 @@ export type ProductionCardsResponse = {
   };
 };
 
+export type AssetBindingHealthItem = {
+  asset_id: string;
+  asset_version: number;
+  canonical_ready: boolean;
+  binding_required: boolean;
+  binding_ready: boolean;
+  binding_id?: string | null;
+  upload_status?: string | null;
+  invalidation_reason?: string | null;
+};
+
+export type AssetBindingHealthResponse = {
+  provider_id: string;
+  model_id: string;
+  binding_kind: string;
+  assets: AssetBindingHealthItem[];
+};
+
 export type ContinuityReviewTask = {
   shot_id: string;
   shot_number: number;
@@ -455,7 +549,7 @@ class ApiClient {
 
   // ========== 请求核心 ==========
 
-  private async request<T>(
+  async request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
@@ -483,7 +577,7 @@ class ApiClient {
         const detail = error?.detail;
         const message = typeof detail === 'string'
           ? detail
-          : detail?.message || error?.message || `HTTP ${response.status}`;
+          : formatSafeApiErrorDetail(detail, error?.message || `HTTP ${response.status}`);
         const apiError = new Error(message) as Error & { detail?: any; status?: number };
         apiError.detail = detail;
         apiError.status = response.status;
@@ -543,7 +637,83 @@ class ApiClient {
       body: JSON.stringify({ message }),
     });
   }
-  
+
+  async createSeriesRun(payload: Record<string, any>) {
+    return this.request<SeriesProductionRun>('/series-runs', { method: 'POST', body: JSON.stringify(payload) });
+  }
+
+  async getSeriesRun(runId: string) {
+    return this.request<SeriesProductionRun>(`/series-runs/${runId}`);
+  }
+
+  async executeSeriesRun(runId: string) {
+    return this.request<SeriesProductionRun>(`/series-runs/${runId}/execute`, { method: 'POST' });
+  }
+
+  async pauseSeriesRun(runId: string) {
+    return this.request<SeriesProductionRun>(`/series-runs/${runId}/pause`, { method: 'POST' });
+  }
+
+  async resumeSeriesRun(runId: string) {
+    return this.request<SeriesProductionRun>(`/series-runs/${runId}/resume`, { method: 'POST' });
+  }
+
+  async validateSeriesRunBindings(runId: string, bindings: Record<'text' | 'image' | 'tts' | 'video', string>) {
+    return this.request<{ model_bindings: Record<string, any>; version: number }>(`/series-runs/${runId}/live-bindings/validate`, {
+      method: 'POST', body: JSON.stringify(bindings),
+    });
+  }
+
+  async enableSeriesRunLiveCanary(runId: string) {
+    return this.request<SeriesProductionRun>(`/series-runs/${runId}/live-canary/enable`, { method: 'POST' });
+  }
+
+  async getSeriesRunLivePreflightPlan(runId: string, nativeAudio = false) {
+    const query = nativeAudio ? '?native_audio=true' : '';
+    return this.request<LivePreflightPlan>(`/series-runs/${runId}/live-preflight-plan${query}`);
+  }
+
+  async selectSeriesRunVoice(runId: string, input: { config_id: string; model_id: string; voice_id: string; version: number }) {
+    return this.request<VoiceSelection>(`/series-runs/${runId}/voice-selection`, {
+      method: 'POST', body: JSON.stringify(input),
+    });
+  }
+
+  async prepareSeriesRunStoryLocks(runId: string) {
+    return this.request(`/series-runs/${runId}/prepare-story-locks`, { method: 'POST' });
+  }
+
+  async prepareSeriesRunReference(runId: string) {
+    return this.request<ReferencePreparation>(`/series-runs/${runId}/prepare-reference`, { method: 'POST' });
+  }
+
+  async getSeriesRunAnchors(runId: string) {
+    return this.request<{ selected_shot_ids: string[]; selected_mode?: 'smoke' | 'full' | null; smoke: AnchorShotRecommendation[]; full: AnchorShotRecommendation[]; blockers?: Record<'smoke' | 'full', { code: string; message: string } | null> }>(`/series-runs/${runId}/anchor-shots`);
+  }
+
+  async saveSeriesRunAnchors(runId: string, shotIds: string[], mode: 'smoke' | 'full') {
+    return this.request<{ selected_shot_ids: string[]; version: number }>(`/series-runs/${runId}/anchor-shots`, {
+      method: 'PUT', body: JSON.stringify({ shot_ids: shotIds, mode }),
+    });
+  }
+
+  async generateSelectedSeriesRunAnchors(
+    runId: string,
+    shotIds: string[],
+    mode: 'smoke' | 'full',
+    nativeAudio = false,
+  ) {
+    return this.request<AnchorGenerationResponse>(`/series-runs/${runId}/generate-selected`, {
+      method: 'POST', body: JSON.stringify({ shot_ids: shotIds, mode, native_audio: nativeAudio }),
+    });
+  }
+
+  async reconcileSelectedSeriesRunAnchors(runId: string) {
+    return this.request<AnchorGenerationResponse>(`/series-runs/${runId}/reconcile-selected`, {
+      method: 'POST',
+    });
+  }
+
   // ========== Coding Plan 相关 ==========
   
   async generateCodingPlan(requirement: string, apiKey?: string, model?: string, modelConfigId?: string) {
@@ -1208,6 +1378,10 @@ class ApiClient {
 
   async getAnalyticsDashboard(days: number = 14) {
     return this.request<any>(`/dashboard/analytics?days=${days}`);
+  }
+
+  async getVideoModelContracts() {
+    return this.request<any>(`/video/models`);
   }
 
   // ========== 使用统计 ==========
@@ -1943,6 +2117,25 @@ class ApiClient {
     });
   }
 
+  async getAssetBindingHealth(assetIds: string[], providerId: string, modelId: string, bindingKind = 'reference_image') {
+    const params = new URLSearchParams({ provider_id: providerId, model_id: modelId, binding_kind: bindingKind });
+    assetIds.forEach((assetId) => params.append('asset_ids', assetId));
+    return this.request<AssetBindingHealthResponse>(`/assets/bindings/health?${params.toString()}`);
+  }
+
+  async createAssetProviderBinding(assetId: string, data: {
+    provider_id: string;
+    model_id: string;
+    binding_kind?: string;
+    asset_version?: number;
+    verify?: boolean;
+  }) {
+    return this.request<any>(`/assets/${assetId}/bindings`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   async reviewAssetContract(assetId: string) {
     return this.request<any>(`/assets/${assetId}/review-contract`, {
       method: 'POST',
@@ -2280,6 +2473,83 @@ class ApiClient {
     model_config_id?: string;
   }) {
     return this.request<any>('/story-bibles/entities/extract-assets', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async analyzeStoryEntities(data: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    text?: string;
+    entity_types?: string[];
+    persist?: boolean;
+    persist_rejected?: boolean;
+    allow_auto_approve?: boolean;
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/story-bibles/entities/analyze', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async getEntityExtractionRun(runId: string) {
+    return this.request<any>(`/story-bibles/entities/runs/${runId}`);
+  }
+
+  async getEntityReviewSummary(params: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+  } = {}) {
+    const searchParams = new URLSearchParams();
+    if (params.novel_id) searchParams.set('novel_id', params.novel_id);
+    if (params.chapter_id) searchParams.set('chapter_id', params.chapter_id);
+    if (params.script_id) searchParams.set('script_id', params.script_id);
+    const qs = searchParams.toString();
+    return this.request<any>(`/story-bibles/entities/review-summary${qs ? `?${qs}` : ''}`);
+  }
+
+  async promoteStoryEntityCandidate(entityId: string, reason?: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/promote`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async rejectStoryEntityCandidate(entityId: string, reason?: string) {
+    return this.request<any>(`/story-bibles/entities/${entityId}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    });
+  }
+
+  async getEntityMergeSuggestions(data: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+  } = {}) {
+    return this.request<any>('/story-bibles/entities/merge-suggestions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async enrichTargetStoryEntity(data: {
+    novel_id?: string;
+    chapter_id?: string;
+    script_id?: string;
+    text: string;
+    entity_type: string;
+    entity_name: string;
+    target_entity_id?: string;
+    fields?: string[];
+    mode?: 'preview' | 'merge_candidate' | 'apply_to_candidate' | 'apply_to_approved_requires_confirmation';
+    model_config_id?: string;
+  }) {
+    return this.request<any>('/story-bibles/entities/enrich-target', {
       method: 'POST',
       body: JSON.stringify(data),
     });

@@ -14,6 +14,7 @@ export interface SavedModelConfig {
   is_default: boolean;
   test_status?: string | null;
   test_message?: string | null;
+  tested_at?: string | null;
   key_available?: boolean;
   usage_count?: number;
 }

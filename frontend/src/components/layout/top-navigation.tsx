@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { 
   BookOpen, 
   BrainCircuit,
+  CircleUserRound,
   Video, 
   Mic, 
   Cpu,
@@ -17,8 +18,19 @@ import {
   Workflow,
   MonitorPlay,
   ListTodo,
+  LogOut,
+  Shield,
+  Users,
 } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { useAuth } from '@/contexts/AuthContext';
 
 const primaryNav = [
   { href: '/studio', label: '工作室' },
@@ -76,12 +88,16 @@ const expertNavItems = expertNav.map((item) => ({
 export function TopNavigation() {
   const pathname = usePathname();
   const router = useRouter();
+  const { user, isAuthenticated, logout } = useAuth();
 
   const isActive = (path: string) => {
     return pathname === path || pathname.startsWith(path + '/');
   };
 
   const expertActive = expertNavItems.some((item) => isActive(item.path));
+  const accountActive = isActive('/settings') || isActive('/teams');
+  const accountName = user?.username?.trim() || '账户';
+  const shouldShowAccountMenu = isAuthenticated || Boolean(user);
 
   const renderDropdownItems = (items: NavigationItem[]) =>
     items.map((item) => {
@@ -101,6 +117,71 @@ export function TopNavigation() {
         </DropdownMenuItem>
       );
     });
+
+  const renderAccountMenu = (variant: 'desktop' | 'mobile') => {
+    if (!shouldShowAccountMenu) return null;
+
+    return (
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="账户菜单"
+            title="账户菜单"
+            className={`${variant === 'desktop' ? 'px-3 py-2' : 'h-9 px-2'} rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
+              ${accountActive
+                ? 'text-white bg-white/10'
+                : 'text-white/60 hover:text-white hover:bg-white/5'
+              }`}
+          >
+            <CircleUserRound className="h-4 w-4" />
+            {variant === 'desktop' && <span className="max-w-24 truncate">{accountName}</span>}
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          sideOffset={8}
+          className="z-[60] w-56 max-w-[calc(100vw-1rem)] border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
+        >
+          <DropdownMenuLabel className="text-xs font-medium text-white/45">
+            {accountName}
+          </DropdownMenuLabel>
+          <DropdownMenuSeparator className="bg-white/10" />
+          <DropdownMenuItem
+            className="flex items-center gap-2 px-3 py-2 text-sm text-white/75 transition-colors hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
+            onSelect={() => router.push('/settings')}
+          >
+            <Settings className="h-4 w-4" />
+            系统设置
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="flex items-center gap-2 px-3 py-2 text-sm text-white/75 transition-colors hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
+            onSelect={() => router.push('/settings/profile')}
+          >
+            <Shield className="h-4 w-4" />
+            个人资料
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="flex items-center gap-2 px-3 py-2 text-sm text-white/75 transition-colors hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
+            onSelect={() => router.push('/teams')}
+          >
+            <Users className="h-4 w-4" />
+            团队管理
+          </DropdownMenuItem>
+          <DropdownMenuSeparator className="bg-white/10" />
+          <DropdownMenuItem
+            danger
+            className="flex items-center gap-2 px-3 py-2 text-sm text-red-200 transition-colors hover:bg-red-500/10 hover:text-red-100 focus:bg-red-500/10 focus:text-red-100"
+            onSelect={() => logout()}
+          >
+            <LogOut className="h-4 w-4" />
+            退出登录
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-[#0f172a]/95 backdrop-blur-md border-b border-white/10">
@@ -160,6 +241,8 @@ export function TopNavigation() {
               {renderDropdownItems(expertNavItems)}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {renderAccountMenu('desktop')}
         </nav>
 
         <nav className="flex min-w-0 flex-1 items-center justify-end gap-1 md:hidden">
@@ -206,6 +289,8 @@ export function TopNavigation() {
               {renderDropdownItems(expertNavItems)}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {renderAccountMenu('mobile')}
         </nav>
       </div>
     </header>

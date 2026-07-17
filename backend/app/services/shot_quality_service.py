@@ -132,7 +132,7 @@ def _names_from_refs(refs: Any) -> List[str]:
     return names
 
 
-def _extract_dialogue_speaker(dialogue: Optional[str], extra_data: Dict[str, Any]) -> Optional[str]:
+def extract_dialogue_speaker(dialogue: Optional[str], extra_data: Dict[str, Any]) -> Optional[str]:
     explicit = extra_data.get("dialogue_speaker") or extra_data.get("speaker_name")
     if explicit:
         return str(explicit).strip()
@@ -155,7 +155,7 @@ def _known_character_names(character_refs: Any, entity_refs: Dict[str, Any]) -> 
 
 
 def _dialogue_speaker_issue(dialogue: Optional[str], extra_data: Dict[str, Any], character_refs: Any, entity_refs: Dict[str, Any]) -> Optional[str]:
-    speaker = _extract_dialogue_speaker(dialogue, extra_data)
+    speaker = extract_dialogue_speaker(dialogue, extra_data)
     if not speaker:
         return None
     if speaker in {"角色A", "角色B", "某人"}:
@@ -419,7 +419,8 @@ class ShotQualityService:
         """
         from sqlalchemy import select, and_
         from app.models import Shot
-        from app.api.v1.endpoints.video import VideoGenerateRequest, generate_video
+        from app.features.video_generation.public import VideoGenerateRequest
+        from app.api.v1.endpoints.video import generate_video
         import uuid
 
         max_attempts = max_attempts or self.max_retry
@@ -591,6 +592,20 @@ def estimate_shot_generation_budget(shot: Any) -> Dict[str, Any]:
             "当前估算仅用于提示镜头复杂度和模型选择",
         ],
     }
+
+
+def estimate_quality_repair_cost_risk(actions: List[str]) -> Dict[str, str]:
+    """Describe the user-visible cost/risk of an already-scoped repair plan."""
+    action_set = set(actions)
+    if "regenerate_shot_video" in action_set:
+        return {"cost": "medium", "risk": "medium", "scope": "shot_video_only"}
+    if "regenerate_tts" in action_set:
+        return {"cost": "low", "risk": "low", "scope": "audio_only"}
+    if "retime_subtitles" in action_set or "generate_subtitles" in action_set:
+        return {"cost": "low", "risk": "low", "scope": "subtitle_only"}
+    if "rerender_video" in action_set:
+        return {"cost": "medium", "risk": "low", "scope": "render_only"}
+    return {"cost": "low", "risk": "low", "scope": "review_only"}
 
 
 def build_shot_quality_report(shot: Any) -> Dict[str, Any]:
