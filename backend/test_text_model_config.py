@@ -809,16 +809,33 @@ def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias
     user_id = "model-alias-dedupe-user"
     headers = {"Authorization": f"Bearer {user_id}"}
 
-    async def _cleanup() -> None:
+    async def _prepare_isolated_aliases() -> None:
         async with AsyncSessionLocal() as db:
             existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
             for config in existing.scalars().all():
                 await db.delete(config)
+            if await db.get(LLMProvider, "minimax") is None:
+                db.add(LLMProvider(
+                    id="minimax", name="minimax", name_cn="MiniMax",
+                    base_url="https://api.minimaxi.com/v1", is_active=True,
+                ))
+            if await db.get(LLMModel, "minimax-m2-7") is None:
+                db.add(LLMModel(
+                    id="minimax-m2-7", provider_id="minimax", model_id="MiniMax-M2.7",
+                    model_name="MiniMax-M2.7", model_type="chat", capabilities=["chat"],
+                    is_active=True,
+                ))
+            if await db.get(LLMModel, "minimax-speech-2-6-hd") is None:
+                db.add(LLMModel(
+                    id="minimax-speech-2-6-hd", provider_id="minimax", model_id="speech-2.6-hd",
+                    model_name="MiniMax-speech-2.6-hd", model_type="tts",
+                    capabilities=["text-to-speech"], is_active=True, is_recommended=True,
+                ))
             await db.commit()
 
     import asyncio
 
-    asyncio.run(_cleanup())
+    asyncio.run(_prepare_isolated_aliases())
 
     response = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
     assert response.status_code == 200

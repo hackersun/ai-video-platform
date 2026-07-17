@@ -34,6 +34,15 @@ def reset_fernet_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(credential_encryption, "_fernet_cache", None)
 
 
+def test_llm_model_module_has_no_fernet_cache_owner() -> None:
+    from app.models import llm_config
+
+    assert not hasattr(llm_config, "_fernet_cache")
+    assert not hasattr(llm_config, "_get_fernet")
+    assert llm_config.encrypt_key is credential_encryption.encrypt_key
+    assert llm_config.decrypt_key is credential_encryption.decrypt_key
+
+
 def _load_audit_module():
     script_path = Path(__file__).resolve().parents[1] / "scripts" / "audit_llm_secret_storage.py"
     spec = importlib.util.spec_from_file_location("audit_llm_secret_storage", script_path)

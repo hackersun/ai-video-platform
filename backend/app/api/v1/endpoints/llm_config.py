@@ -9,6 +9,7 @@ from datetime import datetime
 from uuid import uuid4
 import httpx
 import asyncio
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +18,6 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.model_registry import (
-    get_model_contract_metadata,
     get_registry,
     get_task_default,
     get_video_model_catalog,
@@ -35,6 +35,13 @@ from app.features.model_config.credential_persistence import (
     apply_config_update,
     apply_create_or_upsert_config,
 )
+from app.features.model_config.public import (
+    is_product_visible_model,
+    is_product_visible_provider,
+    legacy_model_capability_group,
+    maybe_log_shadow_catalog_comparison,
+    project_legacy_llm_models,
+)
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.services.deterministic_provider_fake import (
     deterministic_config_test_result,
@@ -42,6 +49,7 @@ from app.services.deterministic_provider_fake import (
 )
 from app.services.volcano_speech_tts import configure_volcano_speech_endpoint, test_volcano_speech_connection
 router = APIRouter(tags=["大模型配置"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/registry")
@@ -220,146 +228,6 @@ def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Opti
     }
 
 
-def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
-    if model is None:
-        return False
-    identifier_values = [
-        getattr(model, "id", None),
-        getattr(model, "provider_id", None),
-        getattr(model, "model_id", None),
-        getattr(model, "model_name", None),
-    ]
-    display_values = [
-        getattr(model, "model_name_cn", None),
-        getattr(model, "description", None),
-    ]
-    identifier_text = " ".join(str(value or "").lower() for value in identifier_values)
-    display_text = " ".join(str(value or "").lower() for value in display_values)
-    text = f"{identifier_text} {display_text}".strip()
-    if not text:
-        return False
-    return (
-        "test-video-" in text
-        or "test-audio-" in text
-        or "test-image-" in text
-        or "test-text-" in text
-        or text.startswith("test-")
-        or identifier_text.startswith("tts-model-")
-        or "tts-api-model" in identifier_text
-        or "tts api model" in identifier_text
-        or "video-api-model" in identifier_text
-        or "video api model" in identifier_text
-        or "image-api-model" in identifier_text
-        or "image api model" in identifier_text
-        or "audio-api-model" in identifier_text
-        or "audio api model" in identifier_text
-        or "api model" in display_text
-        or "-test-" in identifier_text
-        or identifier_text.endswith("-test")
-        or " test " in f" {identifier_text} "
-        or "测试" in display_text
-        or "preflight-" in text
-        or "preflight video model" in text
-        or "doubao-seedance-test" in text
-        or "doubao-seedance-consistency-test" in text
-        or "speech-test" in text
-    )
-
-
-INTERNAL_PROVIDER_PREFIXES = (
-    "preflight-",
-    "test-provider-",
-    "placeholder-provider-",
-    "contract-",
-)
-INTERNAL_PROVIDER_IDS = frozenset({"deterministic-acceptance"})
-
-
-def _is_internal_test_provider(provider: Optional[LLMProvider]) -> bool:
-    if provider is None:
-        return False
-    name_cn = str(getattr(provider, "name_cn", None) or "").strip()
-    if name_cn in {"预检供应商", "测试供应商", "占位供应商", "TTS开通供应商"}:
-        return True
-    values = [
-        getattr(provider, "id", None),
-        getattr(provider, "name", None),
-        getattr(provider, "name_en", None),
-        getattr(provider, "name_cn", None),
-        getattr(provider, "base_url", None),
-        getattr(provider, "description", None),
-    ]
-    normalized = " ".join(str(value or "").strip().lower() for value in values)
-    return (
-        str(getattr(provider, "id", None) or "").lower() in INTERNAL_PROVIDER_IDS
-        or any(part.startswith(INTERNAL_PROVIDER_PREFIXES) for part in normalized.split())
-        or "tts-provider-" in normalized
-    )
-
-
-def _model_capability_group(model: LLMModel) -> str:
-    model_type = (model.model_type or "").lower()
-    model_capabilities = {str(item).lower() for item in (model.capabilities or [])}
-    if model_type == "vision" or model_capabilities.intersection({"vision", "multimodal", "image_understanding"}):
-        return "vision"
-    if model_type in {"chat", "completion", "text-generation", "text_generation", "llm"}:
-        return "text"
-    if model_type in {"image", "image-generation", "image_generation"}:
-        return "image"
-    if model_type in {"tts", "audio", "speech"}:
-        return "audio"
-    if model_type in {"video", "video-generation", "video_generation"}:
-        return "video"
-    if model_type == "embedding":
-        return "embedding"
-    return model_type or "other"
-
-
-def _model_display_key(model: LLMModel) -> tuple[str, str, str]:
-    """Group legacy catalog aliases that call the same API model."""
-    api_model_id = (model.model_id or model.id or "").strip().lower()
-    return (model.provider_id or "", api_model_id, _model_capability_group(model))
-
-
-def _model_display_rank(model: LLMModel, configs_by_model: dict[str, list[LLMConfig]]) -> tuple:
-    configs = configs_by_model.get(model.id, [])
-    primary = configs[0] if configs else None
-    primary_updated = primary.updated_at.timestamp() if primary and primary.updated_at else 0
-    return (
-        bool(primary and primary.is_default),
-        bool(primary),
-        bool(primary and primary.test_status == "success"),
-        "." not in (model.id or ""),
-        bool(model.is_recommended),
-        primary_updated,
-    )
-
-
-def _dedupe_models_for_display(
-    models: list[LLMModel],
-    configs_by_model: dict[str, list[LLMConfig]],
-) -> list[LLMModel]:
-    """Return one visible model per provider/API-model/capability.
-
-    Historical seed scripts used both dotted and hyphenated ids for a few
-    MiniMax models. Keep a user's configured alias visible when it exists;
-    otherwise prefer the newer hyphenated id so the UI does not show duplicate
-    choices for the same remote model.
-    """
-    selected: dict[tuple[str, str, str], LLMModel] = {}
-    order: list[tuple[str, str, str]] = []
-    for model in models:
-        key = _model_display_key(model)
-        current = selected.get(key)
-        if current is None:
-            selected[key] = model
-            order.append(key)
-            continue
-        if _model_display_rank(model, configs_by_model) > _model_display_rank(current, configs_by_model):
-            selected[key] = model
-    return [selected[key] for key in order]
-
-
 async def clear_default_configs_for_model_group(
     db: AsyncSession,
     user_id: str,
@@ -368,7 +236,7 @@ async def clear_default_configs_for_model_group(
     exclude_config_id: Optional[str] = None,
 ) -> None:
     """Keep one default per capability group, not one global default."""
-    group = _model_capability_group(model)
+    group = legacy_model_capability_group(model)
     result = await db.execute(
         select(LLMConfig, LLMModel)
         .join(LLMModel, LLMConfig.model_id == LLMModel.id)
@@ -383,7 +251,7 @@ async def clear_default_configs_for_model_group(
     for config, existing_model in result.all():
         if exclude_config_id and config.id == exclude_config_id:
             continue
-        if _model_capability_group(existing_model) == group:
+        if legacy_model_capability_group(existing_model) == group:
             config.is_default = False
 
 
@@ -1890,7 +1758,7 @@ async def list_providers(
     )
     providers = [
         provider for provider in result.scalars().all()
-        if not _is_internal_test_provider(provider)
+        if is_product_visible_provider(provider)
     ]
     return [
         LLMProviderResponse(
@@ -1916,83 +1784,8 @@ async def list_models(
 ):
     """获取大模型列表"""
     await ensure_default_models(db)
-    provider_result = await db.execute(
-        select(LLMProvider).where(LLMProvider.is_active == True)
-    )
-    internal_provider_ids = {
-        item.id for item in provider_result.scalars().all()
-        if _is_internal_test_provider(item)
-    }
-    if provider and provider in internal_provider_ids:
-        return []
-
-    query = select(LLMModel).where(LLMModel.is_active == True)
-    
-    if provider:
-        query = query.where(LLMModel.provider_id == provider)
-    
-    result = await db.execute(query)
-    models = [
-        model for model in result.scalars().all()
-        if model.provider_id not in internal_provider_ids and not _is_internal_test_model(model)
-    ]
-    if not models:
-        return []
-
-    config_result = await db.execute(
-        select(LLMConfig)
-        .where(
-            and_(
-                LLMConfig.user_id == user_id,
-                LLMConfig.is_active == True,
-                LLMConfig.model_id.in_([model.id for model in models]),
-            )
-        )
-        .order_by(desc(LLMConfig.is_default), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
-    )
-    configs_by_model: dict[str, list[LLMConfig]] = {}
-    for config in config_result.scalars().all():
-        configs_by_model.setdefault(config.model_id, []).append(config)
-
-    visible_models = _dedupe_models_for_display(models, configs_by_model)
-
-    responses = []
-    for model in visible_models:
-        configs = configs_by_model.get(model.id, [])
-        primary = configs[0] if configs else None
-        primary_key_available = bool(primary and primary.get_api_key_decrypted())
-        primary_test_status = primary.test_status if primary else None
-        primary_test_message = primary.test_message if primary else None
-        if primary and not primary_key_available:
-            primary_test_status = "failed"
-            primary_test_message = "API Key 为空或无法解密，请重新保存并验证该配置"
-        responses.append({
-            "id": model.id,
-            "provider_id": model.provider_id,
-            "model_id": model.model_id,
-            "model_name": model.model_name,
-            "model_name_cn": model.model_name_cn,
-            "model_type": model.model_type,
-            "capabilities": model.capabilities or [],
-            "context_window": model.context_window,
-            "max_tokens": model.max_tokens,
-            "input_cost_per_1k": model.input_cost_per_1k,
-            "output_cost_per_1k": model.output_cost_per_1k,
-            "is_active": model.is_active,
-            "is_recommended": model.is_recommended,
-            "description": model.description,
-            "base_url": model.base_url,
-            "user_config_id": primary.id if primary else None,
-            "user_config_name": primary.name if primary else None,
-            "user_configured": bool(primary),
-            "user_config_count": len(configs),
-            "user_is_default": bool(primary and primary.is_default),
-            "user_test_status": primary_test_status,
-            "user_test_message": primary_test_message,
-            "user_key_available": primary_key_available,
-            **get_model_contract_metadata(model.model_id, model.provider_id),
-        })
-
+    responses = await project_legacy_llm_models(db, user_id, provider)
+    await maybe_log_shadow_catalog_comparison(db, user_id, responses, logger)
     return responses
 
 
@@ -2017,14 +1810,14 @@ async def list_configs(
     configs = []
     for row in result.all():
         config, model = row
-        if _is_internal_test_model(model):
+        if not is_product_visible_model(model):
             continue
         # 获取provider名称
         provider_result = await db.execute(
             select(LLMProvider).where(LLMProvider.id == model.provider_id)
         )
         provider = provider_result.scalar_one_or_none()
-        if _is_internal_test_provider(provider):
+        if provider is not None and not is_product_visible_provider(provider):
             continue
         
         configs.append(build_llm_config_response(config, model, provider))
@@ -2315,7 +2108,7 @@ async def set_default_config(
     config.is_default = True
     await db.commit()
 
-    return {"message": f"已设为{_model_capability_group(model)}能力默认配置"}
+    return {"message": f"已设为{legacy_model_capability_group(model)}能力默认配置"}
 
 
 @router.get("/api-key/{provider}", response_model=dict)

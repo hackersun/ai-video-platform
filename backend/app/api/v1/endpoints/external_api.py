@@ -27,6 +27,10 @@ from app.core.dev_generation import is_dev_mode
 from app.core.model_registry import get_registry
 from app.core.qwen_config import QWEN_MODELS
 from app.core.security import get_current_user_id
+from app.features.model_config.public import (
+    build_legacy_external_provider_response,
+    select_legacy_external_providers,
+)
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.media_persistence import STATIC_ROOT
@@ -270,54 +274,6 @@ class ProductionCapabilityStatus(BaseModel):
     registry: Dict[str, Any]
 
 
-def _provider_capabilities(provider: ExternalAPIProvider) -> List[str]:
-    capabilities: List[str] = []
-    for model in provider.supported_models or []:
-        for capability in model.get("capabilities") or []:
-            if capability not in capabilities:
-                capabilities.append(capability)
-    return capabilities
-
-
-def _provider_response(provider: ExternalAPIProvider) -> ExternalAPIProviderResponse:
-    return ExternalAPIProviderResponse(
-        id=provider.id,
-        name=provider.name,
-        name_cn=provider.name_cn,
-        api_type=provider.api_type,
-        base_url=provider.base_url,
-        auth_type=provider.auth_type or "bearer",
-        is_active=bool(provider.is_active),
-        description=provider.description,
-        doc_url=provider.doc_url,
-        supported_models=provider.supported_models or [],
-        capabilities=_provider_capabilities(provider),
-    )
-
-
-def _is_internal_test_provider(provider: ExternalAPIProvider) -> bool:
-    values = [
-        provider.id or "",
-        provider.name or "",
-        provider.name_cn or "",
-        provider.description or "",
-    ]
-    normalized = " ".join(values).lower()
-    return "测试供应商" in (provider.name_cn or "") or "test" in normalized or "external-provider-" in normalized
-
-
-def _visible_providers(providers: List[ExternalAPIProvider]) -> List[ExternalAPIProvider]:
-    default_order = {item["id"]: index for index, item in enumerate(DEFAULT_PROVIDERS)}
-    production_api_types = {"audio_video", "workflow", "render", "lip_sync", "storage", "video"}
-    visible = [
-        provider
-        for provider in providers
-        if provider.api_type in production_api_types and not _is_internal_test_provider(provider)
-    ]
-    visible.sort(key=lambda provider: (default_order.get(provider.id, len(default_order)), provider.name_cn or provider.name))
-    return visible
-
-
 def _config_response(config: ExternalAPIConfig, provider: ExternalAPIProvider) -> ExternalAPIConfigResponse:
     return ExternalAPIConfigResponse(
         id=config.id,
@@ -514,7 +470,10 @@ async def _test_external_config(config: ExternalAPIConfig, provider: ExternalAPI
 @router.get("/providers", response_model=List[ExternalAPIProviderResponse])
 async def list_providers(db: AsyncSession = Depends(get_db)):
     providers = await _ensure_default_providers(db)
-    return [_provider_response(provider) for provider in _visible_providers(providers)]
+    return [
+        ExternalAPIProviderResponse(**build_legacy_external_provider_response(provider))
+        for provider in select_legacy_external_providers(providers)
+    ]
 
 
 @router.get("/configs", response_model=List[ExternalAPIConfigResponse])
