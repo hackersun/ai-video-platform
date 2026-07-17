@@ -53,7 +53,17 @@ class DriverContext:
     driver_key: str
     connection_id: str | None
     secrets: Mapping[str, str] = field(default_factory=dict, repr=False)
+    base_url: str | None = None
+    connection_params: Mapping[str, Any] = field(default_factory=dict, repr=False)
     execution_snapshot_id: str | None = None
+
+    @property
+    def api_key(self) -> str:
+        return self.secrets.get("api_key", "")
+
+    @property
+    def api_secret(self) -> str:
+        return self.secrets.get("api_secret", "")
 
 
 @dataclass(frozen=True)

@@ -29,4 +29,23 @@ class DriverRegistry:
         return driver
 
 
-__all__ = ["DriverRegistry"]
+def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver] = ()) -> DriverRegistry:
+    from app.features.model_drivers.adapters.dashscope_video import DashScopeVideoDriver
+    from app.features.model_drivers.adapters.local_ffmpeg import LocalFFmpegDriver
+    from app.features.model_drivers.adapters.minimax_image import MiniMaxImageDriver
+    from app.features.model_drivers.adapters.minimax_speech import MiniMaxSpeechDriver
+    from app.features.model_drivers.adapters.minimax_text import MiniMaxTextDriver
+    from app.features.model_drivers.adapters.qiniu_kodo import QiniuKodoDriver
+    from app.features.model_drivers.adapters.volcano_ark_image import VolcanoArkImageDriver
+    from app.features.model_drivers.adapters.volcano_ark_video import VolcanoArkVideoDriver
+    from app.features.model_drivers.adapters.volcano_openspeech import VolcanoOpenSpeechDriver
+
+    return DriverRegistry([
+        MiniMaxTextDriver(), MiniMaxImageDriver(), MiniMaxSpeechDriver(),
+        VolcanoArkImageDriver(), VolcanoArkVideoDriver(), VolcanoOpenSpeechDriver(),
+        DashScopeVideoDriver(), LocalFFmpegDriver(), QiniuKodoDriver(),
+        *additional_drivers,
+    ])
+
+
+__all__ = ["DriverRegistry", "build_builtin_driver_registry"]

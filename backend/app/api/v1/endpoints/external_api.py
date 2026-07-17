@@ -31,6 +31,7 @@ from app.features.model_config.public import (
     build_legacy_external_provider_response,
     select_legacy_external_providers,
 )
+from app.features.model_drivers import execute_external_connection_test
 from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.media_persistence import STATIC_ROOT
@@ -389,82 +390,10 @@ def _write_delivery_probe_file() -> str:
 
 
 async def _test_external_config(config: ExternalAPIConfig, provider: ExternalAPIProvider) -> tuple[str, str]:
-    provider_key = provider.name
-    extra = config.extra_config or {}
-    base_url = _base_url(config, provider)
-
-    if provider_key == "local_ffmpeg":
-        binary = extra.get("binary_path") or "ffmpeg"
-        if shutil.which(binary):
-            return "success", f"本地 FFmpeg 可用：{binary}"
-        return "failed", f"未找到本地 FFmpeg 可执行文件：{binary}"
-
-    if provider_key == "comfyui":
-        if not base_url:
-            return "failed", "ComfyUI 需要配置服务地址"
-        health_path = extra.get("health_path") or "/system_stats"
-        try:
-            async with httpx.AsyncClient(timeout=min(config.timeout or 20, 20)) as client:
-                response = await client.get(f"{base_url}{health_path}")
-            if response.status_code < 400:
-                return "success", "ComfyUI 服务可访问"
-            return "failed", f"ComfyUI 健康检查失败：HTTP {response.status_code}"
-        except Exception as exc:
-            if is_dev_mode():
-                return "configured", f"配置已保存，但 DEV_MODE 未连通 ComfyUI：{exc}"
-            return "failed", f"ComfyUI 连接失败：{exc}"
-
-    if provider_key in {"ffmpeg_cloud", "lip_sync"} and base_url:
-        health_path = extra.get("health_path") or "/health"
-        try:
-            headers = {}
-            api_key = config.get_api_key_decrypted()
-            if api_key and provider.auth_type != "none":
-                headers[provider.auth_header or "Authorization"] = f"Bearer {api_key}" if provider.auth_type == "bearer" else api_key
-            async with httpx.AsyncClient(timeout=min(config.timeout or 20, 20)) as client:
-                response = await client.get(f"{base_url}{health_path}", headers=headers)
-            if response.status_code < 400:
-                return "success", f"{provider.name_cn or provider.name} 服务可访问"
-            return "failed", f"健康检查失败：HTTP {response.status_code}"
-        except Exception as exc:
-            if is_dev_mode():
-                return "configured", f"配置已保存，但 DEV_MODE 未连通远端服务：{exc}"
-            return "failed", f"连接失败：{exc}"
-
-    if provider_key in {"openai", "google", "runway", "qwen"}:
-        if provider.auth_type != "none" and not config.get_api_key_decrypted():
-            return "failed", "缺少 API Key"
-        if extra.get("validate_live"):
-            if not base_url:
-                return "failed", "缺少基础 URL"
-            return "configured", "已开启真实验证，但该提供商需在提交任务时按具体模型接口验证权限"
-        return "configured", "配置完整；真实任务提交时会按供应商接口验证权限和额度"
-
-    if provider_key == "object_storage":
-        public_base_url = (extra.get("public_base_url") or base_url).strip()
-        if not public_base_url:
-            return "failed", "缺少公网基础地址，请填写 CDN/对象存储公开域名"
-        if not _is_public_http_url(public_base_url):
-            return "failed", "公网基础地址必须是云端可访问的 http(s) URL，不能使用 localhost、内网或相对路径"
-        storage_provider = str(extra.get("storage_provider") or extra.get("provider") or "").strip().lower()
-        if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
-            api_key = config.get_api_key_decrypted()
-            api_secret = config.get_api_secret_decrypted()
-            bucket = str(extra.get("bucket") or extra.get("bucket_name") or "").strip()
-            if not api_key or not api_secret or not bucket:
-                return "failed", "七牛对象存储需要配置 Access Key、Secret Key 和 bucket，不能仅映射公网域名"
-            upload_url = str(extra.get("upload_url") or "https://upload.qiniup.com").strip()
-            if not _is_public_http_url(upload_url):
-                return "failed", "七牛上传地址必须是云端可访问的 http(s) URL"
-        local_prefix = extra.get("local_static_prefix") or "/static/"
-        public_prefix = extra.get("public_static_prefix") or "/static/"
-        if not str(local_prefix).startswith("/") or not str(public_prefix).startswith("/"):
-            return "failed", "静态路径前缀必须以 / 开头"
-        if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
-            return "success", f"七牛对象存储上传出口可用：{public_base_url.rstrip('/')}{str(public_prefix).rstrip('/')}/..."
-        return "success", f"对象存储/CDN公网出口可用：{public_base_url.rstrip('/')}{str(public_prefix).rstrip('/')}/..."
-
-    return "configured", "配置完整；该适配器将在任务提交时验证"
+    return await execute_external_connection_test(
+        config, provider, http_client_factory=httpx.AsyncClient, dev_mode=is_dev_mode,
+        which=shutil.which, public_url_check=_is_public_http_url,
+    )
 
 
 @router.get("/providers", response_model=List[ExternalAPIProviderResponse])

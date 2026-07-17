@@ -23,6 +23,7 @@ from app.features.model_drivers import (
     execute_generation,
     execute_poll,
 )
+from app.features.model_drivers import registry as driver_registry
 
 
 def profile(
@@ -290,8 +291,46 @@ def test_registry_rejects_duplicate_driver_keys():
         DriverRegistry([EchoTextDriver(), EchoTextDriver()])
 
 
+@pytest.mark.parametrize(
+    ("driver_key", "capability"),
+    [
+        ("minimax_text_v2", "text_generation"),
+        ("minimax_image_v1", "image_generation"),
+        ("minimax_speech_v2", "speech_generation"),
+        ("volcano_ark_image_v3", "image_generation"),
+        ("volcano_ark_video_v3", "video_generation"),
+        ("volcano_openspeech_v3", "speech_generation"),
+        ("dashscope_video_v1", "video_generation"),
+        ("local_ffmpeg_v1", "media_render"),
+        ("qiniu_kodo_v1", "object_storage"),
+    ],
+)
+def test_builtin_driver_registry_has_current_production_drivers(driver_key, capability):
+    driver = driver_registry.build_builtin_driver_registry().require(driver_key)
+
+    assert capability in driver.capabilities
+
+
 def test_driver_context_repr_excludes_decrypted_secrets():
     assert "top-secret" not in repr(context())
+
+
+def test_driver_context_exposes_provider_connection_inputs_without_secret_repr():
+    driver_context = DriverContext(
+        profile=profile(driver_key="minimax_text_v2"),
+        driver_key="minimax_text_v2",
+        connection_id="connection-1",
+        secrets={"api_key": "top-secret", "api_secret": "second-secret"},
+        base_url="https://provider.example.test/v1",
+        connection_params={"region": "cn"},
+    )
+
+    assert driver_context.api_key == "top-secret"
+    assert driver_context.api_secret == "second-secret"
+    assert driver_context.base_url == "https://provider.example.test/v1"
+    assert driver_context.connection_params == {"region": "cn"}
+    assert "top-secret" not in repr(driver_context)
+    assert "second-secret" not in repr(driver_context)
 
 
 @pytest.mark.asyncio

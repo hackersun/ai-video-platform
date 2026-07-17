@@ -22,7 +22,11 @@ from app.features.model_drivers.domain import (
     VideoCommand,
 )
 from app.features.model_drivers.executor import execute_connection_test, execute_generation, execute_poll
-from app.features.model_drivers.registry import DriverRegistry
+from app.features.model_drivers.registry import DriverRegistry, build_builtin_driver_registry
+from app.features.model_drivers.adapters.connection_callable import (
+    execute_external_connection_test,
+    execute_legacy_connection_test,
+)
 
 __all__ = [
     "CapabilityDriver", "Command", "DriverCapabilityError", "DriverContext", "DriverContextError", "DriverError",
@@ -30,5 +34,6 @@ __all__ = [
     "DriverLimitError", "DriverParameterError", "DriverRegistrationError", "DriverRegistry",
     "DriverResultError", "DriverSchemaError", "DriverSubmission", "DriverTestResult",
     "DriverUnavailableError", "ImageCommand", "SpeechCommand", "TextCommand", "VideoCommand",
-    "execute_connection_test", "execute_generation", "execute_poll",
+    "build_builtin_driver_registry", "execute_connection_test", "execute_external_connection_test",
+    "execute_generation", "execute_legacy_connection_test", "execute_poll",
 ]

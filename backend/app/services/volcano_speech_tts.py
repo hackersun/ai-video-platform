@@ -35,6 +35,31 @@ class VolcanoSpeechEndpoint:
     resource_id: str
 
 
+@dataclass(frozen=True)
+class VolcanoSpeechRequest:
+    contract_version: str
+    endpoint_url: str
+    headers: dict[str, str]
+    payload: dict[str, Any]
+    request_id: str
+    resource_id: str
+    voice: str
+
+    @property
+    def payload_keys(self) -> list[str]:
+        return sorted(self.payload)
+
+    def safe_evidence(self) -> dict[str, Any]:
+        request_params = self.payload.get("req_params") or {}
+        return {
+            "request_contract_version": self.contract_version,
+            "resource_id": self.resource_id,
+            "voice_id": self.voice,
+            "payload_fields": self.payload_keys,
+            "request_param_fields": sorted(request_params),
+        }
+
+
 def is_volcano_speech_tts_endpoint(base_url: str | None) -> bool:
     if not base_url:
         return False
@@ -83,6 +108,45 @@ def parse_volcano_speech_endpoint(base_url: str) -> VolcanoSpeechEndpoint:
 def normalize_volcano_speech_voice(voice: str | None) -> str:
     normalized = (voice or "").strip()
     return LEGACY_VOICE_ALIASES.get(normalized, normalized or DEFAULT_VOICE)
+
+
+def build_volcano_speech_request(
+    *,
+    access_token: str,
+    base_url: str,
+    text: str,
+    voice: str,
+    speed: float,
+    request_id: str | None = None,
+) -> VolcanoSpeechRequest:
+    endpoint = parse_volcano_speech_endpoint(base_url)
+    resolved_voice = normalize_volcano_speech_voice(voice)
+    resolved_request_id = request_id or str(uuid4())
+    headers = {
+        "X-Api-App-Id": endpoint.app_id,
+        "X-Api-Access-Key": access_token,
+        "X-Api-Resource-Id": endpoint.resource_id,
+        "X-Api-Request-Id": resolved_request_id,
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "user": {"uid": "ai-video-platform"},
+        "req_params": {
+            "text": text,
+            "speaker": resolved_voice,
+            "speed_ratio": speed,
+            "audio_params": {"format": "mp3", "sample_rate": 24000},
+        },
+    }
+    return VolcanoSpeechRequest(
+        contract_version="volcano.openspeech.v3.v1",
+        endpoint_url=endpoint.url,
+        headers=headers,
+        payload=payload,
+        request_id=resolved_request_id,
+        resource_id=endpoint.resource_id,
+        voice=resolved_voice,
+    )
 
 
 def parse_volcano_speech_events(payload: str) -> tuple[list[dict[str, Any]], bytes]:
@@ -141,30 +205,18 @@ async def synthesize_volcano_speech_v3(
     speed: float,
     output_dir: str,
 ) -> dict[str, Any]:
-    endpoint = parse_volcano_speech_endpoint(base_url)
-    resolved_voice = normalize_volcano_speech_voice(voice)
-    request_id = str(uuid4())
-    headers = {
-        "X-Api-App-Id": endpoint.app_id,
-        "X-Api-Access-Key": access_token,
-        "X-Api-Resource-Id": endpoint.resource_id,
-        "X-Api-Request-Id": request_id,
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "user": {"uid": "ai-video-platform"},
-        "req_params": {
-            "text": text,
-            "speaker": resolved_voice,
-            "speed_ratio": speed,
-            "audio_params": {"format": "mp3", "sample_rate": 24000},
-        },
-    }
+    request = build_volcano_speech_request(
+        access_token=access_token,
+        base_url=base_url,
+        text=text,
+        voice=voice,
+        speed=speed,
+    )
     async with aiohttp.ClientSession() as session:
         async with session.post(
-            endpoint.url,
-            headers=headers,
-            json=payload,
+            request.endpoint_url,
+            headers=request.headers,
+            json=request.payload,
             timeout=aiohttp.ClientTimeout(total=60),
         ) as response:
             response_text = await response.text()
@@ -178,10 +230,10 @@ async def synthesize_volcano_speech_v3(
         "audio_url": audio_url,
         "status": "succeeded",
         "duration": duration,
-        "model": endpoint.resource_id,
-        "voice": resolved_voice,
+        "model": request.resource_id,
+        "voice": request.voice,
         "speed": speed,
-        "request_id": request_id,
+        "request_id": request.request_id,
         "message": "豆包语音 TTS 转换成功",
     }
 

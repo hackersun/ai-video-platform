@@ -42,6 +42,7 @@ from app.features.model_config.public import (
     maybe_log_shadow_catalog_comparison,
     project_legacy_llm_models,
 )
+from app.features.model_drivers import execute_legacy_connection_test
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.services.deterministic_provider_fake import (
     deterministic_config_test_result,
@@ -1745,6 +1746,38 @@ async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
         }
 
 
+_CONFIG_TEST_FACTORIES = {
+    ("volcano", "default"): lambda key, model, message, _base: test_volcano_api(key, model, message),
+    ("volcano", "speech"): lambda key, _model, message, base: test_volcano_speech_connection(key, base, message),
+    (VOLCANO_AGENT_PLAN_PROVIDER_ID, "default"): lambda key, model, message, _base: test_volcano_agent_plan_api(key, model, message),
+    ("qwen", "default"): lambda key, model, message, _base: test_qwen_api(key, model, message),
+    ("dashscope", "default"): lambda key, model, message, _base: test_qwen_api(key, model, message),
+    ("qianlian", "default"): lambda key, model, message, _base: test_qianlian_api(key, model, message),
+    ("baidu", "default"): lambda key, model, message, _base: test_baidu_api(key, model, message),
+    ("openai", "default"): lambda key, model, message, _base: test_openai_api(key, model, message),
+    ("minimax", "default"): lambda key, model, message, _base: test_minimax_api(key, model, message),
+}
+def _unsupported_config_test(provider_id: str) -> dict:
+    return {
+        "success": False, "message": f"不支持的提供商: {provider_id}", "response": None,
+        "response_time_ms": 0, "tokens_used": 0,
+    }
+
+
+async def _execute_config_test(
+    provider_id: str, api_key: str, model_id: str, message: str,
+    *, category: str = "default", base_url: str = "",
+) -> dict:
+    factory = _CONFIG_TEST_FACTORIES.get((provider_id, category))
+    factory = factory or _CONFIG_TEST_FACTORIES.get((provider_id, "default"))
+    if factory is None:
+        return _unsupported_config_test(provider_id)
+
+    async def legacy_test(_context):
+        return await factory(api_key, model_id, message, base_url)
+    return await execute_legacy_connection_test(provider_id, api_key, model_id, base_url, legacy_test)
+
+
 # ============== API端点 ==============
 
 @router.get("/providers", response_model=List[LLMProviderResponse])
@@ -1898,29 +1931,12 @@ async def test_api_connection(
         model_provider_id = model.provider_id
         model_id = model.model_id
     
-    # 根据提供商调用不同的测试函数
-    if model_provider_id == "volcano":
-        return await test_volcano_api(request.api_key, model_id, request.message)
-    elif model_provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
-        return await test_volcano_agent_plan_api(request.api_key, model_id, request.message)
-    elif model_provider_id in ("qwen", "dashscope"):
-        return await test_qwen_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "qianlian":
-        return await test_qianlian_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "baidu":
-        return await test_baidu_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "openai":
-        return await test_openai_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "minimax":
-        return await test_minimax_api(request.api_key, model_id, request.message)
-    else:
-        return {
-            "success": False,
-            "message": f"不支持的提供商: {model_provider_id}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
+    category = "speech" if model and model.model_type in ("tts", "audio", "speech") else "default"
+    base_url = model.base_url if model and model.base_url else ""
+    return await _execute_config_test(
+        model_provider_id, request.api_key, model_id, request.message,
+        category=category, base_url=base_url,
+    )
 
 
 @router.post("/configs/{config_id}/test", response_model=LLMTestResponse)
@@ -1977,33 +1993,15 @@ async def test_config(
         await db.commit()
         return test_result
 
-    # 根据提供商调用测试
-    if provider_id == "volcano" and model.model_type in ("tts", "audio", "speech"):
-        extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra)
-        test_result = await test_volcano_speech_connection(api_key, base_url or "", request.message)
-    elif provider_id == "volcano":
-        test_result = await test_volcano_api(api_key, model.model_id, request.message)
-    elif provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
-        test_result = await test_volcano_agent_plan_api(api_key, model.model_id, request.message)
-    elif provider_id in ("qwen", "dashscope"):
-        test_result = await test_qwen_api(api_key, model.model_id, request.message)
-    elif provider_id == "qianlian":
-        test_result = await test_qianlian_api(api_key, model.model_id, request.message)
-    elif provider_id == "baidu":
-        test_result = await test_baidu_api(api_key, model.model_id, request.message)
-    elif provider_id == "openai":
-        test_result = await test_openai_api(api_key, model.model_id, request.message)
-    elif provider_id == "minimax":
-        test_result = await test_minimax_api(api_key, model.model_id, request.message)
-    else:
-        test_result = {
-            "success": False,
-            "message": f"不支持的提供商: {provider_id}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
+    category = "speech" if model.model_type in ("tts", "audio", "speech") else "default"
+    extra = config.extra_params if isinstance(config.extra_params, dict) else {}
+    configured_base_url = configure_volcano_speech_endpoint(
+        extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra,
+    ) if category == "speech" else ""
+    test_result = await _execute_config_test(
+        provider_id, api_key, model.model_id, request.message,
+        category=category, base_url=configured_base_url or "",
+    )
     # 更新测试状态
     config.test_status = "success" if test_result["success"] else "failed"
     config.test_message = test_result["message"]
