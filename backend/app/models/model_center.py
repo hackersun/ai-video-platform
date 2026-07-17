@@ -7,6 +7,7 @@ from uuid import uuid4
 from cryptography.fernet import InvalidToken
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     event,
@@ -18,14 +19,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.orm import Session, validates
+from sqlalchemy.orm import validates
 
 from app.core.database import Base
 from app.core.time_utils import utc_now
 from app.models.llm_config import _get_fernet, decrypt_key, encrypt_key
-
-
-_VERSION_TABLE_NAMES = frozenset({"model_profile_versions", "production_recipe_versions"})
 
 
 def _next_version_values(
@@ -67,14 +65,6 @@ def _reject_published_delete(_mapper, _connection, target) -> None:
         raise ValueError("published version is append-only; deletion is not allowed")
 
 
-def _reject_bulk_version_dml(orm_execute_state) -> None:
-    if not (orm_execute_state.is_update or orm_execute_state.is_delete):
-        return
-    table = getattr(orm_execute_state.statement, "table", None)
-    if getattr(table, "name", None) in _VERSION_TABLE_NAMES:
-        raise ValueError("bulk UPDATE/DELETE is disabled for version tables")
-
-
 class ModelProvider(Base):
     __tablename__ = "model_providers"
 
@@ -105,7 +95,17 @@ class ModelProfile(Base):
 
 class ModelConnection(Base):
     __tablename__ = "model_connections"
-    __table_args__ = (UniqueConstraint("user_id", "provider_id", "name", name="uq_model_connection_name"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider_id", "name", name="uq_model_connection_name"),
+        CheckConstraint(
+            "api_key IS NULL OR api_key = '' OR (length(api_key) >= 100 AND substr(api_key, 1, 6) = 'gAAAAA')",
+            name="ck_model_connection_api_key_fernet",
+        ),
+        CheckConstraint(
+            "api_secret IS NULL OR api_secret = '' OR (length(api_secret) >= 100 AND substr(api_secret, 1, 6) = 'gAAAAA')",
+            name="ck_model_connection_api_secret_fernet",
+        ),
+    )
 
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), nullable=False, index=True)
@@ -298,4 +298,3 @@ event.listen(ModelProfileVersion, "before_update", _reject_published_update)
 event.listen(ProductionRecipeVersion, "before_update", _reject_published_update)
 event.listen(ModelProfileVersion, "before_delete", _reject_published_delete)
 event.listen(ProductionRecipeVersion, "before_delete", _reject_published_delete)
-event.listen(Session, "do_orm_execute", _reject_bulk_version_dml)
