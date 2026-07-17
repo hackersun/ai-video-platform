@@ -32,6 +32,7 @@ from app.models.template import Template
 from app.models.version import Version, VersionRule
 from app.models.studio_review import StudioRepairAction, StudioReviewRun
 from app.models.prompt_skill import PromptSkill
+from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 from app.models.entity_extraction_run import EntityExtractionRun
 from app.models.story_entity_mention import StoryEntityMention
 from app.models.entity_feedback import EntityFeedback
@@ -95,6 +96,8 @@ __all__ = [
     "StudioRepairAction",
     "StudioReviewRun",
     "PromptSkill",
+    "PromptProfile",
+    "PromptProfileVersion",
     "EntityExtractionRun",
     "StoryEntityMention",
     "EntityFeedback",

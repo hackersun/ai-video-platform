@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app.core.database import AsyncSessionLocal
+from app.models import PromptSkill
 from app.services.prompt_composer import compose_generation_prompt
 from init_db import init_db
 from main import app
@@ -319,6 +323,58 @@ def test_prompt_skill_clone_edit_activate_keeps_one_active_per_task(client: Test
     assert by_id[first["id"]]["is_active"] is False
     assert by_id[second["id"]]["is_active"] is False
     assert by_id[clone["id"]]["is_active"] is True
+
+
+def test_published_prompt_skill_edit_projects_draft_until_activate(client: TestClient) -> None:
+    user_id = f"prompt-skill-version-user-{uuid4()}"
+    created = client.post(
+        "/api/v1/prompt-skills",
+        json={
+            "name": "模型提示词", "task": "script_generation", "stage": "analysis",
+            "content": "published body", "variables": {
+                "routing": {"model_filter": ["MiniMax-M3"]},
+            }, "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    ).json()
+
+    updated_response = client.put(
+        f"/api/v1/prompt-skills/{created['id']}",
+        json={
+            "name": "模型提示词", "task": "script_generation", "stage": "analysis",
+            "content": "draft body", "variables": {
+                "routing": {"model_filter": ["MiniMax-M3"]},
+            }, "is_active": True,
+        },
+        headers=_auth_headers(user_id),
+    )
+    assert updated_response.status_code == 200
+    assert updated_response.json()["version"] == 2
+    assert updated_response.json()["content"] == "draft body"
+
+    async def stored_state():
+        from app.models import PromptProfileVersion
+
+        async with AsyncSessionLocal() as db:
+            skill = await db.get(PromptSkill, created["id"])
+            versions = list((await db.execute(
+                select(PromptProfileVersion)
+                .where(PromptProfileVersion.profile_id == created["id"])
+                .order_by(PromptProfileVersion.version)
+            )).scalars())
+            return skill.content, [(item.version, item.status, item.content) for item in versions]
+
+    skill_content, versions = asyncio.run(stored_state())
+    assert skill_content == "published body"
+    assert versions == [(1, "published", "published body"), (2, "draft", "draft body")]
+
+    activated = client.post(
+        f"/api/v1/prompt-skills/{created['id']}/activate",
+        headers=_auth_headers(user_id),
+    )
+    assert activated.status_code == 200
+    assert activated.json()["version"] == 2
+    assert activated.json()["content"] == "draft body"
 
 
 def test_prompt_skill_delete_only_allows_inactive_user_skill(client: TestClient) -> None:

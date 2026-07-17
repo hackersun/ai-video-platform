@@ -19,6 +19,8 @@ MODEL_CENTER_TRIGGER_NAMES = {
     "trg_model_profile_versions_published_delete",
     "trg_production_recipe_versions_published_update",
     "trg_production_recipe_versions_published_delete",
+    "trg_prompt_profile_versions_published_update",
+    "trg_prompt_profile_versions_published_delete",
 }
 
 

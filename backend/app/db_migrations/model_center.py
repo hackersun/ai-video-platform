@@ -11,7 +11,11 @@ _LINK_COLUMNS = {
     "external_api_configs": {"connection_id": "VARCHAR(36)"},
     "prompt_skills": {"prompt_profile_version_id": "VARCHAR(36)"},
 }
-_VERSION_TABLES = ("model_profile_versions", "production_recipe_versions")
+_VERSION_TABLES = (
+    "model_profile_versions",
+    "production_recipe_versions",
+    "prompt_profile_versions",
+)
 
 
 def _quote_postgresql_identifier(value: str) -> str:

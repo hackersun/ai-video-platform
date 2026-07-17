@@ -27,6 +27,7 @@ def register_production_models() -> None:
         ProductionRecipeVersion,
     )
     from app.models.production_state_event import ProductionStateEvent
+    from app.models.prompt_profile import PromptProfile, PromptProfileVersion
     from app.models.provider_asset_binding import ProviderAssetBinding
     from app.models.quality_evaluation import QualityEvaluation
     from app.models.series_production_run import SeriesProductionRun
@@ -45,6 +46,8 @@ def register_production_models() -> None:
         ModelProfileVersion,
         ModelProvider,
         ProductionRecipeVersion,
+        PromptProfile,
+        PromptProfileVersion,
         ProductionStateEvent,
         ProviderAssetBinding,
         QualityEvaluation,

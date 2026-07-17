@@ -12,80 +12,20 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.features.prompt_profiles.public import (
+    apply_version_to_legacy_skill,
+    edit_legacy_prompt_profile,
+    effective_legacy_prompt_skill_payloads,
+    ensure_legacy_prompt_profile,
+    latest_versions_for_skills,
+    legacy_prompt_skill_payload as prompt_skill_payload,
+    publish_prompt_profile_version,
+    render_legacy_prompt_skill as render_prompt_skill,
+    rendered_legacy_prompt_skill_entry as rendered_prompt_skill_entry,
+)
 from app.models import PromptSkill
 from app.services.default_prompt_skills import ensure_standard_prompt_skills
 from app.services.prompt_composer import compose_generation_prompt
-
-
-class _SafeFormatDict(dict):
-    def __missing__(self, key: str) -> str:
-        return "{" + key + "}"
-
-
-def prompt_skill_payload(skill: PromptSkill) -> Dict[str, Any]:
-    return {
-        "id": skill.id,
-        "user_id": skill.user_id,
-        "name": skill.name,
-        "description": skill.description,
-        "task": skill.task,
-        "stage": skill.stage,
-        "content": skill.content,
-        "variables": skill.variables or {},
-        "priority": skill.priority,
-        "inject_position": skill.inject_position,
-        "version": skill.version,
-        "is_active": bool(skill.is_active),
-        "is_builtin": bool(skill.is_builtin),
-        "tags": skill.tags or [],
-        "created_at": skill.created_at.isoformat() if skill.created_at else None,
-        "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
-    }
-
-
-def _effective_prompt_skill_payloads(skills: List[PromptSkill], user_id: str) -> List[Dict[str, Any]]:
-    user_active_by_task: Dict[str, str] = {}
-    builtin_active_by_task: Dict[str, str] = {}
-    for skill in skills:
-        if not skill.is_active:
-            continue
-        if skill.is_builtin:
-            builtin_active_by_task.setdefault(skill.task, skill.id)
-        elif skill.user_id == user_id:
-            user_active_by_task.setdefault(skill.task, skill.id)
-
-    effective_ids = set(user_active_by_task.values())
-    for task, skill_id in builtin_active_by_task.items():
-        if task not in user_active_by_task:
-            effective_ids.add(skill_id)
-
-    payloads = []
-    for skill in skills:
-        payload = prompt_skill_payload(skill)
-        payload["is_active"] = skill.id in effective_ids
-        payloads.append(payload)
-    return payloads
-
-
-def render_prompt_skill(skill: PromptSkill, context: Optional[Dict[str, Any]] = None) -> str:
-    values = _SafeFormatDict({**(skill.variables or {}), **(context or {})})
-    try:
-        rendered = (skill.content or "").format_map(values)
-    except ValueError:
-        rendered = skill.content or ""
-    return rendered.strip()
-
-
-def rendered_prompt_skill_entry(skill: PromptSkill, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    content = render_prompt_skill(skill, context)
-    return {
-        "id": skill.id,
-        "name": skill.name,
-        "task": skill.task,
-        "stage": skill.stage,
-        "version": skill.version or 1,
-        "content": content,
-    }
 
 
 def _task_label(task: str) -> str:
@@ -217,7 +157,8 @@ async def list_prompt_skills(
         query = query.where(PromptSkill.stage == stage)
     query = query.order_by(PromptSkill.priority, PromptSkill.created_at)
     skills = list((await db.execute(query)).scalars().all())
-    items = _effective_prompt_skill_payloads(skills, user_id)
+    versions = await latest_versions_for_skills(db, skills)
+    items = effective_legacy_prompt_skill_payloads(skills, user_id, versions)
     if active is not None:
         items = [item for item in items if item["is_active"] is active]
     return {"items": items, "count": len(items)}
@@ -264,47 +205,47 @@ async def create_prompt_skill(db: AsyncSession, user_id: str, data: Dict[str, An
         tags=data.get("tags") or [],
     )
     db.add(skill)
+    version = await ensure_legacy_prompt_profile(db, skill)
     await db.commit()
     await db.refresh(skill)
-    return prompt_skill_payload(skill)
+    return prompt_skill_payload(skill, version)
 
 
 async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     skill = await get_prompt_skill(db, user_id, skill_id)
     if skill.is_builtin:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能不能直接修改，请先克隆")
+    was_active = bool(skill.is_active)
+    draft = await edit_legacy_prompt_profile(db, skill, data)
     next_task = data.get("task", skill.task)
     if data.get("is_active") is True:
         await _deactivate_user_task_skills(db, user_id, next_task, exclude_skill_id=skill.id)
-    for key in (
-        "name",
-        "description",
-        "task",
-        "stage",
-        "content",
-        "variables",
-        "priority",
-        "inject_position",
-        "is_active",
-        "tags",
-    ):
-        if key in data:
-            setattr(skill, key, data[key])
-    skill.version = int(skill.version or 1) + 1
+    keep_published_state = was_active and data.get("is_active", True) is True
+    if not keep_published_state:
+        for key in (
+            "name", "description", "task", "stage", "content", "variables",
+            "priority", "inject_position", "is_active", "tags",
+        ):
+            if key in data:
+                setattr(skill, key, data[key])
+        skill.version = draft.version
     await db.commit()
     await db.refresh(skill)
-    return prompt_skill_payload(skill)
+    return prompt_skill_payload(skill, draft)
 
 
 async def activate_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
     skill = await get_prompt_skill(db, user_id, skill_id)
     if skill.is_builtin:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="内置 Prompt 技能请先克隆后激活")
+    version = await ensure_legacy_prompt_profile(db, skill)
+    version = await publish_prompt_profile_version(db, version.id)
     await _deactivate_user_task_skills(db, user_id, skill.task, exclude_skill_id=skill.id)
+    apply_version_to_legacy_skill(skill, version)
     skill.is_active = True
     await db.commit()
     await db.refresh(skill)
-    return prompt_skill_payload(skill)
+    return prompt_skill_payload(skill, version)
 
 
 async def delete_prompt_skill(db: AsyncSession, user_id: str, skill_id: str) -> Dict[str, Any]:
