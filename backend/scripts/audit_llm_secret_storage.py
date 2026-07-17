@@ -26,12 +26,16 @@ def classify_secret(value: str | bytes | None) -> str:
 
 def _sync_database_url(database_url: str) -> str:
     url = make_url(database_url)
-    driver = {"postgresql+asyncpg": "postgresql+psycopg2"}.get(url.drivername, url.drivername)
+    driver = {
+        "postgresql+asyncpg": "postgresql+psycopg2",
+        "postgresql+psycopg_async": "postgresql+psycopg",
+    }.get(url.drivername, url.drivername)
     return url.set(drivername=driver).render_as_string(hide_password=False)
 
 
 def load_secret_columns_read_only(database_url: str | None = None) -> list[str | None]:
-    url = make_url(database_url or os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL))
+    configured_url = database_url or os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+    url = make_url(configured_url)
     if url.get_backend_name() == "sqlite":
         if not url.database or url.database == ":memory:":
             raise RuntimeError("The LLM credential audit requires a persistent SQLite database")
@@ -40,7 +44,7 @@ def load_secret_columns_read_only(database_url: str | None = None) -> list[str |
             rows = connection.execute("SELECT api_key, api_secret FROM llm_configs").fetchall()
         return [value for row in rows for value in row]
 
-    engine = create_engine(_sync_database_url(str(url)))
+    engine = create_engine(_sync_database_url(configured_url))
     try:
         with engine.connect() as connection:
             transaction = connection.begin()

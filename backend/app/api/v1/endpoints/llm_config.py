@@ -31,6 +31,10 @@ from app.core.volcano_agent_plan_config import (
     VOLCANO_AGENT_PLAN_PROVIDER_ID,
 )
 from app.features.video_generation.public import PROVIDER_VIDEO_WATERMARK_ARG
+from app.features.model_config.credential_persistence import (
+    apply_config_update,
+    apply_create_or_upsert_config,
+)
 from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.services.deterministic_provider_fake import (
     deterministic_config_test_result,
@@ -2035,18 +2039,10 @@ async def create_config(
     user_id: str = Depends(get_current_user_id)
 ):
     """创建大模型配置"""
-    # 验证模型是否存在
-    result = await db.execute(
-        select(LLMModel).where(LLMModel.id == request.model_id)
-    )
+    result = await db.execute(select(LLMModel).where(LLMModel.id == request.model_id))
     model = result.scalar_one_or_none()
-    
     if not model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="模型不存在"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在")
     existing_result = await db.execute(
         select(LLMConfig).where(
             and_(
@@ -2057,8 +2053,6 @@ async def create_config(
         ).order_by(desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
     )
     config = existing_result.scalars().first()
-
-    # 如果设为默认，只取消同一能力类别的其他默认配置。
     if request.is_default:
         await clear_default_configs_for_model_group(
             db,
@@ -2066,49 +2060,22 @@ async def create_config(
             model,
             exclude_config_id=config.id if config else None,
         )
-
-    if config:
-        existing_plain_key = config.get_api_key_decrypted()
-        api_key_changed = request.api_key != existing_plain_key
-        config.name = request.name
-        config.set_api_key_encrypted(request.api_key)
-        if request.api_secret:
-            config.set_api_secret_encrypted(request.api_secret)
-        config.temperature = request.temperature
-        config.top_p = request.top_p
-        config.max_tokens = request.max_tokens
-        config.extra_params = request.extra_params
-        config.is_default = request.is_default
-        if api_key_changed:
-            config.test_status = "pending"
-            config.test_message = "配置已更新，请重新测试连接"
-    else:
+    is_existing = config is not None
+    if config is None:
         config = LLMConfig(
             id=str(uuid4()),
             user_id=user_id,
             model_id=request.model_id,
             name=request.name,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            max_tokens=request.max_tokens,
-            extra_params=request.extra_params,
-            is_default=request.is_default,
-            test_status="pending"
         )
-        config.set_api_key_encrypted(request.api_key)
-        if request.api_secret:
-            config.set_api_secret_encrypted(request.api_secret)
         db.add(config)
-
+    apply_create_or_upsert_config(config, request, is_existing=is_existing)
     await db.commit()
     await db.refresh(config)
-    
-    # 获取provider信息
     provider_result = await db.execute(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    
     return build_llm_config_response(config, model, provider)
 
 
@@ -2269,55 +2236,22 @@ async def update_config(
         )
     )
     config = result.scalar_one_or_none()
-    
     if not config:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="配置不存在"
-        )
-    
-    # 更新字段
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="配置不存在")
     if request.is_default:
         target_model = await db.get(LLMModel, request.model_id)
         if target_model is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在")
         await clear_default_configs_for_model_group(db, user_id, target_model, exclude_config_id=config_id)
-
-    existing_plain_key = config.get_api_key_decrypted()
-    next_api_key = request.api_key.strip() if isinstance(request.api_key, str) else None
-    api_key_changed = bool(next_api_key) and next_api_key != existing_plain_key
-    model_changed = request.model_id != config.model_id
-
-    config.name = request.name
-    config.model_id = request.model_id
-    if next_api_key:
-        config.set_api_key_encrypted(next_api_key)
-    if request.api_secret:
-        config.set_api_secret_encrypted(request.api_secret)
-    config.temperature = request.temperature
-    config.top_p = request.top_p
-    config.max_tokens = request.max_tokens
-    config.extra_params = request.extra_params
-    config.is_default = request.is_default
-    if api_key_changed or model_changed:
-        config.test_status = "pending"
-        config.test_message = "模型或 API Key 已更新，请重新测试连接"
-    
+    apply_config_update(config, request)
     await db.commit()
     await db.refresh(config)
-    
-    # 获取模型信息
-    result = await db.execute(
-        select(LLMModel).where(LLMModel.id == config.model_id)
-    )
+    result = await db.execute(select(LLMModel).where(LLMModel.id == config.model_id))
     model = result.scalar_one()
-    
-    # 获取provider信息
     provider_result = await db.execute(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    
     return build_llm_config_response(config, model, provider)
 
 

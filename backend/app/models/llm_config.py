@@ -3,116 +3,18 @@
 支持多模型接入配置
 """
 
-import os
-import base64
-import warnings
 from datetime import datetime
-from pathlib import Path
 from typing import Optional, Dict, Any, List
 from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean, JSON, Float
 from sqlalchemy.sql import func
 
 from app.core.database import Base
-
-
-# ============== Fernet加密工具 ==============
-
-def _configured_encryption_key() -> Optional[bytes]:
-    """读取已配置的Fernet密钥，不生成开发用临时密钥。"""
-    key = os.getenv("FERNET_KEY")
-    if not key:
-        for env_path in (Path(__file__).resolve().parents[2] / ".env", Path(__file__).resolve().parents[3] / ".env"):
-            if not env_path.exists():
-                continue
-            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-                line = raw_line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                env_key, env_value = line.split("=", 1)
-                if env_key.strip() == "FERNET_KEY":
-                    key = env_value.strip().strip("\"'")
-                    os.environ.setdefault("FERNET_KEY", key)
-                    break
-            if key:
-                break
-    if key:
-        return key.encode() if isinstance(key, str) else key
-    return None
-
-
-def get_encryption_key() -> bytes:
-    """
-    获取Fernet加密密钥。
-    优先从环境变量 FERNET_KEY 读取，否则生成一个（仅用于开发）。
-    重要：生产环境必须设置 FERNET_KEY 环境变量。
-    """
-    key = _configured_encryption_key()
-    if key:
-        return key
-
-    # 生成一个默认密钥（仅警告，不用于生产）
-    warnings.warn(
-        "FERNET_KEY environment variable not set. Using a transient key. "
-        "API keys will NOT persist correctly across restarts. "
-        "Set FERNET_KEY to a valid 32-byte base64-encoded key for production.",
-        UserWarning,
-        stacklevel=2,
-    )
-    # Fernet requires a 32-byte URL-safe base64-encoded key
-    from cryptography.fernet import Fernet as _Fernet
-    return _Fernet.generate_key()
-
-
-def require_stable_encryption_key() -> None:
-    """生产环境启动前验证持久化凭据所需的Fernet密钥。"""
-    dev_mode = os.getenv("DEV_MODE", "true").lower() in {"true", "1", "yes"}
-    if dev_mode:
-        return
-
-    key = _configured_encryption_key()
-    if not key:
-        raise RuntimeError("FERNET_KEY is required when DEV_MODE=false")
-
-    try:
-        from cryptography.fernet import Fernet as _Fernet
-        _Fernet(key)
-    except Exception as error:
-        raise RuntimeError("FERNET_KEY must be a valid Fernet key when DEV_MODE=false") from error
-
-
-_fernet_cache: Optional["Fernet"] = None
-
-
-def _get_fernet() -> "Fernet":
-    """获取或创建Fernet实例（延迟初始化）。"""
-    global _fernet_cache
-    if _fernet_cache is None:
-        from cryptography.fernet import Fernet as _Fernet
-        _fernet_cache = _Fernet(get_encryption_key())
-    return _fernet_cache
-
-
-def encrypt_key(api_key: str) -> str:
-    """加密API密钥。返回base64编码的密文字符串。"""
-    if not api_key:
-        return ""
-    fernet = _get_fernet()
-    return fernet.encrypt(api_key.encode()).decode()
-
-
-def decrypt_key(encrypted_key: str) -> str:
-    """解密API密钥。接受base64编码的密文字符串。"""
-    if not encrypted_key:
-        return ""
-    # 开发环境：如果解密失败（已有数据未加密），直接返回原值
-    try:
-        fernet = _get_fernet()
-        return fernet.decrypt(encrypted_key.encode()).decode()
-    except Exception:
-        if encrypted_key.startswith("gAAAAA"):
-            return ""
-        # 可能是明文存储的旧数据
-        return encrypted_key
+from app.core.credential_encryption import (
+    decrypt_key,
+    encrypt_key,
+    get_encryption_key,
+    require_stable_encryption_key,
+)
 
 
 class LLMProvider(Base):
