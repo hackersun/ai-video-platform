@@ -79,6 +79,22 @@ class ProfileOwnerState:
     provider_enabled: bool
 
 
+async def load_shadow_connection_identity(
+    db: AsyncSession, connection_id: str
+) -> dict[str, str]:
+    """Return legacy linkage for a migrated connection without exposing secrets."""
+    connection = await db.get(ModelConnection, connection_id)
+    if connection is None:
+        return {}
+    params = connection.connection_params or {}
+    return {
+        key: value for key, value in {
+            "provider_id": params.get("legacy_provider_id"),
+            "connection_id": params.get("legacy_config_id"),
+        }.items() if isinstance(value, str) and value
+    }
+
+
 class ModelConfigurationError(ValueError):
     """Raised when a requested canonical or legacy model cannot be resolved."""
 
@@ -422,6 +438,7 @@ __all__ = [
     "load_connection",
     "load_legacy_config_rows",
     "load_profile_owner_state",
+    "load_shadow_connection_identity",
     "load_verified_connections",
     "list_product_catalog",
     "load_published_profile",

@@ -26,9 +26,16 @@ from app.features.model_config.repository import (
     load_connection,
     load_legacy_config_rows,
     load_profile_owner_state,
+    load_shadow_connection_identity,
     load_verified_connections,
     resolve_profile_version,
 )
+from app.features.model_config.settings import (
+    ModelCenterReadMode,
+    legacy_canonical_fallback_enabled,
+    model_center_read_mode,
+)
+from app.features.model_config.shadow_compare import compare_resolutions, record_shadow_difference
 
 
 SCOPE_PRECEDENCE = ("request", "series", "project", "user", "system")
@@ -235,6 +242,97 @@ async def _resolve_explicit_profile(
     )
 
 
+async def _resolve_canonical_binding(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    task: str,
+    capability: ModelCapability,
+    project_id: str | None,
+    series_id: str | None,
+) -> ResolvedModelBinding | None:
+    candidates = await load_binding_candidates(
+        db, user_id=user_id, task=task, capability=capability
+    )
+    selected = select_binding_candidate(
+        candidates, user_id=user_id, project_id=project_id, series_id=series_id
+    )
+    if selected is None:
+        return None
+    return await hydrate_resolved_binding(
+        db, selected, user_id=user_id, task=task, capability=capability
+    )
+
+
+async def _shadow_resolution(
+    db: AsyncSession, binding: ResolvedModelBinding,
+) -> dict[str, object]:
+    identity = await load_shadow_connection_identity(db, binding.connection_id)
+    return {
+        "capability": binding.capability,
+        "provider_id": identity.get("provider_id", binding.profile.provider_id),
+        "api_model_id": binding.profile.api_model_id,
+        "connection_id": identity.get("connection_id", binding.connection_id),
+        "prompt_profile_version_id": binding.profile.prompt_profile_key,
+        "native_audio": bool(binding.profile.default_params.get("native_audio")),
+        "output_contract": dict(binding.profile.output_contract),
+    }
+
+
+async def _resolve_by_read_mode(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    task: str,
+    capability: ModelCapability,
+    project_id: str | None,
+    series_id: str | None,
+) -> ResolvedModelBinding:
+    mode = model_center_read_mode()
+    if mode is ModelCenterReadMode.CANONICAL:
+        canonical = await _resolve_canonical_binding(
+            db, user_id=user_id, task=task, capability=capability,
+            project_id=project_id, series_id=series_id,
+        )
+        if canonical is None:
+            raise ModelBindingError("model_binding_not_found")
+        return canonical
+    try:
+        legacy = await resolve_legacy_binding(
+            db, user_id=user_id, task=task, capability=capability,
+        )
+    except ModelBindingError:
+        if mode is ModelCenterReadMode.LEGACY and legacy_canonical_fallback_enabled():
+            canonical = await _resolve_canonical_binding(
+                db, user_id=user_id, task=task, capability=capability,
+                project_id=project_id, series_id=series_id,
+            )
+            if canonical is not None:
+                return canonical
+        raise
+    if mode is not ModelCenterReadMode.SHADOW:
+        return legacy
+    try:
+        canonical = await _resolve_canonical_binding(
+            db, user_id=user_id, task=task, capability=capability,
+            project_id=project_id, series_id=series_id,
+        )
+    except ModelBindingError:
+        canonical = None
+    if canonical is not None:
+        comparison = compare_resolutions(
+            legacy=await _shadow_resolution(db, legacy),
+            canonical=await _shadow_resolution(db, canonical),
+        )
+        try:
+            await record_shadow_difference(
+                db, user_id=user_id, resource_id=canonical.binding_id, comparison=comparison,
+            )
+        except Exception:
+            pass
+    return legacy
+
+
 async def resolve_model_binding(
     db: AsyncSession,
     *,
@@ -258,17 +356,10 @@ async def resolve_model_binding(
             db, user_id=user_id, task=task, capability=capability,
             profile_version_id=explicit_profile_version_id,
         )
-    candidates = await load_binding_candidates(
-        db, user_id=user_id, task=task, capability=capability
+    return await _resolve_by_read_mode(
+        db, user_id=user_id, task=task, capability=capability,
+        project_id=project_id, series_id=series_id,
     )
-    selected = select_binding_candidate(
-        candidates, user_id=user_id, project_id=project_id, series_id=series_id
-    )
-    if selected is not None:
-        return await hydrate_resolved_binding(
-            db, selected, user_id=user_id, task=task, capability=capability
-        )
-    return await resolve_legacy_binding(db, user_id=user_id, task=task, capability=capability)
 
 
 async def resolve_retry_binding(

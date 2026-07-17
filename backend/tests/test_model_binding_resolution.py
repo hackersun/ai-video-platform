@@ -29,6 +29,11 @@ from tests.model_binding_test_support import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _canonical_binding_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_CENTER_READ_MODE", "canonical")
+
+
 def test_workflow_media_resolves_driver_from_binding_not_provider_name() -> None:
     source = Path(
         "app/features/workflow_media/application/prepare_separate_media.py"
@@ -535,7 +540,10 @@ async def test_explicit_legacy_config_overrides_scoped_binding(db_session: Async
 
 
 @pytest.mark.asyncio
-async def test_legacy_fallback_preserves_version_zero_contract(db_session: AsyncSession) -> None:
+async def test_legacy_fallback_preserves_version_zero_contract(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_CENTER_READ_MODE", "legacy")
     legacy = await _seed_legacy_config(db_session)
 
     resolved = await resolve_model_binding(

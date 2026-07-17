@@ -65,6 +65,12 @@ from app.features.model_config.snapshots import (
     load_execution_snapshot,
     sanitize_snapshot_params,
 )
+from app.features.model_config.settings import ModelCenterReadMode, model_center_read_mode
+from app.features.model_config.shadow_compare import (
+    ResolutionComparison,
+    compare_resolutions,
+    record_shadow_difference,
+)
 
 __all__ = [
     "BindingScope",
@@ -74,10 +80,12 @@ __all__ = [
     "ExecutionSnapshotCommand",
     "ModelBindingError",
     "ModelConfigurationError",
+    "ModelCenterReadMode",
     "ModelCapability",
     "ModelProfileContract",
     "ProfileStatus",
     "ProductionRecipeSpec",
+    "ResolutionComparison",
     "RecipeBindingContract",
     "RecipeError",
     "RecipeStage",
@@ -86,6 +94,7 @@ __all__ = [
     "RoutePolicy",
     "build_legacy_external_provider_response",
     "compare_legacy_and_canonical_catalogs",
+    "compare_resolutions",
     "create_recipe_version",
     "create_execution_snapshot",
     "is_product_visible_external_provider",
@@ -95,6 +104,7 @@ __all__ = [
     "load_execution_snapshot",
     "list_product_catalog",
     "maybe_log_shadow_catalog_comparison",
+    "model_center_read_mode",
     "normalize_capabilities",
     "project_legacy_external_providers",
     "project_legacy_llm_models",
@@ -106,6 +116,7 @@ __all__ = [
     "resolve_legacy_strategy_config_id",
     "resolve_retry_binding",
     "route_policy_for",
+    "record_shadow_difference",
     "select_legacy_external_providers",
     "stable_recipe_checksum",
     "sanitize_snapshot_params",

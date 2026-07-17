@@ -17,6 +17,11 @@ from tests.model_binding_test_support import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _canonical_binding_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MODEL_CENTER_READ_MODE", "canonical")
+
+
 @pytest.mark.asyncio
 async def test_projection_matches_old_public_result_for_broad_video_capability(
     db_session: AsyncSession,

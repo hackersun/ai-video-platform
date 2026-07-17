@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
-import os
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +20,7 @@ from app.features.model_config.catalog import (
     select_primary_legacy_config,
 )
 from app.features.model_config.repository import list_product_catalog
+from app.features.model_config.settings import ModelCenterReadMode, model_center_read_mode
 from app.models.external_api import ExternalAPIProvider
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 
@@ -155,7 +155,7 @@ async def maybe_log_shadow_catalog_comparison(
     logger,
 ) -> None:
     try:
-        if os.getenv("MODEL_CENTER_CANONICAL_READS", "").strip().lower() != "shadow":
+        if model_center_read_mode() is not ModelCenterReadMode.SHADOW:
             return
         comparison = await compare_legacy_and_canonical_catalogs(db, user_id, legacy_models)
         summary = comparison.sanitized_summary()
