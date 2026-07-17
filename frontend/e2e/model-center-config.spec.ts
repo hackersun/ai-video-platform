@@ -1,55 +1,84 @@
 import { expect, test } from '@playwright/test';
 
 function devToken(userId: string) {
-  const payload = Buffer.from(
-    JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })
-  ).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url');
   return `dev.${payload}.sig`;
 }
 
+const overview = { blocking_issues: [], connections: [], recipes: [] };
+const connectionPage = {
+  items: [{ id: 'connection-1', provider_id: 'volcengine', name: '主视频连接', base_url: null, has_secret: true, secret_hint: '****ef09', secret_updated_at: null, enabled: true, revision: 1 }],
+  meta: { page: 1, page_size: 20, total: 1 },
+};
+const certification = {
+  id: 'run-17', profile_version_id: 'profile-1', connection_id: 'connection-1', level: 'connection', status: 'passed',
+  sanitized_evidence: { request_id: 'evidence-17', credential: 'redacted' }, estimated_cost_rmb: '0', actual_cost_rmb: '0',
+  created_at: '2026-07-18T00:00:00Z', completed_at: '2026-07-18T00:01:00Z',
+};
+const catalog = {
+  items: [{
+    provider: { id: 'provider-1', code: 'volcengine', display_name: '火山引擎', provider_family: 'ark', is_builtin: true, enabled: true, revision: 1 },
+    profile: { id: 'profile-1', model_id: 'model-1', version: 1, api_model_id: 'doubao-seedance-1-5-pro', driver_key: 'ark_video', capabilities: ['video_generation'], contract_version: 'v1', status: 'published', revision: 1 },
+    certification_level: 'connection',
+  }],
+  meta: { page: 1, page_size: 20, total: 1 },
+};
+
 test.beforeEach(async ({ page }) => {
-  const userId = `model-center-catalog-${Date.now()}`;
-  await page.addInitScript(({ token, id }) => {
+  const id = `model-center-${Date.now()}`;
+  await page.addInitScript(({ token, userId }) => {
     localStorage.setItem('auth_token', token);
-    localStorage.setItem('user', JSON.stringify({ id, username: id }));
-  }, { token: devToken(userId), id: userId });
+    localStorage.setItem('user', JSON.stringify({ id: userId, username: userId }));
+  }, { token: devToken(id), userId: id });
+  await page.route('**/api/v1/model-center/**', async (route) => {
+    const url = route.request().url();
+    const body = url.includes('/catalog') ? catalog
+      : url.includes('/connections?') ? connectionPage
+        : url.includes('/connections/connection-1/test') ? certification
+          : url.includes('/certifications/run-17') ? certification
+            : overview;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+  });
 });
 
-test('provider selectors hide internal catalog records from stale responses', async ({ page }) => {
-  await page.route('**/api/v1/llm/providers', async (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify([
-      { id: 'volcano', name: 'volcano', name_cn: '火山引擎', base_url: 'https://ark.example.test' },
-      { id: 'deterministic-acceptance', name: 'cached-provider', name_cn: 'Deterministic Internal', base_url: 'https://internal.example.test' },
-      { id: 'cached-contract', name: 'contract-text', name_cn: 'Contract Internal', base_url: 'https://internal.example.test' },
-      { id: 'cached-preflight', name: 'cached-provider', name_en: 'preflight-provider-en', name_cn: 'Preflight Internal', base_url: 'https://internal.example.test' },
-      { id: 'cached-test', name: 'test-provider-text', name_cn: 'Test Internal', base_url: 'https://internal.example.test' },
-      { id: 'cached-placeholder', name: 'cached-provider', name_cn: 'Placeholder Internal', base_url: 'https://internal.example.test', description: 'placeholder-provider-description' },
-      { id: 'cached-tts', name: 'tts-provider-text', name_cn: 'TTS Internal', base_url: 'https://internal.example.test' },
-      { id: 'cached-contract-url', name: 'cached-provider', name_cn: 'Contract URL Internal', base_url: 'contract-provider-base-url' },
-      { id: 'cached-cn-preflight', name: 'cached-provider', name_cn: '预检供应商', base_url: 'https://internal.example.test' },
-      { id: 'cached-cn-test', name: 'cached-provider', name_cn: '测试供应商', base_url: 'https://internal.example.test' },
-      { id: 'cached-cn-placeholder', name: 'cached-provider', name_cn: '占位供应商', base_url: 'https://internal.example.test' },
-      { id: 'cached-cn-tts', name: 'cached-provider', name_cn: 'TTS开通供应商', base_url: 'https://internal.example.test' },
-    ]),
-  }));
-  await page.route('**/api/v1/llm/models**', async (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: '[]',
-  }));
-  await page.route('**/api/v1/llm/configs', async (route) => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: '[]',
-  }));
+test('模型中心按能力展示真实目录，并提供组合检查器', async ({ page }) => {
+  await page.goto('/llm-config?section=catalog&capability=video_generation');
+  await expect(page.getByRole('heading', { name: '模型目录' })).toBeVisible();
+  await expect(page.getByText('doubao-seedance-1-5-pro')).toBeVisible();
+  await expect(page.getByText('组合生产链')).toBeVisible();
+  await expect(page.getByRole('link', { name: '视频模型' })).toBeVisible();
+  const screenshot = test.info().outputPath('model-center-catalog.png');
+  await page.screenshot({ path: screenshot, fullPage: true });
+  await test.info().attach('model-center-catalog', { path: screenshot, contentType: 'image/png' });
+});
 
-  await page.goto('/llm-config');
+test('旧生产适配和提示词入口会保留为模型中心深链接', async ({ page }) => {
+  await page.goto('/production-adapters?capability=audio');
+  await expect(page).toHaveURL(/\/llm-config\?section=connections&capability=speech_generation$/);
+  await page.goto('/prompt-skills');
+  await expect(page).toHaveURL(/\/llm-config\?section=prompts$/);
+});
 
-  const providerSelect = page.getByLabel('服务商');
-  await expect(providerSelect).toBeVisible();
-  await expect(providerSelect.locator('option')).toHaveText(['选择服务商', '火山引擎']);
-  await expect(page.getByRole('button', { name: '火山引擎' })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Internal$/ })).toHaveCount(0);
+test('连接认证完成后会直接进入带运行证据的测试实验室，并保留工作台返回地址', async ({ page }) => {
+  await page.goto('/llm-config?section=connections&returnTo=%2Fstudio');
+  await page.getByRole('button', { name: '测试连接' }).click();
+  await expect(page).toHaveURL('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
+  await expect(page.getByText('evidence-17')).toBeVisible();
+  await expect(page.getByRole('link', { name: '返回原工作台' })).toHaveAttribute('href', '/studio');
+});
+
+test('概览修复链接和窄屏导航保留当前工作台上下文', async ({ page }) => {
+  await page.route('**/api/v1/model-center/overview', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      ...overview,
+      blocking_issues: [{ code: 'video_blocked', message: '视频模型尚未认证', capability: 'video_generation' }],
+    }),
+  }));
+  await page.goto('/llm-config?section=overview&returnTo=%2Fstudio');
+  await page.getByRole('link', { name: '查看对应能力' }).click();
+  await expect(page).toHaveURL('/llm-config?section=catalog&capability=video_generation&returnTo=%2Fstudio');
+
+  await page.setViewportSize({ width: 1024, height: 800 });
+  await page.goto('/llm-config?section=catalog');
+  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /能力绑定/ })).toBeVisible();
 });

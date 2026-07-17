@@ -41,7 +41,7 @@ test('顶部导航突出工作室主线，并把专业工具收进专家菜单',
   await expect(page.getByRole('menuitem', { name: '视频生成' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: '提示词管理' })).toBeVisible();
   await page.getByRole('menuitem', { name: '提示词管理' }).click();
-  await expect(page).toHaveURL(/\/prompt-skills$/);
+  await expect(page).toHaveURL(/\/llm-config\?section=prompts$/);
 });
 
 test('登录后顶部导航提供账户设置和退出入口', async ({ page }) => {

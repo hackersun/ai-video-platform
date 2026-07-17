@@ -1,5 +1,11 @@
+import { modelCenterHref } from '@/features/model-center/navigation';
+
 function quickAction(actionId: string, label: string, pathname: string, focus: string) {
   return { actionId, label, focus, href: `${pathname}?focus=${focus}` };
+}
+
+function modelCenterQuickAction(actionId: string, label: string, section: 'connections' | 'catalog' | 'recipes', capability?: 'text_generation' | 'image_generation' | 'video_generation' | 'speech_generation') {
+  return { actionId, label, focus: section, href: modelCenterHref({ section, capability, returnTo: '/studio' }) };
 }
 
 export const STUDIO_QUICK_ACTIONS = {
@@ -15,6 +21,9 @@ export const STUDIO_QUICK_ACTIONS = {
   continuityReview: quickAction('continuity-review', '一致性评审', '/studio/continuity-review', 'findings'),
   timeline: quickAction('timeline', '时间线与精修', '/workflow', 'timeline'),
   output: quickAction('output', '成片输出', '/workflow', 'output'),
+  modelCatalog: modelCenterQuickAction('model-catalog', '模型能力配置', 'catalog'),
+  videoModels: modelCenterQuickAction('video-models', '视频模型配置', 'catalog', 'video_generation'),
+  productionRecipes: modelCenterQuickAction('production-recipes', '生产组合预设', 'recipes'),
 } as const;
 
 export function studioQuickTaskLabel(focus: string) {
