@@ -491,6 +491,8 @@ async def optimize_prompt_skill_content(
     task = str(data.get("task") or "").strip()
     mode = str(data.get("mode") or "polish").strip()
     model_config_id = data.get("model_config_id")
+    if model_config_id == "__local_rules__":
+        return _build_local_prompt_skill_optimization(data)
 
     system_prompt = """你是 AI 视频创作平台的 Prompt 技能编辑器，负责把用户写的技能片段润色为可复用、可测试、适合生产链路的中文提示词。
 

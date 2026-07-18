@@ -65,6 +65,25 @@ test('loads saved prompt body and keeps the legacy entry actionable', async ({ p
   await expect(page.getByRole('link', { name: '返回工作台' })).toHaveAttribute('href', '/studio');
 });
 
+test('explicit local optimization never selects a configured provider model', async ({ page }) => {
+  let optimizeBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/prompt-profiles/prompt-profile-1/optimize', async (route) => {
+    optimizeBody = route.request().postDataJSON();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      task: 'shot_video', source: 'local_rules', original_content: promptHead.task_template,
+      optimized_content: '本地规则优化结果', suggestions: [], warnings: [],
+    }) });
+  });
+  await page.goto('/llm-config?section=prompts');
+  await page.getByLabel('优化模型').selectOption('__local_rules__');
+  await page.getByRole('button', { name: 'AI 优化' }).click();
+
+  await expect(page.getByText('优化建议 · 本地规则')).toBeVisible();
+  expect(optimizeBody).toEqual({
+    version_id: 'prompt-version-3', mode: 'productionize', model_config_id: '__local_rules__',
+  });
+});
+
 test('publishing a prompt profile displays affected model versions and recipes', async ({ page }) => {
   await page.goto('/llm-config?section=prompts');
   await page.getByRole('button', { name: '发布此版本' }).click();
