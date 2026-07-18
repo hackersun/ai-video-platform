@@ -52,3 +52,13 @@ def render_prompt(content: str, variables: Mapping[str, Any], context: Mapping[s
 def stable_prompt_checksum(payload: Mapping[str, Any]) -> str:
     serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def prompt_entry_evidence(entry: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        **{
+            key: entry[key]
+            for key in ("id", "name", "task", "stage", "version")
+        },
+        "prompt_profile_version_id": entry.get("prompt_profile_version_id"),
+    }

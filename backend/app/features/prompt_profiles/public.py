@@ -1,6 +1,11 @@
 """Public Prompt Profile facade for legacy and model-aware callers."""
 
-from app.features.prompt_profiles.domain import PromptRouteQuery, PromptSelection, render_prompt
+from app.features.prompt_profiles.domain import (
+    PromptRouteQuery,
+    PromptSelection,
+    prompt_entry_evidence,
+    render_prompt,
+)
 from app.features.prompt_profiles.evaluation import (
     build_evaluation_evidence,
     record_prompt_evaluation,
@@ -13,6 +18,7 @@ from app.features.prompt_profiles.repository import (
     rendered_legacy_prompt_skill_entry,
 )
 from app.features.prompt_profiles.routing import (
+    resolve_prompt_entries,
     routing_specificity,
     safe_routing_metadata,
     select_prompt_profile,
@@ -41,10 +47,12 @@ __all__ = [
     "effective_legacy_prompt_skill_payloads", "ensure_legacy_prompt_profile",
     "latest_versions_for_skills", "legacy_prompt_skill_payload",
     "legacy_prompt_version_values",
-    "publish_legacy_prompt_profile", "publish_prompt_profile_version",
+    "prompt_entry_evidence", "publish_legacy_prompt_profile",
+    "publish_prompt_profile_version",
     "record_prompt_evaluation",
     "retire_legacy_prompt_profile",
     "render_legacy_prompt_skill", "rendered_legacy_prompt_skill_entry",
-    "render_prompt", "routing_specificity", "select_prompt_profile",
+    "render_prompt", "resolve_prompt_entries", "routing_specificity",
+    "select_prompt_profile",
     "safe_routing_metadata", "select_prompt_profile_version",
 ]

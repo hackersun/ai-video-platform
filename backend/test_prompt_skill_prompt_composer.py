@@ -117,6 +117,7 @@ async def test_build_consistency_prompt_injects_active_prompt_skill_blocks() -> 
     assert context["metadata"]["prompt_skill_count"] == 1
     assert context["metadata"]["prompt_skills"][0]["id"] == skill_id
     assert context["metadata"]["prompt_skills"][0]["version"] == 4
+    assert context["metadata"]["prompt_skills"][0]["prompt_profile_version_id"]
 
 
 @pytest.mark.asyncio

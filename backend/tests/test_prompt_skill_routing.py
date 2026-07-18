@@ -251,3 +251,100 @@ def test_prompt_router_prefers_published_canonical_profile_for_exact_model() -> 
     evidence = {key: value for key, value in result.items() if key != "prompt"}
     assert "private source body" not in str(evidence)
     assert "secret-value" not in str(evidence)
+
+
+@pytest.mark.asyncio
+async def test_video_and_template_router_resolve_same_prompt_version() -> None:
+    from app.models import PromptProfile, PromptProfileVersion
+    from app.services.prompt_skill_service import active_prompt_skill_entries
+    from app.services.prompt_template_router import select_prompt_skill_for_model
+
+    user_id = f"route-user-{uuid4().hex[:20]}"
+    task = f"shot-video-{uuid4().hex[:12]}"
+    skill_id = str(uuid4())
+    profile_id = str(uuid4())
+    version_id = str(uuid4())
+    async with AsyncSessionLocal() as db:
+        db.add(PromptSkill(
+            id=skill_id,
+            user_id=user_id,
+            name="规范镜头提示词",
+            task=task,
+            content="canonical-shot-video",
+            is_active=True,
+            prompt_profile_version_id=version_id,
+        ))
+        db.add(PromptProfile(
+            id=profile_id,
+            user_id=user_id,
+            key="shot.video.default",
+            name="规范镜头提示词",
+            task=task,
+        ))
+        db.add(PromptProfileVersion(
+            id=version_id,
+            profile_id=profile_id,
+            version=7,
+            content="canonical-shot-video",
+            variables={},
+            routing={},
+            evaluation={},
+            status="published",
+            checksum="a" * 64,
+        ))
+        await db.commit()
+
+        routed = await select_prompt_skill_for_model(
+            db,
+            user_id=user_id,
+            task=task,
+            provider_name="volcano",
+            model_id="doubao-seedance-1-5-pro",
+        )
+        entries = await active_prompt_skill_entries(
+            db,
+            user_id,
+            task=task,
+            context={},
+        )
+
+    assert routed["prompt_profile_version_id"] == version_id
+    assert entries[0]["prompt_profile_version_id"] == version_id
+    assert routed["prompt_skill_version"] == entries[0]["version"] == 7
+
+
+@pytest.mark.asyncio
+async def test_active_legacy_prompt_is_promoted_before_runtime_selection() -> None:
+    from app.models import PromptProfileVersion
+    from app.services.prompt_skill_service import active_prompt_skill_entries
+
+    user_id = f"route-user-{uuid4().hex[:20]}"
+    task = f"script-{uuid4().hex[:12]}"
+    skill_id = str(uuid4())
+    async with AsyncSessionLocal() as db:
+        db.add(PromptSkill(
+            id=skill_id,
+            user_id=user_id,
+            name="旧剧本提示词",
+            task=task,
+            content="legacy-but-preserved",
+            version=5,
+            is_active=True,
+        ))
+        await db.commit()
+
+        entries = await active_prompt_skill_entries(
+            db,
+            user_id,
+            task=task,
+            context={},
+        )
+        version = await db.get(
+            PromptProfileVersion,
+            entries[0]["prompt_profile_version_id"],
+        )
+
+    assert entries[0]["content"] == "legacy-but-preserved"
+    assert entries[0]["version"] == 5
+    assert version is not None
+    assert version.status == "published"
