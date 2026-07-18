@@ -519,6 +519,96 @@ async def test_uninstalled_profile_driver_has_actionable_error(client):
 
 
 @pytest.mark.asyncio
+async def test_binding_contract_is_readable_and_rejects_connection_mismatch(client):
+    listed = await client.get("/api/v1/model-center/bindings")
+    item = next(row for row in listed.json()["items"] if row["id"] == "binding-video")
+    assert item["route_policy"] == "single"
+    assert item["priority"] == 100
+    assert item["profile_name"] == "Video"
+    assert item["api_model_id"] == "api-video"
+    assert item["connection_name"] == "Primary"
+    assert item["provider_name"] == "Provider"
+
+    async with AsyncSessionLocal() as db:
+        other_provider = ModelProvider(
+            id="binding-other-provider", code="binding-other", display_name="Other",
+            provider_family="test", enabled=True,
+        )
+        other_connection = ModelConnection(
+            id="binding-other-connection", user_id=USER_ID, provider_id=other_provider.id,
+            name="Other Connection", status="verified",
+        )
+        db.add_all([other_provider, other_connection])
+        await db.commit()
+
+    response = await client.post("/api/v1/model-center/bindings", json={
+        "scope_type": "user", "scope_id": USER_ID, "task": "shot_video",
+        "capability": "video_generation", "profile_version_id": "profile-video-v1",
+        "connection_id": "binding-other-connection", "priority": 10,
+        "route_policy": "single", "fallback_profile_version_ids": [], "reason": "绑定验证",
+    })
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "binding_connection_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_binding_create_update_and_deactivate_round_trip(client):
+    created = await client.post("/api/v1/model-center/bindings", json={
+        "scope_type": "user", "scope_id": "", "task": "shot_video",
+        "capability": "video_generation", "profile_version_id": "profile-video-v1",
+        "connection_id": "connection-1", "priority": 20,
+        "route_policy": "single", "fallback_profile_version_ids": [],
+        "is_active": False, "reason": "建立停用草稿",
+    })
+    assert created.status_code == 200
+    assert created.json()["scope_id"] == USER_ID
+    assert created.json()["is_active"] is False
+
+    updated = await client.put(
+        f"/api/v1/model-center/bindings/{created.json()['id']}",
+        json={
+            "scope_type": "user", "scope_id": "", "task": "shot_video",
+            "capability": "video_generation", "profile_version_id": "profile-video-v1",
+            "connection_id": "connection-1", "priority": 30,
+            "route_policy": "single", "fallback_profile_version_ids": [],
+            "is_active": True, "expected_revision": 1, "reason": "启用生产路由",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["scope_id"] == USER_ID
+    assert updated.json()["priority"] == 30
+    assert updated.json()["is_active"] is True
+    assert updated.json()["revision"] == 2
+
+    listed = await client.get("/api/v1/model-center/bindings")
+    saved = next(item for item in listed.json()["items"] if item["id"] == created.json()["id"])
+    assert saved["priority"] == 30
+    assert saved["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_binding_rejects_non_runtime_route_policy_and_missing_fallback(client):
+    common = {
+        "scope_type": "user", "scope_id": "", "task": "shot_video",
+        "capability": "video_generation", "profile_version_id": "profile-video-v1",
+        "connection_id": "connection-1", "priority": 20,
+        "fallback_profile_version_ids": [], "is_active": True, "reason": "验证降级策略",
+    }
+    unsupported = await client.post(
+        "/api/v1/model-center/bindings", json={**common, "route_policy": "fallback"},
+    )
+    assert unsupported.status_code == 422
+
+    missing = await client.post(
+        "/api/v1/model-center/bindings",
+        json={**common, "route_policy": "pre_submit_fallback"},
+    )
+    assert missing.status_code == 422
+    assert missing.json()["detail"]["code"] == "binding_fallback_required"
+
+
+@pytest.mark.asyncio
 async def test_recipe_management_creates_validates_publishes_and_rolls_back_versions(client):
     spec = _recipe_spec()
     created = await client.post(

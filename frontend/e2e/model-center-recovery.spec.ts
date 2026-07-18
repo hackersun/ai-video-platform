@@ -48,6 +48,16 @@ test.beforeEach(async ({ page }) => {
       }],
       meta: { page: Number(url.searchParams.get('page') || 1), page_size: 20, total: 21 },
     };
+    if (path === '/api/v1/model-center/bindings') body = {
+      items: [{
+        id: 'binding-video', scope_type: 'user', scope_id: 'user-1', task: 'shot_video', capability: 'video_generation',
+        profile_version_id: 'profile-1', profile_name: 'Seedance 1.5 Pro', api_model_id: 'doubao-seedance-1-5-pro',
+        connection_id: 'connection-1', connection_name: '主视频连接', provider_name: '火山引擎', priority: 100,
+        route_policy: 'single', fallback_profile_version_ids: [], certification_status: 'unverified', affected_recipes: 2,
+        version: 1, revision: 1, is_active: true,
+      }],
+      meta: { page: 1, page_size: 20, total: 1 },
+    };
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
 });
@@ -115,5 +125,59 @@ test('model profile wizard saves validates and publishes an installed driver', a
   expect(requests[1]?.body).toMatchObject({
     expected_revision: 1, driver_key: 'volcano_ark_video_v3',
     capabilities: ['video_generation'], contract_version: 'driver-v1',
+  });
+});
+
+test('binding editor only combines matching readable model and connection choices', async ({ page }) => {
+  let createBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/bindings', async (route) => {
+    if (route.request().method() === 'GET') return route.fallback();
+    createBody = route.request().postDataJSON();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      id: 'binding-new', ...createBody, profile_name: 'Seedance 1.5 Pro', api_model_id: 'doubao-seedance-1-5-pro',
+      connection_name: '主视频连接', provider_name: '火山引擎', fallback_profile_version_ids: [],
+      certification_status: 'unverified', affected_recipes: 0, version: 2, revision: 1, is_active: true,
+    }) });
+  });
+
+  await page.goto('/llm-config?section=bindings');
+  await expect(page.getByRole('cell', { name: 'single' })).toBeVisible();
+  await expect(page.getByText('Seedance 1.5 Pro')).toBeVisible();
+  await page.getByRole('button', { name: '新建能力绑定' }).click();
+  await page.getByLabel('业务任务').selectOption('shot_video');
+  await page.getByLabel('任务能力').selectOption('video_generation');
+  await expect(page.getByLabel('模型版本')).toHaveValue('profile-1');
+  await expect(page.getByLabel('模型连接')).toHaveValue('connection-1');
+  await page.getByLabel('操作原因').fill('建立视频默认路由');
+  await page.getByRole('button', { name: '保存能力绑定' }).click();
+  await expect.poll(() => createBody).not.toBeNull();
+  expect(createBody).toMatchObject({
+    task: 'shot_video', capability: 'video_generation', profile_version_id: 'profile-1',
+    connection_id: 'connection-1', route_policy: 'single', reason: '建立视频默认路由',
+  });
+});
+
+test('binding editor previews impact and persists an update', async ({ page }) => {
+  let updateBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/bindings/binding-video', async (route) => {
+    updateBody = route.request().postDataJSON();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      id: 'binding-video', ...updateBody, scope_id: 'user-1', profile_name: 'Seedance 1.5 Pro',
+      api_model_id: 'doubao-seedance-1-5-pro', connection_name: '主视频连接', provider_name: '火山引擎',
+      certification_status: 'unverified', affected_recipes: 2, version: 2, revision: 2,
+    }) });
+  });
+
+  await page.goto('/llm-config?section=bindings');
+  await page.getByRole('button', { name: '编辑镜头视频绑定' }).click();
+  await expect(page.getByText('保存后将影响 2 个生产方案')).toBeVisible();
+  await page.getByLabel('优先级').fill('40');
+  await page.getByLabel('启用此绑定').uncheck();
+  await page.getByLabel('操作原因').fill('临时停用问题路由');
+  await page.getByRole('button', { name: '保存绑定修改' }).click();
+
+  await expect.poll(() => updateBody).not.toBeNull();
+  expect(updateBody).toMatchObject({
+    priority: 40, is_active: false, expected_revision: 1, reason: '临时停用问题路由',
   });
 });

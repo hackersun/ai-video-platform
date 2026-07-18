@@ -124,6 +124,28 @@ class ContractValidationResponse(BaseModel):
     audit_event_id: str
 
 
+class BindingItem(BaseModel):
+    id: str
+    scope_type: str
+    scope_id: str
+    task: str
+    capability: str
+    profile_version_id: str
+    profile_name: str
+    api_model_id: str
+    connection_id: str
+    connection_name: str
+    provider_name: str
+    priority: int
+    route_policy: str
+    fallback_profile_version_ids: list[str]
+    certification_status: str
+    affected_recipes: int
+    version: int
+    revision: int
+    is_active: bool
+
+
 class RevisionedUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=1)
@@ -140,6 +162,23 @@ class NonblankReasonRequest(BaseModel):
         if len(trimmed) < 2:
             raise ValueError("reason must contain at least two non-whitespace characters")
         return trimmed
+
+
+class BindingCreateRequest(NonblankReasonRequest):
+    scope_type: Literal["request", "series", "project", "user"]
+    scope_id: str = ""
+    task: str = Field(min_length=1, max_length=100)
+    capability: str = Field(min_length=1, max_length=40)
+    profile_version_id: str
+    connection_id: str
+    priority: int = Field(default=100, ge=0, le=10000)
+    route_policy: Literal["single", "pre_submit_fallback", "status_poll_only"] = "single"
+    fallback_profile_version_ids: list[str] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class BindingUpdateRequest(BindingCreateRequest):
+    expected_revision: int = Field(ge=1)
 
 
 class ConnectionCreateRequest(NonblankReasonRequest):

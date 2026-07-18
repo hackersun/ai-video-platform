@@ -9,11 +9,14 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
+from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
 from app.models.model_center import (
     ModelBinding,
+    ModelCertificationRun,
     ModelConfigAuditEvent,
     ModelConnection,
     ModelProfile,
+    ModelProfileVersion,
     ModelProvider,
     ProductionRecipeVersion,
 )
@@ -81,7 +84,7 @@ def _connection_view(
         "provider_name": provider_name, "provider_code": provider_code,
         "name": row.name, "status": row.status,
         "base_url": overrides.get("base_url"),
-        "enabled": row.status in {"enabled", "verified"},
+        "enabled": row.status in VERIFIED_CONNECTION_STATUSES,
         "has_secret": bool(has_secret),
         "secret_hint": "****" if has_secret else None,
         "secret_updated_at": secret_updated_at.isoformat() if secret_updated_at else None,
@@ -144,15 +147,51 @@ async def connection_view(db: AsyncSession, row: ModelConnection) -> dict:
     return _connection_view(row, labels)
 
 
+def _contains_binding_id(value, binding_id: str) -> bool:
+    if isinstance(value, dict):
+        return any(_contains_binding_id(item, binding_id) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_binding_id(item, binding_id) for item in value)
+    return value == binding_id
+
+
 async def binding_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
-    rows, total = await _paged_rows(db, ModelBinding, (ModelBinding.user_id == user_id,), page, page_size)
-    items = [{
-        "id": row.id, "scope_type": row.scope_type, "scope_id": row.scope_id,
-        "task": row.task, "capability": row.capability,
-        "profile_version_id": row.profile_version_id, "connection_id": row.connection_id,
-        "version": row.version, "revision": row.revision, "is_active": bool(row.is_active),
-    } for row in rows]
-    return _page(items, page, page_size, total)
+    total = await db.scalar(select(func.count()).select_from(ModelBinding).where(
+        ModelBinding.user_id == user_id,
+    )) or 0
+    rows = (await db.execute(select(
+        ModelBinding, ModelProfileVersion, ModelProfile, ModelConnection, ModelProvider,
+    ).join(
+        ModelProfileVersion, ModelProfileVersion.id == ModelBinding.profile_version_id,
+    ).join(ModelProfile, ModelProfile.id == ModelProfileVersion.model_id).join(
+        ModelConnection, ModelConnection.id == ModelBinding.connection_id,
+    ).join(ModelProvider, ModelProvider.id == ModelProfile.provider_id).where(
+        ModelBinding.user_id == user_id,
+    ).order_by(ModelBinding.id).offset((page - 1) * page_size).limit(page_size))).all()
+    recipes = list((await db.scalars(select(ProductionRecipeVersion).where(
+        ProductionRecipeVersion.user_id == user_id,
+    ))).all())
+    items = []
+    for binding, profile, model, connection, provider in rows:
+        certification = await db.scalar(select(ModelCertificationRun.status).where(
+            ModelCertificationRun.user_id == user_id,
+            ModelCertificationRun.profile_version_id == profile.id,
+            ModelCertificationRun.connection_id == connection.id,
+        ).order_by(desc(ModelCertificationRun.created_at)).limit(1))
+        items.append({
+            "id": binding.id, "scope_type": binding.scope_type, "scope_id": binding.scope_id,
+            "task": binding.task, "capability": binding.capability,
+            "profile_version_id": profile.id, "profile_name": model.display_name,
+            "api_model_id": profile.api_model_id, "connection_id": connection.id,
+            "connection_name": connection.name, "provider_name": provider.display_name,
+            "priority": binding.priority, "route_policy": binding.route_policy,
+            "fallback_profile_version_ids": list(binding.fallback_profile_version_ids or []),
+            "certification_status": certification or "unverified",
+            "affected_recipes": sum(_contains_binding_id(recipe.spec, binding.id) for recipe in recipes),
+            "version": binding.version, "revision": binding.revision,
+            "is_active": bool(binding.is_active),
+        })
+    return _page(items, page, page_size, int(total))
 
 
 async def recipe_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> tuple[list[dict], int]:

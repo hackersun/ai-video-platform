@@ -71,6 +71,7 @@ const validProfileUpdate = {
 const validBindingUpdate = {
   scope_type: 'user', task: 'text.storyboard', capability: 'text_generation',
   profile_version_id: 'profile-1', connection_id: 'connection-1', expected_revision: 2,
+  reason: '更新文本路由',
 } satisfies ModelBindingUpdateInput;
 void [validConnectionUpdate, validSecretReplacement, validProviderUpdate, validProfileUpdate, validBindingUpdate];
 
@@ -87,7 +88,7 @@ const missingProfileRevision: ModelProfileVersionUpdateInput = {
 // @ts-expect-error binding updates require an optimistic-concurrency revision
 const missingBindingRevision: ModelBindingUpdateInput = {
   scope_type: 'user', task: 'text.storyboard', capability: 'text_generation',
-  profile_version_id: 'profile-1', connection_id: 'connection-1',
+  profile_version_id: 'profile-1', connection_id: 'connection-1', reason: '更新文本路由',
 };
 void [
   missingConnectionRevision,

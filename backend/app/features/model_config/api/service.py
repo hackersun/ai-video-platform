@@ -39,6 +39,10 @@ from app.features.model_config.catalog_management import (
     publish_profile_version as publish_model_profile_version,
     validate_profile_contract,
 )
+from app.features.model_config.binding_management import (
+    create_binding as create_model_binding,
+    update_binding as update_model_binding,
+)
 
 
 __all__ = [
@@ -50,6 +54,7 @@ __all__ = [
     "create_model_profile",
     "create_model_profile_version",
     "create_model_provider",
+    "create_model_binding",
     "create_certification",
     "create_prompt_profile_draft",
     "create_prompt_profile_versioned",
@@ -72,6 +77,7 @@ __all__ = [
     "rollback_recipe",
     "test_connection",
     "update_connection",
+    "update_model_binding",
     "unavailable",
     "validate_recipe_version",
     "validate_profile_contract",

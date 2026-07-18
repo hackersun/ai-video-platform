@@ -167,9 +167,17 @@ export interface ModelBindingView {
   task: string;
   capability: ModelCapability;
   profile_version_id: string;
+  profile_name: string;
+  api_model_id: string;
   connection_id: string;
-  priority?: number;
-  route_policy?: string;
+  connection_name: string;
+  provider_name: string;
+  priority: number;
+  route_policy: string;
+  fallback_profile_version_ids: string[];
+  certification_status: string;
+  affected_recipes: number;
+  version: number;
   is_active: boolean;
   revision: number;
 }
@@ -183,6 +191,9 @@ export interface ModelBindingInput {
   connection_id: string;
   priority?: number;
   route_policy?: string;
+  fallback_profile_version_ids?: string[];
+  is_active?: boolean;
+  reason: string;
 }
 
 export type ModelBindingUpdateInput = ModelBindingInput & {
