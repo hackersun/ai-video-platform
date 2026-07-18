@@ -65,6 +65,19 @@ async def _canonical_counts(db: AsyncSession) -> tuple[int, int, int, int, int, 
     return tuple(counts)
 
 
+def test_prompt_recovery_cli_requires_existing_backup_for_apply(tmp_path) -> None:
+    from scripts.backfill_model_center import _validate_prompt_apply_backup
+
+    missing = tmp_path / "missing.db"
+    with pytest.raises(SystemExit, match="backup"):
+        _validate_prompt_apply_backup(apply_prompts=True, backup_ack=str(missing))
+
+    backup = tmp_path / "backup.db"
+    backup.write_bytes(b"sqlite backup evidence")
+    _validate_prompt_apply_backup(apply_prompts=True, backup_ack=str(backup))
+    _validate_prompt_apply_backup(apply_prompts=False, backup_ack=None)
+
+
 @pytest.mark.asyncio
 async def test_check_mode_reports_plan_without_writing(db_session: AsyncSession) -> None:
     from app.features.model_config.backfill import backfill_model_center
@@ -234,6 +247,62 @@ async def test_backfill_projects_active_prompt_without_exposing_prompt_body(
     assert version.content == "仅供模型使用的提示词正文"
     assert report.prompt_versions_created == 1
     assert "仅供模型使用的提示词正文" not in repr(report.sanitized_dict())
+
+
+@pytest.mark.asyncio
+async def test_backfill_links_active_and_inactive_prompts_idempotently(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.model_config.backfill import backfill_model_center
+    from app.models.prompt_profile import PromptProfileVersion
+
+    db_session.add_all([
+        PromptSkill(
+            id="active-prompt",
+            user_id="backfill-user",
+            name="启用提示词",
+            task="shot_video",
+            content="ACTIVE",
+            version=3,
+            is_active=True,
+        ),
+        PromptSkill(
+            id="inactive-prompt",
+            user_id="backfill-user",
+            name="停用提示词",
+            task="shot_video",
+            content="INACTIVE",
+            version=2,
+            is_active=False,
+        ),
+    ])
+    await db_session.commit()
+
+    first = await backfill_model_center(
+        db_session,
+        apply=True,
+        user_id="backfill-user",
+    )
+    skills = list((await db_session.scalars(select(PromptSkill))).all())
+    versions = {
+        row.id: row
+        for row in (await db_session.scalars(select(PromptProfileVersion))).all()
+    }
+    second = await backfill_model_center(
+        db_session,
+        apply=True,
+        user_id="backfill-user",
+    )
+
+    assert first.prompt_profiles_created == 2
+    assert first.prompt_versions_created == 2
+    assert first.updated_total == 2
+    assert {versions[skill.prompt_profile_version_id].status for skill in skills} == {
+        "published",
+        "disabled",
+    }
+    assert second.created_total == 0
+    assert second.updated_total == 0
 
 
 @pytest.mark.asyncio

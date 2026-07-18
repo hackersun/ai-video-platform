@@ -4,6 +4,8 @@ from app.features.model_config.management import (
     ManagementOperationError,
     bindings_page,
     catalog_page,
+    certification_candidates,
+    certifications_history,
     connections_page,
     create_connection,
     create_certification,
@@ -14,6 +16,7 @@ from app.features.model_config.management import (
     get_certification,
     impact_preview,
     overview,
+    providers_page,
     publish_prompt_profile_version,
     prompt_profiles_page,
     publish_recipe,
@@ -26,24 +29,51 @@ from app.features.model_config.management import (
     unavailable,
     validate_recipe_version,
 )
+from app.features.model_config.prompt_assistance import (
+    get_prompt_profile_detail,
+    optimize_prompt_profile,
+    preview_prompt_profile,
+)
+from app.features.model_config.catalog_management import (
+    create_profile as create_model_profile,
+    create_profile_version as create_model_profile_version,
+    create_provider as create_model_provider,
+    publish_profile_version as publish_model_profile_version,
+    validate_profile_contract,
+)
+from app.features.model_config.binding_management import (
+    create_binding as create_model_binding,
+    update_binding as update_model_binding,
+)
 
 
 __all__ = [
     "ManagementOperationError",
     "bindings_page",
     "catalog_page",
+    "certification_candidates",
+    "certifications_history",
     "connections_page",
     "create_connection",
+    "create_model_profile",
+    "create_model_profile_version",
+    "create_model_provider",
+    "create_model_binding",
     "create_certification",
     "create_prompt_profile_draft",
     "create_prompt_profile_versioned",
     "create_recipe",
     "drivers_page",
     "get_certification",
+    "get_prompt_profile_detail",
+    "optimize_prompt_profile",
     "impact_preview",
     "overview",
+    "providers_page",
     "publish_prompt_profile_version",
+    "publish_model_profile_version",
     "prompt_profiles_page",
+    "preview_prompt_profile",
     "publish_recipe",
     "recipes_page",
     "recipe_bindings_display",
@@ -51,6 +81,8 @@ __all__ = [
     "rollback_recipe",
     "test_connection",
     "update_connection",
+    "update_model_binding",
     "unavailable",
     "validate_recipe_version",
+    "validate_profile_contract",
 ]

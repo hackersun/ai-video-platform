@@ -671,7 +671,7 @@ async def build_consistency_prompt(
             "locked_assets": locked_assets,
             "prompt_skill_count": len(prompt_skill_entries),
             "prompt_skills": [
-                {key: entry[key] for key in ("id", "name", "task", "stage", "version")}
+                {**{key: entry[key] for key in ("id", "name", "task", "stage", "version")}, "prompt_profile_version_id": entry.get("prompt_profile_version_id")}
                 for entry in prompt_skill_entries
             ],
             "subtitle_text": (_json_dict(getattr(shot, "extra_data", None)).get("subtitle_text") or getattr(shot, "dialogue", None)) if shot else None,

@@ -8,6 +8,22 @@ const promptProfiles = {
   meta: { page: 1, page_size: 20, total: 1 },
 };
 
+const promptHead = {
+  id: 'prompt-version-3', version: 3, status: 'draft', stage: 'consistency',
+  content: '保持角色 {{name}} 的对白节奏。',
+  system_contract: '保持角色、场景和事件连续。',
+  task_template: '保持角色 {{name}} 的对白节奏。',
+  input_mapping: { name: 'shot.character_name' }, output_schema: { type: 'string' },
+  negative_constraints: ['不得新增角色'], model_family_overrides: {},
+  validation_fixtures: [{ input: { name: '沈砚' } }], release_notes: '恢复的历史正文',
+  checksum: 'a'.repeat(64), created_at: '2026-07-18T00:00:00', published_at: null,
+};
+const promptDetail = {
+  id: 'prompt-profile-1', key: 'anime.dialogue', name: '角色对白', task: 'shot_video',
+  head: promptHead, versions: [promptHead],
+  legacy_skill: { id: 'skill-001', is_active: true, is_builtin: false },
+};
+
 function devToken(userId: string) {
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url');
   return `dev.${payload}.sig`;
@@ -19,9 +35,17 @@ test.beforeEach(async ({ page }) => {
     localStorage.setItem('auth_token', token);
     localStorage.setItem('user', JSON.stringify({ id, username: id }));
   }, { token: devToken(userId), id: userId });
+  await page.route('**/api/v1/llm/configs', (route) => route.fulfill({
+    contentType: 'application/json', body: '[]',
+  }));
+  await page.route('**/api/v1/prompt-skills/variables**', (route) => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ task: 'shot_video', task_label: '镜头视频', items: [{ name: 'name' }], sample_context: {} }),
+  }));
   await page.route('**/api/v1/model-center/**', async (route) => {
     const url = route.request().url();
-    const body = url.includes('/prompt-profiles?') ? promptProfiles
+    const body = url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
+      : url.includes('/prompt-profiles?') ? promptProfiles
       : url.includes('/impact') ? impact
         : { blocking_issues: [], connections: [], recipes: [] };
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
@@ -29,6 +53,36 @@ test.beforeEach(async ({ page }) => {
 });
 
 const impact = { affected_bindings: 2, affected_profiles: 2, affected_recipes: 1, affected_prompts: 1 };
+
+test('loads saved prompt body and keeps the legacy entry actionable', async ({ page }) => {
+  await page.goto('/prompt-skills?returnTo=%2Fstudio');
+  await expect(page).toHaveURL(/section=prompts/);
+  await expect(page.getByLabel('任务模板')).toHaveValue('保持角色 {{name}} 的对白节奏。');
+  await expect(page.getByRole('button', { name: 'AI 优化' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '预览 Prompt' })).toBeVisible();
+  await expect(page.getByLabel('优化模型')).toBeVisible();
+  await expect(page.getByRole('button', { name: '克隆技能' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '返回工作台' })).toHaveAttribute('href', '/studio');
+});
+
+test('explicit local optimization never selects a configured provider model', async ({ page }) => {
+  let optimizeBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/prompt-profiles/prompt-profile-1/optimize', async (route) => {
+    optimizeBody = route.request().postDataJSON();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      task: 'shot_video', source: 'local_rules', original_content: promptHead.task_template,
+      optimized_content: '本地规则优化结果', suggestions: [], warnings: [],
+    }) });
+  });
+  await page.goto('/llm-config?section=prompts');
+  await page.getByLabel('优化模型').selectOption('__local_rules__');
+  await page.getByRole('button', { name: 'AI 优化' }).click();
+
+  await expect(page.getByText('优化建议 · 本地规则')).toBeVisible();
+  expect(optimizeBody).toEqual({
+    version_id: 'prompt-version-3', mode: 'productionize', model_config_id: '__local_rules__',
+  });
+});
 
 test('publishing a prompt profile displays affected model versions and recipes', async ({ page }) => {
   await page.goto('/llm-config?section=prompts');
@@ -49,7 +103,8 @@ test('structured prompt drafts, publish impact, and rollback use the versioned A
   await page.route('**/api/v1/model-center/**', async (route) => {
     const url = route.request().url();
     if (route.request().method() === 'POST') requests.push({ url, body: route.request().postDataJSON() });
-    const body = url.includes('/prompt-profiles?') ? promptProfiles
+    const body = url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
+      : url.includes('/prompt-profiles?') ? promptProfiles
       : url.includes('/impact?') ? impact
         : url.endsWith('/versions') ? { id: 'prompt-profile-1', key: 'anime.dialogue', name: '角色对白', task: 'shot_video', head_version_id: 'prompt-version-4', head_version: 4, status: 'draft' }
           : url.includes('/publish') || url.includes('/rollback') ? { published_version_id: 'prompt-version-4', previous_version_id: 'prompt-version-3', impact, audit_event_id: 'audit-1' }

@@ -457,6 +457,71 @@ async def test_catalog_query_count_is_constant_as_canonical_items_grow() -> None
     assert small_count == large_count == 7
 
 
+@pytest.mark.asyncio
+async def test_canonical_catalog_hides_internal_profile_display_names(
+    db_session: AsyncSession,
+) -> None:
+    provider = ModelProvider(
+        id="visible-provider", code="visible-provider", display_name="Visible Provider",
+        provider_family="test", enabled=True,
+    )
+    model = ModelProfile(
+        id="internal-profile", provider_id=provider.id, profile_key="internal-profile",
+        display_name="test-workflow-unverified-video", enabled=True,
+    )
+    version = ModelProfileVersion(
+        id="public-looking-version", model_id=model.id, version=1,
+        api_model_id="doubao-seedance-story-bible-voice", driver_key="video-driver",
+        capabilities=["video_generation"], input_contract={}, output_contract={},
+        parameter_schema={}, default_params={}, limits={}, pricing={},
+        contract_version="v1", status="published", checksum="f" * 64,
+    )
+    label_model = ModelProfile(
+        id="internal-label-profile", provider_id=provider.id, profile_key="internal-label-profile",
+        display_name="Seedance Test", enabled=True,
+    )
+    label_version = ModelProfileVersion(
+        id="public-looking-label-version", model_id=label_model.id, version=1,
+        api_model_id="doubao-seedance-public-looking", driver_key="video-driver",
+        capabilities=["video_generation"], input_contract={}, output_contract={},
+        parameter_schema={}, default_params={}, limits={}, pricing={},
+        contract_version="v1", status="published", checksum="e" * 64,
+    )
+    db_session.add_all([provider, model, version, label_model, label_version])
+    await db_session.commit()
+
+    catalog = await list_product_catalog(db_session, "catalog-user")
+
+    assert catalog.models == ()
+
+
+@pytest.mark.asyncio
+async def test_catalog_without_provider_filter_keeps_all_visible_providers(
+    db_session: AsyncSession,
+) -> None:
+    await seed_verified_llm_config(db_session, provider="volcano", model="seed-tts-2.0")
+    provider = ModelProvider(
+        id="canonical-provider", code="canonical", display_name="Canonical",
+        provider_family="test", enabled=True,
+    )
+    model = ModelProfile(
+        id="canonical-model", provider_id=provider.id, profile_key="canonical-model",
+        display_name="Canonical Model", enabled=True,
+    )
+    version = ModelProfileVersion(
+        id="canonical-version", model_id=model.id, version=1, api_model_id="canonical-api",
+        driver_key="canonical-driver", capabilities=["text_generation"], input_contract={},
+        output_contract={}, parameter_schema={}, default_params={}, limits={}, pricing={},
+        contract_version="v1", status="published", checksum="d" * 64,
+    )
+    db_session.add_all([provider, model, version])
+    await db_session.commit()
+
+    catalog = await list_product_catalog(db_session, "catalog-user")
+
+    assert {item.provider_code for item in catalog.models} == {"volcano", "canonical"}
+
+
 def test_catalog_comparison_fingerprint_is_stable_across_hash_seeds() -> None:
     code = """
 from app.features.model_config.public import CatalogComparison

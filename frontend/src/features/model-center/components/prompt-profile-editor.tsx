@@ -1,11 +1,16 @@
 'use client';
 
 import { History, Save } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
-import type { PromptProfileVersionInput, PromptProfileView } from '../types';
+import type {
+  PromptProfileDetail,
+  PromptProfileVersionDetail,
+  PromptProfileVersionInput,
+  PromptProfileView,
+} from '../types';
 
-type PromptDraft = {
+export type PromptDraft = {
   systemContract: string;
   taskTemplate: string;
   inputMapping: string;
@@ -20,6 +25,21 @@ export const emptyPromptDraft: PromptDraft = {
   systemContract: '', taskTemplate: '', inputMapping: '{}', outputSchema: '{}',
   negativeConstraints: '', modelFamilyOverrides: '{}', validationFixtures: '[]', releaseNotes: '',
 };
+
+export function promptDraftFromVersion(
+  version: PromptProfileVersionDetail,
+): PromptDraft {
+  return {
+    systemContract: version.system_contract,
+    taskTemplate: version.task_template,
+    inputMapping: JSON.stringify(version.input_mapping || {}, null, 2),
+    outputSchema: JSON.stringify(version.output_schema || {}, null, 2),
+    negativeConstraints: (version.negative_constraints || []).join('\n'),
+    modelFamilyOverrides: JSON.stringify(version.model_family_overrides || {}, null, 2),
+    validationFixtures: JSON.stringify(version.validation_fixtures || [], null, 2),
+    releaseNotes: version.release_notes || '',
+  };
+}
 
 function parseObject(value: string, label: string) {
   const parsed = JSON.parse(value);
@@ -48,30 +68,53 @@ export function promptVersionInput(draft: PromptDraft, expectedRevision: number)
 
 type PromptProfileEditorProps = {
   profile: PromptProfileView;
+  detail: PromptProfileDetail;
+  appliedTaskTemplate?: string | null;
+  onTaskTemplateChange?: (value: string) => void;
   onSaveVersion: (input: PromptProfileVersionInput) => Promise<void>;
   onPublish: () => void;
   onRollback: () => void;
 };
 
-export function PromptProfileEditor({ profile, onSaveVersion, onPublish, onRollback }: PromptProfileEditorProps) {
+export function PromptProfileEditor({
+  profile,
+  detail,
+  appliedTaskTemplate,
+  onTaskTemplateChange,
+  onSaveVersion,
+  onPublish,
+  onRollback,
+}: PromptProfileEditorProps) {
   const [draft, setDraft] = useState(emptyPromptDraft);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const update = (key: keyof PromptDraft, value: string) => setDraft((current) => ({ ...current, [key]: value }));
+  useEffect(() => {
+    const restored = promptDraftFromVersion(detail.head);
+    setDraft(restored);
+    onTaskTemplateChange?.(restored.taskTemplate);
+  }, [detail.head.id, onTaskTemplateChange]);
+  useEffect(() => {
+    if (appliedTaskTemplate === null || appliedTaskTemplate === undefined) return;
+    setDraft((current) => ({ ...current, taskTemplate: appliedTaskTemplate }));
+    onTaskTemplateChange?.(appliedTaskTemplate);
+  }, [appliedTaskTemplate, onTaskTemplateChange]);
+  const update = (key: keyof PromptDraft, value: string) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+    if (key === 'taskTemplate') onTaskTemplateChange?.(value);
+  };
   const save = async () => {
     if (profile.head_version === null) return setError('当前模板没有可作为父版本的草稿。');
     try {
       setPending(true);
       setError(null);
       await onSaveVersion(promptVersionInput(draft, profile.head_version));
-      setDraft(emptyPromptDraft);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '提示词草稿保存失败');
     } finally {
       setPending(false);
     }
   };
-  return <section className="mt-4 rounded-lg border border-white/10 bg-slate-950/20 p-4"><header className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">{profile.name} · {profile.key}</h3><p className="mt-1 text-xs text-slate-500">头版本 v{profile.head_version ?? '—'} · {profile.status || '未创建'}。服务端目录不返回历史正文；仅提交本次明确修改的字段，留空字段继承父版本。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={onRollback} disabled={!profile.head_version_id || profile.head_version === null} className="model-center-quiet"><History className="h-3.5 w-3.5" />回滚为新版本</button><button type="button" onClick={onPublish} disabled={!profile.head_version_id || profile.head_version === null} className="model-center-primary">发布此版本</button></div></header><PromptFields draft={draft} onChange={update} optional /><button type="button" onClick={() => void save()} disabled={pending || profile.head_version === null} className="model-center-quiet mt-4"><Save className="h-3.5 w-3.5" />{pending ? '保存中' : '保存为新草稿版本'}</button>{error && <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{error}</p>}</section>;
+  return <section className="rounded-lg border border-white/10 bg-slate-950/20 p-4"><header className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">{profile.name} · {profile.key}</h3><p className="mt-1 text-xs text-slate-500">已恢复服务端头版本正文：v{detail.head.version} · {detail.head.status}。修改会保存为新草稿，不会覆盖历史版本。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={onRollback} disabled={!profile.head_version_id || profile.head_version === null} className="model-center-quiet"><History className="h-3.5 w-3.5" />回滚为新版本</button><button type="button" onClick={onPublish} disabled={!profile.head_version_id || profile.head_version === null} className="model-center-primary">发布此版本</button></div></header><PromptFields draft={draft} onChange={update} /><button type="button" onClick={() => void save()} disabled={pending || profile.head_version === null} className="model-center-quiet mt-4"><Save className="h-3.5 w-3.5" />{pending ? '保存中' : '保存为新草稿版本'}</button>{error && <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{error}</p>}</section>;
 }
 
 export function PromptFields({ draft, onChange, optional = false }: { draft: PromptDraft; onChange: (key: keyof PromptDraft, value: string) => void; optional?: boolean }) {

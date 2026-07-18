@@ -10,13 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.features.model_config.management_repository import (
     binding_page,
     connection_page,
+    connection_view,
     load_recipe_publish_candidate,
     management_overview,
+    provider_page,
     prompt_profile_page,
     publish_recipe_if_revision,
     recipe_page,
 )
 from app.features.model_config.certification_repository import (
+    certification_candidates_page as load_certification_candidates_page,
+    certification_history_page as load_certification_history_page,
     create_certification_intent,
     load_certification_intent,
     validate_certification_target,
@@ -85,6 +89,15 @@ def _safe_stage_metadata(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return safe
 
 
+def _safe_recipe_metadata(spec: dict[str, Any]) -> dict[str, Any]:
+    stages = _safe_stage_metadata(spec)
+    return {
+        "strategy": str(spec.get("production_strategy") or spec.get("strategy") or ""),
+        "stages": stages,
+        "spec": stages,
+    }
+
+
 async def overview(db: AsyncSession, user_id: str) -> dict:
     return await management_overview(db, user_id)
 
@@ -95,20 +108,12 @@ async def drivers_page(page: int, page_size: int) -> dict:
     return _page([dict(item) for item in drivers[start:start + page_size]], page, page_size, len(drivers))
 
 
+async def providers_page(db: AsyncSession, page: int, page_size: int) -> dict:
+    return await provider_page(db, page, page_size)
+
+
 async def connections_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     return await connection_page(db, user_id, page, page_size)
-
-
-def _connection_item(row) -> dict:
-    overrides = getattr(row, "endpoint_overrides", {})
-    overrides = overrides if isinstance(overrides, dict) else {}
-    return {
-        "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
-        "base_url": overrides.get("base_url"), "enabled": row.status in {"enabled", "verified"},
-        "has_secret": row.has_secret, "secret_hint": "****" if row.has_secret else None,
-        "secret_updated_at": row.secret_updated_at.isoformat() if row.secret_updated_at else None,
-        "revision": row.revision,
-    }
 
 
 async def create_connection(db: AsyncSession, *, user_id: str, request) -> dict:
@@ -119,7 +124,7 @@ async def create_connection(db: AsyncSession, *, user_id: str, request) -> dict:
         )
         if row is None:
             raise ManagementOperationError("resource_not_found", "Provider was not found.", "refresh", 404)
-    return _connection_item(row)
+    return await connection_view(db, row)
 
 
 async def update_connection(db: AsyncSession, *, user_id: str, connection_id: str, request) -> dict:
@@ -133,7 +138,7 @@ async def update_connection(db: AsyncSession, *, user_id: str, connection_id: st
     if row is None:
         raise ManagementOperationError("revision_conflict", "Connection has changed or was not found.", "refresh_and_retry", 409)
     await db.commit()
-    return _connection_item(row)
+    return await connection_view(db, row)
 
 
 async def test_connection(db: AsyncSession, *, user_id: str, connection_id: str) -> dict:
@@ -147,12 +152,29 @@ async def test_connection(db: AsyncSession, *, user_id: str, connection_id: str)
     row, audit_id = result
     return {
         "id": audit_id, "status": "connection_verification_queued", "execution_mode": "safe_intent_only",
-        "connection": _connection_item(row),
+        "connection": await connection_view(db, row),
     }
 
 
-async def catalog_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
-    catalog = await list_product_catalog(db, user_id)
+async def catalog_page(
+    db: AsyncSession,
+    user_id: str,
+    page: int,
+    page_size: int,
+    *,
+    capability: str | None = None,
+    provider_id: str | None = None,
+    status: str | None = None,
+    query: str | None = None,
+) -> dict:
+    catalog = await list_product_catalog(
+        db,
+        user_id,
+        capability=capability,
+        provider_id=provider_id,
+        status=status,
+        query=query,
+    )
     start = (page - 1) * page_size
     items = []
     for item in catalog.models[start:start + page_size]:
@@ -169,7 +191,7 @@ async def bindings_page(db: AsyncSession, user_id: str, page: int, page_size: in
 async def recipes_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     items, total = await recipe_page(db, user_id, page, page_size)
     for item in items:
-        item["spec"] = _safe_stage_metadata(item["spec"])
+        item.update(_safe_recipe_metadata(item["spec"]))
     return _page(items, page, page_size, total)
 
 
@@ -214,11 +236,12 @@ async def publish_recipe(
 
 
 def _recipe_item(row) -> dict:
-    return {
+    item = {
         "id": row.id, "recipe_key": row.recipe_key, "name": row.name,
         "version": row.version, "status": row.status, "revision": row.revision,
-        "spec": _safe_stage_metadata(row.spec),
     }
+    item.update(_safe_recipe_metadata(row.spec))
+    return item
 
 
 def _recipe_errors(errors) -> list[dict]:
@@ -430,6 +453,26 @@ async def get_certification(db: AsyncSession, *, user_id: str, run_id: str) -> d
     if row is None:
         raise ManagementOperationError("resource_not_found", "Certification run was not found.", "refresh", 404)
     return _certification_item(row)
+
+
+async def certification_candidates(
+    db: AsyncSession, *, user_id: str, page: int, page_size: int,
+    capability: str | None = None, query: str | None = None,
+) -> dict:
+    return await load_certification_candidates_page(
+        db, user_id=user_id, page=page, page_size=page_size,
+        capability=capability, query=query,
+    )
+
+
+async def certifications_history(
+    db: AsyncSession, *, user_id: str, page: int, page_size: int,
+    level: str | None = None, status: str | None = None,
+) -> dict:
+    return await load_certification_history_page(
+        db, user_id=user_id, page=page, page_size=page_size,
+        level=level, status=status,
+    )
 
 
 async def impact_preview(

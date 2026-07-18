@@ -29,9 +29,21 @@ class DriverItem(BaseModel):
     contract_version: str = "driver-v1"
 
 
+class ProviderItem(BaseModel):
+    id: str
+    code: str
+    display_name: str
+    provider_family: str
+    is_builtin: bool
+    enabled: bool
+    revision: int
+
+
 class ConnectionItem(BaseModel):
     id: str
     provider_id: str
+    provider_name: str
+    provider_code: str
     name: str
     status: str
     base_url: str | None = None
@@ -44,8 +56,13 @@ class ConnectionItem(BaseModel):
 
 class CatalogItem(BaseModel):
     provider_id: str
+    provider_name: str
+    provider_code: str
+    model_name: str
     api_model_id: str
     profile_version_id: str | None
+    profile_version: int | None
+    driver_key: str | None
     legacy_model_id: str | None
     legacy_config_id: str | None
     certification_status: str
@@ -56,6 +73,77 @@ class ProviderCreateRequest(BaseModel):
     code: str = Field(min_length=1, max_length=80)
     display_name: str = Field(min_length=1, max_length=120)
     provider_family: str = Field(min_length=1, max_length=80)
+
+
+class ModelProfileItem(BaseModel):
+    id: str
+    provider_id: str
+    profile_key: str
+    display_name: str
+    enabled: bool
+    revision: int
+
+
+class ModelProfileCreateRequest(BaseModel):
+    provider_id: str
+    profile_key: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=160)
+    enabled: bool = True
+
+
+class ModelProfileVersionItem(BaseModel):
+    id: str
+    model_id: str
+    version: int
+    api_model_id: str
+    driver_key: str
+    capabilities: list[str]
+    contract_version: str
+    status: str
+    revision: int
+
+
+class ModelProfileVersionCreateRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+    api_model_id: str = Field(min_length=1, max_length=200)
+    driver_key: str = Field(min_length=1, max_length=80)
+    capabilities: list[str] = Field(min_length=1)
+    input_contract: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)
+    default_params: dict[str, Any] = Field(default_factory=dict)
+    limits: dict[str, Any] = Field(default_factory=dict)
+    pricing: dict[str, Any] = Field(default_factory=dict)
+    prompt_profile_key: str | None = Field(default=None, max_length=120)
+    contract_version: str = Field(min_length=1, max_length=100)
+
+
+class ContractValidationResponse(BaseModel):
+    valid: bool
+    errors: list[dict[str, Any]]
+    audit_event_id: str
+
+
+class BindingItem(BaseModel):
+    id: str
+    scope_type: str
+    scope_id: str
+    task: str
+    capability: str
+    profile_version_id: str
+    profile_name: str
+    api_model_id: str
+    connection_id: str
+    connection_name: str
+    provider_name: str
+    priority: int
+    route_policy: str
+    fallback_profile_version_ids: list[str]
+    certification_status: str
+    affected_recipes: int
+    version: int
+    revision: int
+    is_active: bool
 
 
 class RevisionedUpdateRequest(BaseModel):
@@ -74,6 +162,23 @@ class NonblankReasonRequest(BaseModel):
         if len(trimmed) < 2:
             raise ValueError("reason must contain at least two non-whitespace characters")
         return trimmed
+
+
+class BindingCreateRequest(NonblankReasonRequest):
+    scope_type: Literal["request", "series", "project", "user"]
+    scope_id: str = ""
+    task: str = Field(min_length=1, max_length=100)
+    capability: str = Field(min_length=1, max_length=40)
+    profile_version_id: str
+    connection_id: str
+    priority: int = Field(default=100, ge=0, le=10000)
+    route_policy: Literal["single", "pre_submit_fallback", "status_poll_only"] = "single"
+    fallback_profile_version_ids: list[str] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class BindingUpdateRequest(BindingCreateRequest):
+    expected_revision: int = Field(ge=1)
 
 
 class ConnectionCreateRequest(NonblankReasonRequest):
@@ -185,6 +290,18 @@ class PromptProfileVersionRequest(BaseModel):
         return values
 
 
+class PromptProfileOptimizeRequest(BaseModel):
+    version_id: str
+    mode: str = Field(default="productionize", max_length=80)
+    model_config_id: str | None = None
+
+
+class PromptProfilePreviewRequest(BaseModel):
+    version_id: str
+    task_template: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
 class ResourceImpact(BaseModel):
     affected_bindings: int = 0
     affected_profiles: int = 0
@@ -197,6 +314,45 @@ class PublishResponse(BaseModel):
     previous_version_id: str | None
     impact: ResourceImpact
     audit_event_id: str
+
+
+class CertificationCandidateProfile(BaseModel):
+    id: str
+    name: str
+    api_model_id: str
+    provider_id: str
+    provider_name: str
+    capabilities: list[str]
+
+
+class CertificationCandidateConnection(BaseModel):
+    id: str
+    name: str
+    provider_id: str
+    status: str
+
+
+class CertificationCandidateItem(BaseModel):
+    id: str
+    profile: CertificationCandidateProfile
+    connection: CertificationCandidateConnection
+
+
+class CertificationHistoryItem(BaseModel):
+    id: str
+    profile_version_id: str
+    connection_id: str
+    profile_name: str
+    api_model_id: str
+    connection_name: str
+    provider_name: str
+    level: str
+    status: str
+    sanitized_evidence: dict[str, Any]
+    estimated_cost_rmb: str
+    actual_cost_rmb: str
+    created_at: str
+    completed_at: str | None
 
 
 class CertificationRequest(NonblankReasonRequest):

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 
 import { modelCenterApi } from '../api';
-import type { ProductionRecipeInput, PublishInput } from '../types';
+import type { ProductionRecipeInput, PublishInput, RollbackInput } from '../types';
 import { modelCenterMutationInvalidations } from './model-center-query-store';
 import { runModelCenterMutation } from './run-model-center-mutation';
 import { useModelCenterQuery } from './use-model-center-query';
@@ -27,6 +27,12 @@ export function useProductionRecipes(page = 1, pageSize = 20) {
       modelCenterMutationInvalidations.recipeCreate,
     );
   }, []);
+  const rollbackRecipe = useCallback(async (recipeKey: string, input: RollbackInput) => {
+    return runModelCenterMutation(
+      () => modelCenterApi.rollbackRecipe(recipeKey, input),
+      modelCenterMutationInvalidations.recipePublish,
+    );
+  }, []);
 
-  return { ...query, createRecipe, publishRecipeVersion, validateRecipeVersion };
+  return { ...query, createRecipe, publishRecipeVersion, validateRecipeVersion, rollbackRecipe };
 }

@@ -27,6 +27,7 @@ from app.models.model_center import (
     ProductionRecipeVersion,
 )
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
+from app.models.prompt_skill import PromptSkill
 from main import app
 
 
@@ -35,6 +36,7 @@ MODEL_CENTER_ROUTES = {
     ("get", "/api/v1/model-center/overview"),
     ("get", "/api/v1/model-center/drivers"),
     ("post", "/api/v1/model-center/providers"),
+    ("get", "/api/v1/model-center/providers"),
     ("put", "/api/v1/model-center/providers/{provider_id}"),
     ("get", "/api/v1/model-center/connections"),
     ("post", "/api/v1/model-center/connections"),
@@ -45,6 +47,7 @@ MODEL_CENTER_ROUTES = {
     ("post", "/api/v1/model-center/profiles/{profile_id}/versions"),
     ("put", "/api/v1/model-center/profile-versions/{profile_version_id}"),
     ("post", "/api/v1/model-center/profile-versions/{profile_version_id}/publish"),
+    ("post", "/api/v1/model-center/profile-versions/{profile_version_id}/validate"),
     ("post", "/api/v1/model-center/profile-versions/{profile_version_id}/disable"),
     ("post", "/api/v1/model-center/profiles/{profile_id}/rollback"),
     ("get", "/api/v1/model-center/bindings"),
@@ -56,12 +59,18 @@ MODEL_CENTER_ROUTES = {
     ("post", "/api/v1/model-center/recipe-versions/{recipe_version_id}/disable"),
     ("post", "/api/v1/model-center/recipes/{recipe_key}/rollback"),
     ("get", "/api/v1/model-center/prompt-profiles"),
+    ("get", "/api/v1/model-center/prompt-profiles/{profile_id}"),
+    ("get", "/api/v1/model-center/prompt-profiles/{profile_id}/versions"),
     ("post", "/api/v1/model-center/prompt-profiles"),
+    ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/optimize"),
+    ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/preview"),
     ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/versions"),
     ("post", "/api/v1/model-center/prompt-profile-versions/{version_id}/publish"),
     ("post", "/api/v1/model-center/prompt-profile-versions/{version_id}/disable"),
     ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/rollback"),
     ("post", "/api/v1/model-center/certifications"),
+    ("get", "/api/v1/model-center/certifications"),
+    ("get", "/api/v1/model-center/certification-candidates"),
     ("get", "/api/v1/model-center/certifications/{run_id}"),
     ("get", "/api/v1/model-center/impact"),
 }
@@ -118,6 +127,84 @@ async def test_overview_returns_the_frontend_model_center_contract(client):
 
 
 @pytest.mark.asyncio
+async def test_overview_blocks_uncertified_model_missing_prompt_and_unpublished_recipe(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            ModelProfile(
+                id="readiness-image", provider_id="provider-1", profile_key="readiness-image",
+                display_name="Readiness Image", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="readiness-image-v1", model_id="readiness-image", version=1,
+                api_model_id="readiness-image-api", driver_key="driver-image",
+                capabilities=["image_generation"], input_contract={}, output_contract={},
+                parameter_schema={}, default_params={}, limits={}, pricing={},
+                prompt_profile_key="missing-image-prompt", contract_version="v1",
+                status="published", checksum="i" * 64,
+            ),
+            ModelBinding(
+                id="readiness-image-binding", user_id=USER_ID, scope_type="project",
+                scope_id="readiness-project", task="shot_image", capability="image_generation",
+                profile_version_id="readiness-image-v1", connection_id="connection-1",
+                version=1, is_active=True,
+            ),
+        ])
+        await db.commit()
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    issues = response.json()["blocking_issues"]
+    codes = {item["code"] for item in issues}
+    assert {"model_certification_missing", "prompt_profile_missing", "published_recipe_missing"} <= codes
+    assert all(set(item) >= {
+        "code", "message", "severity", "section", "resource_id", "action_label",
+    } for item in issues)
+
+
+@pytest.mark.asyncio
+async def test_certification_candidates_only_return_compatible_readable_pairs(client):
+    response = await client.get(
+        "/api/v1/model-center/certification-candidates",
+        params={"capability": "video_generation", "q": "video"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"]
+    assert all(
+        item["profile"]["provider_id"] == item["connection"]["provider_id"]
+        for item in payload["items"]
+    )
+    assert payload["items"][0]["profile"]["name"] == "Video"
+    assert payload["items"][0]["connection"]["name"] == "Primary"
+
+
+@pytest.mark.asyncio
+async def test_certification_history_is_filterable_and_paginated(client):
+    async with AsyncSessionLocal() as db:
+        db.add(ModelCertificationRun(
+            id="history-contract-failed", user_id=USER_ID,
+            profile_version_id="profile-video-v1", connection_id="connection-1",
+            level="contract", status="failed", request_fingerprint="h" * 64,
+            sanitized_evidence={"error_code": "contract_failed", "api_key": "should-not-leak"},
+            estimated_cost_rmb=0, actual_cost_rmb=0,
+        ))
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/model-center/certifications",
+        params={"page": 1, "page_size": 10, "level": "contract", "status": "failed"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["total"] >= 1
+    item = next(row for row in response.json()["items"] if row["id"] == "history-contract-failed")
+    assert item["profile_name"] == "Video"
+    assert item["connection_name"] == "Primary"
+    assert "api_key" not in json.dumps(item)
+
+
+@pytest.mark.asyncio
 async def test_model_center_routes_require_authentication():
     def reject_anonymous():
         raise HTTPException(status_code=401, detail="authentication required")
@@ -162,8 +249,158 @@ async def test_collections_are_paginated_and_connection_secrets_are_redacted(cli
     assert "runtime-prompt" not in serialized
     assert "runtime-text" not in serialized
     assert "authorization" not in serialized.lower()
+    assert recipe["strategy"] == "direct_av_first"
+    assert recipe["stages"] == recipe["spec"]
     assert recipe["spec"]["video"] == {"binding_id": "binding-video", "required": True}
     assert recipe["spec"]["audio"] == {"mode": "video_native_audio"}
+
+
+@pytest.mark.asyncio
+async def test_catalog_filters_before_pagination_and_returns_readable_labels(client):
+    response = await client.get(
+        "/api/v1/model-center/catalog",
+        params={
+            "capability": "video_generation",
+            "provider_id": "provider-1",
+            "status": "unverified",
+            "q": "api-video",
+            "page": 1,
+            "page_size": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"] == {"page": 1, "page_size": 1, "total": 1}
+    assert payload["items"][0] == {
+        "provider_id": "provider-1",
+        "provider_name": "Provider",
+        "provider_code": "provider-1",
+        "model_name": "Video",
+        "api_model_id": "api-video",
+        "profile_version_id": "profile-video-v1",
+        "profile_version": 1,
+        "driver_key": "driver-video",
+        "legacy_model_id": None,
+        "legacy_config_id": None,
+        "certification_status": "unverified",
+        "capabilities": ["video_generation"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_connections_return_readable_provider_labels(client):
+    response = await client.get("/api/v1/model-center/connections")
+
+    assert response.status_code == 200
+    connection = response.json()["items"][0]
+    assert connection["provider_name"] == "Provider"
+    assert connection["provider_code"] == "provider-1"
+
+
+@pytest.mark.asyncio
+async def test_enabled_providers_are_available_for_connection_picker(client):
+    response = await client.get("/api/v1/model-center/providers")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{
+            "id": "provider-1",
+            "code": "provider-1",
+            "display_name": "Provider",
+            "provider_family": "test",
+            "is_builtin": False,
+            "enabled": True,
+            "revision": 1,
+        }],
+        "meta": {"page": 1, "page_size": 20, "total": 1},
+    }
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_detail_returns_owned_body_and_history(client):
+    response = await client.get("/api/v1/model-center/prompt-profiles/prompt-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == "prompt-1"
+    assert payload["head"]["task_template"] == "Write {{topic}}"
+    assert payload["head"]["content"] == "Write {{topic}}"
+    assert payload["versions"][0]["checksum"] == "p" * 64
+    assert payload["versions"][0]["content"] == "Write {{topic}}"
+    assert payload["legacy_skill"] == {
+        "id": "prompt-skill-1",
+        "is_active": True,
+        "is_builtin": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_optimize_reuses_legacy_optimizer(
+    client,
+    monkeypatch,
+):
+    calls = []
+
+    async def fake_optimize(db, user_id, data):
+        calls.append((user_id, data))
+        return {
+            "task": data["task"],
+            "source": "local_rules",
+            "original_content": data["content"],
+            "optimized_content": "Optimized {{topic}}",
+            "suggestions": ["keep variables"],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "app.features.model_config.prompt_assistance.optimize_prompt_skill_content",
+        fake_optimize,
+        raising=False,
+    )
+    response = await client.post(
+        "/api/v1/model-center/prompt-profiles/prompt-1/optimize",
+        json={
+            "version_id": "prompt-v1",
+            "mode": "productionize",
+            "model_config_id": None,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["optimized_content"] == "Optimized {{topic}}"
+    assert response.json()["source"] == "local_rules"
+    assert calls[0][0] == USER_ID
+    assert calls[0][1]["content"] == "Write {{topic}}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_preview_does_not_overwrite_saved_version(client):
+    preview = await client.post(
+        "/api/v1/model-center/prompt-profiles/prompt-1/preview",
+        json={
+            "version_id": "prompt-v1",
+            "task_template": "Draft {topic}",
+            "context": {"topic": "harbor"},
+        },
+    )
+    detail = await client.get("/api/v1/model-center/prompt-profiles/prompt-1")
+
+    assert preview.status_code == 200
+    assert "Draft harbor" in preview.json()["prompt"]
+    assert detail.json()["head"]["task_template"] == "Write {{topic}}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_body_is_not_visible_to_another_user(client):
+    app.dependency_overrides[get_current_user_id] = lambda: "other-user"
+    try:
+        response = await client.get("/api/v1/model-center/prompt-profiles/prompt-1")
+    finally:
+        app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+
+    assert response.status_code == 404
+    assert "Write {{topic}}" not in response.text
 
 
 @pytest.mark.asyncio
@@ -284,15 +521,173 @@ async def test_recipe_publish_returns_audit_and_impact_envelope(client):
 
 @pytest.mark.asyncio
 async def test_missing_service_operation_returns_stable_actionable_error(client):
-    response = await client.post(
-        "/api/v1/model-center/providers",
-        json={"code": "new-provider", "display_name": "New", "provider_family": "openai"},
+    response = await client.put(
+        "/api/v1/model-center/providers/provider-1",
+        json={"expected_revision": 1, "changes": {"display_name": "New"}},
     )
     assert response.status_code == 501
     detail = response.json()["detail"]
     assert detail["code"] == "operation_not_implemented"
     assert detail["action_code"] == "contact_operator_or_use_legacy_api"
-    assert "provider.create" in detail["message"]
+    assert "provider.update" in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_operator_creates_validates_and_publishes_installed_model_profile(client):
+    provider = await client.post(
+        "/api/v1/model-center/providers",
+        json={"code": "task7-volcano", "display_name": "Task 7 火山", "provider_family": "volcano"},
+    )
+    assert provider.status_code == 200
+    profile = await client.post(
+        "/api/v1/model-center/profiles",
+        json={
+            "provider_id": provider.json()["id"], "profile_key": "seedance-task7",
+            "display_name": "Seedance Task 7", "enabled": True,
+        },
+    )
+    assert profile.status_code == 200
+    version = await client.post(
+        f"/api/v1/model-center/profiles/{profile.json()['id']}/versions",
+        json={
+            "expected_revision": 1, "api_model_id": "doubao-seedance-task7",
+            "driver_key": "volcano_ark_video_v3", "capabilities": ["video_generation"],
+            "contract_version": "driver-v1",
+        },
+    )
+    assert version.status_code == 200
+    assert version.json()["status"] == "draft"
+
+    blocked = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/publish",
+        json={"expected_revision": 1, "reason": "准备发布"},
+    )
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"]["action_code"] == "run_contract_validation"
+
+    validated = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/validate",
+    )
+    assert validated.status_code == 200
+    assert validated.json()["valid"] is True
+    published = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/publish",
+        json={"expected_revision": 1, "reason": "契约验证通过"},
+    )
+    assert published.status_code == 200
+    assert published.json()["published_version_id"] == version.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_uninstalled_profile_driver_has_actionable_error(client):
+    profile = await client.post(
+        "/api/v1/model-center/profiles",
+        json={
+            "provider_id": "provider-1", "profile_key": "unknown-driver-task7",
+            "display_name": "Unknown Driver", "enabled": True,
+        },
+    )
+    response = await client.post(
+        f"/api/v1/model-center/profiles/{profile.json()['id']}/versions",
+        json={
+            "expected_revision": 1, "api_model_id": "unknown-model",
+            "driver_key": "unknown-driver", "capabilities": ["video_generation"],
+            "contract_version": "driver-v1",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["action_code"] == "install_or_select_driver"
+
+
+@pytest.mark.asyncio
+async def test_binding_contract_is_readable_and_rejects_connection_mismatch(client):
+    listed = await client.get("/api/v1/model-center/bindings")
+    item = next(row for row in listed.json()["items"] if row["id"] == "binding-video")
+    assert item["route_policy"] == "single"
+    assert item["priority"] == 100
+    assert item["profile_name"] == "Video"
+    assert item["api_model_id"] == "api-video"
+    assert item["connection_name"] == "Primary"
+    assert item["provider_name"] == "Provider"
+
+    async with AsyncSessionLocal() as db:
+        other_provider = ModelProvider(
+            id="binding-other-provider", code="binding-other", display_name="Other",
+            provider_family="test", enabled=True,
+        )
+        other_connection = ModelConnection(
+            id="binding-other-connection", user_id=USER_ID, provider_id=other_provider.id,
+            name="Other Connection", status="verified",
+        )
+        db.add_all([other_provider, other_connection])
+        await db.commit()
+
+    response = await client.post("/api/v1/model-center/bindings", json={
+        "scope_type": "user", "scope_id": USER_ID, "task": "shot_video",
+        "capability": "video_generation", "profile_version_id": "profile-video-v1",
+        "connection_id": "binding-other-connection", "priority": 10,
+        "route_policy": "single", "fallback_profile_version_ids": [], "reason": "绑定验证",
+    })
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "binding_connection_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_binding_create_update_and_deactivate_round_trip(client):
+    created = await client.post("/api/v1/model-center/bindings", json={
+        "scope_type": "user", "scope_id": "", "task": "shot_video",
+        "capability": "video_generation", "profile_version_id": "profile-video-v1",
+        "connection_id": "connection-1", "priority": 20,
+        "route_policy": "single", "fallback_profile_version_ids": [],
+        "is_active": False, "reason": "建立停用草稿",
+    })
+    assert created.status_code == 200
+    assert created.json()["scope_id"] == USER_ID
+    assert created.json()["is_active"] is False
+
+    updated = await client.put(
+        f"/api/v1/model-center/bindings/{created.json()['id']}",
+        json={
+            "scope_type": "user", "scope_id": "", "task": "shot_video",
+            "capability": "video_generation", "profile_version_id": "profile-video-v1",
+            "connection_id": "connection-1", "priority": 30,
+            "route_policy": "single", "fallback_profile_version_ids": [],
+            "is_active": True, "expected_revision": 1, "reason": "启用生产路由",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["scope_id"] == USER_ID
+    assert updated.json()["priority"] == 30
+    assert updated.json()["is_active"] is True
+    assert updated.json()["revision"] == 2
+
+    listed = await client.get("/api/v1/model-center/bindings")
+    saved = next(item for item in listed.json()["items"] if item["id"] == created.json()["id"])
+    assert saved["priority"] == 30
+    assert saved["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_binding_rejects_non_runtime_route_policy_and_missing_fallback(client):
+    common = {
+        "scope_type": "user", "scope_id": "", "task": "shot_video",
+        "capability": "video_generation", "profile_version_id": "profile-video-v1",
+        "connection_id": "connection-1", "priority": 20,
+        "fallback_profile_version_ids": [], "is_active": True, "reason": "验证降级策略",
+    }
+    unsupported = await client.post(
+        "/api/v1/model-center/bindings", json={**common, "route_policy": "fallback"},
+    )
+    assert unsupported.status_code == 422
+
+    missing = await client.post(
+        "/api/v1/model-center/bindings",
+        json={**common, "route_policy": "pre_submit_fallback"},
+    )
+    assert missing.status_code == 422
+    assert missing.json()["detail"]["code"] == "binding_fallback_required"
 
 
 @pytest.mark.asyncio
@@ -690,6 +1085,16 @@ async def _seed_collection_rows(db: AsyncSession) -> None:
             id="prompt-v1", profile_id="prompt-1", version=1, content="Write {{topic}}",
             variables={"topic": "story"}, routing={}, evaluation={}, status="published", checksum="p" * 64,
         ),
+        PromptSkill(
+            id="prompt-skill-1",
+            user_id=USER_ID,
+            name="Script",
+            task="script_generation",
+            content="Write {{topic}}",
+            is_active=True,
+            is_builtin=False,
+            prompt_profile_version_id="prompt-v1",
+        ),
     ])
     await db.commit()
 
@@ -721,6 +1126,7 @@ def _seed_binding(db: AsyncSession, stage: str, capability: str) -> None:
 
 def _recipe_spec() -> dict:
     return {
+        "strategy": "direct_av_first",
         "text": {"required": False}, "vision": {"required": False}, "image": {"required": False},
         "video": {
             "binding_id": "binding-video", "required": True,

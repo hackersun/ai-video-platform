@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time_utils import utc_now
 from app.models.model_center import ModelBinding, ModelConfigAuditEvent, ModelProfileVersion, ProductionRecipeVersion
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
+from app.models.prompt_skill import PromptSkill
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,7 @@ def _checksum(values: dict) -> str:
     return sha256(encoded).hexdigest()
 
 
-def _as_values(row: PromptProfileVersion) -> dict:
+def prompt_version_values(row: PromptProfileVersion) -> dict:
     content = _structured_content(row.content)
     return {
         "stage": row.stage,
@@ -71,7 +72,7 @@ def _row(profile: PromptProfile, version: PromptProfileVersion) -> PromptVersion
     return PromptVersionRow(
         id=version.id, profile_id=profile.id, profile_key=profile.key, user_id=profile.user_id,
         name=profile.name, task=profile.task, version=version.version, status=version.status,
-        values=_as_values(version),
+        values=prompt_version_values(version),
     )
 
 
@@ -136,7 +137,7 @@ async def create_prompt_draft(
     profile, latest = pair
     if latest.version != expected_version:
         return None
-    values = _as_values(latest)
+    values = prompt_version_values(latest)
     values.update(deepcopy(changes))
     if not values.get("system_contract") or not values.get("task_template"):
         raise ValueError("prompt_profile_fields_required")
@@ -180,6 +181,45 @@ async def load_prompt_rollback_rows(
     ))
     items = [_row(profile, version) for profile, version in rows.all()]
     return next((item for item in items if item.id == target_id), None), (items[0] if items else None)
+
+
+async def load_owned_prompt_profile_history(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    profile_id: str,
+) -> tuple[PromptProfile | None, list[PromptProfileVersion]]:
+    profile = await db.scalar(select(PromptProfile).where(
+        PromptProfile.id == profile_id,
+        PromptProfile.user_id == user_id,
+    ))
+    if profile is None:
+        return None, []
+    versions = list((await db.scalars(
+        select(PromptProfileVersion)
+        .where(PromptProfileVersion.profile_id == profile_id)
+        .order_by(desc(PromptProfileVersion.version), desc(PromptProfileVersion.id))
+    )).all())
+    return profile, versions
+
+
+async def load_linked_prompt_skill(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    profile_id: str,
+    version_ids: list[str],
+) -> PromptSkill | None:
+    linked = await db.scalar(select(PromptSkill).where(
+        PromptSkill.user_id == user_id,
+        PromptSkill.prompt_profile_version_id.in_(version_ids),
+    ).limit(1))
+    if linked is not None:
+        return linked
+    return await db.scalar(select(PromptSkill).where(
+        PromptSkill.user_id == user_id,
+        PromptSkill.id == profile_id,
+    ).limit(1))
 
 
 async def prompt_impact(db: AsyncSession, *, user_id: str, profile_id: str | None = None) -> dict:

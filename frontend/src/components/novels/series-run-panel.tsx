@@ -167,10 +167,13 @@ export function SeriesRunPanel({ novelId, chapters, seriesPlan, modelConfigs }: 
     if (!run) return;
     setBusy(true); setError(''); setLiveBlocker('');
     try {
-      const missing = Object.entries(configs).filter(([, config]) => !config).map(([capability]) => capability);
+      const configIds = Object.fromEntries(Object.entries(configs).map(([capability, config]) => [
+        capability, config?.id || run.model_bindings?.capabilities?.[capability]?.config_id,
+      ]));
+      const missing = Object.entries(configIds).filter(([, configId]) => !configId).map(([capability]) => capability);
       if (missing.length) throw new Error(`缺少模型配置：${missing.join('、')}`);
       let current = await apiClient.enableSeriesRunLiveCanary(run.id);
-      const validated = await apiClient.validateSeriesRunBindings(current.id, Object.fromEntries(Object.entries(configs).map(([key, config]) => [key, config!.id])) as Record<'text' | 'image' | 'tts' | 'video', string>);
+      const validated = await apiClient.validateSeriesRunBindings(current.id, configIds as Record<'text' | 'image' | 'tts' | 'video', string>);
       setValidatedBindings(validated.model_bindings);
       current = { ...current, model_bindings: { capabilities: validated.model_bindings } };
       setRun(current);

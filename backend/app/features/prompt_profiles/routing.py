@@ -5,10 +5,13 @@ from __future__ import annotations
 from fnmatch import fnmatchcase
 from typing import Any, Iterable
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.prompt_profiles.domain import PromptRouteQuery, PromptSelection, render_prompt
 from app.features.prompt_profiles.repository import published_prompt_candidates
+from app.features.prompt_profiles.versioning import ensure_legacy_prompt_profile
+from app.models.prompt_skill import PromptSkill
 
 
 ROUTING_PRECEDENCE = {
@@ -79,6 +82,28 @@ def routing_specificity(
     return ROUTING_PRECEDENCE["task_generic"], "task_generic_match", "task_only_template"
 
 
+def _legacy_compatibility_reason(
+    profile_key: str,
+    routing: dict[str, Any],
+    reason: str,
+    fallback: str | None,
+) -> tuple[str, str | None]:
+    if not profile_key.startswith("legacy"):
+        return reason, fallback
+    providers = _patterns(routing.get("provider_filter"))
+    models = _patterns(routing.get("model_filter"))
+    output_contract = str(routing.get("output_contract") or "").strip()
+    if providers and models and output_contract:
+        return "provider_model_contract_match", None
+    if models and output_contract:
+        return "model_contract_match", None
+    if providers:
+        return "provider_match", None
+    if output_contract:
+        return "output_contract_match", None
+    return "task_only_template", "task_only_template"
+
+
 async def _ranked_candidates(
     db: AsyncSession, query: PromptRouteQuery,
 ):
@@ -122,6 +147,12 @@ async def select_prompt_profile(
     if not ranked:
         return None
     *_, profile, version, reason, fallback = ranked[0]
+    reason, fallback = _legacy_compatibility_reason(
+        profile.key,
+        dict(version.routing or {}),
+        reason,
+        fallback,
+    )
     return PromptSelection(
         profile_id=profile.id, profile_version_id=version.id,
         profile_key=profile.key, profile_name=profile.name,
@@ -133,3 +164,33 @@ async def select_prompt_profile(
             version.routing or {}, reason, version.output_contract,
         ),
     )
+
+
+async def resolve_prompt_entries(
+    db: AsyncSession,
+    query: PromptRouteQuery,
+) -> tuple[PromptSelection, ...]:
+    """Resolve prompt content through the canonical routing owner."""
+    selection = await select_prompt_profile(db, query=query)
+    if selection is None:
+        statement = select(PromptSkill).where(
+            PromptSkill.task == query.task,
+            PromptSkill.is_active == True,
+            or_(
+                PromptSkill.user_id == query.user_id,
+                PromptSkill.is_builtin == True,
+            ),
+        )
+        if query.stage:
+            statement = statement.where(
+                or_(PromptSkill.stage == query.stage, PromptSkill.stage.is_(None))
+            )
+        skills = list((await db.scalars(
+            statement.order_by(PromptSkill.priority, PromptSkill.created_at)
+        )).all())
+        for skill in skills:
+            if skill.user_id == query.user_id or skill.is_builtin:
+                await ensure_legacy_prompt_profile(db, skill)
+        if skills:
+            selection = await select_prompt_profile(db, query=query)
+    return (selection,) if selection is not None else ()

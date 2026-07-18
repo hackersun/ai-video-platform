@@ -474,6 +474,27 @@ def test_prompt_skill_optimize_returns_polished_content_and_warnings(client: Tes
     assert "original_content" in result
 
 
+def test_prompt_skill_optimize_explicit_local_mode_has_no_provider_warning(client: TestClient) -> None:
+    user_id = f"prompt-skill-local-optimize-user-{uuid4()}"
+
+    response = client.post(
+        "/api/v1/prompt-skills/optimize",
+        json={
+            "task": "shot_video",
+            "name": "本地一致性优化",
+            "content": "保持角色一致，不要乱变。",
+            "mode": "polish",
+            "model_config_id": "__local_rules__",
+        },
+        headers=_auth_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["source"] == "local_rules"
+    assert not any("AI 优化暂不可用" in warning for warning in result["warnings"])
+
+
 def test_prompt_skill_optimize_requires_content(client: TestClient) -> None:
     user_id = f"prompt-skill-optimize-empty-user-{uuid4()}"
 

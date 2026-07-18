@@ -354,7 +354,7 @@ def _metadata(state: _PackageState) -> dict[str, Any]:
         "subtitle_text": state.shot_context["subtitle_text"], "default_model_id": (get_task_default("shot_video") or {}).get("default_model_id"),
         "series_seed": state.seeds["series"], "novel_series_seed": state.seeds["series"], "chapter_seed": state.seeds["chapter"],
         "storyboard_seed": state.seeds["storyboard"], "style_lock": state.style_lock, "prompt_skill_count": len(state.prompt_skills),
-        "prompt_skills": [{key: entry[key] for key in ("id", "name", "task", "stage", "version")} for entry in state.prompt_skills],
+        "prompt_skills": [{**{key: entry[key] for key in ("id", "name", "task", "stage", "version")}, "prompt_profile_version_id": entry.get("prompt_profile_version_id")} for entry in state.prompt_skills],
         "character_visual_locks": state.character_refs, "character_multiview_refs": state.multiview_refs,
         "reference_image_source": state.reference_source, "invalid_entity_ref_count": len(state.filtered_refs), "seed": state.seeds["shot"]}
     for key in ("continuity_lock", "previous_chapter_context", "current_chapter_context", "next_chapter_constraint", "previous_chapter_state", "chapter_state_snapshot", "state_machine_version", "state_machine_summary"):

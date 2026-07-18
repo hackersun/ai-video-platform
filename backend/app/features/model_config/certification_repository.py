@@ -11,7 +11,7 @@ from hashlib import sha256
 import json
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.model_center import (
@@ -20,7 +20,31 @@ from app.models.model_center import (
     ModelConnection,
     ModelProfile,
     ModelProfileVersion,
+    ModelProvider,
 )
+from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
+
+
+_SENSITIVE_EVIDENCE_MARKERS = (
+    "apikey", "apisecret", "authorization", "token", "password", "secret",
+    "credential", "header", "prompt", "rawrequest", "rawresponse",
+)
+
+
+def _safe_evidence(value):
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, nested in value.items():
+            normalized = "".join(character for character in str(key).lower() if character.isalnum())
+            if any(marker in normalized for marker in _SENSITIVE_EVIDENCE_MARKERS):
+                continue
+            sanitized[str(key)] = _safe_evidence(nested)
+        return sanitized
+    if isinstance(value, list):
+        return [_safe_evidence(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return f"<{type(value).__name__}>"
 
 
 @dataclass(frozen=True)
@@ -40,7 +64,8 @@ class CertificationRow:
 def as_certification_row(row: ModelCertificationRun) -> CertificationRow:
     return CertificationRow(
         id=row.id, profile_version_id=row.profile_version_id, connection_id=row.connection_id,
-        level=row.level, status=row.status, sanitized_evidence=dict(row.sanitized_evidence or {}),
+        level=row.level, status=row.status,
+        sanitized_evidence=_safe_evidence(dict(row.sanitized_evidence or {})),
         estimated_cost_rmb=Decimal(row.estimated_cost_rmb), actual_cost_rmb=Decimal(row.actual_cost_rmb),
         created_at=row.created_at, completed_at=row.completed_at,
     )
@@ -95,3 +120,92 @@ async def load_certification_intent(
     ))
     return as_certification_row(row) if row else None
 
+
+async def certification_candidates_page(
+    db: AsyncSession, *, user_id: str, page: int, page_size: int,
+    capability: str | None = None, query: str | None = None,
+) -> dict:
+    rows = (await db.execute(select(
+        ModelProfileVersion, ModelProfile, ModelProvider, ModelConnection,
+    ).join(ModelProfile, ModelProfile.id == ModelProfileVersion.model_id).join(
+        ModelProvider, ModelProvider.id == ModelProfile.provider_id,
+    ).join(ModelConnection, ModelConnection.provider_id == ModelProvider.id).where(
+        ModelProfileVersion.status == "published", ModelProfile.enabled == True,
+        ModelProvider.enabled == True, ModelConnection.user_id == user_id,
+        ModelConnection.status.in_(VERIFIED_CONNECTION_STATUSES),
+    ).order_by(ModelProfile.display_name, ModelConnection.name))).all()
+    keyword = (query or "").strip().casefold()
+    candidates = []
+    for version, profile, provider, connection in rows:
+        if capability and capability not in set(version.capabilities or []):
+            continue
+        searchable = " ".join((
+            profile.display_name, version.api_model_id, provider.display_name,
+            provider.code, connection.name,
+        )).casefold()
+        if keyword and keyword not in searchable:
+            continue
+        candidates.append({
+            "id": f"{version.id}:{connection.id}",
+            "profile": {
+                "id": version.id, "name": profile.display_name,
+                "api_model_id": version.api_model_id, "provider_id": provider.id,
+                "provider_name": provider.display_name,
+                "capabilities": list(version.capabilities or []),
+            },
+            "connection": {
+                "id": connection.id, "name": connection.name,
+                "provider_id": connection.provider_id, "status": connection.status,
+            },
+        })
+    start = (page - 1) * page_size
+    return {
+        "items": candidates[start:start + page_size],
+        "meta": {"page": page, "page_size": page_size, "total": len(candidates)},
+    }
+
+
+async def certification_history_page(
+    db: AsyncSession, *, user_id: str, page: int, page_size: int,
+    level: str | None = None, status: str | None = None,
+) -> dict:
+    statement = select(
+        ModelCertificationRun, ModelProfileVersion, ModelProfile,
+        ModelConnection, ModelProvider,
+    ).join(
+        ModelProfileVersion, ModelProfileVersion.id == ModelCertificationRun.profile_version_id,
+    ).join(ModelProfile, ModelProfile.id == ModelProfileVersion.model_id).join(
+        ModelConnection, ModelConnection.id == ModelCertificationRun.connection_id,
+    ).join(ModelProvider, ModelProvider.id == ModelProfile.provider_id).where(
+        ModelCertificationRun.user_id == user_id,
+    )
+    if level:
+        statement = statement.where(ModelCertificationRun.level == level)
+    if status:
+        statement = statement.where(ModelCertificationRun.status == status)
+    rows = (await db.execute(statement.order_by(
+        desc(ModelCertificationRun.created_at), ModelCertificationRun.id,
+    ))).all()
+    start = (page - 1) * page_size
+    items = []
+    for run, version, profile, connection, provider in rows[start:start + page_size]:
+        item = certification_item(run)
+        item.update({
+            "profile_name": profile.display_name, "api_model_id": version.api_model_id,
+            "connection_name": connection.name, "provider_name": provider.display_name,
+        })
+        items.append(item)
+    return {"items": items, "meta": {"page": page, "page_size": page_size, "total": len(rows)}}
+
+
+def certification_item(row: ModelCertificationRun | CertificationRow) -> dict:
+    values = as_certification_row(row) if isinstance(row, ModelCertificationRun) else row
+    return {
+        "id": values.id, "profile_version_id": values.profile_version_id,
+        "connection_id": values.connection_id, "level": values.level, "status": values.status,
+        "sanitized_evidence": values.sanitized_evidence,
+        "estimated_cost_rmb": f"{values.estimated_cost_rmb:.4f}",
+        "actual_cost_rmb": f"{values.actual_cost_rmb:.4f}",
+        "created_at": values.created_at.isoformat(),
+        "completed_at": values.completed_at.isoformat() if values.completed_at else None,
+    }

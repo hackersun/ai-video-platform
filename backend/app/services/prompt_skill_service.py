@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
 from app.features.prompt_profiles.public import (
+    PromptRouteQuery,
     apply_version_to_legacy_skill,
     disable_legacy_prompt_profile,
     edit_legacy_prompt_profile,
@@ -20,7 +21,9 @@ from app.features.prompt_profiles.public import (
     ensure_legacy_prompt_profile,
     latest_versions_for_skills,
     legacy_prompt_skill_payload as prompt_skill_payload,
+    prompt_entry_evidence,
     publish_legacy_prompt_profile,
+    resolve_prompt_entries,
     render_legacy_prompt_skill as render_prompt_skill,
     rendered_legacy_prompt_skill_entry as rendered_prompt_skill_entry,
     retire_legacy_prompt_profile,
@@ -399,32 +402,28 @@ async def active_prompt_skill_entries(
     context: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     await ensure_standard_prompt_skills(db)
-    user_result = await db.execute(
-        select(PromptSkill)
-        .where(
-            PromptSkill.task == task,
-            PromptSkill.is_active == True,
-            PromptSkill.user_id == user_id,
-            PromptSkill.is_builtin == False,
-        )
-        .order_by(PromptSkill.priority, PromptSkill.created_at)
+    selections = await resolve_prompt_entries(
+        db,
+        PromptRouteQuery(
+            user_id=user_id,
+            task=task,
+            context=context or {},
+        ),
     )
-    user_skills = list(user_result.scalars().all())
-    if user_skills:
-        entries = [rendered_prompt_skill_entry(skill, context) for skill in user_skills]
-        return [entry for entry in entries if entry["content"]][:1]
-
-    builtin_result = await db.execute(
-        select(PromptSkill)
-        .where(
-            PromptSkill.task == task,
-            PromptSkill.is_active == True,
-            PromptSkill.is_builtin == True,
-        )
-        .order_by(PromptSkill.priority, PromptSkill.created_at)
-    )
-    entries = [rendered_prompt_skill_entry(skill, context) for skill in builtin_result.scalars().all()]
-    return [entry for entry in entries if entry["content"]][:1]
+    if selections:
+        selection = selections[0]
+        if not selection.prompt:
+            return []
+        return [{
+            "id": selection.profile_id,
+            "name": selection.profile_name,
+            "task": task,
+            "stage": selection.stage,
+            "version": selection.version,
+            "content": selection.prompt,
+            "prompt_profile_version_id": selection.profile_version_id,
+        }]
+    return []
 
 
 async def active_prompt_skill_blocks(
@@ -472,7 +471,7 @@ async def apply_active_prompt_skill_template(
         "prompt": prompt.strip(),
         "skill_blocks": skill_blocks,
         "prompt_skills": [
-            {key: entry[key] for key in ("id", "name", "task", "stage", "version")}
+            prompt_entry_evidence(entry)
             for entry in entries
         ],
         "prompt_skill_count": len(entries),
@@ -492,6 +491,8 @@ async def optimize_prompt_skill_content(
     task = str(data.get("task") or "").strip()
     mode = str(data.get("mode") or "polish").strip()
     model_config_id = data.get("model_config_id")
+    if model_config_id == "__local_rules__":
+        return _build_local_prompt_skill_optimization(data)
 
     system_prompt = """你是 AI 视频创作平台的 Prompt 技能编辑器，负责把用户写的技能片段润色为可复用、可测试、适合生产链路的中文提示词。
 

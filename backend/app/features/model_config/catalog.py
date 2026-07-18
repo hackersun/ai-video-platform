@@ -58,6 +58,7 @@ def is_product_visible_model(model) -> bool:
     text = f"{identifier_text} {display_text}".strip()
     return bool(text) and not (
         any(marker in text for marker in ("test-video-", "test-audio-", "test-image-", "test-text-"))
+        or any(part.startswith(_INTERNAL_PREFIXES) for part in display_text.split())
         or text.startswith("test-")
         or identifier_text.startswith("tts-model-")
         or any(marker in identifier_text for marker in ("tts-api-model", "tts api model", "video-api-model", "video api model", "image-api-model", "image api model", "audio-api-model", "audio api model"))
@@ -65,6 +66,7 @@ def is_product_visible_model(model) -> bool:
         or "-test-" in identifier_text
         or identifier_text.endswith("-test")
         or " test " in f" {identifier_text} "
+        or " test " in f" {display_text} "
         or "测试" in display_text
         or "preflight-" in text
         or "preflight video model" in text
@@ -165,8 +167,13 @@ def select_legacy_external_providers(providers: Sequence) -> list:
 @dataclass(frozen=True)
 class ProductCatalogItem:
     provider_id: str
+    provider_name: str
+    provider_code: str
+    model_name: str
     api_model_id: str
     profile_version_id: str | None
+    profile_version: int | None
+    driver_key: str | None
     legacy_model_id: str | None
     legacy_config_id: str | None
     certification_status: str
