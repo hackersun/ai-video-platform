@@ -7,7 +7,7 @@ function devToken(userId: string) {
 
 const overview = { blocking_issues: [], connections: [], recipes: [] };
 const connectionPage = {
-  items: [{ id: 'connection-1', provider_id: 'volcengine', name: '主视频连接', base_url: null, has_secret: true, secret_hint: '****ef09', secret_updated_at: null, enabled: true, revision: 1 }],
+  items: [{ id: 'connection-1', provider_id: 'volcengine', provider_name: '火山引擎', provider_code: 'volcengine', name: '主视频连接', base_url: null, has_secret: true, secret_hint: '****ef09', secret_updated_at: null, enabled: true, revision: 1 }],
   meta: { page: 1, page_size: 20, total: 1 },
 };
 const certification = {
@@ -17,8 +17,10 @@ const certification = {
 };
 const catalog = {
   items: [{
-    provider_id: 'provider-1', api_model_id: 'doubao-seedance-1-5-pro', profile_version_id: 'profile-1', legacy_model_id: null,
-    legacy_config_id: null, certification_status: 'connection', capabilities: ['video_generation'],
+    provider_id: 'provider-1', provider_name: '火山引擎', provider_code: 'volcengine', model_name: 'Seedance 1.5 Pro',
+    api_model_id: 'doubao-seedance-1-5-pro', profile_version_id: 'profile-1', profile_version: 1,
+    driver_key: 'volcano_ark_video', legacy_model_id: null,
+    legacy_config_id: null, certification_status: 'connection_verified', capabilities: ['video_generation'],
   }],
   meta: { page: 1, page_size: 20, total: 1 },
 };
@@ -31,7 +33,8 @@ test.beforeEach(async ({ page }) => {
   }, { token: devToken(id), userId: id });
   await page.route('**/api/v1/model-center/**', async (route) => {
     const url = route.request().url();
-    const body = url.includes('/catalog') ? catalog
+    const body = url.includes('/providers') ? { items: [], meta: { page: 1, page_size: 100, total: 0 } }
+      : url.includes('/catalog') ? catalog
       : url.includes('/connections?') ? connectionPage
         : url.includes('/connections/connection-1/test') ? certification
           : url.includes('/certifications/run-17') ? certification

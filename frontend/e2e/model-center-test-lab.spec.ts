@@ -10,12 +10,13 @@ const certification = {
 };
 const catalog = {
   items: [{
-    provider_id: 'provider-1', api_model_id: 'seedance-1.5', profile_version_id: 'profile-video', legacy_model_id: null,
-    legacy_config_id: null, certification_status: 'contract', capabilities: ['video_generation'],
+    provider_id: 'provider-1', provider_name: '火山引擎', provider_code: 'volcengine', model_name: 'Seedance 1.5',
+    api_model_id: 'seedance-1.5', profile_version_id: 'profile-video', profile_version: 1, driver_key: 'volcano_ark_video', legacy_model_id: null,
+    legacy_config_id: null, certification_status: 'contract_verified', capabilities: ['video_generation'],
   }],
   meta: { page: 1, page_size: 20, total: 1 },
 };
-const connections = { items: [{ id: 'connection-video', provider_id: 'volcengine', name: '视频连接', base_url: null, has_secret: true, secret_hint: '****1234', secret_updated_at: null, enabled: true, revision: 1 }], meta: { page: 1, page_size: 20, total: 1 } };
+const connections = { items: [{ id: 'connection-video', provider_id: 'volcengine', provider_name: '火山引擎', provider_code: 'volcengine', name: '视频连接', base_url: null, has_secret: true, secret_hint: '****1234', secret_updated_at: null, enabled: true, revision: 1 }], meta: { page: 1, page_size: 20, total: 1 } };
 
 function devToken(userId: string) {
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url');

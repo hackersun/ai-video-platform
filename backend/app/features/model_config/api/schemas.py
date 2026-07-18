@@ -29,9 +29,21 @@ class DriverItem(BaseModel):
     contract_version: str = "driver-v1"
 
 
+class ProviderItem(BaseModel):
+    id: str
+    code: str
+    display_name: str
+    provider_family: str
+    is_builtin: bool
+    enabled: bool
+    revision: int
+
+
 class ConnectionItem(BaseModel):
     id: str
     provider_id: str
+    provider_name: str
+    provider_code: str
     name: str
     status: str
     base_url: str | None = None
@@ -44,8 +56,13 @@ class ConnectionItem(BaseModel):
 
 class CatalogItem(BaseModel):
     provider_id: str
+    provider_name: str
+    provider_code: str
+    model_name: str
     api_model_id: str
     profile_version_id: str | None
+    profile_version: int | None
+    driver_key: str | None
     legacy_model_id: str | None
     legacy_config_id: str | None
     certification_status: str

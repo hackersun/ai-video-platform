@@ -36,6 +36,7 @@ MODEL_CENTER_ROUTES = {
     ("get", "/api/v1/model-center/overview"),
     ("get", "/api/v1/model-center/drivers"),
     ("post", "/api/v1/model-center/providers"),
+    ("get", "/api/v1/model-center/providers"),
     ("put", "/api/v1/model-center/providers/{provider_id}"),
     ("get", "/api/v1/model-center/connections"),
     ("post", "/api/v1/model-center/connections"),
@@ -169,6 +170,68 @@ async def test_collections_are_paginated_and_connection_secrets_are_redacted(cli
     assert "authorization" not in serialized.lower()
     assert recipe["spec"]["video"] == {"binding_id": "binding-video", "required": True}
     assert recipe["spec"]["audio"] == {"mode": "video_native_audio"}
+
+
+@pytest.mark.asyncio
+async def test_catalog_filters_before_pagination_and_returns_readable_labels(client):
+    response = await client.get(
+        "/api/v1/model-center/catalog",
+        params={
+            "capability": "video_generation",
+            "provider_id": "provider-1",
+            "status": "unverified",
+            "q": "api-video",
+            "page": 1,
+            "page_size": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["meta"] == {"page": 1, "page_size": 1, "total": 1}
+    assert payload["items"][0] == {
+        "provider_id": "provider-1",
+        "provider_name": "Provider",
+        "provider_code": "provider-1",
+        "model_name": "Video",
+        "api_model_id": "api-video",
+        "profile_version_id": "profile-video-v1",
+        "profile_version": 1,
+        "driver_key": "driver-video",
+        "legacy_model_id": None,
+        "legacy_config_id": None,
+        "certification_status": "unverified",
+        "capabilities": ["video_generation"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_connections_return_readable_provider_labels(client):
+    response = await client.get("/api/v1/model-center/connections")
+
+    assert response.status_code == 200
+    connection = response.json()["items"][0]
+    assert connection["provider_name"] == "Provider"
+    assert connection["provider_code"] == "provider-1"
+
+
+@pytest.mark.asyncio
+async def test_enabled_providers_are_available_for_connection_picker(client):
+    response = await client.get("/api/v1/model-center/providers")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [{
+            "id": "provider-1",
+            "code": "provider-1",
+            "display_name": "Provider",
+            "provider_family": "test",
+            "is_builtin": False,
+            "enabled": True,
+            "revision": 1,
+        }],
+        "meta": {"page": 1, "page_size": 20, "total": 1},
+    }
 
 
 @pytest.mark.asyncio

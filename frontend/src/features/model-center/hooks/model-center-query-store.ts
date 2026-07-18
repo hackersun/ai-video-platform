@@ -1,6 +1,7 @@
 export type ModelCenterQueryKey =
   | 'overview'
   | 'connections'
+  | 'providers'
   | 'catalog'
   | 'bindings'
   | 'recipes'

@@ -5,6 +5,7 @@ import type {
   CertificationRunInput,
   ConfigurationState,
   ModelCapability,
+  ModelCatalogFilters,
   ModelBindingInput,
   ModelBindingUpdateInput,
   ModelBindingView,
@@ -45,6 +46,15 @@ function pagePath(path: string, page = 1, pageSize = 20) {
   const safePage = boundedInteger(page, 1, Number.MAX_SAFE_INTEGER);
   const safePageSize = boundedInteger(pageSize, 20, 100);
   return `${path}?page=${safePage}&page_size=${safePageSize}`;
+}
+
+function catalogPath(page = 1, pageSize = 20, filters: ModelCatalogFilters = {}) {
+  const params = new URLSearchParams(pagePath('', page, pageSize).slice(1));
+  if (filters.capability) params.set('capability', filters.capability);
+  if (filters.providerId) params.set('provider_id', filters.providerId);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.query?.trim()) params.set('q', filters.query.trim());
+  return `/model-center/catalog?${params.toString()}`;
 }
 
 function jsonBody(input: object) {
@@ -103,6 +113,8 @@ function connectionView(value: unknown): ModelConnectionView {
   return {
     id: stringValue(input, 'id', '连接'),
     provider_id: stringValue(input, 'provider_id', '连接'),
+    provider_name: stringValue(input, 'provider_name', '连接'),
+    provider_code: stringValue(input, 'provider_code', '连接'),
     name: stringValue(input, 'name', '连接'),
     base_url: nullableStringValue(input, 'base_url', '连接'),
     has_secret: input.has_secret,
@@ -156,6 +168,8 @@ export const modelCenterApi = {
   getOverview: async () => modelCenterOverview(await apiClient.request<unknown>('/model-center/overview')),
   listDrivers: (page = 1, pageSize = 20) =>
     apiClient.request<PageResponse<ModelDriverView>>(pagePath('/model-center/drivers', page, pageSize)),
+  listProviders: (page = 1, pageSize = 100) =>
+    apiClient.request<PageResponse<ModelProviderView>>(pagePath('/model-center/providers', page, pageSize)),
   createProvider: (input: ModelProviderInput) =>
     apiClient.request<ModelProviderView>('/model-center/providers', { method: 'POST', body: jsonBody(input) }),
   updateProvider: (providerId: string, input: ModelProviderUpdateInput) =>
@@ -170,8 +184,8 @@ export const modelCenterApi = {
   testConnection: (connectionId: string) =>
     apiClient.request<CertificationRun>(`/model-center/connections/${connectionId}/test`, { method: 'POST' }),
 
-  listCatalog: (page = 1, pageSize = 20) =>
-    apiClient.request<PageResponse<ModelCatalogView>>(pagePath('/model-center/catalog', page, pageSize)),
+  listCatalog: (page = 1, pageSize = 20, filters: ModelCatalogFilters = {}) =>
+    apiClient.request<PageResponse<ModelCatalogView>>(catalogPath(page, pageSize, filters)),
   createProfile: (input: ModelProfileInput) =>
     apiClient.request<ModelProfileVersionView>('/model-center/profiles', { method: 'POST', body: jsonBody(input) }),
   createProfileVersion: (profileId: string, input: ModelProfileVersionInput) =>

@@ -376,7 +376,35 @@ async def _load_certification_levels(
     return levels
 
 
-async def list_product_catalog(db: AsyncSession, user_id: str) -> ProductCatalog:
+def _matches_catalog_filters(
+    item: ProductCatalogItem,
+    *,
+    capability: str | None,
+    provider_id: str | None,
+    status: str | None,
+    query: str | None,
+) -> bool:
+    keyword = (query or "").strip().casefold()
+    searchable = " ".join((
+        item.provider_name, item.provider_code, item.model_name, item.api_model_id,
+    )).casefold()
+    return (
+        (not capability or capability in item.capabilities)
+        and (not provider_id or provider_id == item.provider_id)
+        and (not status or status == item.certification_status)
+        and (not keyword or keyword in searchable)
+    )
+
+
+async def list_product_catalog(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    capability: str | None = None,
+    provider_id: str | None = None,
+    status: str | None = None,
+    query: str | None = None,
+) -> ProductCatalog:
     """Return a canonical-first catalog without mutating legacy or canonical rows."""
     providers, models, configs, versions, model_profiles, canonical_providers = await _load_catalog_rows(db, user_id)
     configs_by_model = group_legacy_configs(configs)
@@ -397,8 +425,13 @@ async def list_product_catalog(db: AsyncSession, user_id: str) -> ProductCatalog
         api_model_id = profile.api_model_id if profile is not None else model.model_id
         item = ProductCatalogItem(
             provider_id=model.provider_id,
+            provider_name=provider.name_cn or provider.name_en or provider.name,
+            provider_code=provider.name,
+            model_name=model.model_name_cn or model.model_name or model.model_id,
             api_model_id=api_model_id,
             profile_version_id=profile.id if profile is not None else None,
+            profile_version=profile.version if profile is not None else None,
+            driver_key=profile.driver_key if profile is not None else None,
             legacy_model_id=model.id,
             legacy_config_id=config.id if config is not None else None,
             certification_status=_certification_status(profile.id if profile else None, config, certification_levels),
@@ -409,21 +442,38 @@ async def list_product_catalog(db: AsyncSession, user_id: str) -> ProductCatalog
         if profile.model_id in legacy_ids or not is_product_visible_model(profile):
             continue
         model_profile = model_profiles.get(profile.model_id)
-        provider_id = model_profile.provider_id if model_profile is not None else None
-        provider = canonical_providers.get(provider_id or "")
-        if provider_id is None or provider is None or not is_product_visible_provider(provider):
+        if model_profile is None or not is_product_visible_model(model_profile):
             continue
-        key = (provider_id, profile.api_model_id)
+        canonical_provider_id = model_profile.provider_id
+        provider = canonical_providers.get(canonical_provider_id)
+        if provider is None or not is_product_visible_provider(provider):
+            continue
+        key = (canonical_provider_id, profile.api_model_id)
         items[key] = ProductCatalogItem(
-            provider_id=provider_id,
+            provider_id=canonical_provider_id,
+            provider_name=provider.display_name,
+            provider_code=provider.code,
+            model_name=model_profile.display_name,
             api_model_id=profile.api_model_id,
             profile_version_id=profile.id,
+            profile_version=profile.version,
+            driver_key=profile.driver_key,
             legacy_model_id=None,
             legacy_config_id=None,
             certification_status=_certification_status(profile.id, None, certification_levels),
             capabilities=frozenset(normalize_capabilities(None, profile.capabilities or [])),
         )
-    return ProductCatalog(models=tuple(sorted(items.values(), key=lambda item: (item.provider_id, item.api_model_id))))
+    filtered = (
+        item for item in items.values()
+        if _matches_catalog_filters(
+            item,
+            capability=capability,
+            provider_id=provider_id,
+            status=status,
+            query=query,
+        )
+    )
+    return ProductCatalog(models=tuple(sorted(filtered, key=lambda item: (item.provider_name, item.model_name, item.api_model_id))))
 
 
 __all__ = [

@@ -17,6 +17,7 @@ from app.models.model_center import (
     ModelProvider,
     ProductionRecipeVersion,
 )
+from app.models.llm_config import LLMProvider
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 
 
@@ -50,14 +51,40 @@ async def _paged_rows(db: AsyncSession, model, filters: tuple, page: int, page_s
     return rows, int(total)
 
 
-def _connection_view(row: ModelConnection) -> dict:
+async def _provider_labels(db: AsyncSession, provider_ids: set[str]) -> dict[str, tuple[str, str]]:
+    if not provider_ids:
+        return {}
+    legacy_rows = list((await db.scalars(select(LLMProvider).where(LLMProvider.id.in_(provider_ids)))).all())
+    canonical_rows = list((await db.scalars(select(ModelProvider).where(ModelProvider.id.in_(provider_ids)))).all())
+    labels = {
+        row.id: (row.name_cn or row.name_en or row.name, row.name)
+        for row in legacy_rows
+    }
+    labels.update({row.id: (row.display_name, row.code) for row in canonical_rows})
+    return labels
+
+
+def _connection_view(
+    row,
+    provider_labels: dict[str, tuple[str, str]] | None = None,
+) -> dict:
+    provider_name, provider_code = (provider_labels or {}).get(
+        row.provider_id, (row.provider_id, row.provider_id),
+    )
+    overrides = getattr(row, "endpoint_overrides", {}) or {}
+    has_secret = getattr(row, "has_secret", None)
+    if has_secret is None:
+        has_secret = bool(getattr(row, "api_key", None) or getattr(row, "api_secret", None))
+    secret_updated_at = getattr(row, "secret_updated_at", None) or getattr(row, "updated_at", None)
     return {
-        "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
-        "base_url": (row.endpoint_overrides or {}).get("base_url"),
+        "id": row.id, "provider_id": row.provider_id,
+        "provider_name": provider_name, "provider_code": provider_code,
+        "name": row.name, "status": row.status,
+        "base_url": overrides.get("base_url"),
         "enabled": row.status in {"enabled", "verified"},
-        "has_secret": bool(row.api_key or row.api_secret),
-        "secret_hint": "****" if row.api_key or row.api_secret else None,
-        "secret_updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "has_secret": bool(has_secret),
+        "secret_hint": "****" if has_secret else None,
+        "secret_updated_at": secret_updated_at.isoformat() if secret_updated_at else None,
         "revision": row.revision,
     }
 
@@ -83,9 +110,10 @@ async def management_overview(db: AsyncSession, user_id: str) -> dict:
         blocking_issues.append({"code": "connection_unverified", "message": "没有已认证的模型连接"})
     if not recipe_rows:
         blocking_issues.append({"code": "recipe_missing", "message": "尚未配置生产组合预设"})
+    provider_labels = await _provider_labels(db, {row.provider_id for row in connection_rows})
     return {
         "blocking_issues": blocking_issues,
-        "connections": [_connection_view(row) for row in connection_rows],
+        "connections": [_connection_view(row, provider_labels) for row in connection_rows],
         "recipes": [_recipe_view(row) for row in recipe_rows],
     }
 
@@ -94,8 +122,26 @@ async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: 
     rows, total = await _paged_rows(
         db, ModelConnection, (ModelConnection.user_id == user_id,), page, page_size,
     )
-    items = [_connection_view(row) for row in rows]
+    provider_labels = await _provider_labels(db, {row.provider_id for row in rows})
+    items = [_connection_view(row, provider_labels) for row in rows]
     return _page(items, page, page_size, total)
+
+
+async def provider_page(db: AsyncSession, page: int, page_size: int) -> dict:
+    rows, total = await _paged_rows(
+        db, ModelProvider, (ModelProvider.enabled == True,), page, page_size,
+    )
+    items = [{
+        "id": row.id, "code": row.code, "display_name": row.display_name,
+        "provider_family": row.provider_family, "is_builtin": bool(row.is_builtin),
+        "enabled": bool(row.enabled), "revision": row.revision,
+    } for row in rows]
+    return _page(items, page, page_size, total)
+
+
+async def connection_view(db: AsyncSession, row: ModelConnection) -> dict:
+    labels = await _provider_labels(db, {row.provider_id})
+    return _connection_view(row, labels)
 
 
 async def binding_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:

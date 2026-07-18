@@ -46,7 +46,8 @@ function recordFetch(respond: (url: string) => Response) {
 
 const connectionPage = {
   items: [{
-    id: 'connection-1', provider_id: 'volcengine', name: '主连接', base_url: null,
+    id: 'connection-1', provider_id: 'volcengine', provider_name: '火山引擎', provider_code: 'volcengine',
+    name: '主连接', base_url: null,
     has_secret: true, secret_hint: '****ef09', secret_updated_at: '2026-07-17T09:00:00Z',
     enabled: true, revision: 3,
   }],
@@ -224,6 +225,25 @@ test('bounds collection pagination before issuing a drivers URL', async () => {
   try {
     await modelCenterApi.listDrivers(0, 999);
     expect(requests.calls[0]?.url).toBe('http://localhost:8000/api/v1/model-center/drivers?page=1&page_size=100');
+  } finally {
+    requests.restore();
+  }
+});
+
+test('catalog filters are encoded before server pagination', async () => {
+  const requests = recordFetch(() => jsonResponse({
+    items: [], meta: { page: 2, page_size: 10, total: 23 },
+  }));
+  try {
+    await modelCenterApi.listCatalog(2, 10, {
+      capability: 'video_generation',
+      providerId: 'volcengine',
+      status: 'unverified',
+      query: 'seedance 1.5',
+    });
+    expect(requests.calls[0]?.url).toBe(
+      'http://localhost:8000/api/v1/model-center/catalog?page=2&page_size=10&capability=video_generation&provider_id=volcengine&status=unverified&q=seedance+1.5',
+    );
   } finally {
     requests.restore();
   }

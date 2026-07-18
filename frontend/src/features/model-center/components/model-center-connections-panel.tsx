@@ -1,22 +1,31 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { CheckCircle2, KeyRound, Loader2, Plus, TestTube } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 import { useModelConnections } from '../hooks/use-model-connections';
+import { useModelProviders } from '../hooks/use-model-providers';
 import { modelCenterHref, type ModelCenterLocation } from '../navigation';
 import { ModelCenterEmpty, ModelCenterError, ModelCenterLoading } from './model-center-state';
+import { ModelCenterPagination } from './model-center-pagination';
+import { ProviderModelLabel } from './provider-model-label';
 
 const blankForm = { providerId: '', name: '', reason: '', baseUrl: '', apiKey: '' };
 
 export function ModelCenterConnectionsPanel({ location }: { location: ModelCenterLocation }) {
   const router = useRouter();
-  const { data, error, loading, reload, createConnection, testConnection } = useModelConnections();
+  const [page, setPage] = useState(1);
+  const { data, error, loading, reload, createConnection, testConnection } = useModelConnections(page, 20);
+  const providers = useModelProviders();
   const [form, setForm] = useState(blankForm);
   const [creating, setCreating] = useState(false);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    const firstProvider = providers.data?.items[0];
+    if (firstProvider && !form.providerId) setForm((current) => ({ ...current, providerId: firstProvider.id }));
+  }, [form.providerId, providers.data]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -50,8 +59,8 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
   if (error && !data) return <ModelCenterError error={error} onRetry={() => void reload()} />;
   return (
     <div className="space-y-4 p-4">
-      <form onSubmit={submit} className="grid gap-2 rounded-lg border border-white/10 bg-slate-950/30 p-3 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
-        <input aria-label="提供方 ID" required value={form.providerId} onChange={(event) => setForm({ ...form, providerId: event.target.value })} placeholder="提供方 ID" className="model-center-input" />
+      <form id="connection-form" onSubmit={submit} className="grid gap-2 rounded-lg border border-white/10 bg-slate-950/30 p-3 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
+        <select aria-label="提供方" required value={form.providerId} onChange={(event) => setForm({ ...form, providerId: event.target.value })} className="model-center-input"><option value="" disabled>{providers.loading ? '正在读取提供方…' : '请选择提供方'}</option>{providers.data?.items.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}（{provider.code}）</option>)}</select>
         <input aria-label="连接名称" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="连接名称" className="model-center-input" />
         <input aria-label="保存说明" required minLength={2} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} placeholder="保存说明（至少2字）" className="model-center-input" />
         <input aria-label="自定义 API 地址" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="自定义 API 地址（可选）" className="model-center-input" />
@@ -63,11 +72,11 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
       {!data?.items.length ? <ModelCenterEmpty title="还没有模型连接" description="新增连接后，按任务能力绑定到生产方案。" /> : (
         <div className="overflow-x-auto rounded-lg border border-white/10">
           <table className="min-w-full text-left text-sm"><thead className="bg-white/[0.035] text-xs text-slate-500"><tr><th>连接名称</th><th>提供方</th><th>凭证</th><th>地址</th><th className="text-right">操作</th></tr></thead>
-            <tbody>{data.items.map((connection) => <tr key={connection.id} className="border-t border-white/[0.07] text-slate-300"><td className="font-medium text-white">{connection.name}</td><td>{connection.provider_id}</td><td><span className={connection.has_secret ? 'text-emerald-300' : 'text-amber-300'}>{connection.has_secret ? '已保存 · 已脱敏' : '未设置'}</span></td><td className="max-w-44 truncate text-slate-500">{connection.base_url || '默认地址'}</td><td className="text-right"><button type="button" disabled={testingId === connection.id || !connection.enabled} onClick={() => void runTest(connection.id)} className="model-center-quiet"><TestTube className="h-3.5 w-3.5" />{testingId === connection.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '测试连接'}</button></td></tr>)}</tbody>
+            <tbody>{data.items.map((connection) => <tr key={connection.id} className="border-t border-white/[0.07] text-slate-300"><td className="font-medium text-white">{connection.name}</td><td><ProviderModelLabel providerName={connection.provider_name} providerCode={connection.provider_code} /></td><td><span className={connection.has_secret ? 'text-emerald-300' : 'text-amber-300'}>{connection.has_secret ? '已保存 · 已脱敏' : '未设置'}</span></td><td className="max-w-44 truncate text-slate-500">{connection.base_url || '默认地址'}</td><td className="text-right"><button type="button" disabled={testingId === connection.id || !connection.enabled} onClick={() => void runTest(connection.id)} className="model-center-quiet"><TestTube className="h-3.5 w-3.5" />{testingId === connection.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : '测试连接'}</button></td></tr>)}</tbody>
           </table>
         </div>
       )}
-      <div className="flex items-center justify-between text-xs text-slate-500"><span>共 {data?.meta.total || 0} 条连接</span><button type="button" onClick={() => void reload()} className="hover:text-white">刷新连接列表</button></div>
+      {data && <ModelCenterPagination page={data.meta.page} pageSize={data.meta.page_size} total={data.meta.total} onPageChange={setPage} />}
     </div>
   );
 }

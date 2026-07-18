@@ -10,8 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.features.model_config.management_repository import (
     binding_page,
     connection_page,
+    connection_view,
     load_recipe_publish_candidate,
     management_overview,
+    provider_page,
     prompt_profile_page,
     publish_recipe_if_revision,
     recipe_page,
@@ -95,20 +97,12 @@ async def drivers_page(page: int, page_size: int) -> dict:
     return _page([dict(item) for item in drivers[start:start + page_size]], page, page_size, len(drivers))
 
 
+async def providers_page(db: AsyncSession, page: int, page_size: int) -> dict:
+    return await provider_page(db, page, page_size)
+
+
 async def connections_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     return await connection_page(db, user_id, page, page_size)
-
-
-def _connection_item(row) -> dict:
-    overrides = getattr(row, "endpoint_overrides", {})
-    overrides = overrides if isinstance(overrides, dict) else {}
-    return {
-        "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
-        "base_url": overrides.get("base_url"), "enabled": row.status in {"enabled", "verified"},
-        "has_secret": row.has_secret, "secret_hint": "****" if row.has_secret else None,
-        "secret_updated_at": row.secret_updated_at.isoformat() if row.secret_updated_at else None,
-        "revision": row.revision,
-    }
 
 
 async def create_connection(db: AsyncSession, *, user_id: str, request) -> dict:
@@ -119,7 +113,7 @@ async def create_connection(db: AsyncSession, *, user_id: str, request) -> dict:
         )
         if row is None:
             raise ManagementOperationError("resource_not_found", "Provider was not found.", "refresh", 404)
-    return _connection_item(row)
+    return await connection_view(db, row)
 
 
 async def update_connection(db: AsyncSession, *, user_id: str, connection_id: str, request) -> dict:
@@ -133,7 +127,7 @@ async def update_connection(db: AsyncSession, *, user_id: str, connection_id: st
     if row is None:
         raise ManagementOperationError("revision_conflict", "Connection has changed or was not found.", "refresh_and_retry", 409)
     await db.commit()
-    return _connection_item(row)
+    return await connection_view(db, row)
 
 
 async def test_connection(db: AsyncSession, *, user_id: str, connection_id: str) -> dict:
@@ -147,12 +141,29 @@ async def test_connection(db: AsyncSession, *, user_id: str, connection_id: str)
     row, audit_id = result
     return {
         "id": audit_id, "status": "connection_verification_queued", "execution_mode": "safe_intent_only",
-        "connection": _connection_item(row),
+        "connection": await connection_view(db, row),
     }
 
 
-async def catalog_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
-    catalog = await list_product_catalog(db, user_id)
+async def catalog_page(
+    db: AsyncSession,
+    user_id: str,
+    page: int,
+    page_size: int,
+    *,
+    capability: str | None = None,
+    provider_id: str | None = None,
+    status: str | None = None,
+    query: str | None = None,
+) -> dict:
+    catalog = await list_product_catalog(
+        db,
+        user_id,
+        capability=capability,
+        provider_id=provider_id,
+        status=status,
+        query=query,
+    )
     start = (page - 1) * page_size
     items = []
     for item in catalog.models[start:start + page_size]:

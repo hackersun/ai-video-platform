@@ -28,6 +28,8 @@ export interface PageResponse<T> {
 export interface ModelConnectionView {
   id: string;
   provider_id: string;
+  provider_name: string;
+  provider_code: string;
   name: string;
   base_url: string | null;
   has_secret: boolean;
@@ -129,12 +131,24 @@ export type ModelProfileVersionUpdateInput = ModelProfileVersionInput & {
 
 export interface ModelCatalogView {
   provider_id: string;
+  provider_name: string;
+  provider_code: string;
+  model_name: string;
   api_model_id: string;
   profile_version_id: string | null;
+  profile_version: number | null;
+  driver_key: string | null;
   legacy_model_id: string | null;
   legacy_config_id: string | null;
   certification_status: string;
   capabilities: ModelCapability[];
+}
+
+export interface ModelCatalogFilters {
+  capability?: ModelCapability;
+  providerId?: string;
+  status?: string;
+  query?: string;
 }
 
 export interface ModelBindingView {
