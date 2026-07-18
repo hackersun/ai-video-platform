@@ -1872,12 +1872,17 @@ def _build_render_html(title: str, segments: List[Dict[str, Any]], artifacts: Di
         video = segment.get("video") or {}
         audio = segment.get("audio") or {}
         subtitle = segment.get("subtitle") or {}
+        audio_link = (
+            '<a href="' + escape(audio.get("url")) + '">音频</a>'
+            if audio.get("url")
+            else "静音"
+        )
         segment_rows.append(
             "<tr>"
             f"<td>{escape(str(segment.get('index') or ''))}</td>"
             f"<td>{escape(str(segment.get('start_seconds') or 0))}s - {escape(str(segment.get('end_seconds') or 0))}s</td>"
             f"<td><a href=\"{escape(video.get('url') or '#')}\">视频</a></td>"
-            f"<td>{('<a href=\"' + escape(audio.get('url')) + '\">音频</a>') if audio.get('url') else '静音'}</td>"
+            f"<td>{audio_link}</td>"
             f"<td>{escape(subtitle.get('text') or '')}</td>"
             "</tr>"
         )
