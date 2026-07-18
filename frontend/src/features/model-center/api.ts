@@ -141,13 +141,17 @@ function connectionPage(value: unknown): PageResponse<ModelConnectionView> {
 
 function productionRecipeView(value: unknown): ProductionRecipeView {
   const input = record(value, '生产方案');
+  const spec = record(input.spec, '生产方案');
+  const stages = input.stages === undefined ? spec : record(input.stages, '生产方案阶段');
   return {
     id: stringValue(input, 'id', '生产方案'),
     recipe_key: stringValue(input, 'recipe_key', '生产方案'),
     name: stringValue(input, 'name', '生产方案'),
     version: numberValue(input, 'version', '生产方案'),
     status: configurationState(input.status, '生产方案'),
-    spec: record(input.spec, '生产方案'),
+    strategy: typeof input.strategy === 'string' ? input.strategy : typeof spec.strategy === 'string' ? spec.strategy : '',
+    stages: stages as Record<string, Record<string, unknown>>,
+    spec,
     revision: numberValue(input, 'revision', '生产方案'),
   };
 }

@@ -87,6 +87,15 @@ def _safe_stage_metadata(spec: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return safe
 
 
+def _safe_recipe_metadata(spec: dict[str, Any]) -> dict[str, Any]:
+    stages = _safe_stage_metadata(spec)
+    return {
+        "strategy": str(spec.get("production_strategy") or spec.get("strategy") or ""),
+        "stages": stages,
+        "spec": stages,
+    }
+
+
 async def overview(db: AsyncSession, user_id: str) -> dict:
     return await management_overview(db, user_id)
 
@@ -180,7 +189,7 @@ async def bindings_page(db: AsyncSession, user_id: str, page: int, page_size: in
 async def recipes_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     items, total = await recipe_page(db, user_id, page, page_size)
     for item in items:
-        item["spec"] = _safe_stage_metadata(item["spec"])
+        item.update(_safe_recipe_metadata(item["spec"]))
     return _page(items, page, page_size, total)
 
 
@@ -225,11 +234,12 @@ async def publish_recipe(
 
 
 def _recipe_item(row) -> dict:
-    return {
+    item = {
         "id": row.id, "recipe_key": row.recipe_key, "name": row.name,
         "version": row.version, "status": row.status, "revision": row.revision,
-        "spec": _safe_stage_metadata(row.spec),
     }
+    item.update(_safe_recipe_metadata(row.spec))
+    return item
 
 
 def _recipe_errors(errors) -> list[dict]:

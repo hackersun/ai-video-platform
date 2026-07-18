@@ -169,6 +169,8 @@ async def test_collections_are_paginated_and_connection_secrets_are_redacted(cli
     assert "runtime-prompt" not in serialized
     assert "runtime-text" not in serialized
     assert "authorization" not in serialized.lower()
+    assert recipe["strategy"] == "direct_av_first"
+    assert recipe["stages"] == recipe["spec"]
     assert recipe["spec"]["video"] == {"binding_id": "binding-video", "required": True}
     assert recipe["spec"]["audio"] == {"mode": "video_native_audio"}
 
@@ -1044,6 +1046,7 @@ def _seed_binding(db: AsyncSession, stage: str, capability: str) -> None:
 
 def _recipe_spec() -> dict:
     return {
+        "strategy": "direct_av_first",
         "text": {"required": False}, "vision": {"required": False}, "image": {"required": False},
         "video": {
             "binding_id": "binding-video", "required": True,

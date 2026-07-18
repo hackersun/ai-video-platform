@@ -207,6 +207,8 @@ export interface ProductionRecipeView {
   name: string;
   version: number;
   status: ConfigurationState;
+  strategy: string;
+  stages: Record<string, Record<string, unknown>>;
   spec: Record<string, unknown>;
   revision: number;
 }
