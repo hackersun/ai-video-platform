@@ -185,6 +185,18 @@ class PromptProfileVersionRequest(BaseModel):
         return values
 
 
+class PromptProfileOptimizeRequest(BaseModel):
+    version_id: str
+    mode: str = Field(default="productionize", max_length=80)
+    model_config_id: str | None = None
+
+
+class PromptProfilePreviewRequest(BaseModel):
+    version_id: str
+    task_template: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
 class ResourceImpact(BaseModel):
     affected_bindings: int = 0
     affected_profiles: int = 0

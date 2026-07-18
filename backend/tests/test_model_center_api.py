@@ -56,7 +56,11 @@ MODEL_CENTER_ROUTES = {
     ("post", "/api/v1/model-center/recipe-versions/{recipe_version_id}/disable"),
     ("post", "/api/v1/model-center/recipes/{recipe_key}/rollback"),
     ("get", "/api/v1/model-center/prompt-profiles"),
+    ("get", "/api/v1/model-center/prompt-profiles/{profile_id}"),
+    ("get", "/api/v1/model-center/prompt-profiles/{profile_id}/versions"),
     ("post", "/api/v1/model-center/prompt-profiles"),
+    ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/optimize"),
+    ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/preview"),
     ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/versions"),
     ("post", "/api/v1/model-center/prompt-profile-versions/{version_id}/publish"),
     ("post", "/api/v1/model-center/prompt-profile-versions/{version_id}/disable"),
@@ -164,6 +168,87 @@ async def test_collections_are_paginated_and_connection_secrets_are_redacted(cli
     assert "authorization" not in serialized.lower()
     assert recipe["spec"]["video"] == {"binding_id": "binding-video", "required": True}
     assert recipe["spec"]["audio"] == {"mode": "video_native_audio"}
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_detail_returns_owned_body_and_history(client):
+    response = await client.get("/api/v1/model-center/prompt-profiles/prompt-1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == "prompt-1"
+    assert payload["head"]["task_template"] == "Write {{topic}}"
+    assert payload["head"]["content"] == "Write {{topic}}"
+    assert payload["versions"][0]["checksum"] == "p" * 64
+    assert payload["versions"][0]["content"] == "Write {{topic}}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_optimize_reuses_legacy_optimizer(
+    client,
+    monkeypatch,
+):
+    calls = []
+
+    async def fake_optimize(db, user_id, data):
+        calls.append((user_id, data))
+        return {
+            "task": data["task"],
+            "source": "local_rules",
+            "original_content": data["content"],
+            "optimized_content": "Optimized {{topic}}",
+            "suggestions": ["keep variables"],
+            "warnings": [],
+        }
+
+    monkeypatch.setattr(
+        "app.features.model_config.prompt_assistance.optimize_prompt_skill_content",
+        fake_optimize,
+        raising=False,
+    )
+    response = await client.post(
+        "/api/v1/model-center/prompt-profiles/prompt-1/optimize",
+        json={
+            "version_id": "prompt-v1",
+            "mode": "productionize",
+            "model_config_id": None,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["optimized_content"] == "Optimized {{topic}}"
+    assert response.json()["source"] == "local_rules"
+    assert calls[0][0] == USER_ID
+    assert calls[0][1]["content"] == "Write {{topic}}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_preview_does_not_overwrite_saved_version(client):
+    preview = await client.post(
+        "/api/v1/model-center/prompt-profiles/prompt-1/preview",
+        json={
+            "version_id": "prompt-v1",
+            "task_template": "Draft {topic}",
+            "context": {"topic": "harbor"},
+        },
+    )
+    detail = await client.get("/api/v1/model-center/prompt-profiles/prompt-1")
+
+    assert preview.status_code == 200
+    assert "Draft harbor" in preview.json()["prompt"]
+    assert detail.json()["head"]["task_template"] == "Write {{topic}}"
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_body_is_not_visible_to_another_user(client):
+    app.dependency_overrides[get_current_user_id] = lambda: "other-user"
+    try:
+        response = await client.get("/api/v1/model-center/prompt-profiles/prompt-1")
+    finally:
+        app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+
+    assert response.status_code == 404
+    assert "Write {{topic}}" not in response.text
 
 
 @pytest.mark.asyncio

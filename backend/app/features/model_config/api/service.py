@@ -26,6 +26,11 @@ from app.features.model_config.management import (
     unavailable,
     validate_recipe_version,
 )
+from app.features.model_config.prompt_assistance import (
+    get_prompt_profile_detail,
+    optimize_prompt_profile,
+    preview_prompt_profile,
+)
 
 
 __all__ = [
@@ -40,10 +45,13 @@ __all__ = [
     "create_recipe",
     "drivers_page",
     "get_certification",
+    "get_prompt_profile_detail",
+    "optimize_prompt_profile",
     "impact_preview",
     "overview",
     "publish_prompt_profile_version",
     "prompt_profiles_page",
+    "preview_prompt_profile",
     "publish_recipe",
     "recipes_page",
     "recipe_bindings_display",
