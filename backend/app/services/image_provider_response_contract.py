@@ -69,6 +69,7 @@ async def persist_image_response_evidence(
         "schema_version", "provider", "response_kind", "data_kind",
         "provider_task_id_present", "artifact_returned", "payload_counts",
         "metadata_counts", "base_status_code", "base_status_message_sha256",
+        "execution_snapshot_id",
     }
     safe = {key: value for key, value in evidence.items() if key in allowed}
     metadata = dict(run.run_metadata or {})

@@ -4,7 +4,6 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-
 from app.services.prompt_composer import compose_generation_prompt
 from init_db import init_db
 from main import app

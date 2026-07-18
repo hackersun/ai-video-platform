@@ -88,6 +88,23 @@ export function isInternalTestModelConfig(config: Partial<SavedModelConfig> & Re
   );
 }
 
+const INTERNAL_PROVIDER_PREFIXES = ['preflight-', 'test-provider-', 'placeholder-provider-', 'contract-'];
+const INTERNAL_PROVIDER_IDS = new Set(['deterministic-acceptance']);
+const INTERNAL_PROVIDER_NAMES_CN = new Set(['预检供应商', '测试供应商', '占位供应商', 'TTS开通供应商']);
+
+export function isInternalProviderConfig(provider: {
+  id?: string; name?: string; name_en?: string; name_cn?: string; base_url?: string; description?: string;
+}) {
+  const nameCn = String(provider.name_cn || '').trim();
+  if (INTERNAL_PROVIDER_NAMES_CN.has(nameCn)) return true;
+  const id = String(provider.id || '').toLowerCase();
+  const normalized = [provider.id, provider.name, provider.name_en, provider.name_cn, provider.base_url, provider.description]
+    .map(value => String(value || '').trim().toLowerCase()).join(' ');
+  return INTERNAL_PROVIDER_IDS.has(id)
+    || normalized.split(/\s+/).some(part => INTERNAL_PROVIDER_PREFIXES.some(prefix => part.startsWith(prefix)))
+    || normalized.includes('tts-provider-');
+}
+
 export function getModelCapabilities(configOrModel: { model_type?: string; model_capabilities?: string[]; capabilities?: string[] }): ModelCapability[] {
   const modelType = (configOrModel.model_type || '').toLowerCase();
   const capabilities = (configOrModel.model_capabilities || configOrModel.capabilities || []).map(item => String(item).toLowerCase());

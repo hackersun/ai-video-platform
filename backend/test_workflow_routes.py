@@ -3428,7 +3428,7 @@ def test_workflow_media_batch_uses_consistency_prompt_and_reference_image(
     assert "视频一致性约束" in first_prompt
     assert "角色视觉DNA锁" in first_prompt
     assert "沈砚" in first_prompt
-    assert captured_video[0]["generate_audio"] is False
+    assert "generate_audio" not in captured_video[0]
     assert captured_video[0]["content"][0]["type"] == "image_url"
     assert captured_video[0]["seed"] != captured_video[1]["seed"]
 
@@ -5212,7 +5212,7 @@ def test_final_quality_separate_video_tts_uses_provider_default_voice_lock(
     assert payload["tts_voice_lock_count"] == 1
     assert len(payload["video_job_ids"]) == 1
     assert len(payload["tts_job_ids"]) == 1
-    assert captured_video[0]["generate_audio"] is False
+    assert "generate_audio" not in captured_video[0]
     assert captured_tts[0]["voice"] == "female_nvsheng"
     video_extra = _get_video_job_extra(payload["video_job_ids"][0])
     tts_extra = _get_tts_job_extra(payload["tts_job_ids"][0])

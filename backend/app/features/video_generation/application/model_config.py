@@ -11,8 +11,15 @@ from app.core.volcano_agent_plan_config import find_volcano_agent_plan_model
 from app.core.volcano_config import VOLCANO_MODELS, get_endpoint_id
 from app.features.video_generation.constants import VIDEO_MODEL_ID
 from app.features.video_generation.errors import VideoGenerationError
+from app.features.model_config.public import (
+    GenerationContext,
+    ModelBindingError,
+    resolve_generation_context,
+)
 from app.models import LLMConfig, LLMModel, LLMProvider
 
+
+_CATALOG_FALLBACK_ERRORS = {"model_binding_not_found"}
 
 def get_video_model_name(model_id: str) -> str:
     model = next((item for item in VOLCANO_MODELS if item["id"] == model_id), None)
@@ -131,7 +138,7 @@ def _fallback_payload(model_key: str) -> dict[str, Any]:
     }
 
 
-async def resolve_video_model_config(
+async def _legacy_video_model_config(
     db: AsyncSession,
     user_id: str,
     requested_model: Optional[str],
@@ -142,6 +149,63 @@ async def resolve_video_model_config(
     model_key = requested_model or VIDEO_MODEL_ID
     database = await _database_model(db, user_id, model_key)
     return database or _registry_payload(model_key) or _fallback_payload(model_key)
+
+
+def _generation_context_payload(context: GenerationContext) -> dict[str, Any]:
+    profile = context.profile
+    provider_name = context.connection_params.get("provider_name") or profile.provider_id
+    return {
+        "provider_id": provider_name,
+        "provider_name": provider_name,
+        "api_model_id": profile.api_model_id,
+        "config_model_id": profile.profile_version_id,
+        "model_config_id": context.binding.connection_id,
+        "model_name": profile.api_model_id,
+        "model_type": "video-generation",
+        "base_url": context.base_url,
+        "api_key": context.api_key,
+        "test_status": "success",
+        "model_endpoint_id": profile.api_model_id,
+        "capabilities": list(profile.capabilities),
+        "limits": dict(profile.limits),
+        "protocol": dict(profile.input_contract),
+        "routing": {"route_policy": dict(context.route_policy)},
+        "generation_context": context,
+    }
+
+
+def _preflight_only_video_payload(
+    requested_model: Optional[str], config_id: str, error_code: str,
+) -> dict[str, Any]:
+    model_id = requested_model or VIDEO_MODEL_ID
+    return {
+        "provider_id": "volcano", "provider_name": "unverified",
+        "api_model_id": model_id, "config_model_id": model_id,
+        "model_config_id": config_id, "model_name": model_id,
+        "model_type": "video-generation", "base_url": None, "api_key": None,
+        "test_status": "pending", "model_endpoint_id": model_id,
+        "capabilities": [], "limits": {}, "protocol": {}, "routing": {},
+        "binding_resolution_error": error_code,
+    }
+
+
+async def resolve_video_model_config(
+    db: AsyncSession,
+    user_id: str,
+    requested_model: Optional[str],
+    config_id: Optional[str] = None,
+) -> dict[str, Any]:
+    try:
+        context = await resolve_generation_context(
+            db, user_id=user_id, stage="video", explicit_config_id=config_id,
+        )
+    except ModelBindingError as error:
+        if str(error) in _CATALOG_FALLBACK_ERRORS and not config_id:
+            return await _legacy_video_model_config(db, user_id, requested_model, config_id)
+        if str(error) == "legacy_config_not_verified" and config_id:
+            return _preflight_only_video_payload(requested_model, config_id, str(error))
+        raise VideoGenerationError(422, str(error)) from error
+    return _generation_context_payload(context)
 
 
 async def resolve_video_job_client_config(

@@ -7,8 +7,8 @@ from app.core.time_utils import utc_now
 from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
-import httpx
-import asyncio
+import httpx  # Compatibility alias for legacy tests; provider logic lives in model_drivers.
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,6 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.core.model_registry import (
-    get_model_contract_metadata,
     get_registry,
     get_task_default,
     get_video_model_catalog,
@@ -25,19 +24,35 @@ from app.core.model_registry import (
 from app.core.security import get_current_user_id
 from app.core.volcano_image_catalog import VOLCANO_IMAGE_MODEL_SEEDS
 from app.core.volcano_agent_plan_config import (
-    VOLCANO_AGENT_PLAN_BASE_URL,
     VOLCANO_AGENT_PLAN_MODELS,
     VOLCANO_AGENT_PLAN_PROVIDER,
-    VOLCANO_AGENT_PLAN_PROVIDER_ID,
 )
-from app.features.video_generation.public import PROVIDER_VIDEO_WATERMARK_ARG
-from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog, encrypt_key
+from app.features.model_config.credential_persistence import (
+    apply_config_update,
+    apply_create_or_upsert_config,
+)
+from app.features.model_config.public import (
+    is_product_visible_model,
+    is_product_visible_provider,
+    legacy_model_capability_group,
+    maybe_log_shadow_catalog_comparison,
+    project_legacy_llm_models,
+)
+from app.features.model_drivers import (
+    execute_llm_connection_test,
+    resolve_published_driver_key,
+    test_minimax_api,
+    test_volcano_agent_plan_api,
+    test_volcano_api,
+)
+from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.services.deterministic_provider_fake import (
     deterministic_config_test_result,
     deterministic_provider_fake_enabled,
 )
-from app.services.volcano_speech_tts import configure_volcano_speech_endpoint, test_volcano_speech_connection
+from app.services.volcano_speech_tts import configure_volcano_speech_endpoint
 router = APIRouter(tags=["大模型配置"])
+logger = logging.getLogger(__name__)
 
 
 @router.get("/registry")
@@ -216,137 +231,6 @@ def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Opti
     }
 
 
-def _is_internal_test_model(model: Optional[LLMModel]) -> bool:
-    if model is None:
-        return False
-    identifier_values = [
-        getattr(model, "id", None),
-        getattr(model, "provider_id", None),
-        getattr(model, "model_id", None),
-        getattr(model, "model_name", None),
-    ]
-    display_values = [
-        getattr(model, "model_name_cn", None),
-        getattr(model, "description", None),
-    ]
-    identifier_text = " ".join(str(value or "").lower() for value in identifier_values)
-    display_text = " ".join(str(value or "").lower() for value in display_values)
-    text = f"{identifier_text} {display_text}".strip()
-    if not text:
-        return False
-    return (
-        "test-video-" in text
-        or "test-audio-" in text
-        or "test-image-" in text
-        or "test-text-" in text
-        or text.startswith("test-")
-        or identifier_text.startswith("tts-model-")
-        or "tts-api-model" in identifier_text
-        or "tts api model" in identifier_text
-        or "video-api-model" in identifier_text
-        or "video api model" in identifier_text
-        or "image-api-model" in identifier_text
-        or "image api model" in identifier_text
-        or "audio-api-model" in identifier_text
-        or "audio api model" in identifier_text
-        or "api model" in display_text
-        or "-test-" in identifier_text
-        or identifier_text.endswith("-test")
-        or " test " in f" {identifier_text} "
-        or "测试" in display_text
-        or "preflight-" in text
-        or "preflight video model" in text
-        or "doubao-seedance-test" in text
-        or "doubao-seedance-consistency-test" in text
-        or "speech-test" in text
-    )
-
-
-def _is_internal_test_provider(provider: Optional[LLMProvider]) -> bool:
-    if provider is None:
-        return False
-    name_cn = (getattr(provider, "name_cn", None) or "").strip()
-    if name_cn in {"预检供应商", "测试供应商", "占位供应商", "TTS开通供应商"}:
-        return True
-    values = [
-        getattr(provider, "id", None),
-        getattr(provider, "name", None),
-        getattr(provider, "name_en", None),
-        getattr(provider, "base_url", None),
-        getattr(provider, "description", None),
-    ]
-    text = " ".join(str(value or "").lower() for value in values)
-    return (
-        "preflight-provider-" in text
-        or "test-provider-" in text
-        or "tts-provider-" in text
-        or "placeholder-provider-" in text
-    )
-
-
-def _model_capability_group(model: LLMModel) -> str:
-    model_type = (model.model_type or "").lower()
-    model_capabilities = {str(item).lower() for item in (model.capabilities or [])}
-    if model_type == "vision" or model_capabilities.intersection({"vision", "multimodal", "image_understanding"}):
-        return "vision"
-    if model_type in {"chat", "completion", "text-generation", "text_generation", "llm"}:
-        return "text"
-    if model_type in {"image", "image-generation", "image_generation"}:
-        return "image"
-    if model_type in {"tts", "audio", "speech"}:
-        return "audio"
-    if model_type in {"video", "video-generation", "video_generation"}:
-        return "video"
-    if model_type == "embedding":
-        return "embedding"
-    return model_type or "other"
-
-
-def _model_display_key(model: LLMModel) -> tuple[str, str, str]:
-    """Group legacy catalog aliases that call the same API model."""
-    api_model_id = (model.model_id or model.id or "").strip().lower()
-    return (model.provider_id or "", api_model_id, _model_capability_group(model))
-
-
-def _model_display_rank(model: LLMModel, configs_by_model: dict[str, list[LLMConfig]]) -> tuple:
-    configs = configs_by_model.get(model.id, [])
-    primary = configs[0] if configs else None
-    primary_updated = primary.updated_at.timestamp() if primary and primary.updated_at else 0
-    return (
-        bool(primary and primary.is_default),
-        bool(primary),
-        bool(primary and primary.test_status == "success"),
-        "." not in (model.id or ""),
-        bool(model.is_recommended),
-        primary_updated,
-    )
-
-
-def _dedupe_models_for_display(
-    models: list[LLMModel],
-    configs_by_model: dict[str, list[LLMConfig]],
-) -> list[LLMModel]:
-    """Return one visible model per provider/API-model/capability.
-
-    Historical seed scripts used both dotted and hyphenated ids for a few
-    MiniMax models. Keep a user's configured alias visible when it exists;
-    otherwise prefer the newer hyphenated id so the UI does not show duplicate
-    choices for the same remote model.
-    """
-    selected: dict[tuple[str, str, str], LLMModel] = {}
-    order: list[tuple[str, str, str]] = []
-    for model in models:
-        key = _model_display_key(model)
-        current = selected.get(key)
-        if current is None:
-            selected[key] = model
-            order.append(key)
-            continue
-        if _model_display_rank(model, configs_by_model) > _model_display_rank(current, configs_by_model):
-            selected[key] = model
-    return [selected[key] for key in order]
-
-
 async def clear_default_configs_for_model_group(
     db: AsyncSession,
     user_id: str,
@@ -355,7 +239,7 @@ async def clear_default_configs_for_model_group(
     exclude_config_id: Optional[str] = None,
 ) -> None:
     """Keep one default per capability group, not one global default."""
-    group = _model_capability_group(model)
+    group = legacy_model_capability_group(model)
     result = await db.execute(
         select(LLMConfig, LLMModel)
         .join(LLMModel, LLMConfig.model_id == LLMModel.id)
@@ -370,7 +254,7 @@ async def clear_default_configs_for_model_group(
     for config, existing_model in result.all():
         if exclude_config_id and config.id == exclude_config_id:
             continue
-        if _model_capability_group(existing_model) == group:
+        if legacy_model_capability_group(existing_model) == group:
             config.is_default = False
 
 
@@ -1254,614 +1138,16 @@ async def ensure_default_models(db: AsyncSession) -> None:
         await db.commit()
 
 
-async def test_volcano_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试火山引擎API，根据模型类型走不同端点"""
-    from app.core.volcano_config import VOLCANO_MODELS, get_endpoint_id
-    image_model_ids = {"Doubao-Seedream-4.5", "Doubao-Seedream-5.0-lite", "volcano-seedream-4.5", "volcano-seedream-5.0-lite"}
-    video_model_ids = {
-        "Doubao-Seedance-1.5-pro",
-        "Doubao-Seedance-1.0-pro-fast",
-        "Doubao-Seedance-2.0",
-        "Doubao-Seedance-2.0-fast",
-        "doubao-seedance-1-5-pro-251215",
-        "doubao-seedance-2-0-260128",
-        "doubao-seedance-2-0-fast-260128",
-        "volcano-seedance-1-5-pro",
-        "volcano-seedance-1-0-pro-fast",
-        "volcano-seedance-2-0",
-        "volcano-seedance-2-0-fast",
-    }
-
-    # 查找模型配置
-    model_config = {}
-    model_type = "text-generation"
-    for m in VOLCANO_MODELS:
-        if m["id"] == model_id:
-            model_config = m
-            model_type = m.get("type", "text-generation")
-            break
-    if model_type == "text-generation":
-        if model_id in image_model_ids:
-            model_type = "image-generation"
-        elif model_id in video_model_ids:
-            model_type = "video-generation"
-
-    # 解析实际调用的 model（图像/视频用 endpoint_id，文本用 model_id）
-    actual_model = get_endpoint_id(model_id)  # volcano_config 会正确解析
-
-    base_url = "https://ark.cn-beijing.volces.com/api/v3"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    if model_type == "video-generation":
-        url = f"{base_url}/contents/generations/tasks"
-        data = {
-            "model": actual_model,
-            "content": [
-                {"type": "text", "text": f"{message} --duration 4 --resolution 720p --camerafixed true --watermark {PROVIDER_VIDEO_WATERMARK_ARG}"}
-            ]
-        }
-    elif model_type == "image-generation":
-        # 图像生成模型 → POST /images/generations
-        url = f"{base_url}/images/generations"
-        # 最小像素 3686400，2048x2048=4194304 满足要求
-        data = {
-            "model": actual_model,
-            "prompt": message[:200],
-            "size": "2048x2048",  # 满足 min_pixels >= 3686400
-            "n": 1,
-            "response_format": "url"
-        }
-    else:
-        # 文本生成模型 → POST /chat/completions
-        url = f"{base_url}/chat/completions"
-        data = {
-            "model": actual_model,
-            "messages": [{"role": "user", "content": message}],
-            "max_tokens": 100
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                if model_type == "video-generation":
-                    task_id = result.get("id", "unknown")
-                    return {
-                        "success": True,
-                        "message": f"火山引擎视频模型 API 连接成功！任务ID: {task_id}",
-                        "response": f"任务已提交: {task_id}",
-                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                        "tokens_used": 0
-                    }
-                elif model_type == "image-generation":
-                    return {
-                        "success": True,
-                        "message": "火山引擎图像模型 API 连接成功！",
-                        "response": result.get("data", [{}])[0].get("url", "响应成功"),
-                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                        "tokens_used": 0
-                    }
-                else:
-                    return {
-                        "success": True,
-                        "message": "火山引擎 API 连接成功！",
-                        "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                        "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                        "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                    }
-            else:
-                try:
-                    err_json = response.json()
-                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-                except Exception:
-                    err_msg = response.text[:200]
-                return {
-                    "success": False,
-                    "message": f"[HTTP {response.status_code}] API错误: {err_msg}\n模型ID: {model_id} | 端点: {url}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": f"连接超时(30s)，请检查网络或API地址是否正确\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"连接失败，无法访问API地址: {e}\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-def _is_video_model_id(model_id: str) -> bool:
-    return any(key in model_id for key in ("seedance", "video"))
-
-
-def _is_image_model_id(model_id: str) -> bool:
-    return any(key in model_id for key in ("seedream", "image"))
-
-
-async def test_volcano_agent_plan_api(api_key: str, model_id: str, message: str) -> dict:
-    """Test Volcano Ark Agent Plan with the dedicated /api/plan/v3 endpoint."""
-    base_url = VOLCANO_AGENT_PLAN_BASE_URL
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-    }
-
-    if _is_video_model_id(model_id):
-        url = f"{base_url}/contents/generations/tasks"
-        method = "GET"
-        params = {"page_num": 1, "page_size": 1}
-        data = None
-    elif _is_image_model_id(model_id):
-        # Agent Plan image validation has no documented no-op endpoint. Use the
-        # read-only multimodal task list to verify the dedicated key/base URL
-        # without creating a billable image generation task.
-        url = f"{base_url}/contents/generations/tasks"
-        method = "GET"
-        params = {"page_num": 1, "page_size": 1}
-        data = None
-    else:
-        url = f"{base_url}/chat/completions"
-        method = "POST"
-        params = None
-        data = {
-            "model": model_id,
-            "messages": [{"role": "user", "content": message}],
-            "max_tokens": 100,
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            if method == "GET":
-                response = await client.get(url, params=params, headers=headers)
-            else:
-                response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                if _is_video_model_id(model_id):
-                    response_text = "Agent Plan 视频任务查询端点验证通过，未提交生成任务。"
-                    tokens_used = 0
-                elif _is_image_model_id(model_id):
-                    response_text = "Agent Plan 专属 Key 与 /api/plan/v3 验证通过，未提交图像生成任务。"
-                    tokens_used = 0
-                else:
-                    response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
-                    tokens_used = result.get("usage", {}).get("total_tokens", 0)
-                return {
-                    "success": True,
-                    "message": "火山方舟 Agent Plan API 连接成功！",
-                    "response": response_text,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": tokens_used,
-                }
-
-            try:
-                err_json = response.json()
-                err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-            except Exception:
-                err_msg = response.text[:200]
-            return {
-                "success": False,
-                "message": f"[HTTP {response.status_code}] Agent Plan API错误: {err_msg}\n端点: {url}",
-                "response": None,
-                "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                "tokens_used": 0,
-            }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": f"Agent Plan 连接超时(60s)，请检查网络或 API 地址\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 60000,
-            "tokens_used": 0,
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"Agent Plan 连接失败，无法访问 API 地址: {e}\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0,
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"Agent Plan 测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0,
-        }
-
-
-async def test_qwen_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试阿里千问API"""
-    url = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                content = result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功")
-                return {
-                    "success": True,
-                    "message": "阿里千问 API 连接成功！",
-                    "response": content,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) or result.get("usage", {}).get("input_tokens", 0) + result.get("usage", {}).get("output_tokens", 0)
-                }
-            else:
-                try:
-                    err_json = response.json()
-                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-                except Exception:
-                    err_msg = response.text[:200]
-                return {
-                    "success": False,
-                    "message": f"[HTTP {response.status_code}] API错误: {err_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": f"连接超时(30s)，请检查网络或API地址是否正确\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"连接失败，无法访问API地址: {e}\n请求地址: {url}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_qianlian_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试阿里百炼API (Anthropic 兼容格式)"""
-    url = "https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
-        "anthropic-version": "2023-06-01"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                contents = result.get("content", [])
-                content = next((c.get("text", "") for c in contents if c.get("type") == "text"), "响应成功")
-                return {
-                    "success": True,
-                    "message": "阿里百炼 API 连接成功！",
-                    "response": content[:500] if content else "响应成功",
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("output_tokens", 0)
-                }
-            else:
-                try:
-                    err_json = response.json()
-                    err_type = err_json.get("type", "unknown")
-                    err_msg = err_json.get("error", {}).get("message", err_json.get("message", response.text[:200]))
-                    error_detail = f"[HTTP {response.status_code}] {err_type}: {err_msg}"
-                except Exception:
-                    error_detail = f"[HTTP {response.status_code}] {response.text[:200]}"
-                return {
-                    "success": False,
-                    "message": f"API错误: {error_detail}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时(60s)，请检查网络或API地址是否正确",
-            "response": None,
-            "response_time_ms": 60000,
-            "tokens_used": 0
-        }
-    except httpx.ConnectError as e:
-        return {
-            "success": False,
-            "message": f"连接失败，无法访问API地址: {e}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"测试异常: {str(e)[:300]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_baidu_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试百度文心一言API"""
-    # 百度千帆平台使用IAM认证或Access Token
-    # 兼容模式使用Access Token方式
-    url = "https://qianfan.baidubce.com/v2/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "message": "百度文心一言 API 连接成功！",
-                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                }
-            else:
-                error_data = response.json() if response.content else {}
-                error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(error_data)[:100]
-                return {
-                    "success": False,
-                    "message": f"API错误: {error_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时，请检查网络或API地址",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_openai_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试 OpenAI API"""
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    data = {
-        "model": model_id,
-        "messages": [{"role": "user", "content": message}],
-        "max_tokens": 100
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                return {
-                    "success": True,
-                    "message": "OpenAI API 连接成功！",
-                    "response": result.get("choices", [{}])[0].get("message", {}).get("content", "响应成功"),
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0)
-                }
-            else:
-                error_data = response.json() if response.content else {}
-                error_msg = error_data.get("error", {}).get("message", response.text[:100]) if isinstance(error_data, dict) else str(response.text)[:100]
-                return {
-                    "success": False,
-                    "message": f"API错误: {error_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时，请检查网络或API地址",
-            "response": None,
-            "response_time_ms": 30000,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
-
-
-async def test_minimax_api(api_key: str, model_id: str, message: str) -> dict:
-    """测试 MiniMax API，根据模型类型走不同端点"""
-    from app.core.minimax_config import DEFAULT_TTS_VOICE, MINIMAX_MODELS, get_minimax_base_url
-    from app.core.minimax_voice_contract import minimax_tts_verification_message
-    from app.services.minimax_errors import minimax_config_test_failure
-
-    # 查找模型配置（支持内部ID和API model_id两种匹配）
-    model_config = {}
-    model_type = "text-generation"
-    for m in MINIMAX_MODELS:
-        if m["id"] == model_id or m.get("api_model_id") == model_id:
-            model_config = m
-            model_type = m.get("type", "text-generation")
-            break
-
-    # 解析实际调用的 model（优先用 api_model_id）
-    actual_model = model_config.get("api_model_id", model_id) if model_config else model_id
-    base_url = get_minimax_base_url(api_key)
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    if model_type == "image-generation":
-        # 图像生成模型 → POST /v1/image_generation
-        url = f"{base_url}/image_generation"
-        data = {
-            "model": actual_model,
-            "prompt": message[:200],
-            "aspect_ratio": "1:1",
-            "n": 1,
-            "response_format": "url"
-        }
-    elif model_type == "tts":
-        # TTS模型 → POST /v1/t2a_v2
-        from app.services.minimax_tts_request import build_minimax_tts_request
-
-        request = build_minimax_tts_request(
-            model_id=actual_model, text=message[:50], voice_id=DEFAULT_TTS_VOICE, speed=1.0,
-        )
-        url = f"{base_url}{request.url_path}"
-        data = request.payload
-    else:
-        # 文本生成模型：M3 使用新端点，旧 MiniMax 文本模型保留 OpenAI-compatible 端点
-        if actual_model == "MiniMax-M3":
-            url = f"{base_url}/text/chatcompletion_v2"
-        else:
-            url = f"{base_url}/chat/completions"
-        data = {
-            "model": actual_model,
-            "messages": [{"role": "user", "content": message}],
-            "max_tokens": 100
-        }
-
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(url, json=data, headers=headers)
-
-            if response.status_code == 200:
-                result = response.json()
-                if failure := minimax_config_test_failure(result, int(response.elapsed.total_seconds() * 1000)):
-                    return failure
-                response_text = ""
-                if model_type == "text-generation":
-                    choices = result.get("choices", [])
-                    if choices:
-                        response_text = choices[0].get("message", {}).get("content", "响应成功")
-                    else:
-                        response_text = str(result)[:100]
-                elif model_type == "image-generation":
-                    items = result.get("data", {}).get("items", [])
-                    if items:
-                        response_text = f"生成图像成功，URL: {items[0].get('url', '')[:80]}"
-                    else:
-                        response_text = f"图像生成响应: {str(result)[:100]}"
-                elif model_type == "tts":
-                    response_text = f"TTS响应: {str(result)[:100]}"
-                else:
-                    response_text = str(result)[:100]
-
-                return {
-                    "success": True,
-                    "message": minimax_tts_verification_message(actual_model) if model_type == "tts" else "MiniMax API 连接成功！",
-                    "response": response_text,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": result.get("usage", {}).get("total_tokens", 0) if model_type == "text-generation" else 0
-                }
-            else:
-                error_msg = response.text[:150]
-                return {
-                    "success": False,
-                    "message": f"API错误 [{response.status_code}]: {error_msg}",
-                    "response": None,
-                    "response_time_ms": int(response.elapsed.total_seconds() * 1000),
-                    "tokens_used": 0
-                }
-    except httpx.TimeoutException:
-        return {
-            "success": False,
-            "message": "连接超时，请检查网络或API地址",
-            "response": None,
-            "response_time_ms": 60000,
-            "tokens_used": 0
-        }
-    except Exception as e:
-        return {
-            "success": False,
-            "message": f"连接失败: {str(e)[:100]}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
+async def _execute_config_test(
+    provider_id: str, api_key: str, model_id: str, message: str,
+    *, category: str = "default", model_type: str | None = None,
+    driver_key: str | None = None, base_url: str = "", connection_params: dict | None = None,
+) -> dict:
+    effective_type = model_type or ("speech" if category == "speech" else "chat")
+    return await execute_llm_connection_test(
+        provider_id, api_key, model_id, message, model_type=effective_type,
+        driver_key=driver_key, base_url=base_url, connection_params=connection_params,
+    )
 
 
 # ============== API端点 ==============
@@ -1877,7 +1163,7 @@ async def list_providers(
     )
     providers = [
         provider for provider in result.scalars().all()
-        if not _is_internal_test_provider(provider)
+        if is_product_visible_provider(provider)
     ]
     return [
         LLMProviderResponse(
@@ -1903,83 +1189,8 @@ async def list_models(
 ):
     """获取大模型列表"""
     await ensure_default_models(db)
-    provider_result = await db.execute(
-        select(LLMProvider).where(LLMProvider.is_active == True)
-    )
-    internal_provider_ids = {
-        item.id for item in provider_result.scalars().all()
-        if _is_internal_test_provider(item)
-    }
-    if provider and provider in internal_provider_ids:
-        return []
-
-    query = select(LLMModel).where(LLMModel.is_active == True)
-    
-    if provider:
-        query = query.where(LLMModel.provider_id == provider)
-    
-    result = await db.execute(query)
-    models = [
-        model for model in result.scalars().all()
-        if model.provider_id not in internal_provider_ids and not _is_internal_test_model(model)
-    ]
-    if not models:
-        return []
-
-    config_result = await db.execute(
-        select(LLMConfig)
-        .where(
-            and_(
-                LLMConfig.user_id == user_id,
-                LLMConfig.is_active == True,
-                LLMConfig.model_id.in_([model.id for model in models]),
-            )
-        )
-        .order_by(desc(LLMConfig.is_default), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
-    )
-    configs_by_model: dict[str, list[LLMConfig]] = {}
-    for config in config_result.scalars().all():
-        configs_by_model.setdefault(config.model_id, []).append(config)
-
-    visible_models = _dedupe_models_for_display(models, configs_by_model)
-
-    responses = []
-    for model in visible_models:
-        configs = configs_by_model.get(model.id, [])
-        primary = configs[0] if configs else None
-        primary_key_available = bool(primary and primary.get_api_key_decrypted())
-        primary_test_status = primary.test_status if primary else None
-        primary_test_message = primary.test_message if primary else None
-        if primary and not primary_key_available:
-            primary_test_status = "failed"
-            primary_test_message = "API Key 为空或无法解密，请重新保存并验证该配置"
-        responses.append({
-            "id": model.id,
-            "provider_id": model.provider_id,
-            "model_id": model.model_id,
-            "model_name": model.model_name,
-            "model_name_cn": model.model_name_cn,
-            "model_type": model.model_type,
-            "capabilities": model.capabilities or [],
-            "context_window": model.context_window,
-            "max_tokens": model.max_tokens,
-            "input_cost_per_1k": model.input_cost_per_1k,
-            "output_cost_per_1k": model.output_cost_per_1k,
-            "is_active": model.is_active,
-            "is_recommended": model.is_recommended,
-            "description": model.description,
-            "base_url": model.base_url,
-            "user_config_id": primary.id if primary else None,
-            "user_config_name": primary.name if primary else None,
-            "user_configured": bool(primary),
-            "user_config_count": len(configs),
-            "user_is_default": bool(primary and primary.is_default),
-            "user_test_status": primary_test_status,
-            "user_test_message": primary_test_message,
-            "user_key_available": primary_key_available,
-            **get_model_contract_metadata(model.model_id, model.provider_id),
-        })
-
+    responses = await project_legacy_llm_models(db, user_id, provider)
+    await maybe_log_shadow_catalog_comparison(db, user_id, responses, logger)
     return responses
 
 
@@ -2004,14 +1215,14 @@ async def list_configs(
     configs = []
     for row in result.all():
         config, model = row
-        if _is_internal_test_model(model):
+        if not is_product_visible_model(model):
             continue
         # 获取provider名称
         provider_result = await db.execute(
             select(LLMProvider).where(LLMProvider.id == model.provider_id)
         )
         provider = provider_result.scalar_one_or_none()
-        if _is_internal_test_provider(provider):
+        if provider is not None and not is_product_visible_provider(provider):
             continue
         
         configs.append(build_llm_config_response(config, model, provider))
@@ -2026,18 +1237,10 @@ async def create_config(
     user_id: str = Depends(get_current_user_id)
 ):
     """创建大模型配置"""
-    # 验证模型是否存在
-    result = await db.execute(
-        select(LLMModel).where(LLMModel.id == request.model_id)
-    )
+    result = await db.execute(select(LLMModel).where(LLMModel.id == request.model_id))
     model = result.scalar_one_or_none()
-    
     if not model:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="模型不存在"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在")
     existing_result = await db.execute(
         select(LLMConfig).where(
             and_(
@@ -2048,8 +1251,6 @@ async def create_config(
         ).order_by(desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
     )
     config = existing_result.scalars().first()
-
-    # 如果设为默认，只取消同一能力类别的其他默认配置。
     if request.is_default:
         await clear_default_configs_for_model_group(
             db,
@@ -2057,47 +1258,22 @@ async def create_config(
             model,
             exclude_config_id=config.id if config else None,
         )
-
-    if config:
-        existing_plain_key = config.get_api_key_decrypted()
-        api_key_changed = request.api_key != existing_plain_key
-        config.name = request.name
-        config.api_key = encrypt_key(request.api_key)
-        config.api_secret = request.api_secret
-        config.temperature = request.temperature
-        config.top_p = request.top_p
-        config.max_tokens = request.max_tokens
-        config.extra_params = request.extra_params
-        config.is_default = request.is_default
-        if api_key_changed:
-            config.test_status = "pending"
-            config.test_message = "配置已更新，请重新测试连接"
-    else:
+    is_existing = config is not None
+    if config is None:
         config = LLMConfig(
             id=str(uuid4()),
             user_id=user_id,
             model_id=request.model_id,
             name=request.name,
-            api_key=encrypt_key(request.api_key),
-            api_secret=request.api_secret,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            max_tokens=request.max_tokens,
-            extra_params=request.extra_params,
-            is_default=request.is_default,
-            test_status="pending"
         )
         db.add(config)
-
+    apply_create_or_upsert_config(config, request, is_existing=is_existing)
     await db.commit()
     await db.refresh(config)
-    
-    # 获取provider信息
     provider_result = await db.execute(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    
     return build_llm_config_response(config, model, provider)
 
 
@@ -2127,29 +1303,14 @@ async def test_api_connection(
         model_provider_id = model.provider_id
         model_id = model.model_id
     
-    # 根据提供商调用不同的测试函数
-    if model_provider_id == "volcano":
-        return await test_volcano_api(request.api_key, model_id, request.message)
-    elif model_provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
-        return await test_volcano_agent_plan_api(request.api_key, model_id, request.message)
-    elif model_provider_id in ("qwen", "dashscope"):
-        return await test_qwen_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "qianlian":
-        return await test_qianlian_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "baidu":
-        return await test_baidu_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "openai":
-        return await test_openai_api(request.api_key, model_id, request.message)
-    elif model_provider_id == "minimax":
-        return await test_minimax_api(request.api_key, model_id, request.message)
-    else:
-        return {
-            "success": False,
-            "message": f"不支持的提供商: {model_provider_id}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
+    category = "speech" if model and model.model_type in ("tts", "audio", "speech") else "default"
+    base_url = model.base_url if model and model.base_url else ""
+    driver_key = await resolve_published_driver_key(db, model.id if model else None)
+    return await _execute_config_test(
+        model_provider_id, request.api_key, model_id, request.message,
+        category=category, model_type=model.model_type if model else None,
+        driver_key=driver_key, base_url=base_url,
+    )
 
 
 @router.post("/configs/{config_id}/test", response_model=LLMTestResponse)
@@ -2206,33 +1367,18 @@ async def test_config(
         await db.commit()
         return test_result
 
-    # 根据提供商调用测试
-    if provider_id == "volcano" and model.model_type in ("tts", "audio", "speech"):
-        extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-        base_url = configure_volcano_speech_endpoint(extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra)
-        test_result = await test_volcano_speech_connection(api_key, base_url or "", request.message)
-    elif provider_id == "volcano":
-        test_result = await test_volcano_api(api_key, model.model_id, request.message)
-    elif provider_id == VOLCANO_AGENT_PLAN_PROVIDER_ID:
-        test_result = await test_volcano_agent_plan_api(api_key, model.model_id, request.message)
-    elif provider_id in ("qwen", "dashscope"):
-        test_result = await test_qwen_api(api_key, model.model_id, request.message)
-    elif provider_id == "qianlian":
-        test_result = await test_qianlian_api(api_key, model.model_id, request.message)
-    elif provider_id == "baidu":
-        test_result = await test_baidu_api(api_key, model.model_id, request.message)
-    elif provider_id == "openai":
-        test_result = await test_openai_api(api_key, model.model_id, request.message)
-    elif provider_id == "minimax":
-        test_result = await test_minimax_api(api_key, model.model_id, request.message)
-    else:
-        test_result = {
-            "success": False,
-            "message": f"不支持的提供商: {provider_id}",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0
-        }
+    category = "speech" if model.model_type in ("tts", "audio", "speech") else "default"
+    extra = config.extra_params if isinstance(config.extra_params, dict) else {}
+    configured_base_url = configure_volcano_speech_endpoint(
+        extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra,
+    ) if category == "speech" else ""
+    driver_key = str(extra.get("driver_key") or "").strip() or await resolve_published_driver_key(db, model.id)
+    test_result = await _execute_config_test(
+        provider_id, api_key, model.model_id, request.message,
+        category=category, model_type=model.model_type, driver_key=driver_key,
+        base_url=configured_base_url or model.base_url or (provider.base_url if provider else "") or "",
+        connection_params=extra,
+    )
     # 更新测试状态
     config.test_status = "success" if test_result["success"] else "failed"
     config.test_message = test_result["message"]
@@ -2258,54 +1404,22 @@ async def update_config(
         )
     )
     config = result.scalar_one_or_none()
-    
     if not config:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="配置不存在"
-        )
-    
-    # 更新字段
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="配置不存在")
     if request.is_default:
         target_model = await db.get(LLMModel, request.model_id)
         if target_model is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="模型不存在")
         await clear_default_configs_for_model_group(db, user_id, target_model, exclude_config_id=config_id)
-
-    existing_plain_key = config.get_api_key_decrypted()
-    next_api_key = request.api_key.strip() if isinstance(request.api_key, str) else None
-    api_key_changed = bool(next_api_key) and next_api_key != existing_plain_key
-    model_changed = request.model_id != config.model_id
-
-    config.name = request.name
-    config.model_id = request.model_id
-    if next_api_key:
-        config.api_key = encrypt_key(next_api_key)
-    config.api_secret = request.api_secret
-    config.temperature = request.temperature
-    config.top_p = request.top_p
-    config.max_tokens = request.max_tokens
-    config.extra_params = request.extra_params
-    config.is_default = request.is_default
-    if api_key_changed or model_changed:
-        config.test_status = "pending"
-        config.test_message = "模型或 API Key 已更新，请重新测试连接"
-    
+    apply_config_update(config, request)
     await db.commit()
     await db.refresh(config)
-    
-    # 获取模型信息
-    result = await db.execute(
-        select(LLMModel).where(LLMModel.id == config.model_id)
-    )
+    result = await db.execute(select(LLMModel).where(LLMModel.id == config.model_id))
     model = result.scalar_one()
-    
-    # 获取provider信息
     provider_result = await db.execute(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    
     return build_llm_config_response(config, model, provider)
 
 
@@ -2369,7 +1483,7 @@ async def set_default_config(
     config.is_default = True
     await db.commit()
 
-    return {"message": f"已设为{_model_capability_group(model)}能力默认配置"}
+    return {"message": f"已设为{legacy_model_capability_group(model)}能力默认配置"}
 
 
 @router.get("/api-key/{provider}", response_model=dict)

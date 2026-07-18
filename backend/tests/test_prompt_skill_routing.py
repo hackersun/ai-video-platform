@@ -199,3 +199,55 @@ def test_prompt_router_exposes_known_model_contract_without_prompt_text_evidence
     assert result["model_verification_status"] == "verified"
     evidence = {key: value for key, value in result.items() if key != "prompt"}
     assert "小说原文不得进入证据" not in str(evidence)
+
+
+def test_prompt_router_prefers_published_canonical_profile_for_exact_model() -> None:
+    async def scenario() -> dict:
+        from app.models import PromptProfile, PromptProfileVersion
+        from app.services.prompt_template_router import select_prompt_skill_for_model
+
+        user_id = f"route-user-{uuid4().hex[:20]}"
+        profile_id = str(uuid4())
+        async with AsyncSessionLocal() as db:
+            db.add(_skill(
+                user_id=user_id, name="旧通用模板", content="legacy-template",
+                is_builtin=False, routing={},
+            ))
+            db.add(PromptProfile(
+                id=profile_id, user_id=user_id, key="script.minimax.m3",
+                name="MiniMax M3 模板", task=ROUTING_TEST_TASK,
+            ))
+            db.add(PromptProfileVersion(
+                id=str(uuid4()), profile_id=profile_id, version=1, stage="analysis",
+                content="canonical-{entity_types}", variables={},
+                routing={
+                    "model_filter": ["MiniMax-M3"], "api_key": "secret-value",
+                    "private prompt body": 1,
+                },
+                output_contract="json_array", evaluation={}, status="published",
+                checksum="a" * 64,
+            ))
+            await db.commit()
+            return await select_prompt_skill_for_model(
+                db, user_id=user_id, task=ROUTING_TEST_TASK, provider_name="minimax",
+                model_id="MiniMax-M3", model_capabilities=["text_generation"],
+                output_contract="json_array", context={"entity_types": "character"},
+                internal_prompt="private source body",
+            )
+
+    result = _run(scenario())
+
+    assert result["prompt_skill_name"] == "MiniMax M3 模板"
+    assert result["prompt"].startswith("【模型适配提示词模板】\ncanonical-character")
+    assert result["prompt_profile_version_id"]
+    assert result["routing_reason"] == "exact_model_match"
+    assert result["prompt_skills"][0]["routing"] == {
+        "selector_kind": "exact_model",
+        "provider_scoped": False,
+        "model_scoped": True,
+        "capability_scoped": False,
+        "output_contract_scoped": True,
+    }
+    evidence = {key: value for key, value in result.items() if key != "prompt"}
+    assert "private source body" not in str(evidence)
+    assert "secret-value" not in str(evidence)

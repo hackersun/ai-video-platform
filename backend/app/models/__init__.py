@@ -32,6 +32,7 @@ from app.models.template import Template
 from app.models.version import Version, VersionRule
 from app.models.studio_review import StudioRepairAction, StudioReviewRun
 from app.models.prompt_skill import PromptSkill
+from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 from app.models.entity_extraction_run import EntityExtractionRun
 from app.models.story_entity_mention import StoryEntityMention
 from app.models.entity_feedback import EntityFeedback
@@ -41,6 +42,17 @@ from app.models.quality_evaluation import QualityEvaluation
 from app.models.series_production_run import SeriesProductionRun
 from app.models.series_anchor_generation_submission import SeriesAnchorGenerationSubmission
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.models.model_center import (
+    ModelBinding,
+    ModelCertificationRun,
+    ModelConfigAuditEvent,
+    ModelConnection,
+    ModelExecutionSnapshot,
+    ModelProfile,
+    ModelProfileVersion,
+    ModelProvider,
+    ProductionRecipeVersion,
+)
 
 __all__ = [
     "LLMProvider",
@@ -84,6 +96,8 @@ __all__ = [
     "StudioRepairAction",
     "StudioReviewRun",
     "PromptSkill",
+    "PromptProfile",
+    "PromptProfileVersion",
     "EntityExtractionRun",
     "StoryEntityMention",
     "EntityFeedback",
@@ -92,4 +106,13 @@ __all__ = [
     "QualityEvaluation",
     "SeriesProductionRun",
     "LiveCanaryProviderOperation",
+    "ModelProvider",
+    "ModelProfile",
+    "ModelConnection",
+    "ModelProfileVersion",
+    "ModelBinding",
+    "ProductionRecipeVersion",
+    "ModelCertificationRun",
+    "ModelExecutionSnapshot",
+    "ModelConfigAuditEvent",
 ]

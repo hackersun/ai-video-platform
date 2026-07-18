@@ -4,10 +4,12 @@ Tests for default text model resolution.
 
 from __future__ import annotations
 
+from pathlib import Path
 import pytest
 from uuid import uuid4
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.api_key_utils import (
     create_image_generation_service,
@@ -19,7 +21,7 @@ from app.core.api_key_utils import (
     sanitize_chat_response,
     strip_thinking_blocks,
 )
-from app.core.database import AsyncSessionLocal
+from app.core.database import AsyncSessionLocal, get_db
 from app.api.v1.endpoints.coding_plan import resolve_text_service
 from app.services.ai_service_base import truncate_context
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
@@ -106,6 +108,41 @@ async def test_llm_catalog_hides_preflight_test_provider_data() -> None:
             if provider is not None:
                 await db.delete(provider)
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_llm_catalog_hides_contract_and_deterministic_providers(tmp_path: Path) -> None:
+    provider_ids = {"deterministic-acceptance", "contract-text"}
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'llm-catalog.db'}")
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(LLMProvider.__table__.create)
+    async with session_factory() as db:
+        for provider_id in provider_ids:
+            db.add(
+                LLMProvider(
+                    id=provider_id,
+                    name=provider_id,
+                    name_cn=provider_id,
+                    base_url="https://example.invalid/internal",
+                    is_active=True,
+                )
+            )
+        await db.commit()
+
+    async def override_get_db():
+        async with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    try:
+        response = TestClient(app).get("/api/v1/llm/providers")
+        assert response.status_code == 200
+        assert {item["id"] for item in response.json()}.isdisjoint(provider_ids)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -772,16 +809,33 @@ def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias
     user_id = "model-alias-dedupe-user"
     headers = {"Authorization": f"Bearer {user_id}"}
 
-    async def _cleanup() -> None:
+    async def _prepare_isolated_aliases() -> None:
         async with AsyncSessionLocal() as db:
             existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
             for config in existing.scalars().all():
                 await db.delete(config)
+            if await db.get(LLMProvider, "minimax") is None:
+                db.add(LLMProvider(
+                    id="minimax", name="minimax", name_cn="MiniMax",
+                    base_url="https://api.minimaxi.com/v1", is_active=True,
+                ))
+            if await db.get(LLMModel, "minimax-m2-7") is None:
+                db.add(LLMModel(
+                    id="minimax-m2-7", provider_id="minimax", model_id="MiniMax-M2.7",
+                    model_name="MiniMax-M2.7", model_type="chat", capabilities=["chat"],
+                    is_active=True,
+                ))
+            if await db.get(LLMModel, "minimax-speech-2-6-hd") is None:
+                db.add(LLMModel(
+                    id="minimax-speech-2-6-hd", provider_id="minimax", model_id="speech-2.6-hd",
+                    model_name="MiniMax-speech-2.6-hd", model_type="tts",
+                    capabilities=["text-to-speech"], is_active=True, is_recommended=True,
+                ))
             await db.commit()
 
     import asyncio
 
-    asyncio.run(_cleanup())
+    asyncio.run(_prepare_isolated_aliases())
 
     response = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
     assert response.status_code == 200
@@ -866,7 +920,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
             config = LLMConfig(
                 id="llm-config-update-preserve-key-config",
                 user_id=user_id,
-                model_id="minimax-m2-7",
+                model_id="minimax-m2.7",
                 name="已验证配置",
                 is_active=True,
                 is_default=True,
@@ -874,6 +928,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
                 test_message="MiniMax API 连接成功！",
             )
             config.set_api_key_encrypted("sk-existing-key")
+            config.set_api_secret_encrypted("secret-existing")
             db.add(config)
             await db.commit()
 
@@ -884,7 +939,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
     response = client.put(
         "/api/v1/llm/configs/llm-config-update-preserve-key-config",
         json={
-            "model_id": "minimax-m2-7",
+            "model_id": "minimax-m2.7",
             "name": "只改名称和参数",
             "temperature": 0.6,
             "top_p": 0.8,
@@ -900,6 +955,34 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
     assert data["test_status"] == "success"
     assert data["test_message"] == "MiniMax API 连接成功！"
     assert data["key_available"] is True
+
+    async def _stored_secret() -> tuple[str | None, str]:
+        async with AsyncSessionLocal() as db:
+            config = await db.get(LLMConfig, "llm-config-update-preserve-key-config")
+            assert config is not None
+            return config.api_secret, config.get_api_secret_decrypted()
+
+    encrypted_secret, decrypted_secret = asyncio.run(_stored_secret())
+    assert encrypted_secret != "secret-existing"
+    assert decrypted_secret == "secret-existing"
+
+    null_secret_response = client.put(
+        "/api/v1/llm/configs/llm-config-update-preserve-key-config",
+        json={
+            "model_id": "minimax-m2.7",
+            "name": "明确保留 Secret",
+            "api_secret": None,
+            "temperature": 0.6,
+            "top_p": 0.8,
+            "max_tokens": 4096,
+            "is_default": True,
+        },
+        headers=headers,
+    )
+    assert null_secret_response.status_code == 200
+    encrypted_secret, decrypted_secret = asyncio.run(_stored_secret())
+    assert encrypted_secret != "secret-existing"
+    assert decrypted_secret == "secret-existing"
 
 
 def test_llm_defaults_are_scoped_by_model_capability() -> None:

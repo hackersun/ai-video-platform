@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from dataclasses import replace
+from typing import Any, Mapping, Optional
 
 from fastapi import HTTPException
+
+from app.core.dev_generation import is_dev_mode
+from app.features.model_config.public import (
+    ExecutionSnapshotCommand,
+    ModelBindingError,
+    create_execution_snapshot,
+    resolve_generation_context,
+)
+from app.features.model_drivers import public as driver_kernel
 
 MINIMAX_IMAGE_PROMPT_MAX_CHARS = 1450
 
@@ -106,6 +116,31 @@ def _prepare_image_prompt_for_provider(provider_name: str, prompt: str) -> str:
     return prompt
 
 
+async def _create_image_execution_snapshot(
+    generation_context: Any, *, db: Any, user_id: str | None, run_id: str | None,
+    job_id: str | None, aspect_ratio: str, image_count: int, image_size: str,
+    prompt_compacted: bool,
+) -> str | None:
+    if db is None or not user_id or getattr(generation_context, "binding", None) is None:
+        return None
+    snapshot = await create_execution_snapshot(
+        db,
+        ExecutionSnapshotCommand(
+            user_id=user_id, run_id=run_id, job_id=job_id,
+            task=generation_context.binding.task,
+            capability=generation_context.binding.capability,
+            binding=generation_context.binding,
+            recipe_version_id=getattr(generation_context, "recipe_version_id", None),
+            prompt_profile_version_id=getattr(generation_context, "prompt_profile_version_id", None),
+            sanitized_params={
+                "aspect_ratio": aspect_ratio, "image_count": image_count, "image_size": image_size,
+                "parameter_normalization": {"prompt_compacted": prompt_compacted},
+            },
+        ),
+    )
+    return snapshot.id
+
+
 async def call_image_generation_provider(
     service: Any,
     *,
@@ -117,8 +152,54 @@ async def call_image_generation_provider(
     aspect_ratio: str = "1:1",
     openai_size: str = "1024x1024",
     minimax_response_format: str = "base64",
+    generation_context: Any = None,
+    generation_params: Mapping[str, Any] | None = None,
+    db: Any = None,
+    user_id: str | None = None,
+    config_id: str | None = None,
+    job_id: str | None = None,
+    run_id: str | None = None,
+    recipe_version_id: str | None = None,
+    prompt_profile_version_id: str | None = None,
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
+    if generation_context is None and db is not None and user_id:
+        try:
+            generation_context = await resolve_generation_context(
+                db, user_id=user_id, stage="image", explicit_config_id=config_id,
+                recipe_version_id=recipe_version_id,
+                prompt_profile_version_id=prompt_profile_version_id,
+            )
+        except ModelBindingError as error:
+            if not is_dev_mode():
+                raise HTTPException(status_code=422, detail=str(error)) from error
+    if generation_context is not None:
+        driver = generation_context.driver_context
+        prepared_prompt = (
+            _compact_minimax_image_prompt(prompt)
+            if driver.driver_key == "minimax_image_v1" else prompt
+        )
+        params = {
+            **dict(generation_context.profile.default_params),
+            **_driver_image_params(driver.driver_key, num, size, aspect_ratio, minimax_response_format),
+            **dict(generation_params or {}),
+        }
+        snapshot_id = await _create_image_execution_snapshot(
+            generation_context, db=db, user_id=user_id, run_id=run_id, job_id=job_id,
+            aspect_ratio=aspect_ratio, image_count=num, image_size=size,
+            prompt_compacted=prepared_prompt != prompt,
+        )
+        submission = await driver_kernel.execute_generation(
+            driver_kernel.build_builtin_driver_registry(),
+            driver_kernel.ImageCommand(prompt=prepared_prompt, params=params),
+            replace(driver, execution_snapshot_id=snapshot_id) if snapshot_id else driver,
+        )
+        output = dict(submission.output)
+        if submission.provider_task_id and not output.get("task_id"):
+            output["task_id"] = submission.provider_task_id
+        if snapshot_id:
+            output["execution_snapshot_id"] = snapshot_id
+        return output
     provider = (provider_name or "").lower()
     prepared_prompt = _prepare_image_prompt_for_provider(provider, prompt)
     if provider in ("volcano", "volcano_agent_plan"):
@@ -140,6 +221,16 @@ async def call_image_generation_provider(
             save_local=False,
         )
     raise HTTPException(status_code=400, detail=f"不支持的图像模型服务商: {provider_name}")
+
+
+def _driver_image_params(
+    driver_key: str, num: int, size: str, aspect_ratio: str, response_format: str,
+) -> dict[str, Any]:
+    if driver_key == "minimax_image_v1":
+        return {"aspect_ratio": aspect_ratio, "n": num, "response_format": response_format}
+    if driver_key == "volcano_ark_image_v3":
+        return {"size": size, "num": num}
+    return {}
 
 
 def provider_task_id(result: Any, provider_name: Optional[str] = None) -> Optional[str]:

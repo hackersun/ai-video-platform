@@ -48,7 +48,7 @@ const expertNav = [
   { href: '/tts', label: '配音' },
   { href: '/synthesis', label: '合成' },
   { href: '/prompt-skills', label: '提示词管理' },
-  { href: '/llm-config', label: '模型配置' },
+  { href: '/llm-config', label: '模型中心' },
 ];
 
 type NavigationItem = {

@@ -17,8 +17,12 @@ from app.api.v1.endpoints import (
 from app.features.series_anchor_generation.api import router as series_anchor_generation_router
 from app.features.series_run_recovery.api import router as series_run_recovery_router
 from app.features.assets.api import router as asset_maintenance_router
+from app.features.model_config.api import router as model_center_router
 
 api_router = APIRouter()
+
+# 统一模型中心管理 API
+api_router.include_router(model_center_router, prefix="", tags=["模型中心"])
 
 # 用户认证
 api_router.include_router(auth.router, prefix="", tags=["用户认证"])

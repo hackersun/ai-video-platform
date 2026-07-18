@@ -3,11 +3,13 @@
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from sqlalchemy import desc, select
-
-from app.core.api_key_utils import get_user_api_key
 from app.core.dev_generation import is_dev_mode
 from app.core.model_registry import get_model_reference_limits, get_task_default
+from app.features.model_config.public import (
+    ModelBindingError,
+    resolve_generation_context,
+)
+from app.features.model_drivers.public import select_llm_connection_driver_key
 from app.features.video_generation import public as video_kernel
 from app.features.workflow_media.application.load_context import WorkflowMediaContext
 from app.features.workflow_media.application.reference_packages import (
@@ -25,7 +27,6 @@ from app.features.workflow_media.application.voice_locks import (
 from app.features.workflow_media.errors import WorkflowMediaError
 from app.features.workflow_media.schemas import WorkflowMediaBatchRequest
 from app.models import Shot
-from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.services.audio_route_service import resolve_shot_audio_route
 from app.services.consistency_preflight import (
     build_generation_context_package,
@@ -58,7 +59,7 @@ class PreparedSeparateMedia:
     prepared_shots: Dict[str, Dict[str, Any]]
 
 
-def _is_tts_model(model: LLMModel) -> bool:
+def _is_tts_model(model: Any) -> bool:
     model_type = (model.model_type or "").lower()
     capabilities = [str(item).lower() for item in (model.capabilities or [])]
     return model_type in {"tts", "audio", "speech"} or any(
@@ -67,11 +68,11 @@ def _is_tts_model(model: LLMModel) -> bool:
     )
 
 
-def _audio_model(config: LLMConfig, model: LLMModel, provider: LLMProvider) -> Dict[str, Any]:
+def _audio_model(config: Any, model: Any, provider: Any) -> Dict[str, Any]:
     extra = config.extra_params if isinstance(config.extra_params, dict) else {}
     provider_id = provider.name or provider.id
     base_url = extra.get("base_url") or model.base_url or provider.base_url
-    if provider_id == "volcano":
+    if select_llm_connection_driver_key(provider_id, "speech") == "volcano_openspeech_v3":
         base_url = configure_volcano_speech_endpoint(base_url, extra)
     return {
         "config_id": config.id,
@@ -90,59 +91,58 @@ async def _resolve_saved_tts_model(
 ) -> Optional[Dict[str, Any]]:
     if not config_id:
         return None
-    result = await context.db.execute(
-        select(LLMConfig, LLMModel, LLMProvider)
-        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
-        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
-        .where(
-            LLMConfig.id == config_id,
-            LLMConfig.user_id == context.user_id,
-            LLMConfig.is_active == True,
-            LLMModel.is_active == True,
-            LLMProvider.is_active == True,
-        ).limit(1)
-    )
-    row = result.first()
-    if not row:
-        raise WorkflowMediaError(404, "所选声音模型配置不存在或已停用")
-    config, model, provider = row
-    if not _is_tts_model(model):
-        raise WorkflowMediaError(422, "所选模型配置不支持声音/TTS能力")
-    return _audio_model(config, model, provider)
+    try:
+        generation = await resolve_generation_context(
+            context.db, user_id=context.user_id, stage="audio",
+            explicit_config_id=config_id,
+        )
+    except ModelBindingError as error:
+        if str(error) == "legacy_config_not_verified":
+            raise await _legacy_binding_preflight_error(
+                context, config_id=config_id, task_type="tts_dialogue",
+            ) from error
+        raise WorkflowMediaError(422, str(error)) from error
+    return _audio_generation_model(generation)
+
+
+def _audio_generation_model(generation: Any) -> Dict[str, Any]:
+    driver = generation.driver_context
+    base_url = generation.base_url
+    if driver.driver_key == "volcano_openspeech_v3":
+        base_url = configure_volcano_speech_endpoint(base_url, dict(driver.connection_params))
+    return {
+        "config_id": generation.binding.connection_id,
+        "provider_id": driver.connection_params.get("provider_name") or generation.profile.provider_id,
+        "model_id": generation.profile.api_model_id,
+        "model_name": generation.profile.api_model_id,
+        "capabilities": list(generation.profile.capabilities),
+        "test_status": "success",
+        "base_url": base_url,
+        "api_key": driver.api_key,
+        "driver_key": driver.driver_key,
+        "generation_context": generation,
+    }
 
 
 async def _resolve_default_tts_model(context: WorkflowMediaContext) -> Optional[Dict[str, Any]]:
-    supported = {"minimax", "volcano"}
-    result = await context.db.execute(
-        select(LLMConfig, LLMModel, LLMProvider)
-        .join(LLMModel, LLMConfig.model_id == LLMModel.id)
-        .join(LLMProvider, LLMModel.provider_id == LLMProvider.id)
-        .where(
-            LLMConfig.user_id == context.user_id,
-            LLMConfig.is_active == True,
-            LLMModel.is_active == True,
-            LLMProvider.is_active == True,
-        ).order_by(desc(LLMConfig.is_default), desc(LLMConfig.updated_at), desc(LLMConfig.created_at))
-    )
-    for config, model, provider in result.all():
-        candidate = _audio_model(config, model, provider)
-        if candidate["provider_id"] in supported and _is_tts_model(model) and candidate["api_key"]:
-            return candidate
+    try:
+        generation = await resolve_generation_context(
+            context.db, user_id=context.user_id, stage="audio",
+        )
+        return _audio_generation_model(generation)
+    except ModelBindingError as error:
+        if str(error) != "model_binding_not_found":
+            raise WorkflowMediaError(422, str(error)) from error
     default = (get_task_default("tts_dialogue") or {}).get("default_model") or {}
     if not default:
         return None
     provider_id = default.get("provider_id", "local")
-    api_key, base_url = (None, None)
-    if provider_id in supported:
-        api_key, base_url = await get_user_api_key(
-            context.db, context.user_id, provider_id, raise_if_missing=False,
-        )
     return {
         "config_id": None, "provider_id": provider_id,
         "model_id": default.get("api_model_id") or default.get("id") or "local.dev_tts",
         "model_name": default.get("display_name", "DEV_MODE 语音合成"),
         "capabilities": default.get("capabilities") or ["text-to-speech"],
-        "test_status": "configured" if api_key else None, "base_url": base_url, "api_key": api_key,
+        "test_status": None, "base_url": None, "api_key": None,
     }
 
 
@@ -156,6 +156,20 @@ def _tts_unconfigured_detail(command: PrepareSeparateMediaCommand, model: Option
         "provider_id": model.get("provider_id") if model else None,
         "workflow_id": workflow.id,
     }
+
+
+async def _legacy_binding_preflight_error(
+    context: WorkflowMediaContext, *, config_id: str, task_type: str,
+) -> WorkflowMediaError:
+    shot = context.shots[0]
+    package = await build_generation_context_package(
+        context.db, context.user_id, task_type=task_type, model_config_id=config_id,
+        image_url=shot.image_url, require_public_reference_image=bool(shot.image_url),
+        production_mode=True, novel_id=context.workflow.novel_id,
+        chapter_id=context.workflow.chapter_id, script_id=context.workflow.script_id,
+        storyboard_id=context.workflow.storyboard_id or shot.storyboard_id, shot_id=shot.id,
+    )
+    return WorkflowMediaError(422, preflight_failure_detail(package))
 
 
 def _shot_prompt(shot: Shot) -> str:
@@ -281,8 +295,13 @@ async def _quality_inputs(command: PrepareSeparateMediaCommand, values: dict) ->
     return references, locks
 
 
-def _runtime_flags(command: PrepareSeparateMediaCommand, values: dict) -> tuple[Optional[str], Optional[str], bool, bool]:
+async def _runtime_flags(command: PrepareSeparateMediaCommand, values: dict) -> tuple[Optional[str], Optional[str], bool, bool]:
     request = command.request
+    if values["video"].get("binding_resolution_error") == "legacy_config_not_verified":
+        raise await _legacy_binding_preflight_error(
+            command.context, config_id=command.context.effective_video_config_id,
+            task_type="shot_video",
+        )
     video_key = values["video"].get("api_key")
     audio_key = values["audio"].get("api_key") if values["audio"] else None
     dev_video = not video_key and is_dev_mode() and not request.require_real_video
@@ -396,7 +415,7 @@ async def _prepare_shot(command: PrepareSeparateMediaCommand, shared: dict, shot
 async def prepare_separate_media(command: PrepareSeparateMediaCommand) -> PreparedSeparateMedia:
     values = await _model_inputs(command)
     references, locks = await _quality_inputs(command, values)
-    video_key, audio_key, dev_video, dev_audio = _runtime_flags(command, values)
+    video_key, audio_key, dev_video, dev_audio = await _runtime_flags(command, values)
     shared = {
         **values, "quality_references": references, "audio_key": audio_key, "dev_audio": dev_audio,
     }

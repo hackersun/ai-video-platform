@@ -3,6 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.features.model_drivers import DriverResultError, ImageCommand
+from app.features.model_drivers.adapters.minimax_image import MiniMaxImageDriver
+from app.features.model_drivers.adapters.volcano_ark_image import VolcanoArkImageDriver
+
 
 def _contract_module():
     return importlib.import_module("app.services.image_provider_response_contract")
@@ -72,3 +76,83 @@ async def test_response_evidence_is_persisted_by_operation_without_raw_payload()
 
     assert db.commits == 1
     assert run.run_metadata["provider_response_evidence"] == {"operation-1": evidence}
+
+
+@pytest.mark.asyncio
+async def test_minimax_image_driver_reuses_service_and_response_classifier(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_generate_image(_service, prompt, **kwargs):
+        captured.update(prompt=prompt, **kwargs)
+        return {
+            "id": "image-task-1",
+            "data": {"image_urls": ["https://cdn.example.test/image.png"]},
+            "base_resp": {"status_code": 0, "status_msg": "success"},
+        }
+
+    monkeypatch.setattr("app.services.minimax_service.MiniMaxService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key",
+        base_url="https://minimax.example.test/v1",
+        profile=SimpleNamespace(api_model_id="image-01"),
+    )
+
+    submission = await MiniMaxImageDriver().submit(
+        ImageCommand(prompt="draw", params={"aspect_ratio": "16:9"}), context
+    )
+
+    assert captured == {"prompt": "draw", "model": "image-01", "aspect_ratio": "16:9"}
+    assert submission.status == "completed"
+    assert submission.provider_task_id == "image-task-1"
+    assert submission.output["image_urls"] == ["https://cdn.example.test/image.png"]
+
+
+@pytest.mark.asyncio
+async def test_minimax_image_connection_fails_without_artifact_or_task_id(monkeypatch) -> None:
+    async def fake_generate_image(_service, _prompt, **_kwargs):
+        return {}
+
+    monkeypatch.setattr("app.services.minimax_service.MiniMaxService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key",
+        base_url="https://minimax.example.test/v1",
+        profile=SimpleNamespace(api_model_id="image-01"),
+    )
+
+    result = await MiniMaxImageDriver().test_connection(context)
+
+    assert result.status == "failed"
+    assert result.sanitized_evidence == {"submission_status": "unknown"}
+
+
+@pytest.mark.asyncio
+async def test_volcano_image_driver_normalizes_current_service_url_shape(monkeypatch) -> None:
+    async def fake_generate_image(_service, _prompt, **_kwargs):
+        return {"data": [{"url": "https://cdn.example.test/volcano.png"}]}
+
+    monkeypatch.setattr("app.services.volcano_service.VolcanoService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key",
+        base_url="https://ark.example.test/api/v3",
+        profile=SimpleNamespace(api_model_id="doubao-seedream-5-0-260128"),
+    )
+
+    submission = await VolcanoArkImageDriver().submit(ImageCommand(prompt="draw"), context)
+
+    assert submission.status == "completed"
+    assert submission.output["image_urls"] == ["https://cdn.example.test/volcano.png"]
+
+
+@pytest.mark.asyncio
+async def test_volcano_image_driver_keeps_empty_response_fail_closed(monkeypatch) -> None:
+    async def fake_generate_image(_service, _prompt, **_kwargs):
+        return {}
+
+    monkeypatch.setattr("app.services.volcano_service.VolcanoService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key", base_url="https://ark.example.test/api/v3",
+        profile=SimpleNamespace(api_model_id="doubao-seedream-5-0-260128"),
+    )
+
+    with pytest.raises(DriverResultError):
+        await VolcanoArkImageDriver().submit(ImageCommand(prompt="draw"), context)

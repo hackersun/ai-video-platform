@@ -28,6 +28,15 @@ PRODUCTION_TABLES = {
     "quality_evaluations",
     "series_production_runs",
     "story_entity_mentions",
+    "model_providers",
+    "model_profiles",
+    "model_connections",
+    "model_profile_versions",
+    "model_bindings",
+    "production_recipe_versions",
+    "model_certification_runs",
+    "model_execution_snapshots",
+    "model_config_audit_events",
 }
 
 

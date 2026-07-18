@@ -25,6 +25,7 @@ class PromptSkill(Base):
     is_active = Column(Boolean, default=True, index=True)
     is_builtin = Column(Boolean, default=False)
     tags = Column(JSON, default=list)
+    prompt_profile_version_id = Column(String(36), nullable=True, index=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 

@@ -3,6 +3,7 @@ FastAPI 应用入口
 """
 
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 
@@ -25,21 +26,33 @@ def _load_local_env() -> None:
 _load_local_env()
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+from app.core.credential_encryption import require_stable_encryption_key
+from app.core.validation_errors import redact_credential_validation_errors
 
 ALLOWED_ORIGIN_REGEX = (
     r"^https://([a-z0-9-]+--)?hackersun-ai-video-platform\.netlify\.app$"
     r"|^http://(localhost|127\.0\.0\.1)(:\d+)?$"
 )
 
+
+@asynccontextmanager
+async def persistent_credential_encryption_lifespan(_: FastAPI):
+    require_stable_encryption_key()
+    yield
+
+
 app = FastAPI(
     title="AI视频平台",
     description="纳米漫剧 AI视频生成平台",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=persistent_credential_encryption_lifespan,
 )
 
 # CORS配置
@@ -60,6 +73,13 @@ async def add_private_network_cors_header(request: Request, call_next):
     if request.headers.get("origin"):
         response.headers["Access-Control-Allow-Private-Network"] = "true"
     return response
+
+
+@app.exception_handler(RequestValidationError)
+async def credential_safe_validation_error_handler(request: Request, exc: RequestValidationError):
+    del request
+    detail = redact_credential_validation_errors(exc.errors())
+    return JSONResponse(status_code=422, content=jsonable_encoder({"detail": detail}))
 
 
 @app.exception_handler(Exception)
