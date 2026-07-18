@@ -100,8 +100,11 @@ async def connections_page(db: AsyncSession, user_id: str, page: int, page_size:
 
 
 def _connection_item(row) -> dict:
+    overrides = getattr(row, "endpoint_overrides", {})
+    overrides = overrides if isinstance(overrides, dict) else {}
     return {
         "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
+        "base_url": overrides.get("base_url"), "enabled": row.status in {"enabled", "verified"},
         "has_secret": row.has_secret, "secret_hint": "****" if row.has_secret else None,
         "secret_updated_at": row.secret_updated_at.isoformat() if row.secret_updated_at else None,
         "revision": row.revision,

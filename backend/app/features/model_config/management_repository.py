@@ -72,6 +72,8 @@ async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: 
     )
     items = [{
         "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
+        "base_url": (row.endpoint_overrides or {}).get("base_url"),
+        "enabled": row.status in {"enabled", "verified"},
         "has_secret": bool(row.api_key or row.api_secret),
         "secret_hint": "****" if row.api_key or row.api_secret else None,
         "secret_updated_at": row.updated_at.isoformat() if row.updated_at else None,
