@@ -16,6 +16,7 @@ import type {
   ModelConnectionView,
   ModelDriverView,
   ModelProfileInput,
+  ModelProfileView,
   ModelProfileVersionInput,
   ModelProfileVersionUpdateInput,
   ModelProfileVersionView,
@@ -187,7 +188,7 @@ export const modelCenterApi = {
   listCatalog: (page = 1, pageSize = 20, filters: ModelCatalogFilters = {}) =>
     apiClient.request<PageResponse<ModelCatalogView>>(catalogPath(page, pageSize, filters)),
   createProfile: (input: ModelProfileInput) =>
-    apiClient.request<ModelProfileVersionView>('/model-center/profiles', { method: 'POST', body: jsonBody(input) }),
+    apiClient.request<ModelProfileView>('/model-center/profiles', { method: 'POST', body: jsonBody(input) }),
   createProfileVersion: (profileId: string, input: ModelProfileVersionInput) =>
     apiClient.request<ModelProfileVersionView>(`/model-center/profiles/${profileId}/versions`, { method: 'POST', body: jsonBody(input) }),
   updateProfileVersion: (profileVersionId: string, input: ModelProfileVersionUpdateInput) =>
@@ -198,6 +199,8 @@ export const modelCenterApi = {
     apiClient.request<PublishResult>(`/model-center/profile-versions/${profileVersionId}/disable`, { method: 'POST', body: jsonBody(input) }),
   rollbackProfile: (profileId: string, input: PublishInput) =>
     apiClient.request<PublishResult>(`/model-center/profiles/${profileId}/rollback`, { method: 'POST', body: jsonBody(input) }),
+  validateProfileVersion: (profileVersionId: string) =>
+    apiClient.request<{ valid: boolean; errors: Array<Record<string, unknown>>; audit_event_id: string }>(`/model-center/profile-versions/${profileVersionId}/validate`, { method: 'POST' }),
 
   listBindings: (page = 1, pageSize = 20) =>
     apiClient.request<PageResponse<ModelBindingView>>(pagePath('/model-center/bindings', page, pageSize)),

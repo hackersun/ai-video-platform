@@ -35,6 +35,10 @@ test.beforeEach(async ({ page }) => {
     const path = url.pathname.replace(/\/+$/g, '');
     let body: unknown = { blocking_issues: [], connections: [], recipes: [] };
     if (path === '/api/v1/model-center/providers') body = providerPage;
+    if (path === '/api/v1/model-center/drivers') body = {
+      items: [{ key: 'volcano_ark_video_v3', capabilities: ['video_generation'], parameter_schema: {}, contract_version: 'driver-v1' }],
+      meta: { page: 1, page_size: 100, total: 1 },
+    };
     if (path === '/api/v1/model-center/catalog') body = catalogPage(Number(url.searchParams.get('page') || 1));
     if (path === '/api/v1/model-center/connections') body = {
       items: [{
@@ -71,4 +75,45 @@ test('connection form uses provider picker and readable paged rows', async ({ pa
   await expect(page.getByRole('cell', { name: '火山引擎' })).toBeVisible();
   await expect(page.getByText('第 1 / 2 页')).toBeVisible();
   await expect(page.getByRole('button', { name: '下一页' })).toBeEnabled();
+});
+
+test('model profile wizard saves validates and publishes an installed driver', async ({ page }) => {
+  const requests: Array<{ path: string; body: unknown }> = [];
+  await page.route('**/api/v1/model-center/**', async (route) => {
+    if (route.request().method() === 'GET') return route.fallback();
+    const url = new URL(route.request().url());
+    const path = url.pathname.replace(/\/+$/g, '');
+    requests.push({ path, body: route.request().postDataJSON() });
+    let body: unknown = {};
+    if (path === '/api/v1/model-center/profiles') body = { id: 'profile-new', provider_id: 'volcengine', profile_key: 'seedance-new', display_name: 'Seedance 新模型', enabled: true, revision: 1 };
+    if (path === '/api/v1/model-center/profiles/profile-new/versions') body = { id: 'version-new', model_id: 'profile-new', version: 1, api_model_id: 'doubao-seedance-new', driver_key: 'volcano_ark_video_v3', capabilities: ['video_generation'], contract_version: 'driver-v1', status: 'draft', revision: 1 };
+    if (path === '/api/v1/model-center/profile-versions/version-new/validate') body = { valid: true, errors: [], audit_event_id: 'audit-validate' };
+    if (path === '/api/v1/model-center/profile-versions/version-new/publish') body = { published_version_id: 'version-new', previous_version_id: null, impact: { affected_bindings: 0, affected_profiles: 1, affected_recipes: 0, affected_prompts: 0 }, audit_event_id: 'audit-publish' };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+
+  await page.goto('/llm-config?section=catalog');
+  await page.getByRole('button', { name: '新增模型' }).click();
+  await page.getByLabel('模型档案名称').fill('Seedance 新模型');
+  await page.getByLabel('档案键').fill('seedance-new');
+  await page.getByLabel('API 模型标识').fill('doubao-seedance-new');
+  await page.getByLabel('模型驱动').selectOption('volcano_ark_video_v3');
+  await page.getByRole('button', { name: '保存模型草稿' }).click();
+  await expect(page.getByText('草稿 v1 已保存')).toBeVisible();
+  await page.getByRole('button', { name: '运行契约校验' }).click();
+  await expect(page.getByText('契约校验通过')).toBeVisible();
+  await page.getByLabel('发布说明').fill('契约验证通过');
+  await page.getByRole('button', { name: '发布模型版本' }).click();
+  await expect(page.getByText('模型版本已发布')).toBeVisible();
+
+  expect(requests.map((item) => item.path)).toEqual([
+    '/api/v1/model-center/profiles',
+    '/api/v1/model-center/profiles/profile-new/versions',
+    '/api/v1/model-center/profile-versions/version-new/validate',
+    '/api/v1/model-center/profile-versions/version-new/publish',
+  ]);
+  expect(requests[1]?.body).toMatchObject({
+    expected_revision: 1, driver_key: 'volcano_ark_video_v3',
+    capabilities: ['video_generation'], contract_version: 'driver-v1',
+  });
 });

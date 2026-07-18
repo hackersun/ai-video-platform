@@ -103,6 +103,15 @@ export interface ModelProfileVersionView {
   revision: number;
 }
 
+export interface ModelProfileView {
+  id: string;
+  provider_id: string;
+  profile_key: string;
+  display_name: string;
+  enabled: boolean;
+  revision: number;
+}
+
 export interface ModelProfileInput {
   provider_id: string;
   profile_key: string;
@@ -111,6 +120,7 @@ export interface ModelProfileInput {
 }
 
 export interface ModelProfileVersionInput {
+  expected_revision: number;
   api_model_id: string;
   driver_key: string;
   capabilities: ModelCapability[];
@@ -125,7 +135,6 @@ export interface ModelProfileVersionInput {
 }
 
 export type ModelProfileVersionUpdateInput = ModelProfileVersionInput & {
-  expected_revision: number;
   reason?: string;
 };
 

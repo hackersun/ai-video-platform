@@ -32,6 +32,13 @@ from app.features.model_config.prompt_assistance import (
     optimize_prompt_profile,
     preview_prompt_profile,
 )
+from app.features.model_config.catalog_management import (
+    create_profile as create_model_profile,
+    create_profile_version as create_model_profile_version,
+    create_provider as create_model_provider,
+    publish_profile_version as publish_model_profile_version,
+    validate_profile_contract,
+)
 
 
 __all__ = [
@@ -40,6 +47,9 @@ __all__ = [
     "catalog_page",
     "connections_page",
     "create_connection",
+    "create_model_profile",
+    "create_model_profile_version",
+    "create_model_provider",
     "create_certification",
     "create_prompt_profile_draft",
     "create_prompt_profile_versioned",
@@ -52,6 +62,7 @@ __all__ = [
     "overview",
     "providers_page",
     "publish_prompt_profile_version",
+    "publish_model_profile_version",
     "prompt_profiles_page",
     "preview_prompt_profile",
     "publish_recipe",
@@ -63,4 +74,5 @@ __all__ = [
     "update_connection",
     "unavailable",
     "validate_recipe_version",
+    "validate_profile_contract",
 ]

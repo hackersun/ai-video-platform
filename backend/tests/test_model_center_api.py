@@ -47,6 +47,7 @@ MODEL_CENTER_ROUTES = {
     ("post", "/api/v1/model-center/profiles/{profile_id}/versions"),
     ("put", "/api/v1/model-center/profile-versions/{profile_version_id}"),
     ("post", "/api/v1/model-center/profile-versions/{profile_version_id}/publish"),
+    ("post", "/api/v1/model-center/profile-versions/{profile_version_id}/validate"),
     ("post", "/api/v1/model-center/profile-versions/{profile_version_id}/disable"),
     ("post", "/api/v1/model-center/profiles/{profile_id}/rollback"),
     ("get", "/api/v1/model-center/bindings"),
@@ -438,15 +439,83 @@ async def test_recipe_publish_returns_audit_and_impact_envelope(client):
 
 @pytest.mark.asyncio
 async def test_missing_service_operation_returns_stable_actionable_error(client):
-    response = await client.post(
-        "/api/v1/model-center/providers",
-        json={"code": "new-provider", "display_name": "New", "provider_family": "openai"},
+    response = await client.put(
+        "/api/v1/model-center/providers/provider-1",
+        json={"expected_revision": 1, "changes": {"display_name": "New"}},
     )
     assert response.status_code == 501
     detail = response.json()["detail"]
     assert detail["code"] == "operation_not_implemented"
     assert detail["action_code"] == "contact_operator_or_use_legacy_api"
-    assert "provider.create" in detail["message"]
+    assert "provider.update" in detail["message"]
+
+
+@pytest.mark.asyncio
+async def test_operator_creates_validates_and_publishes_installed_model_profile(client):
+    provider = await client.post(
+        "/api/v1/model-center/providers",
+        json={"code": "task7-volcano", "display_name": "Task 7 火山", "provider_family": "volcano"},
+    )
+    assert provider.status_code == 200
+    profile = await client.post(
+        "/api/v1/model-center/profiles",
+        json={
+            "provider_id": provider.json()["id"], "profile_key": "seedance-task7",
+            "display_name": "Seedance Task 7", "enabled": True,
+        },
+    )
+    assert profile.status_code == 200
+    version = await client.post(
+        f"/api/v1/model-center/profiles/{profile.json()['id']}/versions",
+        json={
+            "expected_revision": 1, "api_model_id": "doubao-seedance-task7",
+            "driver_key": "volcano_ark_video_v3", "capabilities": ["video_generation"],
+            "contract_version": "driver-v1",
+        },
+    )
+    assert version.status_code == 200
+    assert version.json()["status"] == "draft"
+
+    blocked = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/publish",
+        json={"expected_revision": 1, "reason": "准备发布"},
+    )
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"]["action_code"] == "run_contract_validation"
+
+    validated = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/validate",
+    )
+    assert validated.status_code == 200
+    assert validated.json()["valid"] is True
+    published = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/publish",
+        json={"expected_revision": 1, "reason": "契约验证通过"},
+    )
+    assert published.status_code == 200
+    assert published.json()["published_version_id"] == version.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_uninstalled_profile_driver_has_actionable_error(client):
+    profile = await client.post(
+        "/api/v1/model-center/profiles",
+        json={
+            "provider_id": "provider-1", "profile_key": "unknown-driver-task7",
+            "display_name": "Unknown Driver", "enabled": True,
+        },
+    )
+    response = await client.post(
+        f"/api/v1/model-center/profiles/{profile.json()['id']}/versions",
+        json={
+            "expected_revision": 1, "api_model_id": "unknown-model",
+            "driver_key": "unknown-driver", "capabilities": ["video_generation"],
+            "contract_version": "driver-v1",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["action_code"] == "install_or_select_driver"
 
 
 @pytest.mark.asyncio

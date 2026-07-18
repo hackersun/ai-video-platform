@@ -75,6 +75,55 @@ class ProviderCreateRequest(BaseModel):
     provider_family: str = Field(min_length=1, max_length=80)
 
 
+class ModelProfileItem(BaseModel):
+    id: str
+    provider_id: str
+    profile_key: str
+    display_name: str
+    enabled: bool
+    revision: int
+
+
+class ModelProfileCreateRequest(BaseModel):
+    provider_id: str
+    profile_key: str = Field(min_length=1, max_length=120)
+    display_name: str = Field(min_length=1, max_length=160)
+    enabled: bool = True
+
+
+class ModelProfileVersionItem(BaseModel):
+    id: str
+    model_id: str
+    version: int
+    api_model_id: str
+    driver_key: str
+    capabilities: list[str]
+    contract_version: str
+    status: str
+    revision: int
+
+
+class ModelProfileVersionCreateRequest(BaseModel):
+    expected_revision: int = Field(ge=1)
+    api_model_id: str = Field(min_length=1, max_length=200)
+    driver_key: str = Field(min_length=1, max_length=80)
+    capabilities: list[str] = Field(min_length=1)
+    input_contract: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)
+    default_params: dict[str, Any] = Field(default_factory=dict)
+    limits: dict[str, Any] = Field(default_factory=dict)
+    pricing: dict[str, Any] = Field(default_factory=dict)
+    prompt_profile_key: str | None = Field(default=None, max_length=120)
+    contract_version: str = Field(min_length=1, max_length=100)
+
+
+class ContractValidationResponse(BaseModel):
+    valid: bool
+    errors: list[dict[str, Any]]
+    audit_event_id: str
+
+
 class RevisionedUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_revision: int = Field(ge=1)
