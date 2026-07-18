@@ -40,6 +40,7 @@ export interface ModelConnectionView {
 export interface ModelConnectionInput {
   provider_id: string;
   name: string;
+  reason: string;
   base_url?: string | null;
   api_key?: string;
   api_secret?: string;

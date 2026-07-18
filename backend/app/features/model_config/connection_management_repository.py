@@ -38,10 +38,13 @@ async def create_connection(
     db: AsyncSession, *, user_id: str, provider_id: str, name: str,
     api_key: str | None, api_secret: str | None, reason: str,
 ) -> ConnectionRow | None:
-    if await db.get(ModelProvider, provider_id) is None:
+    provider = await db.get(ModelProvider, provider_id)
+    if provider is None:
+        provider = await db.scalar(select(ModelProvider).where(ModelProvider.code == provider_id))
+    if provider is None:
         return None
     row = ModelConnection(
-        id=str(uuid4()), user_id=user_id, provider_id=provider_id, name=name, status="draft",
+        id=str(uuid4()), user_id=user_id, provider_id=provider.id, name=name, status="draft",
     )
     row.set_api_key_encrypted(api_key or "")
     row.set_api_secret_encrypted(api_secret)

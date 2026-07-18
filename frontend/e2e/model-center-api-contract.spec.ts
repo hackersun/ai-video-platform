@@ -163,7 +163,7 @@ test('redacts raw secrets from overview and connection write responses', async (
   try {
     const overview = await modelCenterApi.getOverview();
     const created = await modelCenterApi.createConnection({
-      provider_id: 'volcengine', name: '主连接', api_key: 'replacement-key',
+      provider_id: 'volcengine', name: '主连接', reason: '创建主连接', api_key: 'replacement-key',
     });
     const updated = await modelCenterApi.updateConnection('connection-1', {
       name: '主连接', expected_revision: 3,

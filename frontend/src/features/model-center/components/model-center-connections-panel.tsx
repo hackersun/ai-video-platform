@@ -8,7 +8,7 @@ import { useModelConnections } from '../hooks/use-model-connections';
 import { modelCenterHref, type ModelCenterLocation } from '../navigation';
 import { ModelCenterEmpty, ModelCenterError, ModelCenterLoading } from './model-center-state';
 
-const blankForm = { providerId: '', name: '', baseUrl: '', apiKey: '' };
+const blankForm = { providerId: '', name: '', reason: '', baseUrl: '', apiKey: '' };
 
 export function ModelCenterConnectionsPanel({ location }: { location: ModelCenterLocation }) {
   const router = useRouter();
@@ -23,7 +23,7 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
     setCreating(true);
     setMessage(null);
     try {
-      await createConnection({ provider_id: form.providerId.trim(), name: form.name.trim(), base_url: form.baseUrl.trim() || undefined, api_key: form.apiKey });
+      await createConnection({ provider_id: form.providerId.trim(), name: form.name.trim(), reason: form.reason.trim(), base_url: form.baseUrl.trim() || undefined, api_key: form.apiKey });
       setForm(blankForm);
       setMessage('连接已保存。请使用“测试连接”完成认证。');
     } catch (reason) {
@@ -50,9 +50,10 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
   if (error && !data) return <ModelCenterError error={error} onRetry={() => void reload()} />;
   return (
     <div className="space-y-4 p-4">
-      <form onSubmit={submit} className="grid gap-2 rounded-lg border border-white/10 bg-slate-950/30 p-3 md:grid-cols-[1fr_1fr_1fr_1fr_auto]">
+      <form onSubmit={submit} className="grid gap-2 rounded-lg border border-white/10 bg-slate-950/30 p-3 md:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto]">
         <input aria-label="提供方 ID" required value={form.providerId} onChange={(event) => setForm({ ...form, providerId: event.target.value })} placeholder="提供方 ID" className="model-center-input" />
         <input aria-label="连接名称" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="连接名称" className="model-center-input" />
+        <input aria-label="保存说明" required minLength={2} value={form.reason} onChange={(event) => setForm({ ...form, reason: event.target.value })} placeholder="保存说明（至少2字）" className="model-center-input" />
         <input aria-label="自定义 API 地址" value={form.baseUrl} onChange={(event) => setForm({ ...form, baseUrl: event.target.value })} placeholder="自定义 API 地址（可选）" className="model-center-input" />
         <input aria-label="API Key" required type="password" autoComplete="off" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder="API Key" className="model-center-input" />
         <button disabled={creating} type="submit" className="model-center-primary"><Plus className="h-4 w-4" />{creating ? '保存中' : '新增连接'}</button>
