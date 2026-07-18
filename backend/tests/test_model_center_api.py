@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import AsyncSessionLocal, Base, engine, get_db
+from app.core.database import DATABASE_DIAGNOSTIC, get_db
 from app.core.security import get_current_user_id
 from app.features.model_config.recipes import stable_recipe_checksum
 from app.models.model_center import (
@@ -29,6 +29,12 @@ from app.models.model_center import (
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 from app.models.prompt_skill import PromptSkill
 from main import app
+from tests.model_center_api_database import (
+    SessionLocal as AsyncSessionLocal,
+    TEST_DATABASE_PATH,
+    dispose_database,
+    reset_database,
+)
 
 
 USER_ID = "model-center-api-user"
@@ -78,14 +84,11 @@ MODEL_CENTER_ROUTES = {
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def isolated_database():
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
-        await connection.run_sync(Base.metadata.create_all)
+    await reset_database()
     async with AsyncSessionLocal() as db:
         await _seed_collection_rows(db)
     yield
-    async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
+    await dispose_database()
 
 
 @pytest_asyncio.fixture()
@@ -111,6 +114,11 @@ def test_model_center_routes_are_registered():
         if method in {"get", "post", "put", "patch", "delete"}
     }
     assert MODEL_CENTER_ROUTES <= registered
+
+
+def test_model_center_api_database_is_intrinsically_isolated():
+    assert TEST_DATABASE_PATH.is_relative_to(Path("/tmp").resolve())
+    assert str(TEST_DATABASE_PATH) != DATABASE_DIAGNOSTIC.resolved_sqlite_path
 
 
 @pytest.mark.asyncio
