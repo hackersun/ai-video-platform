@@ -5,6 +5,7 @@ export type ModelCenterQueryKey =
   | 'bindings'
   | 'recipes'
   | 'prompt-profiles'
+  | `prompt-profile:${string}`
   | 'test-lab'
   | 'impact';
 

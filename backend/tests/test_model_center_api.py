@@ -27,6 +27,7 @@ from app.models.model_center import (
     ProductionRecipeVersion,
 )
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
+from app.models.prompt_skill import PromptSkill
 from main import app
 
 
@@ -181,6 +182,11 @@ async def test_prompt_profile_detail_returns_owned_body_and_history(client):
     assert payload["head"]["content"] == "Write {{topic}}"
     assert payload["versions"][0]["checksum"] == "p" * 64
     assert payload["versions"][0]["content"] == "Write {{topic}}"
+    assert payload["legacy_skill"] == {
+        "id": "prompt-skill-1",
+        "is_active": True,
+        "is_builtin": False,
+    }
 
 
 @pytest.mark.asyncio
@@ -774,6 +780,16 @@ async def _seed_collection_rows(db: AsyncSession) -> None:
         PromptProfileVersion(
             id="prompt-v1", profile_id="prompt-1", version=1, content="Write {{topic}}",
             variables={"topic": "story"}, routing={}, evaluation={}, status="published", checksum="p" * 64,
+        ),
+        PromptSkill(
+            id="prompt-skill-1",
+            user_id=USER_ID,
+            name="Script",
+            task="script_generation",
+            content="Write {{topic}}",
+            is_active=True,
+            is_builtin=False,
+            prompt_profile_version_id="prompt-v1",
         ),
     ])
     await db.commit()

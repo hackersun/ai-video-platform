@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.prompt_management_repository import (
     load_owned_prompt_profile_history,
+    load_linked_prompt_skill,
     load_prompt_version_for_user,
     prompt_version_values,
 )
@@ -46,6 +47,12 @@ async def get_prompt_profile_detail(
     if profile is None or not versions:
         return None
     details = [_version_detail(version) for version in versions]
+    legacy_skill = await load_linked_prompt_skill(
+        db,
+        user_id=user_id,
+        profile_id=profile.id,
+        version_ids=[version.id for version in versions],
+    )
     return {
         "id": profile.id,
         "key": profile.key,
@@ -53,6 +60,11 @@ async def get_prompt_profile_detail(
         "task": profile.task,
         "head": details[0],
         "versions": details,
+        "legacy_skill": ({
+            "id": legacy_skill.id,
+            "is_active": bool(legacy_skill.is_active),
+            "is_builtin": bool(legacy_skill.is_builtin),
+        } if legacy_skill else None),
     }
 
 

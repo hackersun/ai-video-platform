@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time_utils import utc_now
 from app.models.model_center import ModelBinding, ModelConfigAuditEvent, ModelProfileVersion, ProductionRecipeVersion
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
+from app.models.prompt_skill import PromptSkill
 
 
 @dataclass(frozen=True)
@@ -200,6 +201,25 @@ async def load_owned_prompt_profile_history(
         .order_by(desc(PromptProfileVersion.version), desc(PromptProfileVersion.id))
     )).all())
     return profile, versions
+
+
+async def load_linked_prompt_skill(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    profile_id: str,
+    version_ids: list[str],
+) -> PromptSkill | None:
+    linked = await db.scalar(select(PromptSkill).where(
+        PromptSkill.user_id == user_id,
+        PromptSkill.prompt_profile_version_id.in_(version_ids),
+    ).limit(1))
+    if linked is not None:
+        return linked
+    return await db.scalar(select(PromptSkill).where(
+        PromptSkill.user_id == user_id,
+        PromptSkill.id == profile_id,
+    ).limit(1))
 
 
 async def prompt_impact(db: AsyncSession, *, user_id: str, profile_id: str | None = None) -> dict:

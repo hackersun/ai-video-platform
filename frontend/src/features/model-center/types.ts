@@ -193,6 +193,55 @@ export interface PromptProfileView {
   status: ConfigurationState | null;
 }
 
+export interface PromptProfileVersionDetail {
+  id: string;
+  version: number;
+  status: ConfigurationState;
+  stage: string | null;
+  content: string;
+  system_contract: string;
+  task_template: string;
+  input_mapping: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+  negative_constraints: string[];
+  model_family_overrides: Record<string, unknown>;
+  validation_fixtures: Array<Record<string, unknown>>;
+  release_notes: string;
+  checksum: string;
+  created_at: string | null;
+  published_at: string | null;
+}
+
+export interface PromptProfileDetail {
+  id: string;
+  key: string;
+  name: string;
+  task: string;
+  head: PromptProfileVersionDetail;
+  versions: PromptProfileVersionDetail[];
+  legacy_skill: {
+    id: string;
+    is_active: boolean;
+    is_builtin: boolean;
+  } | null;
+}
+
+export interface PromptOptimizationResult {
+  task: string;
+  source: 'ai_model' | 'local_rules';
+  original_content: string;
+  optimized_content: string;
+  suggestions: string[];
+  warnings: string[];
+}
+
+export interface PromptPreviewResult {
+  task: string;
+  skill_count: number;
+  skill_blocks: string[];
+  prompt: string;
+}
+
 export interface PromptProfileInput {
   key: string;
   name: string;

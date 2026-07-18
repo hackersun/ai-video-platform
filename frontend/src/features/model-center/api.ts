@@ -25,6 +25,9 @@ import type {
   ProductionRecipeInput,
   ProductionRecipeView,
   PromptProfileInput,
+  PromptOptimizationResult,
+  PromptPreviewResult,
+  PromptProfileDetail,
   PromptProfileVersionInput,
   PromptProfileView,
   PublishInput,
@@ -204,6 +207,20 @@ export const modelCenterApi = {
 
   listPromptProfiles: (page = 1, pageSize = 20) =>
     apiClient.request<PageResponse<PromptProfileView>>(pagePath('/model-center/prompt-profiles', page, pageSize)),
+  getPromptProfile: (profileId: string) =>
+    apiClient.request<PromptProfileDetail>(`/model-center/prompt-profiles/${profileId}`),
+  optimizePromptProfile: (
+    profileId: string,
+    input: { version_id: string; mode?: string; model_config_id?: string | null },
+  ) => apiClient.request<PromptOptimizationResult>(`/model-center/prompt-profiles/${profileId}/optimize`, {
+    method: 'POST', body: jsonBody(input),
+  }),
+  previewPromptProfile: (
+    profileId: string,
+    input: { version_id: string; task_template?: string; context?: Record<string, unknown> },
+  ) => apiClient.request<PromptPreviewResult>(`/model-center/prompt-profiles/${profileId}/preview`, {
+    method: 'POST', body: jsonBody(input),
+  }),
   createPromptProfile: (input: PromptProfileInput) =>
     apiClient.request<PromptProfileView>('/model-center/prompt-profiles', { method: 'POST', body: jsonBody(input) }),
   createPromptProfileVersion: (profileId: string, input: PromptProfileVersionInput) =>

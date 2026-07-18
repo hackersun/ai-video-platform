@@ -19,6 +19,6 @@ function BindingsPanel() {
 export function ModelCenterManagementPanel({ section, location }: { section: Exclude<ModelCenterSection, 'overview' | 'connections' | 'catalog'>; location: ModelCenterLocation }) {
   if (section === 'bindings') return <BindingsPanel />;
   if (section === 'recipes') return <RecipeList />;
-  if (section === 'prompts') return <PromptProfileList />;
+  if (section === 'prompts') return <PromptProfileList location={location} />;
   return <TestLab runId={location.runId} location={location} />;
 }
