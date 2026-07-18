@@ -120,6 +120,101 @@ async def test_backfill_copies_only_existing_ciphertext_and_is_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_backfill_requires_credential_reentry_for_undecryptable_legacy_ciphertext(
+    db_session: AsyncSession,
+) -> None:
+    from cryptography.fernet import Fernet
+
+    from app.features.model_config.backfill import (
+        backfill_model_center,
+        get_connection_for_legacy_config,
+    )
+
+    legacy_config = await _seed_legacy_catalog(db_session)
+    legacy_config.api_key = Fernet(Fernet.generate_key()).encrypt(b"legacy-secret").decode()
+    await db_session.commit()
+
+    report = await backfill_model_center(db_session, apply=True)
+    connection = await get_connection_for_legacy_config(db_session, legacy_config.id)
+
+    assert connection is not None
+    assert connection.api_key == ""
+    assert connection.status == "draft"
+    assert connection.tested_at is None
+    assert connection.connection_params["credential_reentry_required"] is True
+    assert report.connections_created == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_creates_one_binding_for_duplicate_default_legacy_configs(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.model_config.backfill import backfill_model_center
+
+    db_session.autoflush = False
+    legacy_config = await _seed_legacy_catalog(db_session)
+    duplicate = LLMConfig(
+        id=f"config-{uuid4()}", user_id=legacy_config.user_id, model_id=legacy_config.model_id,
+        name="重复默认配置", is_active=True, is_default=True, test_status="success",
+    )
+    duplicate.set_api_key_encrypted("sk-duplicate-secret")
+    db_session.add(duplicate)
+    await db_session.commit()
+
+    await backfill_model_center(db_session, apply=True)
+    bindings = list((await db_session.scalars(select(ModelBinding))).all())
+
+    assert len(bindings) == 1
+    assert bindings[0].capability == "video_generation"
+
+
+@pytest.mark.asyncio
+async def test_backfill_reuses_one_profile_for_duplicate_legacy_models(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.model_config.backfill import backfill_model_center
+
+    db_session.autoflush = False
+    legacy_config = await _seed_legacy_catalog(db_session)
+    original_model = await db_session.get(LLMModel, legacy_config.model_id)
+    db_session.add(LLMModel(
+        id=f"model-{uuid4()}", provider_id=original_model.provider_id,
+        model_id=original_model.model_id, model_name=original_model.model_name,
+        model_name_cn=original_model.model_name_cn, model_type=original_model.model_type,
+        capabilities=original_model.capabilities, is_active=True,
+    ))
+    await db_session.commit()
+
+    await backfill_model_center(db_session, apply=True)
+
+    assert int(await db_session.scalar(select(func.count()).select_from(ModelProfile))) == 1
+    assert int(await db_session.scalar(select(func.count()).select_from(ModelProfileVersion))) == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_keeps_distinct_legacy_model_contracts_separate(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.model_config.backfill import backfill_model_center
+
+    db_session.autoflush = False
+    legacy_config = await _seed_legacy_catalog(db_session)
+    original_model = await db_session.get(LLMModel, legacy_config.model_id)
+    db_session.add(LLMModel(
+        id=f"model-{uuid4()}", provider_id=original_model.provider_id,
+        model_id=original_model.model_id, model_name=original_model.model_name,
+        model_name_cn=original_model.model_name_cn, model_type=original_model.model_type,
+        capabilities=original_model.capabilities, context_window=8192, max_tokens=4096,
+        is_active=True,
+    ))
+    await db_session.commit()
+
+    await backfill_model_center(db_session, apply=True)
+
+    assert int(await db_session.scalar(select(func.count()).select_from(ModelProfile))) == 2
+
+
+@pytest.mark.asyncio
 async def test_backfill_projects_active_prompt_without_exposing_prompt_body(
     db_session: AsyncSession,
 ) -> None:
@@ -153,10 +248,7 @@ async def test_backfill_reuses_manual_profile_with_the_same_provider_and_profile
     provider = await db_session.get(LLMProvider, model.provider_id)
     capabilities = sorted(backfill.normalize_capabilities(model.model_type, model.capabilities or []))
     canonical_provider_id = backfill._canonical_id("provider", provider.id)
-    profile_key = (
-        f"legacy:{backfill._provider_code(provider)}:{model.model_id}:"
-        f"{backfill._checksum(capabilities)[:12]}"
-    )
+    profile_key = backfill._profile_key(provider, model, capabilities)
     db_session.add_all([
         ModelProvider(
             id=canonical_provider_id, code=backfill._provider_code(provider), display_name="manual",
@@ -189,10 +281,7 @@ async def test_backfill_reuses_equivalent_manual_profile_version(
     provider = await db_session.get(LLMProvider, model.provider_id)
     capabilities = sorted(backfill.normalize_capabilities(model.model_type, model.capabilities or []))
     canonical_provider_id = backfill._canonical_id("provider", provider.id)
-    profile_key = (
-        f"legacy:{backfill._provider_code(provider)}:{model.model_id}:"
-        f"{backfill._checksum(capabilities)[:12]}"
-    )
+    profile_key = backfill._profile_key(provider, model, capabilities)
     limits = {"context_window": model.context_window, "max_tokens": model.max_tokens}
     pricing = {"input_cost_per_1k": model.input_cost_per_1k, "output_cost_per_1k": model.output_cost_per_1k}
     db_session.add_all([

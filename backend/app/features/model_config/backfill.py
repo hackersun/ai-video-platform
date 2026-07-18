@@ -11,6 +11,7 @@ from uuid import UUID, uuid5
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.credential_encryption import validate_fernet_ciphertext
 from app.features.model_config.domain import normalize_capabilities
 from app.features.model_drivers.public import select_llm_connection_driver_key
 from app.features.workflow_media.public import production_strategy_metadata
@@ -54,6 +55,35 @@ def _provider_code(provider: LLMProvider) -> str:
 
 def _connection_name(config: LLMConfig) -> str:
     return f"legacy:{config.id}"
+
+
+def _profile_key(provider: LLMProvider, model: LLMModel, capabilities: list[str]) -> str:
+    contract = {
+        "driver_key": select_llm_connection_driver_key(provider.name, model.model_type),
+        "limits": {"context_window": model.context_window, "max_tokens": model.max_tokens},
+        "pricing": {"input_cost_per_1k": model.input_cost_per_1k, "output_cost_per_1k": model.output_cost_per_1k},
+    }
+    return (
+        f"legacy:{_provider_code(provider)}:{model.model_id}:"
+        f"{_checksum(capabilities)[:12]}:{_checksum(contract)[:12]}"
+    )
+
+
+def _backfill_credentials(config: LLMConfig) -> tuple[str, str | None, bool]:
+    """Copy only credentials decryptable by the current Fernet key."""
+    api_key = config.api_key or ""
+    api_secret = config.api_secret
+    reentry_required = False
+    for value in (api_key, api_secret):
+        if not value:
+            continue
+        try:
+            validate_fernet_ciphertext(value)
+        except ValueError:
+            reentry_required = True
+    if reentry_required:
+        return "", None, True
+    return api_key, api_secret, False
 
 
 def _matches_legacy_profile_version(
@@ -159,13 +189,27 @@ async def _backfill_model(
     canonical_provider_id: str,
     report: BackfillReport,
     apply: bool,
+    pending_profile_versions: dict[tuple[str, str], tuple[str, str, str]],
 ) -> str:
+    capabilities = sorted(normalize_capabilities(model.model_type, model.capabilities or []))
+    profile_key = _profile_key(provider, model, capabilities)
+    profile_identity = (canonical_provider_id, profile_key)
     profile_id = _canonical_id("profile", model.id)
+    cached = pending_profile_versions.get(profile_identity)
+    if cached is not None:
+        cached_profile_id, cached_version_id, cached_checksum = cached
+        payload = {
+            "model_id": cached_profile_id, "api_model_id": model.model_id,
+            "driver_key": select_llm_connection_driver_key(provider.name, model.model_type),
+            "capabilities": capabilities,
+            "limits": {"context_window": model.context_window, "max_tokens": model.max_tokens},
+            "pricing": {"input_cost_per_1k": model.input_cost_per_1k, "output_cost_per_1k": model.output_cost_per_1k},
+        }
+        if _checksum(payload) != cached_checksum:
+            raise ValueError("legacy_profile_version_conflict")
+        return cached_version_id
+
     profile = await db.get(ModelProfile, profile_id)
-    profile_key = (
-        f"legacy:{_provider_code(provider)}:{model.model_id}:"
-        f"{_checksum(sorted(normalize_capabilities(model.model_type, model.capabilities or [])))[:12]}"
-    )
     if profile is None:
         profile = await db.scalar(select(ModelProfile).where(
             ModelProfile.provider_id == canonical_provider_id,
@@ -173,7 +217,6 @@ async def _backfill_model(
         ))
     if profile is not None:
         profile_id = profile.id
-    capabilities = sorted(normalize_capabilities(model.model_type, model.capabilities or []))
     if profile is None:
         _plan(report, "profiles_created", apply=apply)
         if apply:
@@ -200,6 +243,7 @@ async def _backfill_model(
     if version is not None:
         if not _matches_legacy_profile_version(version, payload, profile_id):
             raise ValueError("legacy_profile_version_conflict")
+        pending_profile_versions[profile_identity] = (profile_id, version.id, _checksum(payload))
         return version.id
     _plan(report, "profile_versions_created", apply=apply)
     if apply:
@@ -209,6 +253,7 @@ async def _backfill_model(
             contract_version="legacy-backfill-v1", status="published",
             checksum=_checksum(payload), **payload,
         ))
+    pending_profile_versions[profile_identity] = (profile_id, version_id, _checksum(payload))
     return version_id
 
 
@@ -223,18 +268,20 @@ async def _backfill_connection(
     connection_id = _canonical_id("connection", config.id)
     if await db.get(ModelConnection, connection_id) is not None:
         return
+    api_key, api_secret, credential_reentry_required = _backfill_credentials(config)
     _plan(report, "connections_created", apply=apply)
     if apply:
         db.add(ModelConnection(
             id=connection_id, user_id=config.user_id, provider_id=provider_id,
-            name=_connection_name(config), api_key=config.api_key, api_secret=config.api_secret,
+            name=_connection_name(config), api_key=api_key, api_secret=api_secret,
             endpoint_overrides={},
             connection_params={
                 "legacy_config_id": config.id, "legacy_model_id": config.model_id,
                 "legacy_provider_id": legacy_provider_id,
+                "credential_reentry_required": credential_reentry_required,
             },
-            status="verified" if config.test_status == "success" else "draft",
-            tested_at=config.tested_at,
+            status="verified" if config.test_status == "success" and not credential_reentry_required else "draft",
+            tested_at=config.tested_at if not credential_reentry_required else None,
         ))
 
 
@@ -245,12 +292,16 @@ async def _backfill_default_bindings(
     profile_version_id: str,
     report: BackfillReport,
     apply: bool,
+    pending_binding_keys: set[tuple[str, str, str, str, str]],
 ) -> None:
     if not config.is_default or config.test_status != "success" or not config.is_active:
         return
     for capability in sorted(normalize_capabilities(model.model_type, model.capabilities or [])):
         task = _TASK_BY_CAPABILITY.get(capability)
         if task is None:
+            continue
+        binding_key = (config.user_id, "user", config.user_id, task, capability)
+        if binding_key in pending_binding_keys:
             continue
         existing = await db.scalar(select(ModelBinding).where(
             ModelBinding.user_id == config.user_id, ModelBinding.scope_type == "user",
@@ -259,6 +310,7 @@ async def _backfill_default_bindings(
         ))
         if existing is not None:
             continue
+        pending_binding_keys.add(binding_key)
         _plan(report, "bindings_created", apply=apply)
         if apply:
             db.add(ModelBinding(
@@ -343,11 +395,14 @@ async def backfill_model_center(
     for provider in providers:
         canonical_provider_ids[provider.id] = await _backfill_provider(db, provider, report, apply)
     profile_versions: dict[str, str] = {}
+    pending_profile_versions: dict[tuple[str, str], tuple[str, str, str]] = {}
+    pending_binding_keys: set[tuple[str, str, str, str, str]] = set()
     for model in models:
         provider = provider_by_id.get(model.provider_id)
         if provider is not None:
             profile_versions[model.id] = await _backfill_model(
                 db, model, provider, canonical_provider_ids[provider.id], report, apply,
+                pending_profile_versions,
             )
     for config in configs:
         model = model_by_id.get(config.model_id)
@@ -359,7 +414,7 @@ async def backfill_model_center(
         profile_version_id = profile_versions.get(model.id)
         if profile_version_id is not None:
             await _backfill_default_bindings(
-                db, config, model, profile_version_id, report, apply,
+                db, config, model, profile_version_id, report, apply, pending_binding_keys,
             )
     for prompt in prompts:
         await _backfill_prompt(db, prompt, report, apply)
