@@ -34,6 +34,8 @@ class ConnectionItem(BaseModel):
     provider_id: str
     name: str
     status: str
+    base_url: str | None = None
+    enabled: bool = False
     has_secret: bool
     secret_hint: str | None
     secret_updated_at: str | None
