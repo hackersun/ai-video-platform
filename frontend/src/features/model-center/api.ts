@@ -3,6 +3,8 @@ import { apiClient } from '@/lib/api-client';
 import type {
   CertificationRun,
   CertificationRunInput,
+  CertificationCandidate,
+  CertificationHistoryItem,
   ConfigurationState,
   ModelCapability,
   ModelCatalogFilters,
@@ -156,13 +158,62 @@ function productionRecipeView(value: unknown): ProductionRecipeView {
   };
 }
 
+function certificationCandidatePage(value: unknown): PageResponse<CertificationCandidate> {
+  const input = record(value, '认证候选列表');
+  const meta = record(input.meta, '认证候选分页');
+  const items = arrayValue(input, 'items', '认证候选列表').map((value) => {
+    const item = record(value, '认证候选');
+    const profile = record(item.profile, '认证候选模型');
+    const connection = record(item.connection, '认证候选连接');
+    return {
+      id: stringValue(item, 'id', '认证候选'),
+      profile: {
+        id: stringValue(profile, 'id', '认证候选模型'), name: stringValue(profile, 'name', '认证候选模型'),
+        api_model_id: stringValue(profile, 'api_model_id', '认证候选模型'),
+        provider_id: stringValue(profile, 'provider_id', '认证候选模型'),
+        provider_name: stringValue(profile, 'provider_name', '认证候选模型'),
+        capabilities: arrayValue(profile, 'capabilities', '认证候选模型').map((entry) => modelCapability(entry, '认证候选模型')),
+      },
+      connection: {
+        id: stringValue(connection, 'id', '认证候选连接'), name: stringValue(connection, 'name', '认证候选连接'),
+        provider_id: stringValue(connection, 'provider_id', '认证候选连接'), status: stringValue(connection, 'status', '认证候选连接'),
+      },
+    };
+  });
+  return { items, meta: { page: numberValue(meta, 'page', '认证候选分页'), page_size: numberValue(meta, 'page_size', '认证候选分页'), total: numberValue(meta, 'total', '认证候选分页') } };
+}
+
+function certificationHistoryPage(value: unknown): PageResponse<CertificationHistoryItem> {
+  const input = record(value, '认证历史列表');
+  const meta = record(input.meta, '认证历史分页');
+  const items = arrayValue(input, 'items', '认证历史列表').map((value) => {
+    const item = record(value, '认证历史');
+    return {
+      id: stringValue(item, 'id', '认证历史'), profile_version_id: stringValue(item, 'profile_version_id', '认证历史'),
+      connection_id: stringValue(item, 'connection_id', '认证历史'), profile_name: stringValue(item, 'profile_name', '认证历史'),
+      api_model_id: stringValue(item, 'api_model_id', '认证历史'), connection_name: stringValue(item, 'connection_name', '认证历史'),
+      provider_name: stringValue(item, 'provider_name', '认证历史'), level: item.level as CertificationHistoryItem['level'],
+      status: stringValue(item, 'status', '认证历史'), sanitized_evidence: record(item.sanitized_evidence, '认证历史证据'),
+      estimated_cost_rmb: stringValue(item, 'estimated_cost_rmb', '认证历史'), actual_cost_rmb: stringValue(item, 'actual_cost_rmb', '认证历史'),
+      created_at: stringValue(item, 'created_at', '认证历史'), completed_at: typeof item.completed_at === 'string' ? item.completed_at : null,
+    };
+  });
+  return { items, meta: { page: numberValue(meta, 'page', '认证历史分页'), page_size: numberValue(meta, 'page_size', '认证历史分页'), total: numberValue(meta, 'total', '认证历史分页') } };
+}
+
 function modelCenterOverview(value: unknown): ModelCenterOverview {
   const input = record(value, '概览');
   return {
     blocking_issues: arrayValue(input, 'blocking_issues', '概览').map((issue) => {
       const item = record(issue, '概览问题');
       const capability = item.capability === undefined ? undefined : modelCapability(item.capability, '概览问题');
-      return { code: stringValue(item, 'code', '概览问题'), message: stringValue(item, 'message', '概览问题'), capability };
+      const section = typeof item.section === 'string' ? item.section as ModelCenterOverview['blocking_issues'][number]['section'] : 'catalog';
+      return {
+        code: stringValue(item, 'code', '概览问题'), message: stringValue(item, 'message', '概览问题'),
+        capability, severity: item.severity === 'warning' ? 'warning' : 'blocker', section,
+        resource_id: typeof item.resource_id === 'string' ? item.resource_id : '',
+        action_label: typeof item.action_label === 'string' ? item.action_label : capability ? '查看对应能力' : '去处理',
+      };
     }),
     connections: arrayValue(input, 'connections', '概览').map(connectionView),
     recipes: arrayValue(input, 'recipes', '概览').map(productionRecipeView),
@@ -255,6 +306,18 @@ export const modelCenterApi = {
 
   createCertification: (input: CertificationRunInput) =>
     apiClient.request<CertificationRun>('/model-center/certifications', { method: 'POST', body: jsonBody(input) }),
+  listCertificationCandidates: (page = 1, pageSize = 100, capability?: ModelCapability, query?: string) => {
+    const params = new URLSearchParams(pagePath('/model-center/certification-candidates', page, pageSize).split('?')[1]);
+    if (capability) params.set('capability', capability);
+    if (query?.trim()) params.set('q', query.trim());
+    return apiClient.request<unknown>(`/model-center/certification-candidates?${params.toString()}`).then(certificationCandidatePage);
+  },
+  listCertifications: (page = 1, pageSize = 10, level?: string, status?: string) => {
+    const params = new URLSearchParams(pagePath('/model-center/certifications', page, pageSize).split('?')[1]);
+    if (level) params.set('level', level);
+    if (status) params.set('status', status);
+    return apiClient.request<unknown>(`/model-center/certifications?${params.toString()}`).then(certificationHistoryPage);
+  },
   getCertification: (runId: string) => apiClient.request<CertificationRun>(`/model-center/certifications/${runId}`),
   getImpact: (resourceType?: 'prompt_profile' | 'recipe', resourceId?: string) => {
     const params = new URLSearchParams();

@@ -69,6 +69,8 @@ MODEL_CENTER_ROUTES = {
     ("post", "/api/v1/model-center/prompt-profile-versions/{version_id}/disable"),
     ("post", "/api/v1/model-center/prompt-profiles/{profile_id}/rollback"),
     ("post", "/api/v1/model-center/certifications"),
+    ("get", "/api/v1/model-center/certifications"),
+    ("get", "/api/v1/model-center/certification-candidates"),
     ("get", "/api/v1/model-center/certifications/{run_id}"),
     ("get", "/api/v1/model-center/impact"),
 }
@@ -122,6 +124,84 @@ async def test_overview_returns_the_frontend_model_center_contract(client):
     assert body["connections"][0]["has_secret"] is True
     assert "api_key" not in body["connections"][0]
     assert {item["status"] for item in body["recipes"]} <= {"draft", "published", "disabled"}
+
+
+@pytest.mark.asyncio
+async def test_overview_blocks_uncertified_model_missing_prompt_and_unpublished_recipe(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            ModelProfile(
+                id="readiness-image", provider_id="provider-1", profile_key="readiness-image",
+                display_name="Readiness Image", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="readiness-image-v1", model_id="readiness-image", version=1,
+                api_model_id="readiness-image-api", driver_key="driver-image",
+                capabilities=["image_generation"], input_contract={}, output_contract={},
+                parameter_schema={}, default_params={}, limits={}, pricing={},
+                prompt_profile_key="missing-image-prompt", contract_version="v1",
+                status="published", checksum="i" * 64,
+            ),
+            ModelBinding(
+                id="readiness-image-binding", user_id=USER_ID, scope_type="project",
+                scope_id="readiness-project", task="shot_image", capability="image_generation",
+                profile_version_id="readiness-image-v1", connection_id="connection-1",
+                version=1, is_active=True,
+            ),
+        ])
+        await db.commit()
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    issues = response.json()["blocking_issues"]
+    codes = {item["code"] for item in issues}
+    assert {"model_certification_missing", "prompt_profile_missing", "published_recipe_missing"} <= codes
+    assert all(set(item) >= {
+        "code", "message", "severity", "section", "resource_id", "action_label",
+    } for item in issues)
+
+
+@pytest.mark.asyncio
+async def test_certification_candidates_only_return_compatible_readable_pairs(client):
+    response = await client.get(
+        "/api/v1/model-center/certification-candidates",
+        params={"capability": "video_generation", "q": "video"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["items"]
+    assert all(
+        item["profile"]["provider_id"] == item["connection"]["provider_id"]
+        for item in payload["items"]
+    )
+    assert payload["items"][0]["profile"]["name"] == "Video"
+    assert payload["items"][0]["connection"]["name"] == "Primary"
+
+
+@pytest.mark.asyncio
+async def test_certification_history_is_filterable_and_paginated(client):
+    async with AsyncSessionLocal() as db:
+        db.add(ModelCertificationRun(
+            id="history-contract-failed", user_id=USER_ID,
+            profile_version_id="profile-video-v1", connection_id="connection-1",
+            level="contract", status="failed", request_fingerprint="h" * 64,
+            sanitized_evidence={"error_code": "contract_failed", "api_key": "should-not-leak"},
+            estimated_cost_rmb=0, actual_cost_rmb=0,
+        ))
+        await db.commit()
+
+    response = await client.get(
+        "/api/v1/model-center/certifications",
+        params={"page": 1, "page_size": 10, "level": "contract", "status": "failed"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["meta"]["total"] >= 1
+    item = next(row for row in response.json()["items"] if row["id"] == "history-contract-failed")
+    assert item["profile_name"] == "Video"
+    assert item["connection_name"] == "Primary"
+    assert "api_key" not in json.dumps(item)
 
 
 @pytest.mark.asyncio

@@ -319,6 +319,22 @@ export interface CertificationRun {
   completed_at: string | null;
 }
 
+export interface CertificationCandidate {
+  id: string;
+  profile: {
+    id: string; name: string; api_model_id: string; provider_id: string;
+    provider_name: string; capabilities: ModelCapability[];
+  };
+  connection: { id: string; name: string; provider_id: string; status: string };
+}
+
+export interface CertificationHistoryItem extends CertificationRun {
+  profile_name: string;
+  api_model_id: string;
+  connection_name: string;
+  provider_name: string;
+}
+
 export interface CertificationRunInput {
   profile_version_id: string;
   connection_id: string;
@@ -360,7 +376,17 @@ export interface PublishResult {
 }
 
 export interface ModelCenterOverview {
-  blocking_issues: Array<{ code: string; message: string; capability?: ModelCapability }>;
+  blocking_issues: ReadinessIssue[];
   connections: ModelConnectionView[];
   recipes: ProductionRecipeView[];
+}
+
+export interface ReadinessIssue {
+  code: string;
+  message: string;
+  severity: 'blocker' | 'warning';
+  section: ModelCenterSection;
+  capability?: ModelCapability;
+  resource_id: string;
+  action_label: string;
 }

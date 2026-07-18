@@ -19,6 +19,8 @@ from app.features.model_config.management_repository import (
     recipe_page,
 )
 from app.features.model_config.certification_repository import (
+    certification_candidates_page as load_certification_candidates_page,
+    certification_history_page as load_certification_history_page,
     create_certification_intent,
     load_certification_intent,
     validate_certification_target,
@@ -451,6 +453,26 @@ async def get_certification(db: AsyncSession, *, user_id: str, run_id: str) -> d
     if row is None:
         raise ManagementOperationError("resource_not_found", "Certification run was not found.", "refresh", 404)
     return _certification_item(row)
+
+
+async def certification_candidates(
+    db: AsyncSession, *, user_id: str, page: int, page_size: int,
+    capability: str | None = None, query: str | None = None,
+) -> dict:
+    return await load_certification_candidates_page(
+        db, user_id=user_id, page=page, page_size=page_size,
+        capability=capability, query=query,
+    )
+
+
+async def certifications_history(
+    db: AsyncSession, *, user_id: str, page: int, page_size: int,
+    level: str | None = None, status: str | None = None,
+) -> dict:
+    return await load_certification_history_page(
+        db, user_id=user_id, page=page, page_size=page_size,
+        level=level, status=status,
+    )
 
 
 async def impact_preview(

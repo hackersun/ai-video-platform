@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
 from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
+from app.features.model_config.readiness import production_readiness
 from app.models.model_center import (
     ModelBinding,
     ModelCertificationRun,
@@ -106,13 +107,7 @@ async def management_overview(db: AsyncSession, user_id: str) -> dict:
     recipe_rows = list((await db.scalars(select(ProductionRecipeVersion).where(
         ProductionRecipeVersion.user_id == user_id,
     ).order_by(ProductionRecipeVersion.id))).all())
-    blocking_issues = []
-    if not connection_rows:
-        blocking_issues.append({"code": "connection_missing", "message": "尚未保存模型连接"})
-    elif not any(row.status in {"enabled", "verified"} for row in connection_rows):
-        blocking_issues.append({"code": "connection_unverified", "message": "没有已认证的模型连接"})
-    if not recipe_rows:
-        blocking_issues.append({"code": "recipe_missing", "message": "尚未配置生产组合预设"})
+    blocking_issues = await production_readiness(db, user_id=user_id)
     provider_labels = await _provider_labels(db, {row.provider_id for row in connection_rows})
     return {
         "blocking_issues": blocking_issues,

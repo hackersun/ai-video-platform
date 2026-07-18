@@ -74,12 +74,12 @@ test('概览修复链接和窄屏导航保留当前工作台上下文', async ({
   await page.route('**/api/v1/model-center/overview', async (route) => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
       ...overview,
-      blocking_issues: [{ code: 'video_blocked', message: '视频模型尚未认证', capability: 'video_generation' }],
+      blocking_issues: [{ code: 'video_blocked', message: '视频模型尚未认证', severity: 'blocker', section: 'test-lab', resource_id: 'profile-1', action_label: '运行模型认证', capability: 'video_generation' }],
     }),
   }));
   await page.goto('/llm-config?section=overview&returnTo=%2Fstudio');
-  await page.getByRole('link', { name: '查看对应能力' }).click();
-  await expect(page).toHaveURL('/llm-config?section=catalog&capability=video_generation&returnTo=%2Fstudio');
+  await page.getByRole('link', { name: '运行模型认证' }).click();
+  await expect(page).toHaveURL('/llm-config?section=test-lab&capability=video_generation&returnTo=%2Fstudio');
 
   await page.setViewportSize({ width: 1024, height: 800 });
   await page.goto('/llm-config?section=catalog');

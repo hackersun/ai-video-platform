@@ -316,6 +316,45 @@ class PublishResponse(BaseModel):
     audit_event_id: str
 
 
+class CertificationCandidateProfile(BaseModel):
+    id: str
+    name: str
+    api_model_id: str
+    provider_id: str
+    provider_name: str
+    capabilities: list[str]
+
+
+class CertificationCandidateConnection(BaseModel):
+    id: str
+    name: str
+    provider_id: str
+    status: str
+
+
+class CertificationCandidateItem(BaseModel):
+    id: str
+    profile: CertificationCandidateProfile
+    connection: CertificationCandidateConnection
+
+
+class CertificationHistoryItem(BaseModel):
+    id: str
+    profile_version_id: str
+    connection_id: str
+    profile_name: str
+    api_model_id: str
+    connection_name: str
+    provider_name: str
+    level: str
+    status: str
+    sanitized_evidence: dict[str, Any]
+    estimated_cost_rmb: str
+    actual_cost_rmb: str
+    created_at: str
+    completed_at: str | None
+
+
 class CertificationRequest(NonblankReasonRequest):
     profile_version_id: str
     connection_id: str

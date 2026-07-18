@@ -17,6 +17,11 @@ const catalog = {
   meta: { page: 1, page_size: 20, total: 1 },
 };
 const connections = { items: [{ id: 'connection-video', provider_id: 'volcengine', provider_name: '火山引擎', provider_code: 'volcengine', name: '视频连接', base_url: null, has_secret: true, secret_hint: '****1234', secret_updated_at: null, enabled: true, revision: 1 }], meta: { page: 1, page_size: 20, total: 1 } };
+const candidates = {
+  items: [{ id: 'profile-video:connection-video', profile: { id: 'profile-video', name: 'Seedance 1.5', api_model_id: 'seedance-1.5', provider_id: 'volcengine', provider_name: '火山引擎', capabilities: ['video_generation'] }, connection: { id: 'connection-video', name: '视频连接', provider_id: 'volcengine', status: 'connection_verified' } }],
+  meta: { page: 1, page_size: 100, total: 1 },
+};
+const history = { items: [{ ...certification, profile_name: 'Seedance 1.5', api_model_id: 'seedance-1.5', connection_name: '视频连接', provider_name: '火山引擎' }], meta: { page: 1, page_size: 10, total: 1 } };
 
 function devToken(userId: string) {
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url');
@@ -31,7 +36,9 @@ test.beforeEach(async ({ page }) => {
   }, { token: devToken(userId), id: userId });
   await page.route('**/api/v1/model-center/**', async (route) => {
     const url = route.request().url();
-    const body = url.includes('/certifications/run-17') ? certification
+    const body = url.includes('/certification-candidates') ? candidates
+      : url.includes('/certifications?') ? history
+      : url.includes('/certifications/run-17') ? certification
       : url.includes('/catalog?') ? catalog
         : url.includes('/connections?') ? connections
           : { blocking_issues: [], connections: [], recipes: [] };
@@ -51,12 +58,13 @@ test('test lab exposes tiered certification and actionable sanitized failure evi
   await page.route('**/api/v1/model-center/certifications/run-queued', async (route) => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ...certification, id: 'run-queued', status: 'queued' }) }));
   await page.goto('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
   await expect(page.getByRole('heading', { name: '契约认证' })).toBeVisible();
-  await expect(page.getByText('provider_timeout')).toBeVisible();
+  await expect(page.getByRole('definition').filter({ hasText: 'provider_timeout' })).toBeVisible();
   await expect(page.getByRole('button', { name: '修改连接后重试' })).toBeVisible();
   await expect(page.getByRole('link', { name: '返回工作台' })).toHaveAttribute('href', '/studio');
+  await expect(page.getByText('Seedance 1.5 · 视频连接')).toBeVisible();
+  await expect(page.getByText('provider_timeout')).toHaveCount(2);
   await page.getByRole('button', { name: '发起真实验证' }).click();
-  await page.getByLabel('模型版本').selectOption('profile-video');
-  await page.getByLabel('模型连接').selectOption('connection-video');
+  await page.getByLabel('兼容模型与连接').selectOption('profile-video:connection-video');
   await page.getByLabel('操作原因').fill('验收关键镜头');
   await page.getByLabel('用户作用域').fill('sunqy');
   await page.getByLabel('生产方案版本').fill('recipe-v1');
@@ -72,4 +80,18 @@ test('test lab exposes tiered certification and actionable sanitized failure evi
   await expect.poll(() => requests.length).toBe(1);
   expect(requests[0]).toEqual({ profile_version_id: 'profile-video', connection_id: 'connection-video', level: 'live', reason: '验收关键镜头', user_scope: 'sunqy', recipe_version_id: 'recipe-v1', chapter_id: 'chapter-4', run_id: 'run-17', selected_shot_ids: ['shot-03', 'shot-07'], budget_ceiling_rmb: '10', retry_policy: 'never', storage_policy: 'qiniu_public', real_cost_acknowledged: true });
   await expect(page).toHaveURL('/llm-config?section=test-lab&runId=run-queued&returnTo=%2Fstudio');
+});
+
+test('test lab searches only server-approved compatible candidates and filters history', async ({ page }) => {
+  const requested: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().includes('/certification-candidates') || request.url().includes('/certifications?')) requested.push(request.url());
+  });
+  await page.goto('/llm-config?section=test-lab');
+  await page.getByLabel('搜索兼容模型').fill('seedance');
+  await expect.poll(() => requested.some((url) => url.includes('q=seedance') && url.includes('capability=video_generation'))).toBe(true);
+  await expect(page.getByRole('option', { name: /Seedance 1.5.*视频连接/ })).toHaveCount(1);
+  await page.getByLabel('历史认证等级').selectOption('contract');
+  await page.getByLabel('历史认证状态').selectOption('failed');
+  await expect.poll(() => requested.some((url) => url.includes('level=contract') && url.includes('status=failed'))).toBe(true);
 });
