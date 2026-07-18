@@ -24,16 +24,18 @@ from app.models.prompt_skill import PromptSkill
 VERSION_FIELDS = ("stage", "content", "variables", "routing", "output_contract")
 
 
-def _canonical_checksum(values: dict[str, Any], evaluation: dict[str, Any]) -> str:
+def canonical_prompt_values_checksum(
+    values: dict[str, Any], evaluation: dict[str, Any] | None = None,
+) -> str:
     return stable_prompt_checksum({
         **{field: deepcopy(values.get(field)) for field in VERSION_FIELDS},
-        "evaluation": deepcopy(evaluation),
+        "evaluation": deepcopy(evaluation or {}),
     })
 
 
 def canonical_prompt_version_checksum(version: PromptProfileVersion) -> str:
     values = {field: getattr(version, field) for field in VERSION_FIELDS}
-    return _canonical_checksum(values, version.evaluation or {})
+    return canonical_prompt_values_checksum(values, version.evaluation or {})
 
 
 def _version_payload(source: PromptProfileVersion, changes: dict[str, Any]) -> dict[str, Any]:
@@ -53,7 +55,7 @@ async def edit_prompt_profile(
     source = await get_profile_version(db, version_id)
     latest = await latest_profile_version(db, source.profile_id)
     values = _version_payload(source, changes)
-    checksum = _canonical_checksum(values, {})
+    checksum = canonical_prompt_values_checksum(values)
     draft = PromptProfileVersion(
         id=str(uuid4()), profile_id=source.profile_id,
         version=(latest.version if latest else source.version) + 1,
@@ -91,7 +93,7 @@ async def publish_legacy_prompt_profile(
     return await publish_prompt_profile_version(db, version.id)
 
 
-def _legacy_version_values(skill: PromptSkill) -> dict[str, Any]:
+def legacy_prompt_version_values(skill: PromptSkill) -> dict[str, Any]:
     variables = deepcopy(skill.variables or {})
     routing = deepcopy(variables.get("routing") if isinstance(variables.get("routing"), dict) else {})
     return {
@@ -103,6 +105,17 @@ def _legacy_version_values(skill: PromptSkill) -> dict[str, Any]:
 async def ensure_legacy_prompt_profile(
     db: AsyncSession, skill: PromptSkill,
 ) -> PromptProfileVersion:
+    if skill.prompt_profile_version_id:
+        linked = await db.scalar(
+            select(PromptProfileVersion)
+            .join(PromptProfile, PromptProfile.id == PromptProfileVersion.profile_id)
+            .where(
+                PromptProfileVersion.id == skill.prompt_profile_version_id,
+                PromptProfile.user_id == skill.user_id,
+            )
+        )
+        if linked is not None:
+            return linked
     latest = await latest_profile_version(db, skill.id)
     if latest is not None:
         skill.prompt_profile_version_id = latest.id
@@ -111,11 +124,11 @@ async def ensure_legacy_prompt_profile(
         id=skill.id, user_id=skill.user_id, key=f"legacy.{skill.id}",
         name=skill.name, task=skill.task,
     ))
-    values = _legacy_version_values(skill)
+    values = legacy_prompt_version_values(skill)
     version = PromptProfileVersion(
         id=str(uuid4()), profile_id=skill.id, version=int(skill.version or 1),
         **values, evaluation={}, status="published" if skill.is_active else "draft",
-        checksum=_canonical_checksum(values, {}),
+        checksum=canonical_prompt_values_checksum(values),
         published_at=utc_now() if skill.is_active else None,
     )
     db.add(version)
@@ -159,7 +172,7 @@ async def disable_legacy_prompt_profile(
     disabled = PromptProfileVersion(
         id=str(uuid4()), profile_id=source.profile_id, version=source.version + 1,
         **values, evaluation={}, status="disabled",
-        checksum=_canonical_checksum(values, {}),
+        checksum=canonical_prompt_values_checksum(values),
     )
     db.add(disabled)
     skill.prompt_profile_version_id = disabled.id

@@ -13,6 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.credential_encryption import validate_fernet_ciphertext
 from app.features.model_config.domain import normalize_capabilities
+from app.features.model_config.prompt_recovery import (
+    PromptRecoveryConflict,
+    apply_prompt_recovery,
+    plan_prompt_recovery,
+)
 from app.features.model_drivers.public import select_llm_connection_driver_key
 from app.features.workflow_media.public import production_strategy_metadata
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
@@ -24,7 +29,6 @@ from app.models.model_center import (
     ModelProvider,
     ProductionRecipeVersion,
 )
-from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 from app.models.prompt_skill import PromptSkill
 
 
@@ -118,6 +122,7 @@ class BackfillReport:
     prompt_versions_created: int = 0
     planned_total: int = 0
     updated_total: int = 0
+    prompt_conflicts: tuple[str, ...] = ()
 
     @property
     def created_total(self) -> int:
@@ -126,7 +131,7 @@ class BackfillReport:
             if key.endswith("_created")
         )
 
-    def sanitized_dict(self) -> dict[str, int]:
+    def sanitized_dict(self) -> dict[str, object]:
         return {
             "providers_created": self.providers_created,
             "profiles_created": self.profiles_created,
@@ -139,6 +144,7 @@ class BackfillReport:
             "planned_total": self.planned_total,
             "created_total": self.created_total,
             "updated_total": self.updated_total,
+            "prompt_conflicts": self.prompt_conflicts,
         }
 
 
@@ -154,7 +160,7 @@ async def _legacy_rows(
     providers = list((await db.scalars(select(LLMProvider))).all())
     models = list((await db.scalars(select(LLMModel))).all())
     config_statement = select(LLMConfig)
-    prompt_statement = select(PromptSkill).where(PromptSkill.is_active == True)
+    prompt_statement = select(PromptSkill)
     if user_id:
         config_statement = config_statement.where(LLMConfig.user_id == user_id)
         prompt_statement = prompt_statement.where(PromptSkill.user_id == user_id)
@@ -323,33 +329,31 @@ async def _backfill_default_bindings(
             ))
 
 
-async def _backfill_prompt(
-    db: AsyncSession, prompt: PromptSkill, report: BackfillReport, apply: bool
+async def _recover_prompts(
+    db: AsyncSession,
+    *,
+    prompts: list[PromptSkill],
+    report: BackfillReport,
+    apply: bool,
 ) -> None:
-    profile_id = _canonical_id("prompt-profile", prompt.id)
-    profile = await db.get(PromptProfile, profile_id)
-    if profile is None:
-        _plan(report, "prompt_profiles_created", apply=apply)
-        if apply:
-            db.add(PromptProfile(
-                id=profile_id, user_id=prompt.user_id, key=f"legacy:{prompt.id}",
-                name=prompt.name, task=prompt.task,
-            ))
-    version_id = _canonical_id("prompt-version", prompt.id)
-    version = await db.get(PromptProfileVersion, version_id)
-    if version is not None:
-        return
-    _plan(report, "prompt_versions_created", apply=apply)
-    if apply:
-        body = {
-            "task": prompt.task, "stage": prompt.stage, "content": prompt.content,
-            "variables": prompt.variables or {}, "tags": prompt.tags or [],
-        }
-        db.add(PromptProfileVersion(
-            id=version_id, profile_id=profile_id, version=1, stage=prompt.stage,
-            content=prompt.content, variables=prompt.variables or {}, routing={}, output_contract=None,
-            evaluation={}, status="published", checksum=_checksum(body),
-        ))
+    for prompt_user_id in sorted({prompt.user_id for prompt in prompts}):
+        plan = await plan_prompt_recovery(db, user_id=prompt_user_id)
+        if plan.content_conflicts:
+            report.prompt_conflicts += plan.content_conflicts
+            if apply:
+                raise PromptRecoveryConflict(plan.content_conflicts)
+            continue
+        report.planned_total += (
+            plan.profiles_to_create
+            + plan.versions_to_create
+            + plan.links_to_update
+        )
+        if not apply:
+            continue
+        recovered = await apply_prompt_recovery(db, user_id=prompt_user_id)
+        report.prompt_profiles_created += recovered.profiles_created
+        report.prompt_versions_created += recovered.versions_created
+        report.updated_total += recovered.skills_linked
 
 
 async def _backfill_production_strategies(
@@ -416,8 +420,7 @@ async def backfill_model_center(
             await _backfill_default_bindings(
                 db, config, model, profile_version_id, report, apply, pending_binding_keys,
             )
-    for prompt in prompts:
-        await _backfill_prompt(db, prompt, report, apply)
+    await _recover_prompts(db, prompts=prompts, report=report, apply=apply)
     await _backfill_production_strategies(
         db, user_ids={config.user_id for config in configs}, report=report, apply=apply,
     )
