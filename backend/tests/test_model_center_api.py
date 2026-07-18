@@ -105,6 +105,19 @@ def test_model_center_routes_are_registered():
 
 
 @pytest.mark.asyncio
+async def test_overview_returns_the_frontend_model_center_contract(client):
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"blocking_issues", "connections", "recipes"}
+    assert isinstance(body["blocking_issues"], list)
+    assert body["connections"][0]["has_secret"] is True
+    assert "api_key" not in body["connections"][0]
+    assert {item["status"] for item in body["recipes"]} <= {"draft", "published", "disabled"}
+
+
+@pytest.mark.asyncio
 async def test_model_center_routes_require_authentication():
     def reject_anonymous():
         raise HTTPException(status_code=401, detail="authentication required")

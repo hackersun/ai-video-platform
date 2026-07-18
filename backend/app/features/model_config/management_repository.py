@@ -50,27 +50,8 @@ async def _paged_rows(db: AsyncSession, model, filters: tuple, page: int, page_s
     return rows, int(total)
 
 
-async def management_overview(db: AsyncSession, user_id: str) -> dict:
-    resources = {
-        "providers": (ModelProvider, ()),
-        "connections": (ModelConnection, (ModelConnection.user_id == user_id,)),
-        "profiles": (ModelProfile, ()),
-        "bindings": (ModelBinding, (ModelBinding.user_id == user_id,)),
-        "recipes": (ProductionRecipeVersion, (ProductionRecipeVersion.user_id == user_id,)),
-        "prompt_profiles": (PromptProfile, (PromptProfile.user_id == user_id,)),
-    }
-    counts = {
-        key: int(await db.scalar(select(func.count()).select_from(model).where(*filters)) or 0)
-        for key, (model, filters) in resources.items()
-    }
-    return {"counts": counts}
-
-
-async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
-    rows, total = await _paged_rows(
-        db, ModelConnection, (ModelConnection.user_id == user_id,), page, page_size,
-    )
-    items = [{
+def _connection_view(row: ModelConnection) -> dict:
+    return {
         "id": row.id, "provider_id": row.provider_id, "name": row.name, "status": row.status,
         "base_url": (row.endpoint_overrides or {}).get("base_url"),
         "enabled": row.status in {"enabled", "verified"},
@@ -78,7 +59,42 @@ async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: 
         "secret_hint": "****" if row.api_key or row.api_secret else None,
         "secret_updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "revision": row.revision,
-    } for row in rows]
+    }
+
+
+def _recipe_view(row: ProductionRecipeVersion) -> dict:
+    return {
+        "id": row.id, "recipe_key": row.recipe_key, "name": row.name, "version": row.version,
+        "status": row.status, "spec": dict(row.spec or {}), "revision": row.revision,
+    }
+
+
+async def management_overview(db: AsyncSession, user_id: str) -> dict:
+    connection_rows = list((await db.scalars(select(ModelConnection).where(
+        ModelConnection.user_id == user_id,
+    ).order_by(ModelConnection.id))).all())
+    recipe_rows = list((await db.scalars(select(ProductionRecipeVersion).where(
+        ProductionRecipeVersion.user_id == user_id,
+    ).order_by(ProductionRecipeVersion.id))).all())
+    blocking_issues = []
+    if not connection_rows:
+        blocking_issues.append({"code": "connection_missing", "message": "尚未保存模型连接"})
+    elif not any(row.status in {"enabled", "verified"} for row in connection_rows):
+        blocking_issues.append({"code": "connection_unverified", "message": "没有已认证的模型连接"})
+    if not recipe_rows:
+        blocking_issues.append({"code": "recipe_missing", "message": "尚未配置生产组合预设"})
+    return {
+        "blocking_issues": blocking_issues,
+        "connections": [_connection_view(row) for row in connection_rows],
+        "recipes": [_recipe_view(row) for row in recipe_rows],
+    }
+
+
+async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
+    rows, total = await _paged_rows(
+        db, ModelConnection, (ModelConnection.user_id == user_id,), page, page_size,
+    )
+    items = [_connection_view(row) for row in rows]
     return _page(items, page, page_size, total)
 
 
@@ -97,10 +113,7 @@ async def recipe_page(db: AsyncSession, user_id: str, page: int, page_size: int)
     rows, total = await _paged_rows(
         db, ProductionRecipeVersion, (ProductionRecipeVersion.user_id == user_id,), page, page_size,
     )
-    return [{
-        "id": row.id, "recipe_key": row.recipe_key, "name": row.name, "version": row.version,
-        "status": row.status, "spec": dict(row.spec or {}), "revision": row.revision,
-    } for row in rows], total
+    return [_recipe_view(row) for row in rows], total
 
 
 async def prompt_profile_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
