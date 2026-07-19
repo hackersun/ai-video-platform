@@ -700,6 +700,7 @@ async def test_unrelated_candidates_remain_candidates_and_do_not_block_lock(
     assert result["required_counts"] == {kind: 2 for kind in ENTITY_COUNTS}
     assert result["unrelated_candidate_count"] == 38
     assert len(unrelated) == 38
+    assert bible.style == "二维国风动漫"
     assert all(not item.is_approved and get_entity_review_status(item) == "candidate" for item in unrelated)
     story_lock = bible.extra_data["series_story_lock"]
     assert story_lock["closure_hash"] == result["closure_hash"]

@@ -8,6 +8,7 @@ from typing import Any
 
 from app.models import Chapter, StoryBible, StoryEntity
 from app.models.series_production_run import SeriesProductionRun
+from .visual_style import resolve_novel_visual_style
 from ..domain.errors import RequiredEntityBlocked, StoryLockSourceStale
 
 from ..repositories.lineage_repository import StoryLockLineageRepository
@@ -69,7 +70,6 @@ async def current_story_source(
     inputs_valid = all(str(episode.get("input_hash") or "") == chapter_input_hash([
         chapter for chapter in chapters if chapter.id in set(episode.get("chapter_ids") or [])
     ]) for episode in ordered)
-    extra = novel.extra_data or {}
     selected_ids = [str(value) for value in (run.run_metadata or {}).get("selected_anchor_shot_ids", [])]
     shot_refs = [{
         "shot_id": str(shot.id),
@@ -107,7 +107,7 @@ async def current_story_source(
             "name": item.canonical_name or item.name, "chapter_id": item.chapter_id,
             "attributes": item.attributes, "evidence": item.evidence,
         } for item in sorted(entities, key=lambda entity: (entity.entity_type, entity.id))],
-        "style": str(extra.get("visual_style") or extra.get("style") or novel.genre or "").strip(),
+        "style": resolve_novel_visual_style(novel),
     }
     return source, inputs_valid
 

@@ -185,6 +185,7 @@ class AsyncClosureVersioningAdapter:
         return StoryBible(
             id=bible_id, user_id=run.user_id, novel_id=run.novel_id,
             title=f"Production Bible v{lock['version']}",
+            style=str((request.get("drift_factors") or {}).get("visual_style") or ""),
             extra_data={"production_status": "locked", "series_story_lock": lock},
         )
 

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Chapter, Novel, Shot, StoryEntity, Storyboard, Workflow
 from app.models.series_production_run import SeriesProductionRun
 from app.services.story_entity_lifecycle import get_entity_review_status
+from .visual_style import resolve_novel_visual_style
 
 from ..domain.closure_v2 import edge
 from ..domain.scoped_reference import canonical_json_sha256, resolve_scoped_reference
@@ -124,8 +125,7 @@ async def build_closure_v2_request(
     if novel is None:
         raise ValueError("production novel missing or cross-owner")
     drift_factors = {"voice_selection": dict((run.run_metadata or {}).get("voice_selection") or {}),
-        "visual_style": str((novel.extra_data or {}).get("visual_style")
-                            or (novel.extra_data or {}).get("style") or novel.genre or ""),
+        "visual_style": resolve_novel_visual_style(novel),
         "required_entity_versions": sorted((entity.id, int(entity.version or 0))
                                             for entity in candidates if entity.id in required_ids),
         "required_entity_lifecycle": sorted((entity.id, get_entity_review_status(entity))

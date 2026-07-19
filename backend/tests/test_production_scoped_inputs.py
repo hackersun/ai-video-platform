@@ -142,6 +142,23 @@ async def test_persisted_scoped_shot_builds_closure_v2_request(scoped_db):
 
 
 @pytest.mark.asyncio
+async def test_closure_preserves_explicit_3d_style_from_novel_description(scoped_db):
+    run, _shot = await _persist_scoped_shot(scoped_db)
+    novel = await scoped_db.get(Novel, run.novel_id)
+    novel.extra_data = {}
+    novel.genre = "悬疑"
+    novel.description = "电影级 3D 科幻悬疑连续短片，统一写实材质与电影光影。"
+    await scoped_db.flush()
+
+    request = await build_closure_v2_request(
+        scoped_db, run.id, expected_run_version=run.version, user_id=run.user_id,
+    )
+
+    assert "3D" in request["drift_factors"]["visual_style"]
+    assert request["drift_factors"]["visual_style"] != "悬疑"
+
+
+@pytest.mark.asyncio
 async def test_required_entity_lifecycle_change_drifts_closure_snapshot(scoped_db):
     from app.services.story_entity_lifecycle import ARCHIVED, set_entity_review_status
 
