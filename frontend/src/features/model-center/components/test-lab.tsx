@@ -1,6 +1,7 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { useCertificationRun } from '../hooks/use-certification-run';
@@ -32,10 +33,16 @@ function LiveConfirmation({ canSubmit, onClose, onSubmit }: { canSubmit: boolean
 export function TestLab({ runId, location }: { runId?: string; location: ModelCenterLocation }) {
   const router = useRouter();
   const run = useCertificationRun(runId);
-  const [level, setLevel] = useState<Exclude<CertificationLevel, 'none'>>('contract');
-  const [capability, setCapability] = useState<ModelCapability>(location.capability || 'video_generation');
+  const [level, setLevel] = useState<Exclude<CertificationLevel, 'none'>>(location.level || 'contract');
+  const [capability, setCapability] = useState<ModelCapability | undefined>(
+    location.capability || (location.connectionId ? undefined : 'video_generation'),
+  );
   const [query, setQuery] = useState('');
-  const candidates = useCertificationCandidates(capability, query);
+  const [profileFilter, setProfileFilter] = useState(location.profileVersionId);
+  const [connectionFilter, setConnectionFilter] = useState(location.connectionId);
+  const candidates = useCertificationCandidates(
+    capability, query, 1, 100, level, profileFilter, connectionFilter,
+  );
   const [candidateId, setCandidateId] = useState('');
   const [historyLevel, setHistoryLevel] = useState('');
   const [historyStatus, setHistoryStatus] = useState('');
@@ -49,13 +56,19 @@ export function TestLab({ runId, location }: { runId?: string; location: ModelCe
   const profileVersionId = selected?.profile.id || '';
   const connectionId = selected?.connection.id || '';
   const liveReady = [liveContext.userScope, liveContext.recipeVersion, liveContext.chapterId, liveContext.runId, liveContext.selectedShots, liveContext.budgetCeiling].every((value) => value.trim().length > 0);
+  useEffect(() => {
+    if (candidateRows.length === 1 && !candidateId) setCandidateId(candidateRows[0].id);
+  }, [candidateId, candidateRows]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (level === 'live') return setShowLiveConfirmation(true);
     try {
       const created = await run.createCertification({ profile_version_id: profileVersionId, connection_id: connectionId, level, reason });
-      router.push(modelCenterHref({ ...location, section: 'test-lab', runId: created.id }));
+      router.push(modelCenterHref({
+        ...location, section: 'test-lab', runId: created.id,
+        level: undefined, profileVersionId: undefined, connectionId: undefined,
+      }));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '认证请求失败，请修改后重试。');
     }
@@ -71,7 +84,10 @@ export function TestLab({ runId, location }: { runId?: string; location: ModelCe
         budget_ceiling_rmb: liveContext.budgetCeiling.trim(), retry_policy: liveContext.retryPolicy,
         storage_policy: liveContext.storagePolicy, real_cost_acknowledged: true,
       });
-      router.push(modelCenterHref({ ...location, section: 'test-lab', runId: created.id }));
+      router.push(modelCenterHref({
+        ...location, section: 'test-lab', runId: created.id,
+        level: undefined, profileVersionId: undefined, connectionId: undefined,
+      }));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '真实验证请求失败，请修改后重试。');
     }
@@ -82,15 +98,16 @@ export function TestLab({ runId, location }: { runId?: string; location: ModelCe
     <section className="rounded-lg border border-white/10 bg-slate-950/20 p-4">
       <header className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-white">分级认证</h2><p className="mt-1 text-xs text-slate-500">候选由服务端按提供方、能力、发布状态和连接认证结果配对。</p></div><button type="button" onClick={() => setLevel('live')} className="model-center-quiet">发起真实验证</button></header>
       <form onSubmit={submit} className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="text-xs text-slate-400">认证等级<select aria-label="认证等级" value={level} onChange={(event) => setLevel(event.target.value as Exclude<CertificationLevel, 'none'>)} className="model-center-input mt-1 w-full"><option value="connection">连接认证（最小健康请求）</option><option value="contract">契约认证（低成本或模拟）</option><option value="live">真实验证（费用确认）</option></select></label>
-        <label className="text-xs text-slate-400">模型能力<select aria-label="模型能力" value={capability} onChange={(event) => { setCapability(event.target.value as ModelCapability); setCandidateId(''); }} className="model-center-input mt-1 w-full">{capabilities.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-        <label className="text-xs text-slate-400">搜索兼容模型<input aria-label="搜索兼容模型" value={query} onChange={(event) => { setQuery(event.target.value); setCandidateId(''); }} placeholder="模型、API 标识、提供方或连接" className="model-center-input mt-1 w-full" /></label>
+        <label className="text-xs text-slate-400">认证等级<select aria-label="认证等级" value={level} onChange={(event) => { setLevel(event.target.value as Exclude<CertificationLevel, 'none'>); setCandidateId(''); }} className="model-center-input mt-1 w-full"><option value="connection">连接认证（会请求提供方）</option><option value="contract">契约认证（本地免费）</option><option value="live">真实验证（费用确认）</option></select></label>
+        <label className="text-xs text-slate-400">模型能力<select aria-label="模型能力" value={capability || ''} onChange={(event) => { setCapability((event.target.value || undefined) as ModelCapability | undefined); setProfileFilter(undefined); setConnectionFilter(undefined); setCandidateId(''); }} className="model-center-input mt-1 w-full"><option value="">全部能力</option>{capabilities.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label className="text-xs text-slate-400">搜索兼容模型<input aria-label="搜索兼容模型" value={query} onChange={(event) => { setQuery(event.target.value); setProfileFilter(undefined); setConnectionFilter(undefined); setCandidateId(''); }} placeholder="模型、API 标识、提供方或连接" className="model-center-input mt-1 w-full" /></label>
         <ModelVersionPicker candidates={candidateRows} value={candidateId} loading={candidates.loading} onChange={setCandidateId} />
         <label className="text-xs text-slate-400 sm:col-span-2">操作原因<input aria-label="操作原因" required value={reason} onChange={(event) => setReason(event.target.value)} className="model-center-input mt-1 w-full" /></label>
         {level === 'live' && <div className="sm:col-span-2"><AdvancedParametersDrawer value={liveContext} onChange={setLiveContext} /></div>}
         <div className="sm:col-span-2 flex justify-end"><button type="submit" disabled={!selected || reason.trim().length < 2 || (level === 'live' && !liveReady)} className="model-center-primary">提交{level === 'live' ? '真实验证' : '认证'}</button></div>
       </form>
       {candidates.error && <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{candidates.error.message} 请修改筛选或检查连接后重试。</p>}
+      {candidates.data && !candidates.loading && !candidates.error && candidateRows.length === 0 && <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-100">当前筛选没有可用的模型连接组合。<Link href={modelCenterHref({ ...location, section: 'connections', level: undefined, profileVersionId: undefined, connectionId: undefined, runId: undefined })} className="ml-1 font-medium text-violet-200 underline underline-offset-2">先配置模型连接</Link>，保存并测试凭证后再返回认证。</p>}
       {message && <p className="mt-3 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{message}</p>}
     </section>
     <section className="rounded-lg border border-white/10 bg-slate-950/20 p-4">

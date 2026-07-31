@@ -31,6 +31,11 @@ async def unevaluated_quality_results(
         if not artifact_id:
             raise ValueError("selected-anchor artifact identity is missing")
         episode = episode_by_workflow.get(workflow_id) or {}
+        subtitle_sync_status = extra.get("subtitle_sync_status")
+        audio_verification_required = bool(extra.get("audio_verification_required"))
+        if not subtitle_sync_status and extra.get("video_native_audio") and extra.get("subtitle_burned"):
+            subtitle_sync_status = "script_aligned_pending_audio_verification"
+            audio_verification_required = True
         results.append({
             "shot_id": shot_id,
             "artifact_id": str(artifact_id),
@@ -40,6 +45,11 @@ async def unevaluated_quality_results(
             "evidence_source": "not_evaluated",
             "episode_number": int(episode.get("episode_number") or 0),
             "preceding_artifact_id": None,
+            "output_video_url": job.output_video_url,
+            "public_video_url": extra.get("subtitle_public_video_url"),
+            "subtitle_track_id": job.subtitle_track_id,
+            "subtitle_sync_status": subtitle_sync_status,
+            "audio_verification_required": audio_verification_required,
         })
     return results
 

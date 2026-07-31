@@ -140,6 +140,23 @@ async def validate_model_bindings(
 ) -> dict[str, dict[str, str]]:
     if set(bindings) != set(CAPABILITIES):
         raise BindingValidationError("exact text/image/tts/video bindings are required")
+    return await validate_required_model_bindings(
+        db, run, bindings, required_tested_at=required_tested_at,
+        freshness_seconds=freshness_seconds, persist=persist,
+    )
+
+
+async def validate_required_model_bindings(
+    db: AsyncSession,
+    run: SeriesProductionRun,
+    bindings: dict[str, str],
+    *,
+    required_tested_at: datetime,
+    freshness_seconds: int = 900,
+    persist: bool = False,
+) -> dict[str, dict[str, str]]:
+    if not bindings or not set(bindings).issubset(CAPABILITIES):
+        raise BindingValidationError("one or more known model bindings are required")
     if not 1 <= freshness_seconds <= 900:
         raise BindingValidationError("server freshness must be within 900 seconds")
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
@@ -154,14 +171,65 @@ async def validate_model_bindings(
             config_id=bindings[capability],
             minimum_tested_at=minimum_tested_at,
         )
-        for capability in CAPABILITIES
+        for capability in bindings
     }
     if persist:
+        previous = (run.model_bindings or {}).get("capabilities") or {}
+        merged = {**previous, **snapshot}
+        video = merged.get("video") or {}
         run.model_bindings = {
-            "capabilities": snapshot,
-            "provider_id": snapshot["video"]["provider_id"],
-            "model_id": snapshot["video"]["api_model_id"],
+            "capabilities": merged,
+            "provider_id": video.get("provider_id"),
+            "model_id": video.get("api_model_id"),
         }
         flag_modified(run, "model_bindings")
         await db.commit()
     return snapshot
+
+
+async def validate_persisted_model_bindings(
+    db: AsyncSession, run: SeriesProductionRun, *, required_capabilities: set[str],
+    persist_missing: bool = False,
+) -> dict[str, dict[str, str]]:
+    """Revalidate immutable run snapshots without restarting the rolling test clock."""
+    persisted = (run.model_bindings or {}).get("capabilities") or {}
+    if not required_capabilities or not required_capabilities.issubset(CAPABILITIES):
+        raise BindingValidationError("one or more known model bindings are required")
+    verified: dict[str, dict[str, str]] = {}
+    for capability in required_capabilities:
+        expected = persisted.get(capability) or {}
+        config_id = str(expected.get("config_id") or "")
+        stable_keys = (
+            "config_id", "db_model_id", "api_model_id", "provider_id",
+            "tested_at", "contract_version", "prompt_profile", "verification_status",
+        )
+        has_snapshot = all(expected.get(key) is not None for key in stable_keys)
+        rolling_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=900)
+        current = await _binding_snapshot(
+            db, run, capability=capability, config_id=config_id,
+            minimum_tested_at=(datetime.min if has_snapshot else max(
+                required_tested_at_for_run(run), rolling_cutoff,
+            )),
+        )
+        changed = has_snapshot and any(
+            str(current.get(key) or "") != str(expected.get(key) or "") for key in stable_keys
+        )
+        if changed and not persist_missing:
+            raise BindingValidationError(f"{capability} persisted binding snapshot has changed")
+        if changed:
+            current = await _binding_snapshot(
+                db, run, capability=capability, config_id=config_id,
+                minimum_tested_at=max(required_tested_at_for_run(run), rolling_cutoff),
+            )
+        verified[capability] = dict(current if changed or not has_snapshot else expected)
+    if persist_missing:
+        merged = {**persisted, **verified}
+        video = merged.get("video") or {}
+        run.model_bindings = {
+            "capabilities": merged,
+            "provider_id": video.get("provider_id"),
+            "model_id": video.get("api_model_id"),
+        }
+        flag_modified(run, "model_bindings")
+        await db.commit()
+    return verified

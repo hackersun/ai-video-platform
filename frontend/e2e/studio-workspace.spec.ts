@@ -216,3 +216,80 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
   await expect(page.getByText('当前工作流没有阻断项，可继续生成、合成或导出。')).toBeVisible();
   expect(actionRequested).toBe(true);
 });
+
+test('studio bootstrap requests the workflow catalog once', async ({ page }) => {
+  let workflowRequestCount = 0;
+  const snapshotRequestCounts = new Map<string, number>();
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/\/+/g, '/').replace(/\/$/, '');
+    if (path === '/api/v1/workflow') {
+      workflowRequestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { workflow_id: 'wf-001', title: '裂纹月光 第一集', status: 'active', novel_id: 'novel-001', chapter_id: 'chapter-001' },
+          { workflow_id: 'wf-002', title: '裂纹月光 第二集', status: 'active', novel_id: 'novel-001', chapter_id: 'chapter-002' },
+        ]),
+      });
+      return;
+    }
+    const snapshotMatch = path.match(/^\/api\/v1\/studio\/workflows\/(wf-00[12])\/snapshot$/);
+    if (snapshotMatch) {
+      const requestedWorkflowId = snapshotMatch[1];
+      snapshotRequestCounts.set(requestedWorkflowId, (snapshotRequestCounts.get(requestedWorkflowId) || 0) + 1);
+      const responseSnapshot = requestedWorkflowId === 'wf-001'
+        ? snapshot
+        : {
+            ...snapshot,
+            workflow: { ...snapshot.workflow, id: 'wf-002', title: '裂纹月光 第二集', chapter_id: 'chapter-002' },
+            story_context: {
+              ...snapshot.story_context,
+              chapter: { id: 'chapter-002', title: '第二章 暗潮', chapter_number: 2 },
+            },
+          };
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(responseSnapshot) });
+      return;
+    }
+    if (path === '/api/v1/production-cards/novel/novel-001') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(productionCards) });
+      return;
+    }
+    if (path === '/api/v1/novels/novel-001') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 'novel-001', title: '裂纹月光', total_chapters: 1 }) });
+      return;
+    }
+    if (path === '/api/v1/chapters/novel/novel-001') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([
+          { id: 'chapter-001', title: '第一章 裂纹月光', chapter_number: 1 },
+          { id: 'chapter-002', title: '第二章 暗潮', chapter_number: 2 },
+        ]),
+      });
+      return;
+    }
+    if (path === '/api/v1/video/models') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ models: [] }) });
+      return;
+    }
+    if (path === '/api/v1/prompt-skills') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], count: 0 }) });
+      return;
+    }
+    throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
+  });
+
+  await page.goto('/studio?workflow_id=wf-001');
+
+  await expect(page).toHaveURL(/\/studio\?workflow_id=wf-001/);
+  await expect(page.getByRole('heading', { name: '第一章 裂纹月光 制作看板' })).toBeVisible();
+  expect(workflowRequestCount).toBe(1);
+  expect(snapshotRequestCounts.get('wf-001')).toBe(1);
+
+  await page.getByRole('button', { name: /第 2 集 第二章 暗潮/ }).click();
+  await expect(page).toHaveURL(/\/studio\?workflow_id=wf-002/);
+  await expect(page.getByRole('heading', { name: '第二章 暗潮 制作看板' })).toBeVisible();
+  expect(snapshotRequestCounts.get('wf-002')).toBe(1);
+});

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from app.features.video_generation.constants import PROVIDER_VIDEO_WATERMARK_ENABLED
+from app.features.video_generation.constants import (
+    PROVIDER_VIDEO_WATERMARK_ENABLED,
+    SEEDANCE_NATIVE_AUDIO_MODEL_IDS,
+)
 from app.services.seedance_contract import get_seedance_contract
 
 
@@ -113,7 +116,10 @@ def apply_seedance_contract_limits(
     return _limits_with_contract_caps(
         model_limits,
         contract=contract,
-        enforce_contract=contract.model_family == "seedance_2",
+        enforce_contract=(
+            contract.model_family == "seedance_2"
+            or str(model_id or "") in SEEDANCE_NATIVE_AUDIO_MODEL_IDS
+        ),
     )
 
 
@@ -151,7 +157,10 @@ def build_video_provider_content(
     effective_limits = _limits_with_contract_caps(
         model_limits,
         contract=contract,
-        enforce_contract=contract.model_family == "seedance_2",
+        enforce_contract=(
+            contract.model_family == "seedance_2"
+            or str(model_id or "") in SEEDANCE_NATIVE_AUDIO_MODEL_IDS
+        ),
     )
     image_limit = _model_limit(effective_limits, "images", 1)
     video_limit = _model_limit(effective_limits, "videos", 0)

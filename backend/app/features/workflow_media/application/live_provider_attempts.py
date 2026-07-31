@@ -1,6 +1,5 @@
 """Live-canary accounting and canonical-shot lineage for workflow media."""
 
-from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -15,18 +14,13 @@ from app.services.live_canary_budget import (
     BudgetExceeded,
     InvalidAccountingInput,
     prepare_provider_operation,
-    required_tested_at_for_run,
     settle_confirmed_provider_rejection,
-    validate_model_bindings,
 )
+from app.services.live_canary_bindings import validate_persisted_model_bindings
 
 
 def _live_canary_enabled(run: Optional[SeriesProductionRun]) -> bool:
     return bool(run and (run.budget_policy or {}).get("live_canary") is True)
-
-
-def _live_required_at(run: SeriesProductionRun) -> datetime:
-    return required_tested_at_for_run(run)
 
 
 async def prepare_live_provider_attempt(
@@ -42,14 +36,7 @@ async def prepare_live_provider_attempt(
         return None
     assert run is not None
     try:
-        capabilities = (run.model_bindings or {}).get("capabilities") or {}
-        config_ids = {
-            name: str((capabilities.get(name) or {}).get("config_id") or "")
-            for name in ("text", "image", "tts", "video")
-        }
-        await validate_model_bindings(
-            db, run, config_ids, required_tested_at=_live_required_at(run), freshness_seconds=900
-        )
+        await validate_persisted_model_bindings(db, run, required_capabilities={capability})
         policy = run.budget_policy or {}
         estimates = policy.get("estimates_rmb") if isinstance(policy.get("estimates_rmb"), dict) else {}
         estimate = estimates.get(capability, policy.get(f"{capability}_estimate_rmb"))
@@ -74,7 +61,7 @@ async def resolve_live_series_run_for_shot(
     """Resolve live context only through persisted shot -> storyboard -> workflow -> run lineage."""
     runs = list((await db.scalars(select(SeriesProductionRun).where(
         SeriesProductionRun.user_id == user_id,
-        SeriesProductionRun.status == "media_running",
+        SeriesProductionRun.status.in_(("shots_ready", "anchor_ready", "media_running")),
     ))).all())
     live_runs = [run for run in runs if _live_canary_enabled(run)]
     shot_storyboard = await db.get(Storyboard, shot.storyboard_id) if shot.storyboard_id else None

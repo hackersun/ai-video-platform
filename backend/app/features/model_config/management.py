@@ -120,7 +120,8 @@ async def create_connection(db: AsyncSession, *, user_id: str, request) -> dict:
     async with db.begin():
         row = await persist_connection(
             db, user_id=user_id, provider_id=request.provider_id, name=request.name,
-            api_key=request.api_key, api_secret=request.api_secret, reason=request.reason,
+            api_key=request.api_key, api_secret=request.api_secret,
+            base_url=request.base_url, reason=request.reason,
         )
         if row is None:
             raise ManagementOperationError("resource_not_found", "Provider was not found.", "refresh", 404)
@@ -425,6 +426,8 @@ def _certification_item(row) -> dict:
 
 
 async def create_certification(db: AsyncSession, *, user_id: str, request) -> dict:
+    from app.features.model_config.certification_execution import execute_certification
+
     async with db.begin():
         if not await validate_certification_target(
             db, user_id=user_id, profile_version_id=request.profile_version_id, connection_id=request.connection_id,
@@ -445,6 +448,14 @@ async def create_certification(db: AsyncSession, *, user_id: str, request) -> di
             connection_id=request.connection_id, level=request.level, reason=request.reason,
             evidence=evidence, estimated_cost_rmb=request.budget_ceiling_rmb or 0,
         )
+        if request.level in {"connection", "contract"}:
+            completed = await execute_certification(
+                db, user_id=user_id, run_id=row.id,
+                profile_version_id=request.profile_version_id,
+                connection_id=request.connection_id, level=request.level,
+            )
+            if completed is not None:
+                row = completed
     return _certification_item(row)
 
 
@@ -458,10 +469,13 @@ async def get_certification(db: AsyncSession, *, user_id: str, run_id: str) -> d
 async def certification_candidates(
     db: AsyncSession, *, user_id: str, page: int, page_size: int,
     capability: str | None = None, query: str | None = None,
+    level: str | None = None, profile_version_id: str | None = None,
+    connection_id: str | None = None,
 ) -> dict:
     return await load_certification_candidates_page(
         db, user_id=user_id, page=page, page_size=page_size,
-        capability=capability, query=query,
+        capability=capability, query=query, level=level,
+        profile_version_id=profile_version_id, connection_id=connection_id,
     )
 
 

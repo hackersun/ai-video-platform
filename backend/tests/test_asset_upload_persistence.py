@@ -107,7 +107,7 @@ def test_remote_image_uses_detected_extension_when_header_is_wrong(tmp_path, mon
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
-            pass
+            assert kwargs["trust_env"] is False
 
         async def __aenter__(self):
             return self

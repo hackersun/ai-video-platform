@@ -196,6 +196,14 @@ def _json_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
 
+def _next_series_plan_version(extra_data: Any) -> int:
+    current = _json_dict(_json_dict(extra_data).get(SERIES_PLAN_KEY)).get("version")
+    try:
+        return max(0, int(current)) + 1
+    except (TypeError, ValueError):
+        return 1
+
+
 def _uniq(values: Iterable[Any], limit: int = 8) -> List[str]:
     result: List[str] = []
     for value in values:
@@ -793,7 +801,7 @@ async def build_series_plan(
 
     now = utc_now().isoformat()
     plan = {
-        "version": 1,
+        "version": _next_series_plan_version(novel.extra_data),
         "novel_id": novel.id,
         "novel_title": novel.title,
         "genre": novel.genre,

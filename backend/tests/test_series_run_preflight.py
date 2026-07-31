@@ -20,6 +20,7 @@ from app.services.series_run_orchestrator import (
     evaluate_media_preflight,
     mark_run_episode_contracts_superseded,
 )
+from app.features.series_run_media_preflight.public import _select_assets
 
 
 @pytest_asyncio.fixture()
@@ -47,6 +48,117 @@ def _run(*, user_id: str, novel_id: str, status: str = "anchor_ready") -> Series
         episodes=[{"episode_number": 1, "chapter_ids": [], "stage": "shots_ready", "canonical_ids": {}}],
         version=1,
     )
+
+
+def test_locked_entity_multiview_assets_are_preferred_over_composite_reference() -> None:
+    user_id, novel_id, entity_id = str(uuid4()), str(uuid4()), str(uuid4())
+    entity = StoryEntity(
+        id=entity_id, user_id=user_id, novel_id=novel_id, entity_type="character",
+        name="沈岚", is_approved=True, attributes={},
+    )
+    views = [
+        Asset(
+            id=f"view-{view_key}", user_id=user_id, novel_id=novel_id,
+            entity_id=entity_id, entity_type="character", category="character",
+            name=f"沈岚 {view_key}", asset_type="image", url=f"https://cdn.example.com/{view_key}.png",
+            version=1, is_active=True, is_final=True, is_locked=True,
+            generation_params={"source": "entity_multiview", "status": "succeeded", "view_key": view_key},
+        )
+        for view_key in ("front", "side", "back")
+    ]
+    composite = Asset(
+        id="legacy-composite", user_id=user_id, novel_id=novel_id, entity_id=entity_id,
+        entity_type="character", category="style", name="多角色复合板", asset_type="image",
+        url="https://cdn.example.com/composite.png", version=1, is_active=True,
+        is_final=True, is_locked=True, generation_params={
+            "composite_reference_rule": "single_artifact_dual_role_v1",
+            "canonical_roles": ["front", "three_quarter", "full_body", "global_style_board"],
+            "role_bindings": [
+                {"role": "character_canonical", "entity_id": entity_id},
+                {"role": "character_canonical", "entity_id": "another-character"},
+                {"role": "global_style_board", "novel_id": novel_id},
+            ],
+        },
+    )
+    style = Asset(
+        id="style-only", user_id=user_id, novel_id=novel_id, category="style",
+        name="系列风格板", asset_type="image", url="https://cdn.example.com/style.png",
+        version=1, is_active=True, is_final=True, is_locked=True,
+        generation_params={"canonical_roles": ["global_style_board"]},
+    )
+
+    selected, missing, unlocked, conflicts = _select_assets(
+        [*views, composite, style], [entity], novel_id,
+    )
+
+    assert [asset.id for asset in selected] == ["view-front", "view-side", "view-back", "style-only"]
+    assert missing == []
+    assert unlocked == []
+    assert conflicts == []
+
+
+def test_incomplete_entity_multiview_set_is_not_canonical() -> None:
+    user_id, novel_id, entity_id = str(uuid4()), str(uuid4()), str(uuid4())
+    entity = StoryEntity(
+        id=entity_id, user_id=user_id, novel_id=novel_id, entity_type="character",
+        name="沈岚", is_approved=True, attributes={},
+    )
+    incomplete = [
+        Asset(
+            id=f"view-{view_key}", user_id=user_id, novel_id=novel_id,
+            entity_id=entity_id, entity_type="character", category="character",
+            name=f"沈岚 {view_key}", asset_type="image", url=f"https://cdn.example.com/{view_key}.png",
+            version=1, is_active=True, is_final=True, is_locked=True,
+            generation_params={"source": "entity_multiview", "status": "succeeded", "view_key": view_key},
+        )
+        for view_key in ("front", "side")
+    ]
+
+    selected, missing, _, _ = _select_assets(incomplete, [entity], novel_id)
+
+    assert selected == []
+    assert missing == [entity_id, "global_style_board"]
+
+
+def test_current_run_reference_supersedes_older_composite_reference_candidate() -> None:
+    user_id, novel_id, entity_id = str(uuid4()), str(uuid4()), str(uuid4())
+    entity = StoryEntity(
+        id=entity_id, user_id=user_id, novel_id=novel_id, entity_type="character",
+        name="顾清霜", is_approved=True, attributes={},
+    )
+
+    def composite(asset_id: str) -> Asset:
+        return Asset(
+            id=asset_id, user_id=user_id, novel_id=novel_id, category="style",
+            name=f"系列复合参考-{asset_id}", asset_type="image",
+            url=f"https://cdn.example.com/{asset_id}.png", version=1,
+            is_active=True, is_final=True, is_locked=True,
+            generation_params={
+                "composite_reference_rule": "single_artifact_dual_role_v1",
+                "canonical_roles": [
+                    "front", "three_quarter", "full_body", "global_style_board",
+                ],
+                "role_bindings": [
+                    {"role": "character_canonical", "entity_id": entity_id},
+                    {"role": "global_style_board", "novel_id": novel_id},
+                ],
+            },
+        )
+
+    old_reference = composite("old-reference")
+    current_reference = composite("current-reference")
+
+    selected, missing, unlocked, conflicts = _select_assets(
+        [old_reference, current_reference],
+        [entity],
+        novel_id,
+        preferred_composite_asset_id=current_reference.id,
+    )
+
+    assert [asset.id for asset in selected] == [current_reference.id]
+    assert missing == []
+    assert unlocked == []
+    assert conflicts == []
 
 
 @pytest.mark.asyncio

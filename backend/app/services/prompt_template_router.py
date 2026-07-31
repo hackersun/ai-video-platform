@@ -103,7 +103,7 @@ async def select_prompt_skill_for_model(
     contract_evidence = _model_contract_evidence(provider, model, capability, task)
     base = _route_base(task, provider, model, capabilities, output_contract, contract_evidence)
     titles = (template_title, internal_title)
-    await ensure_standard_prompt_skills(db)
+    await ensure_standard_prompt_skills(db, commit=False)
     selections = await resolve_prompt_entries(
         db,
         PromptRouteQuery(

@@ -1,15 +1,18 @@
 import { useCallback } from 'react';
 
 import { modelCenterApi } from '../api';
-import type { ModelCapability } from '../types';
+import type { CertificationLevel, ModelCapability } from '../types';
 import { useModelCenterQuery } from './use-model-center-query';
 
 export function useCertificationCandidates(
-  capability: ModelCapability, query: string, page = 1, pageSize = 100,
+  capability: ModelCapability | undefined, query: string, page = 1, pageSize = 100,
+  level?: Exclude<CertificationLevel, 'none'>, profileVersionId?: string, connectionId?: string,
 ) {
   const request = useCallback(
-    () => modelCenterApi.listCertificationCandidates(page, pageSize, capability, query),
-    [capability, page, pageSize, query],
+    () => modelCenterApi.listCertificationCandidates(
+      page, pageSize, capability, query, level, profileVersionId, connectionId,
+    ),
+    [capability, connectionId, level, page, pageSize, profileVersionId, query],
   );
   return useModelCenterQuery('certification-candidates', request);
 }

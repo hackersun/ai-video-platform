@@ -267,7 +267,7 @@ def _character_fallbacks(source_text: str) -> Dict[str, Any]:
         "appearance": _known_phrase(source_text, ("银灰短发", "黑色短发", "长发", "瘦削脸型")),
         "wardrobe": _first_match(
             source_text,
-            (r"((?:蓝色|灰蓝|黑色|白色|红色|旧式)[^，,。；;、\n]{0,12}(?:夹克|长衫|校服|外套|工装))",),
+            (r"((?:深蓝|蓝色|灰蓝|黑色|白色|红色|旧式)[^，,。；;、\n]{0,12}(?:夹克|长衫|校服|外套|工装|大衣|风衣))",),
         ),
         "signature_items": _source_items(source_text, (r"([^，,。；;、\n]{0,8}手套)", r"([^，,。；;、\n]{0,8}罗盘)")),
     }

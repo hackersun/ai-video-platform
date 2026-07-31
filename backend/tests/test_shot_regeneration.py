@@ -10,6 +10,7 @@ from app.core.database import AsyncSessionLocal
 from app.models import Asset, MediaGenerationJob, Shot, Workflow
 from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
+from app.api.v1.endpoints.workflow import WorkflowShotRegenerateRequest
 from init_db import init_db
 from main import app
 from test_workflow_routes import (
@@ -29,6 +30,16 @@ def _init_database() -> None:
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setenv("DEV_MODE", "true")
     return TestClient(app)
+
+
+def test_regeneration_request_accepts_explicit_native_audio() -> None:
+    request = WorkflowShotRegenerateRequest.model_validate({
+        "shot_ids": ["shot-1"],
+        "audio_mode": "model_audio",
+        "native_audio": True,
+    })
+
+    assert request.native_audio is True
 
 
 def _create_workflow_with_shots(
@@ -107,6 +118,19 @@ def _update_shot_extra(shot_id: str, extra_data: dict) -> None:
             shot = await session.get(Shot, shot_id)
             assert shot is not None
             shot.extra_data = {**(shot.extra_data or {}), **extra_data}
+            await session.commit()
+
+    asyncio.run(_update())
+
+
+def _set_shot_reference(shot_id: str, *, image_url: str, asset_id: str) -> None:
+    async def _update() -> None:
+        async with AsyncSessionLocal() as session:
+            shot = await session.get(Shot, shot_id)
+            assert shot is not None
+            shot.image_url = image_url
+            shot.image_asset_id = asset_id
+            shot.image_status = "succeeded"
             await session.commit()
 
     asyncio.run(_update())
@@ -677,6 +701,11 @@ def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
         shot_number=1,
         extra_data={"superseded_by_regeneration": True},
     )
+    _set_shot_reference(
+        shot_ids[0],
+        image_url="/static/review/shot-1-reference.jpg",
+        asset_id="asset-shot-1-reference",
+    )
     latest_video_id = _insert_video_job_for_shot(
         user_id=user_id,
         workflow_id=workflow_id,
@@ -697,6 +726,9 @@ def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
                 "blocking_issue_count": 0,
                 "issues": [],
             },
+            "character_refs": [{"entity_id": "character-sunjian", "name": "孙剑"}],
+            "scene_refs": [{"entity_id": "scene-rain", "name": "雨夜街道"}],
+            "prop_refs": [{"entity_id": "prop-umbrella", "name": "黑伞"}],
         },
     )
     latest_tts_id = _insert_tts_job_for_shot(
@@ -718,6 +750,14 @@ def test_shot_review_aggregates_latest_evidence(client: TestClient) -> None:
     assert payload["latest_render_artifacts"] == latest_render_artifacts
     assert payload["shots"][0]["shot_id"] == shot_ids[0]
     assert payload["shots"][0]["video_url"] == "https://example.com/latest-shot.mp4"
+    assert payload["shots"][0]["reference_image_url"] == "/static/review/shot-1-reference.jpg"
+    assert payload["shots"][0]["reference_image_status"] == "succeeded"
+    assert payload["shots"][0]["reference_asset_id"] == "asset-shot-1-reference"
+    assert payload["shots"][0]["reference_entities"] == {
+        "characters": [{"id": "character-sunjian", "name": "孙剑"}],
+        "scenes": [{"id": "scene-rain", "name": "雨夜街道"}],
+        "props": [{"id": "prop-umbrella", "name": "黑伞"}],
+    }
     assert payload["shots"][0]["subtitle_text"] == "孙剑：证据齐了。"
     assert payload["shots"][0]["character_names"] == ["孙剑"]
     assert payload["shots"][0]["evidence"] == {

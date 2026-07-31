@@ -30,6 +30,7 @@ from app.services.image_result_parser import extract_image_urls_from_provider_re
 from app.services.media_persistence import persist_remote_media_url
 from app.services.image_prompt_policy import GLOBAL_IMAGE_NEGATIVE_CONSTRAINT
 from app.services.prompt_skill_service import apply_active_prompt_skill_template
+from app.services.prompt_template_router import select_prompt_skill_for_model
 from app.services.story_prompt_context import compact_text, load_story_prompt_context
 from app.services.chapter_naming import format_chapter_label
 
@@ -318,6 +319,42 @@ def _build_character_extraction_user_prompt(text: str, *, chunk_index: int, chun
 
 小说文本：
 {text}"""
+
+
+async def _build_routed_character_extraction_prompt(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    provider_name: str,
+    model_id: str,
+    text: str,
+    chunk_index: int,
+    chunk_total: int,
+) -> str:
+    internal_prompt = _build_character_extraction_user_prompt(
+        text, chunk_index=chunk_index, chunk_total=chunk_total,
+    )
+    routed = await select_prompt_skill_for_model(
+        db,
+        user_id=user_id,
+        task="entity_extraction",
+        provider_name=provider_name,
+        model_id=model_id,
+        model_capabilities=[],
+        output_contract="json_array",
+        stage="analysis",
+        context={
+            "entity_types": "character",
+            "allowed_entity_types": "character",
+            "source_type": "novel_or_chapter",
+            "source_content": text,
+            "output_format": "JSON 数组",
+        },
+        internal_prompt=internal_prompt,
+        internal_title="完整角色抽取规则",
+        template_title="激活实体/资产抽取 Skill",
+    )
+    return str(routed["prompt"])
 
 
 async def _find_character_by_name_scope(
@@ -939,18 +976,20 @@ async def extract_characters(
         chunks = _chunk_analysis_text(analysis_text)
         raw_characters: List[Dict[str, Any]] = []
         for chunk_index, chunk in enumerate(chunks, start=1):
+            extraction_prompt = await _build_routed_character_extraction_prompt(
+                db,
+                user_id,
+                provider_name=provider_name,
+                model_id=model_id,
+                text=chunk,
+                chunk_index=chunk_index,
+                chunk_total=len(chunks),
+            )
             response = await service.safe_chat_completion(
                 model=model_id,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {
-                        "role": "user",
-                        "content": _build_character_extraction_user_prompt(
-                            chunk,
-                            chunk_index=chunk_index,
-                            chunk_total=len(chunks),
-                        ),
-                    },
+                    {"role": "user", "content": extraction_prompt},
                 ],
                 temperature=0.25,
                 max_tokens=6000,

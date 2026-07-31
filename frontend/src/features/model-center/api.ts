@@ -5,6 +5,7 @@ import type {
   CertificationRunInput,
   CertificationCandidate,
   CertificationHistoryItem,
+  CertificationLevel,
   ConfigurationState,
   ModelCapability,
   ModelCatalogFilters,
@@ -306,10 +307,16 @@ export const modelCenterApi = {
 
   createCertification: (input: CertificationRunInput) =>
     apiClient.request<CertificationRun>('/model-center/certifications', { method: 'POST', body: jsonBody(input) }),
-  listCertificationCandidates: (page = 1, pageSize = 100, capability?: ModelCapability, query?: string) => {
+  listCertificationCandidates: (
+    page = 1, pageSize = 100, capability?: ModelCapability, query?: string,
+    level?: Exclude<CertificationLevel, 'none'>, profileVersionId?: string, connectionId?: string,
+  ) => {
     const params = new URLSearchParams(pagePath('/model-center/certification-candidates', page, pageSize).split('?')[1]);
     if (capability) params.set('capability', capability);
     if (query?.trim()) params.set('q', query.trim());
+    if (level) params.set('level', level);
+    if (profileVersionId) params.set('profile_version_id', profileVersionId);
+    if (connectionId) params.set('connection_id', connectionId);
     return apiClient.request<unknown>(`/model-center/certification-candidates?${params.toString()}`).then(certificationCandidatePage);
   },
   listCertifications: (page = 1, pageSize = 10, level?: string, status?: string) => {

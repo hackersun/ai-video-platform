@@ -104,17 +104,17 @@ test('model profile wizard saves validates and publishes an installed driver', a
 
   await page.goto('/llm-config?section=catalog');
   await page.getByRole('button', { name: '新增模型' }).click();
-  await page.getByLabel('模型档案名称').fill('Seedance 新模型');
-  await page.getByLabel('档案键').fill('seedance-new');
-  await page.getByLabel('API 模型标识').fill('doubao-seedance-new');
-  await page.getByLabel('模型驱动').selectOption('volcano_ark_video_v3');
+  await page.getByLabel('模型用途').selectOption('video_generation');
+  await page.getByLabel('模型显示名称').fill('Seedance 新模型');
+  await page.getByLabel('供应商 Model ID').fill('doubao-seedance-new');
+  await page.getByLabel('兼容适配器').selectOption('volcano_ark_video_v3');
   await page.getByRole('button', { name: '保存模型草稿' }).click();
   await expect(page.getByText('草稿 v1 已保存')).toBeVisible();
-  await page.getByRole('button', { name: '运行契约校验' }).click();
-  await expect(page.getByText('契约校验通过')).toBeVisible();
+  await page.getByRole('button', { name: '运行免费配置校验' }).click();
+  await expect(page.getByText('配置校验通过，可以发布。')).toBeVisible();
   await page.getByLabel('发布说明').fill('契约验证通过');
-  await page.getByRole('button', { name: '发布模型版本' }).click();
-  await expect(page.getByText('模型版本已发布')).toBeVisible();
+  await page.getByRole('button', { name: '发布模型' }).click();
+  await expect(page.getByText('模型已发布。下一步请配置供应商账号并设为默认模型。')).toBeVisible();
 
   expect(requests.map((item) => item.path)).toEqual([
     '/api/v1/model-center/profiles',
@@ -141,15 +141,15 @@ test('binding editor only combines matching readable model and connection choice
   });
 
   await page.goto('/llm-config?section=bindings');
-  await expect(page.getByRole('cell', { name: 'single' })).toBeVisible();
+  await expect(page.getByText('高级路由：single · P100')).toBeVisible();
   await expect(page.getByText('Seedance 1.5 Pro')).toBeVisible();
-  await page.getByRole('button', { name: '新建能力绑定' }).click();
-  await page.getByLabel('业务任务').selectOption('shot_video');
-  await page.getByLabel('任务能力').selectOption('video_generation');
-  await expect(page.getByLabel('模型版本')).toHaveValue('profile-1');
-  await expect(page.getByLabel('模型连接')).toHaveValue('connection-1');
-  await page.getByLabel('操作原因').fill('建立视频默认路由');
-  await page.getByRole('button', { name: '保存能力绑定' }).click();
+  await page.getByRole('button', { name: '设置默认模型' }).click();
+  await page.getByLabel('使用场景').selectOption('shot_video');
+  await expect(page.getByText('视频生成', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('默认模型', { exact: true })).toHaveValue('profile-1');
+  await expect(page.getByLabel('供应商账号', { exact: true })).toHaveValue('connection-1');
+  await page.getByLabel('变更说明').fill('建立视频默认路由');
+  await page.getByRole('button', { name: '保存默认模型' }).click();
   await expect.poll(() => createBody).not.toBeNull();
   expect(createBody).toMatchObject({
     task: 'shot_video', capability: 'video_generation', profile_version_id: 'profile-1',
@@ -169,12 +169,13 @@ test('binding editor previews impact and persists an update', async ({ page }) =
   });
 
   await page.goto('/llm-config?section=bindings');
-  await page.getByRole('button', { name: '编辑镜头视频绑定' }).click();
-  await expect(page.getByText('保存后将影响 2 个生产方案')).toBeVisible();
+  await page.getByRole('button', { name: '更换镜头视频生成默认模型' }).click();
+  await expect(page.getByText('更换后将影响 2 个生产组合')).toBeVisible();
+  await page.getByText('高级路由设置（可选）').click();
   await page.getByLabel('优先级').fill('40');
-  await page.getByLabel('启用此绑定').uncheck();
-  await page.getByLabel('操作原因').fill('临时停用问题路由');
-  await page.getByRole('button', { name: '保存绑定修改' }).click();
+  await page.getByLabel('在生产中启用').uncheck();
+  await page.getByLabel('变更说明').fill('临时停用问题路由');
+  await page.getByRole('button', { name: '确认更换默认模型' }).click();
 
   await expect.poll(() => updateBody).not.toBeNull();
   expect(updateBody).toMatchObject({

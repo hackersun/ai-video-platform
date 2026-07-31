@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from uuid import uuid4
 
 import pytest
@@ -82,6 +83,132 @@ def test_v2_candidate_extraction_persists_run_mentions_and_lifecycle_metadata() 
     assert result["entity_statuses"]["旧邮局"] in {"candidate", "approved"}
     assert result["entity_statuses"]["铜铃"] in {"candidate", "approved"}
     assert result["entity_quality"]["林澈"]["score"] >= 60
+
+
+def test_auto_approved_extraction_persists_production_approval_record() -> None:
+    async def scenario() -> list[StoryEntity]:
+        from app.services.entity_review_service import run_candidate_entity_extraction
+
+        token = uuid4().hex
+        async with AsyncSessionLocal() as db:
+            result = await run_candidate_entity_extraction(
+                db,
+                user_id=f"review-user-{token[:20]}",
+                novel_id=f"review-novel-{token}",
+                source_type="chapter",
+                source_id=f"chapter-{token}",
+                text="角色：林澈。场景：蓝晶车站。道具：黄铜星钥。事件：星门苏醒。",
+                entity_types=["character", "scene", "prop", "event"],
+                persist=True,
+                allow_auto_approve=True,
+            )
+            return result["entities"]
+
+    approved = [entity for entity in _run(scenario()) if entity.is_approved]
+
+    assert approved
+    assert all(
+        (entity.attributes or {}).get("approval_record", {}).get("reason")
+        == "entity_extraction_v2:auto_approve"
+        for entity in approved
+    )
+
+
+def test_chapter_extraction_persists_scoped_evidence_contract() -> None:
+    async def scenario() -> dict:
+        from app.services.entity_review_service import run_candidate_entity_extraction
+
+        token = uuid4().hex
+        chapter_id = f"chapter-{token}"
+        content = "苏澜举起银蓝星灯，顾言守住北塔。"
+        async with AsyncSessionLocal() as db:
+            result = await run_candidate_entity_extraction(
+                db, user_id=f"review-user-{token[:20]}",
+                novel_id=f"review-novel-{token}", chapter_id=chapter_id,
+                source_type="chapter", source_id=chapter_id, text=content,
+                entity_types=["character", "prop"], persist=True,
+                allow_auto_approve=True,
+                candidate_items=[{
+                    "entity_type": "character", "name": "苏澜",
+                    "canonical_name": "苏澜", "description": "守灯师",
+                    "evidence": "苏澜", "evidence_span": "苏澜",
+                    "confidence": 95, "source": "deterministic",
+                }],
+            )
+            return next(
+                dict((entity.attributes or {}).get("evidence_contract") or {})
+                for entity in result["entities"] if entity.name == "苏澜"
+            )
+
+    evidence = _run(scenario())
+
+    assert evidence["status"] == "verified"
+    assert evidence["source_excerpt"] == "苏澜"
+    assert evidence["parser_version"] == "deterministic-extraction-v2"
+
+
+def test_chapter_reextraction_refreshes_or_archives_stale_evidence() -> None:
+    async def scenario() -> dict:
+        from app.services.entity_review_service import run_candidate_entity_extraction
+        from app.services.story_entity_lifecycle import (
+            APPROVED,
+            get_entity_review_status,
+            set_entity_review_status,
+        )
+
+        token = uuid4().hex
+        user_id = f"review-user-{token[:20]}"
+        novel_id = f"review-novel-{token}"
+        chapter_id = f"chapter-{token}"
+        old_content = "旧序章。苏澜看见黑雾。他低声说：星灯会熄灭。"
+        new_content = "新的序章内容。苏澜看见黑雾。影潮使低声说：星灯会熄灭。"
+        old_hash = hashlib.sha256(old_content.encode("utf-8")).hexdigest()
+
+        async with AsyncSessionLocal() as db:
+            entities = []
+            for name in ("苏澜", "他低声"):
+                start = old_content.index(name)
+                entity = StoryEntity(
+                    id=f"review-entity-{uuid4()}", user_id=user_id,
+                    novel_id=novel_id, chapter_id=chapter_id,
+                    entity_type="character", name=name, evidence=name,
+                    attributes={"evidence_contract": {
+                        "status": "verified", "chapter_id": chapter_id,
+                        "source_span": [start, start + len(name)],
+                        "content_hash": old_hash, "source_excerpt": name,
+                        "parser_version": "deterministic-extraction-v2",
+                    }},
+                )
+                set_entity_review_status(entity, APPROVED, changed_by=user_id, reason="fixture")
+                db.add(entity)
+                entities.append(entity)
+            await db.commit()
+
+            await run_candidate_entity_extraction(
+                db, user_id=user_id, novel_id=novel_id, chapter_id=chapter_id,
+                source_type="chapter", source_id=chapter_id, text=new_content,
+                entity_types=["character"], persist=True, allow_auto_approve=True,
+                candidate_items=[{
+                    "entity_type": "character", "name": "影潮使",
+                    "canonical_name": "影潮使", "description": "反派",
+                    "evidence": "影潮使", "evidence_span": "影潮使",
+                    "confidence": 95, "source": "deterministic",
+                }],
+            )
+            refreshed = [await db.get(StoryEntity, entity.id) for entity in entities]
+            return {
+                entity.name: {
+                    "status": get_entity_review_status(entity),
+                    "content_hash": (entity.attributes or {})["evidence_contract"]["content_hash"],
+                }
+                for entity in refreshed
+            }
+
+    result = _run(scenario())
+
+    assert result["苏澜"]["status"] == "approved"
+    assert result["苏澜"]["content_hash"] != result["他低声"]["content_hash"]
+    assert result["他低声"]["status"] == "archived"
 
 
 def test_v2_candidate_extraction_tracks_rejected_noise_without_production_visibility() -> None:

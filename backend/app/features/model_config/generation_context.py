@@ -99,6 +99,23 @@ def _legacy_driver(binding: ResolvedModelBinding, connection: RuntimeConnectionR
     return replace(binding, profile=_legacy_execution_profile(binding.profile, driver_key))
 
 
+def _runtime_execution_binding(binding: ResolvedModelBinding) -> ResolvedModelBinding:
+    """Translate catalog-oriented limits into the strict driver command contract."""
+    if binding.capability != "text_generation":
+        return binding
+    limits = dict(binding.profile.limits or {})
+    if set(limits) == {"max_prompt_chars"}:
+        return binding
+    maximum = limits.get("context_window") or limits.get("max_tokens") or 12000
+    try:
+        maximum = max(1, int(maximum))
+    except (TypeError, ValueError):
+        maximum = 12000
+    return replace(binding, profile=replace(
+        binding.profile, limits={"max_prompt_chars": maximum},
+    ))
+
+
 def _legacy_execution_profile(profile, driver_key: str):
     capability = next(iter(profile.capabilities), "")
     contracts = {
@@ -107,7 +124,8 @@ def _legacy_execution_profile(profile, driver_key: str):
             {"duration": {"type": "integer"}, "resolution": {"type": "string"}, "camera_fixed": {"type": "boolean"}, "watermark": {"type": "boolean"}, "seed": {"type": "integer"}},
         ),
         "image_generation": (
-            {"max_prompt_chars": 12000, "max_reference_images": 0},
+            {"max_prompt_chars": 12000,
+             "max_reference_images": 10 if driver_key == "volcano_ark_image_v3" else 0},
             {"size": {"type": "string"}, "num": {"type": "integer"}, "aspect_ratio": {"type": "string"}, "n": {"type": "integer"}, "response_format": {"type": "string"}},
         ),
         "speech_generation": (
@@ -146,6 +164,7 @@ async def resolve_generation_context(
     recipe_spec: Mapping[str, Any] | None = None,
     recipe_version_id: str | None = None,
     prompt_profile_version_id: str | None = None,
+    prefer_canonical_binding: bool = False,
 ) -> GenerationContext:
     if stage not in STAGE_REQUIREMENTS:
         raise ModelBindingError("recipe_stage_invalid")
@@ -164,6 +183,7 @@ async def resolve_generation_context(
         await resolve_model_binding(
             db, user_id=user_id, task=task, capability=capability,
             explicit_config_id=explicit_config_id, project_id=project_id, series_id=series_id,
+            prefer_canonical_binding=prefer_canonical_binding,
         )
     )
     if not binding.connection_id:
@@ -175,6 +195,7 @@ async def resolve_generation_context(
     if connection is None:
         raise ModelBindingError("connection_missing")
     binding = _legacy_driver(binding, connection)
+    binding = _runtime_execution_binding(binding)
     params = {**dict(connection.connection_params), "provider_name": connection.provider_name}
     return GenerationContext(
         binding=binding, route_policy=route_policy_for(binding.route_policy),

@@ -4,6 +4,7 @@ import asyncio
 
 from app.services.volcano_service import VolcanoService
 from app.core.api_key_utils import create_image_generation_service, create_text_generation_service
+from app.core.volcano_agent_plan_config import VOLCANO_CODING_PLAN_BASE_URL
 
 
 class _FakeResponse:
@@ -41,6 +42,50 @@ class _FakeSession:
         self._captured["json"] = json
         self._captured["timeout"] = timeout
         return _FakeResponse(self._payload)
+
+
+def test_volcano_agent_plan_uses_current_coding_plan_base_url() -> None:
+    assert VOLCANO_CODING_PLAN_BASE_URL == "https://ark.cn-beijing.volces.com/api/coding/v3"
+
+
+def test_volcano_agent_plan_text_factory_uses_coding_plan_default(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.volcano_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 3}},
+            captured,
+        ),
+    )
+
+    service = create_text_generation_service("agent-key", "volcano_agent_plan", None)
+    asyncio.run(service.chat_completion(
+        model="ark-code-latest",
+        messages=[{"role": "user", "content": "hello"}],
+        max_tokens=16,
+    ))
+
+    assert captured["url"] == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
+
+
+def test_volcano_agent_plan_text_factory_accepts_persisted_provider_code(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(
+        "app.services.volcano_service.aiohttp.ClientSession",
+        lambda: _FakeSession(
+            {"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 3}},
+            captured,
+        ),
+    )
+
+    service = create_text_generation_service("agent-key", "volcano-agent-plan", None)
+    asyncio.run(service.chat_completion(
+        model="ark-code-latest",
+        messages=[{"role": "user", "content": "hello"}],
+        max_tokens=16,
+    ))
+
+    assert captured["url"] == "https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions"
 
 
 def test_text_to_speech_includes_voice_and_speed(monkeypatch) -> None:
@@ -235,4 +280,6 @@ def test_volcano_image_service_passes_seedream_50_flagship_model_id(monkeypatch)
     assert result["data"][0]["url"].endswith("seedream-5.png")
     assert captured["url"] == "https://ark.cn-beijing.volces.com/api/v3/images/generations"
     assert captured["json"]["model"] == "doubao-seedream-5-0-260128"
+    assert captured["json"]["size"] == "2K"
+    assert "n" not in captured["json"]
     assert captured["timeout"].total >= 600

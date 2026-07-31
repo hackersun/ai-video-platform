@@ -144,6 +144,28 @@ async def test_volcano_image_driver_normalizes_current_service_url_shape(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_volcano_image_driver_forwards_reference_images(monkeypatch) -> None:
+    captured = {}
+
+    async def fake_generate_image(_service, _prompt, **kwargs):
+        captured.update(kwargs)
+        return {"data": [{"url": "https://cdn.example.test/shot-frame.png"}]}
+
+    monkeypatch.setattr("app.services.volcano_service.VolcanoService.generate_image", fake_generate_image)
+    context = SimpleNamespace(
+        api_key="not-a-real-key", base_url="https://ark.example.test/api/v3",
+        profile=SimpleNamespace(api_model_id="doubao-seedream-5-0-260128"),
+    )
+
+    await VolcanoArkImageDriver().submit(ImageCommand(
+        prompt="keep the same character",
+        reference_images=("https://cdn.example.test/character-board.png",),
+    ), context)
+
+    assert captured["image"] == ["https://cdn.example.test/character-board.png"]
+
+
+@pytest.mark.asyncio
 async def test_volcano_image_driver_keeps_empty_response_fail_closed(monkeypatch) -> None:
     async def fake_generate_image(_service, _prompt, **_kwargs):
         return {}

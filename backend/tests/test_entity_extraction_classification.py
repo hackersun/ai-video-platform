@@ -1,6 +1,17 @@
 from app.services.entity_extraction_service import extract_story_entities
 
 
+def test_character_costume_is_extracted_from_explicit_wearing_phrase():
+    entities = extract_story_entities(
+        "沈砚穿着深蓝旧呢大衣抵达雾港。沈砚说：“我会查清船队的去向。”",
+        {"character"},
+    )
+
+    character = next(item for item in entities if item["name"] == "沈砚")
+
+    assert character["attributes"]["visual_dna"]["costume"] == "深蓝旧呢大衣"
+
+
 def test_chapter_owned_extraction_emits_stable_story_lock_evidence_contract():
     content = "沈砚抵达雾港，拿起铜铃。"
     entities = extract_story_entities(
@@ -46,6 +57,20 @@ def test_deterministic_extraction_classifies_characters_scenes_and_props():
     assert "外门弟子们" not in by_type.get("character", set())
     assert "青阳宗外门石屋" not in by_type.get("character", set())
     assert "旧铜钩" not in by_type.get("character", set())
+
+
+def test_action_character_rules_reject_time_place_and_action_fragments():
+    text = (
+        "灯塔地下室是一座环形机械厅。季衡伸手说：把星钥给我。"
+        "林澈站在警戒线外回答：用记忆换来的光，不是守护。"
+        "午夜前把星钥送到车站，陆遥说这可能是陷阱。"
+        "阿七把记录投向控制台，蓝雾退向海面。"
+    )
+
+    names = _names_by_type(extract_story_entities(text, {"character"})).get("character", set())
+
+    assert {"季衡", "林澈", "陆遥", "阿七"}.issubset(names)
+    assert not {"塔地下室", "季衡伸手", "警戒线外", "午夜前", "这可能", "蓝雾退"}.intersection(names)
 
 
 def test_ai_entity_json_is_normalized_before_persistence():
@@ -197,6 +222,17 @@ def test_every_extracted_event_keeps_complete_event_shape():
         assert all(event[field] for field in ("actor", "action", "object", "outcome"))
 
 
+def test_dialogue_intention_is_not_promoted_to_story_event():
+    entities = extract_story_entities(
+        "事件：关闭星门。林澈说：“这一次由我决定它的去向。”",
+        {"event"},
+    )
+
+    names = _names_by_type(entities).get("event", set())
+    assert "关闭星门" in names
+    assert all("林澈说" not in name for name in names)
+
+
 def test_fog_port_story_extracts_production_entities_without_dialogue_fragments():
     text = (
         "雾港在夜里突然停电，潮水把旧码头的铜铃推得一声接一声。"
@@ -231,6 +267,62 @@ def test_fog_port_story_extracts_production_entities_without_dialogue_fragments(
         "许澜握紧红围巾",
     }
     assert fake_props.isdisjoint(by_type.get("prop", set()))
+
+
+def test_chapter_dialogue_actions_do_not_become_fake_characters():
+    text = (
+        '影潮使低声说：“星灯一亮，我的影潮就会消失。”'
+        '苏澜举起六棱密钥回答：“那就让雾海看见黎明。”'
+        '顾言接回能量核心，喊道：“能源接通，转动密钥！”'
+        '阿曜跃上控制台。'
+    )
+
+    entities = extract_story_entities(text, {"character", "prop"})
+    by_type = _names_by_type(entities)
+
+    assert {"影潮使", "苏澜", "顾言", "阿曜"}.issubset(by_type.get("character", set()))
+    assert {"潮使", "密钥", "喊道", "顾言答"}.isdisjoint(by_type.get("character", set()))
+    assert "六棱密钥" in by_type.get("prop", set())
+
+
+def test_xianxia_continuity_copy_keeps_names_and_rejects_action_props():
+    text = (
+        "沈岚仍保持黑色高马尾、白蓝银纹长袍、玄霜玉佩和青霄剑的固定造型。"
+        "在悬空云台上，沈岚面对师兄陆衡。陆衡质问她为何私入秘境。"
+        "沈岚握紧同一枚玄霜玉佩回答：‘封印正在崩裂。’"
+        "她以青霄剑斩断幻象，玉佩成为稳定剑阵的核心。"
+    )
+
+    entities = extract_story_entities(text, {"character", "prop"})
+    by_type = _names_by_type(entities)
+
+    assert {"沈岚", "陆衡"}.issubset(by_type.get("character", set()))
+    assert {"沈岚仍", "陆衡质"}.isdisjoint(by_type.get("character", set()))
+    assert {"玄霜玉佩", "青霄剑"}.issubset(by_type.get("prop", set()))
+    assert {"她以青霄剑", "玉佩成为稳定剑"}.isdisjoint(by_type.get("prop", set()))
+
+
+def test_five_chapter_xianxia_assets_exclude_costume_and_dialogue_fragments():
+    chapters = [
+        "二十二岁的女剑修沈岚，腰佩玄霜玉佩，背负青霄剑。她在暮雪中的太玄山门前立誓。",
+        "沈岚进入蓝色灵雾缭绕的寒潭秘境，玉佩映出失落剑阵。她没有更换衣物。",
+        "在悬空云台上，沈岚以青霄剑面对师兄陆衡。陆衡质问她为何私入秘境。",
+        "沈岚在赤金剑阵中承受心魔。她以青霄剑斩断幻象，玉佩成为稳定剑阵的核心。",
+        "北境霜河上空，沈岚将玉佩嵌入封印并挥剑。沈岚说：‘此剑封天，只为后来者仍能看见人间灯火。’",
+    ]
+
+    entities = [item for chapter in chapters for item in extract_story_entities(chapter)]
+    by_type = _names_by_type(entities)
+
+    assert {"沈岚", "陆衡"}.issubset(by_type.get("character", set()))
+    assert {"太玄山门", "寒潭秘境", "悬空云台", "赤金剑阵", "北境霜河"}.issubset(
+        by_type.get("scene", set())
+    )
+    assert {"玄霜玉佩", "青霄剑"}.issubset(by_type.get("prop", set()))
+    assert {
+        "腰佩玄霜玉佩", "女剑", "她没有更换衣", "她在赤金剑",
+        "嵌入封印并挥剑", "此剑", "仍能看见人间灯",
+    }.isdisjoint(by_type.get("prop", set()))
 
 
 def test_four_chapter_acceptance_story_does_not_promote_environment_words_to_characters():
@@ -304,6 +396,19 @@ def test_yundeng_acceptance_story_extracts_core_entities_without_action_noise():
     assert fake_characters.isdisjoint(by_type.get("character", set()))
     fake_props = {"她轻轻摇响铜铃", "一扇通向云灯", "反射着蓝金色灯", "那就先记住铃"}
     assert fake_props.isdisjoint(by_type.get("prop", set()))
+
+
+def test_narrated_dialogue_adverbs_do_not_become_character_entities():
+    text = (
+        "顾清霜抬起左腕。她低声说：“灯不是自然熄灭的。”"
+        "顾清霜握紧霜衡剑。她对着黑暗清晰说道：“我会把真相带回人间。”"
+        "顾清霜闭上眼睛。她睁眼说道：“回声只能困住过去。”"
+        "顾清霜仰望穹顶，平静地说：“我会先完成阵法。”"
+    )
+
+    entities = extract_story_entities(text, {"character"})
+
+    assert _names_by_type(entities).get("character", set()) == {"顾清霜"}
 
 
 def test_rain_station_story_extracts_dialogue_characters_scenes_and_props_without_noise():

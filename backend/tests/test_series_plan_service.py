@@ -183,6 +183,33 @@ async def test_build_series_plan_persists_on_novel_extra_data(
 
 
 @pytest.mark.asyncio
+async def test_rebuilding_series_plan_increments_saved_version(
+    db_session: AsyncSession,
+    seeded_novel_with_chapters: Novel,
+) -> None:
+    first = await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+    )
+    second = await build_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        novel_id=seeded_novel_with_chapters.id,
+    )
+
+    assert first["version"] == 1
+    assert second["version"] == 2
+
+    saved_plan = await get_series_plan(
+        db_session,
+        seeded_novel_with_chapters.user_id,
+        seeded_novel_with_chapters.id,
+    )
+    assert saved_plan["version"] == 2
+
+
+@pytest.mark.asyncio
 async def test_get_series_plan_normalizes_legacy_saved_episode_contract(
     db_session: AsyncSession,
     seeded_novel_with_chapters: Novel,

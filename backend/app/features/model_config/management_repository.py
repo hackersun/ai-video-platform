@@ -9,6 +9,7 @@ from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
+from app.features.model_config.catalog import is_product_visible_provider
 from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
 from app.features.model_config.readiness import production_readiness
 from app.models.model_center import (
@@ -126,9 +127,15 @@ async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: 
 
 
 async def provider_page(db: AsyncSession, page: int, page_size: int) -> dict:
-    rows, total = await _paged_rows(
-        db, ModelProvider, (ModelProvider.enabled == True,), page, page_size,
-    )
+    visible_rows = [
+        row for row in (await db.scalars(
+            select(ModelProvider).where(ModelProvider.enabled == True).order_by(ModelProvider.id)
+        )).all()
+        if is_product_visible_provider(row)
+    ]
+    total = len(visible_rows)
+    start = (page - 1) * page_size
+    rows = visible_rows[start:start + page_size]
     items = [{
         "id": row.id, "code": row.code, "display_name": row.display_name,
         "provider_family": row.provider_family, "is_builtin": bool(row.is_builtin),

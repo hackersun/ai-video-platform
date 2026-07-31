@@ -65,8 +65,27 @@ async def acknowledge_recovery_action(
     descriptor = recovery_for_operation(operation)
     if action_code not in {item.code for item in descriptor.actions}:
         raise RecoveryConflict("当前供应商状态不允许执行该恢复操作")
+    reference_preparation = None
+    if action_code == "recover_reference_artifact":
+        from app.services.series_reference_artifact_recovery import PersistedReferenceArtifactAdapter
+        from app.services.series_run_reference_preparation import (
+            ReferencePreparationBlocked,
+            prepare_series_reference,
+        )
+
+        try:
+            reference_preparation = await prepare_series_reference(
+                db, run, adapter=PersistedReferenceArtifactAdapter(),
+                recovery_operation_id=operation.id,
+            )
+        except ReferencePreparationBlocked as error:
+            raise RecoveryConflict(str(error)) from error
     return {
         "acknowledged": True, "action_code": action_code, "operation_id": operation.id,
         "retry_scope": descriptor.retry_scope, "requires_provider_submission": False,
-        "next_action": "修改并重新验证配置后，使用“生成已选镜头”继续失败阶段",
+        "next_action": (
+            "参考图已恢复，可继续生成镜头首帧"
+            if reference_preparation else "修改并重新验证配置后，使用“生成已选镜头”继续失败阶段"
+        ),
+        "reference_preparation": reference_preparation,
     }

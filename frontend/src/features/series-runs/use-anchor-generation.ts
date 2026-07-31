@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 
-import { apiClient, type AnchorGenerationResponse, type SeriesProductionRun } from '@/lib/api-client';
+import { apiClient, type AnchorDeliverable, type AnchorGenerationResponse, type AnchorMode, type SeriesProductionRun } from '@/lib/api-client';
 import { pollAnchorGeneration } from './poll-anchor-generation';
 
 type Inputs = {
   run: SeriesProductionRun | null;
   selected: string[];
-  selectedMode?: 'smoke' | 'full';
+  selectedMode?: AnchorMode;
   nativeAudio: boolean;
   preflightReady: boolean;
   setRun: (run: SeriesProductionRun) => void;
@@ -30,6 +30,7 @@ export function useAnchorGeneration({
   const [generationBusy, setGenerationBusy] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<AnchorGenerationResponse['status'] | ''>('');
   const [generationQuality, setGenerationQuality] = useState<any[]>([]);
+  const [generationDeliveries, setGenerationDeliveries] = useState<AnchorDeliverable[]>([]);
 
   const finish = async (runId: string, initial: AnchorGenerationResponse) => {
     const generated = initial.status === 'provider_pending' || initial.status === 'provider_ready'
@@ -38,6 +39,22 @@ export function useAnchorGeneration({
     setGenerationStatus(generated.status);
     setGenerationQuality(generated.quality_results || []);
     if (generated.status === 'failed') throw new Error('关键镜头云端视频或配音任务失败，未创建聚合产物。');
+    const deliveries = await Promise.all((generated.media_job_ids || []).map((id) => apiClient.getMediaJob(id)));
+    setGenerationDeliveries(deliveries.map((job) => ({
+      id: job.id, shot_id: job.shot_id, title: job.title,
+      output_video_url: job.output_video_url,
+      public_video_url: job.extra_data?.subtitle_public_video_url,
+      subtitle_track_id: job.subtitle_track_id,
+      duration_seconds: job.duration_seconds, resolution: job.resolution, status: job.status,
+      video_native_audio: Boolean(job.extra_data?.video_native_audio),
+      subtitle_sync_status: job.extra_data?.subtitle_sync_status
+        || (job.extra_data?.video_native_audio && job.extra_data?.subtitle_burned
+          ? 'script_aligned_pending_audio_verification' : undefined),
+      audio_verification_required: Boolean(
+        job.extra_data?.audio_verification_required
+        || (job.extra_data?.video_native_audio && job.extra_data?.subtitle_burned),
+      ),
+    })));
     let refreshed = await apiClient.getSeriesRun(runId);
     const waitingForTrustedEvaluation = generated.quality_results?.some(
       (result) => !result.ready && result.overall_readiness === 'trusted_multimodal_evaluation_required',
@@ -61,7 +78,7 @@ export function useAnchorGeneration({
   const generateSelected = async () => {
     if (!run) return;
     if (!preflightReady) { setError('实模前置准备尚未全部通过，禁止生成关键镜头。'); return; }
-    if (!selectedMode) { setError('请先选择 2 镜头冒烟验证或 6 镜头四章验证模式'); return; }
+    if (!selectedMode) { setError('请先选择 2 镜头冒烟、3 镜头代表验证或 6 镜头完整验证模式'); return; }
     if (run.budget_policy?.profile !== 'isolated_live_canary' || run.budget_policy?.live_canary !== true) {
       setError('请先明确启用“实模关键镜头验证”；整书编排本身不会自动开启付费模型。'); return;
     }
@@ -78,5 +95,10 @@ export function useAnchorGeneration({
     }
   };
 
-  return { generationBusy, generationStatus, generationQuality, generateSelected };
+  const openDeliverable = (jobId: string) => {
+    const playbackPage = `/media-player?job_id=${encodeURIComponent(jobId)}`;
+    window.open(playbackPage, '_blank', 'noopener,noreferrer');
+  };
+
+  return { generationBusy, generationStatus, generationQuality, generationDeliveries, generateSelected, openDeliverable };
 }

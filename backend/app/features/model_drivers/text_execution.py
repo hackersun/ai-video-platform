@@ -265,6 +265,8 @@ def create_text_generation_service(
     snapshot_factory: Callable[[], Awaitable[str | None]] | None = None,
 ) -> Any:
     """Create the correct text-generation service for a saved provider config."""
+    if provider_name == "volcano-agent-plan":
+        provider_name = "volcano_agent_plan"
     base_url = normalize_provider_base_url(provider_name, base_url)
     if provider_name == "qianlian":
         from app.services.qianlian_service import QianlianService
@@ -283,9 +285,13 @@ def create_text_generation_service(
 
         return TextGenerationServiceAdapter(VolcanoService(api_key, base_url), execution_snapshot_id, snapshot_factory)
     if provider_name == "volcano_agent_plan":
+        from app.core.volcano_agent_plan_config import VOLCANO_CODING_PLAN_BASE_URL
         from app.services.volcano_service import VolcanoService
 
-        return TextGenerationServiceAdapter(VolcanoService(api_key, base_url), execution_snapshot_id, snapshot_factory)
+        return TextGenerationServiceAdapter(
+            VolcanoService(api_key, base_url or VOLCANO_CODING_PLAN_BASE_URL),
+            execution_snapshot_id, snapshot_factory,
+        )
     if provider_name == "openai":
         from app.services.openai_service import OpenAIService
 
@@ -354,6 +360,7 @@ async def get_user_text_generation_service(
             context = await resolve_generation_context(
                 db, user_id=user_id, stage="text", recipe_version_id=recipe_version_id,
                 prompt_profile_version_id=prompt_profile_version_id,
+                prefer_canonical_binding=True,
             )
         except ModelBindingError as error:
             if str(error) not in _LEGACY_BINDING_FALLBACK_ERRORS:

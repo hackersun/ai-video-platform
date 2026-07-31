@@ -1717,14 +1717,13 @@ export default function AssetsPage() {
                               <Button
                                 type="button"
                                 variant="outline"
-                                size="icon"
+                                size="sm"
                                 aria-label="重试生成"
-                                title="重试生成"
-                                className="h-8 w-8 rounded-md border-red-300/40 bg-red-500/10 p-0 text-red-100 hover:bg-red-500/20"
+                                className="h-8 rounded-md border-red-300/40 bg-red-500/10 px-2 text-red-100 hover:bg-red-500/20"
                                 disabled={retryingAssetId === matchedAsset.id}
                                 onClick={() => retryAssetGeneration(matchedAsset)}
                               >
-                                {retryingAssetId === matchedAsset.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                                {retryingAssetId === matchedAsset.id ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1 h-3.5 w-3.5" />}重试
                               </Button>
                             )}
                           </div>

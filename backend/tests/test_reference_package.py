@@ -885,6 +885,37 @@ def test_non_seedance_contract_limits_keep_registry_multireference_limits() -> N
     assert result["metadata"]["contract_model_family"] == "legacy"
 
 
+def test_seedance_15_clamps_registry_to_role_free_single_first_frame() -> None:
+    adapter = _adapter_module()
+    build_content = getattr(adapter, "build_video_provider_content")
+
+    result = build_content(
+        final_prompt="林澈在雾港钟楼前举起星钥。",
+        duration=4,
+        resolution="720p",
+        provider_image_url="https://cdn.example.com/shot-first-frame.jpg",
+        reference_package={
+            "images": [
+                {"url": "https://cdn.example.com/character-board.jpg"},
+                {"url": "https://cdn.example.com/style-board.jpg"},
+            ],
+        },
+        model_limits={"images": 9, "videos": 3, "audios": 3},
+        model_id="doubao-seedance-1-5-pro-251215",
+        provider="volcano",
+    )
+
+    assert result["mode"] == "single_image"
+    assert result["content"][0] == {
+        "type": "image_url",
+        "image_url": {"url": "https://cdn.example.com/shot-first-frame.jpg"},
+    }
+    assert "role" not in result["content"][0]
+    assert result["metadata"]["image_count"] == 1
+    assert result["metadata"]["video_count"] == 0
+    assert result["metadata"]["audio_count"] == 0
+
+
 def test_provider_content_clamps_agent_plan_to_single_reference() -> None:
     adapter = _adapter_module()
     build_content = getattr(adapter, "build_video_provider_content")

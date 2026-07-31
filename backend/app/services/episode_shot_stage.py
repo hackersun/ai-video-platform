@@ -13,11 +13,17 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import Shot, Storyboard
 from app.services.entity_ref_normalizer import normalize_entity_refs
+from app.services.entity_review_service import reconcile_chapter_entity_evidence
 from app.services.deterministic_provider_fake import deterministic_provider_fake_enabled
 from app.services.owned_shot_entity_refs import resolve_owned_shot_entity_context
 from app.features.series_run_story_locks.application.production_scoped_inputs import (
     ProductionScopedRefCommand, build_production_scoped_refs,
 )
+from app.features.series_skill_execution.public import (
+    bind_series_stage_skill,
+    execute_skill_model_or_fallback,
+)
+from app.features.series_skill_execution.stage_contracts import validate_shot
 
 
 @dataclass(frozen=True)
@@ -69,9 +75,35 @@ async def _new_shot(context: ShotStageContext) -> Shot:
         db, user_id=run.user_id, novel_id=run.novel_id,
         chapter_ids=list(episode["chapter_ids"]), as_of_chapter_id=chapter_id,
         source_text=context.source_text, shot_text=shot_text)
+    skill_binding = await bind_series_stage_skill(
+        db, user_id=run.user_id, task="shot_prompt", stage="generation",
+        context={"source_content": context.source_text[:1000], "dialogue": dialogue["dialogue"] if dialogue else "",
+                 "episode_number": number, "aspect_ratio": "9:16"},
+        internal_prompt=context.source_text[:1000], artifact_type="shot", artifact_id=shot_id,
+    )
+    required_dialogue = dialogue["dialogue"] if dialogue else None
+    fallback_shot = {
+        "prompt": skill_binding.rendered_prompt,
+        "visual_description": context.source_text[:1000],
+        "dialogue": required_dialogue,
+    }
+    model_result = await execute_skill_model_or_fallback(
+        db, user_id=run.user_id,
+        rendered_prompt=skill_binding.rendered_prompt + (
+            "\n仅输出 JSON 对象，包含 prompt、visual_description、dialogue；dialogue 必须逐字保持输入对白。"
+        ),
+        output_contract="json_object",
+        validator=lambda value: validate_shot(value, required_dialogue=required_dialogue),
+        fallback=lambda: fallback_shot, series_id=run.novel_id,
+    )
+    generated = model_result.value
+    shot_extra["prompt_skill"] = {
+        **skill_binding.evidence, "model_execution": model_result.evidence,
+        "execution_mode": model_result.evidence["execution_mode"],
+    }
     shot = Shot(id=shot_id, user_id=run.user_id, storyboard_id=context.storyboard.id,
-        shot_number=1, duration=4, prompt=context.source_text[:1000],
-        visual_description=context.source_text[:1000], dialogue=dialogue["dialogue"] if dialogue else None,
+        shot_number=1, duration=4, prompt=generated["prompt"],
+        visual_description=generated["visual_description"], dialogue=generated["dialogue"],
         character_refs=[], extra_data={**shot_extra, **entity_context})
     if any(entity_context["entity_refs"].values()):
         scoped = await build_production_scoped_refs(
@@ -120,7 +152,13 @@ async def _refresh_existing(context: ShotStageContext, shot: Shot) -> None:
 async def create_or_resolve_shots_stage(db: AsyncSession, *, run: Any, episode: dict[str, Any]) -> dict[str, Any]:
     from app.services.episode_production_service import _canonical_script, _canonical_workflow, _same_tag, _source, _validate_tag
     canonical, number = episode.get("canonical_ids") or {}, int(episode["episode_number"])
-    _, source_text = await _source(db, run.user_id, run.novel_id, list(episode["chapter_ids"]))
+    chapters, source_text = await _source(db, run.user_id, run.novel_id, list(episode["chapter_ids"]))
+    for chapter in chapters:
+        await reconcile_chapter_entity_evidence(
+            db, user_id=run.user_id, novel_id=run.novel_id,
+            chapter_id=chapter.id, entity_types=("character", "scene", "prop", "event"),
+            content=str(chapter.content or ""),
+        )
     workflow, script = await _canonical_workflow(db, run, episode), await _canonical_script(db, run, episode)
     storyboard = await db.scalar(select(Storyboard).where(
         Storyboard.id == canonical.get("storyboard_id"), Storyboard.user_id == run.user_id,
@@ -146,6 +184,18 @@ async def create_or_resolve_shots_stage(db: AsyncSession, *, run: Any, episode: 
     if tagged:
         _validate_tag(shot.extra_data, run, episode, "shot")
         await _refresh_existing(context, shot)
+    prompt_skill = dict((shot.extra_data or {}).get("prompt_skill") or {})
+    if prompt_skill:
+        metadata = copy.deepcopy(run.run_metadata or {})
+        skill_evidence = dict(metadata.get("skill_evidence") or {})
+        episode_evidence = dict((skill_evidence.get("shot_prompt") or {}).get(str(number)) or {})
+        episode_evidence[shot.id] = prompt_skill
+        skill_evidence["shot_prompt"] = {
+            **dict(skill_evidence.get("shot_prompt") or {}), str(number): episode_evidence,
+        }
+        metadata["skill_evidence"] = skill_evidence
+        run.run_metadata = metadata
+        flag_modified(run, "run_metadata")
     storyboard.shot_count = len(rows) if tagged else len(rows) + 1
     await db.flush()
     return {"shot_ids": [shot.id]}

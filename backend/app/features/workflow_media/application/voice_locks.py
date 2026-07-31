@@ -34,6 +34,7 @@ class FinalQualityLockCommand:
     default_voice: Optional[str] = None
     default_speed: float = 1.0
     default_voice_source: str = "provider_default"
+    require_voice_locks: bool = True
 
 
 @dataclass(frozen=True)
@@ -68,26 +69,32 @@ def _production_context_for_shot(shot: Shot) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 def clean_character_label(name: Optional[str]) -> Optional[str]:
+    from app.services.dialogue_lineage_service import normalize_dialogue_speaker_label
+
     if not name:
         return None
     value = str(name).strip().strip("「」『』“”\"' ")
-    for suffix in ("回答", "低声说", "轻声说", "说道", "说", "道", "问", "喊"):
-        if len(value) > len(suffix) and value.endswith(suffix):
-            value = value[: -len(suffix)].strip()
-            break
-    return value or None
+    return normalize_dialogue_speaker_label(value) or None
 
 def primary_tts_character_name(shot: Shot, subtitle_text: str) -> Optional[str]:
+    from app.services.dialogue_lineage_service import extract_explicit_dialogue
     from app.services.dialogue_parser import extract_character_from_text, parse_dialogue
 
     character_name = clean_character_label(extract_character_from_text(subtitle_text))
     if character_name:
         return character_name
 
-    for segment in parse_dialogue(subtitle_text):
+    parsed_segments = parse_dialogue(subtitle_text)
+    for segment in parsed_segments:
         character_name = clean_character_label(segment.get("character"))
         if character_name and character_name != "旁白":
             return character_name
+
+    expected_lines = {str(item.get("text") or "").strip() for item in parsed_segments}
+    visual_source = str(getattr(shot, "visual_description", "") or "")
+    for line in extract_explicit_dialogue(visual_source):
+        if str(line.get("spoken_text") or "").strip() in expected_lines:
+            return clean_character_label(str(line.get("speaker") or ""))
 
     character_refs = shot.character_refs if isinstance(shot.character_refs, list) else []
     for ref in character_refs:
@@ -432,11 +439,13 @@ async def build_final_quality_lock_snapshots(
 
     for shot in shots:
         asset_locks = asset_locks_for_workflow_shot(shot)
-        voice_lock = await _voice_lock_snapshot_for_workflow_shot(_VoiceLockCommand(
-            db, user_id, workflow, shot,
-            command.requested_story_bible_id, command.default_voice,
-            command.default_speed, command.default_voice_source,
-        ))
+        voice_lock = None
+        if command.require_voice_locks:
+            voice_lock = await _voice_lock_snapshot_for_workflow_shot(_VoiceLockCommand(
+                db, user_id, workflow, shot,
+                command.requested_story_bible_id, command.default_voice,
+                command.default_speed, command.default_voice_source,
+            ))
         snapshots[shot.id] = {
             "asset_version_locks": asset_locks,
             "voice_lock_snapshot": voice_lock,
@@ -444,7 +453,7 @@ async def build_final_quality_lock_snapshots(
         if not asset_locks:
             missing_assets.append({"shot_id": shot.id, "shot_number": shot.shot_number})
         dialogue_text = shot_subtitle_text(shot)
-        if dialogue_text and not voice_lock:
+        if command.require_voice_locks and dialogue_text and not voice_lock:
             missing_voices.append({
                 "shot_id": shot.id,
                 "shot_number": shot.shot_number,

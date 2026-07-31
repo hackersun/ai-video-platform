@@ -220,6 +220,47 @@ def test_qiniu_private_download_url_caps_ttl_to_provider_safe_window(monkeypatch
     assert query["token"][0].startswith("ak-test:")
 
 
+def test_refresh_existing_private_qiniu_media_signs_without_reupload(monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+
+    from app.services import media_delivery
+
+    monkeypatch.setattr(media_delivery.time, "time", lambda: 1_700_000_000)
+
+    async def fake_storage_config(db, user_id, storage_config_id=None):
+        config = SimpleNamespace(
+            id="storage-qiniu-private",
+            name="七牛 Kodo 私有桶",
+            test_status="success",
+            custom_base_url="https://private-bucket.kodo-cn-north-1.qiniucs.com",
+            extra_config={
+                "storage_provider": "qiniu",
+                "public_base_url": "https://private-bucket.kodo-cn-north-1.qiniucs.com",
+                "local_static_prefix": "/static/",
+                "public_static_prefix": "/static/",
+                "private_download": True,
+                "download_url_ttl_seconds": 1800,
+            },
+            get_api_key_decrypted=lambda: "ak-test",
+            get_api_secret_decrypted=lambda: "sk-test",
+        )
+        provider = SimpleNamespace(id="object_storage", name="object_storage", name_cn="对象存储 / CDN")
+        return config, provider
+
+    monkeypatch.setattr(media_delivery, "_get_default_storage_config", fake_storage_config)
+
+    result = asyncio.run(media_delivery.refresh_existing_qiniu_media_url(
+        db=None,
+        user_id="user-1",
+        media_url="/static/generated/videos/final.mp4",
+    ))
+
+    query = parse_qs(urlparse(result["provider_url"]).query)
+    assert query["e"] == ["1700000300"]
+    assert query["token"][0].startswith("ak-test:")
+    assert result["delivery_method"] == "qiniu_signed_refresh"
+
+
 def test_object_storage_config_requires_qiniu_upload_fields_for_qiniu_provider():
     import asyncio
 

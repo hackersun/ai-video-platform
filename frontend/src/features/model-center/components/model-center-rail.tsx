@@ -8,9 +8,9 @@ type RailItem = { section: ModelCenterSection; label: string; description: strin
 
 const items: RailItem[] = [
   { section: 'overview', label: '全局概览', description: '阻塞项与就绪度', icon: Boxes },
-  { section: 'connections', label: '模型连接', description: '凭证与可用性', icon: Cable },
+  { section: 'connections', label: '供应商账号', description: 'API 凭证与可用性', icon: Cable },
   { section: 'catalog', label: '模型目录', description: '文本、图像、视频、语音', icon: Clapperboard },
-  { section: 'bindings', label: '能力绑定', description: '任务路由与优先级', icon: Workflow },
+  { section: 'bindings', label: '默认模型', description: '生产任务使用哪个模型', icon: Workflow },
   { section: 'recipes', label: '组合预设', description: '生产方案版本', icon: PlugZap },
   { section: 'prompts', label: '提示词模板', description: '版本与发布状态', icon: BookText },
   { section: 'test-lab', label: '测试实验室', description: '认证运行与证据', icon: Sparkles },

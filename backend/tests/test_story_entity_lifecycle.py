@@ -143,6 +143,19 @@ def test_lifecycle_status_defaults_preserve_legacy_entities():
     assert candidate.extra_data["lifecycle"]["reason"] == "clean evidence"
 
 
+def test_story_entity_update_contract_keeps_canonical_name_and_appearance():
+    from app.api.v1.endpoints.story_bible import StoryEntityUpdateRequest
+
+    request = StoryEntityUpdateRequest.model_validate({
+        "name": "顾清霜",
+        "canonical_name": "顾清霜",
+        "appearance": "银环高马尾，靛青银纹长袍，暗红束带。",
+    })
+
+    assert request.canonical_name == "顾清霜"
+    assert request.appearance == "银环高马尾，靛青银纹长袍，暗红束带。"
+
+
 def test_production_query_hides_candidates_rejected_and_archived():
     async def scenario():
         from app.services.story_entity_lifecycle import (

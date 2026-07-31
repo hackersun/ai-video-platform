@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 
 LOCAL_STATIC_PATH_RE = re.compile(r"/static/[^\s，,；;）)]+")
@@ -368,10 +368,20 @@ def build_provider_video_prompt_fallback() -> Dict[str, Any]:
     }
 
 
-def sanitize_provider_video_prompt(prompt: str) -> Dict[str, Any]:
+def sanitize_provider_video_prompt(
+    prompt: str, *, protected_texts: Iterable[str] = (),
+) -> Dict[str, Any]:
     """Rewrite risky story terms only for provider-submitted video prompts."""
     safe_prompt = prompt or ""
     replacements: List[Dict[str, str]] = []
+    protected: Dict[str, str] = {}
+    for index, value in enumerate(protected_texts):
+        text = str(value or "").strip()
+        if not text or text not in safe_prompt:
+            continue
+        marker = f"__CANONICAL_SPOKEN_TEXT_{index}__"
+        safe_prompt = safe_prompt.replace(text, marker)
+        protected[marker] = text
     safe_prompt = _strip_provider_unnecessary_story_context(safe_prompt, replacements)
     safe_prompt = _compact_provider_video_prompt(safe_prompt, replacements)
     safe_prompt = _harden_provider_visual_prompt(safe_prompt, replacements)
@@ -379,6 +389,8 @@ def sanitize_provider_video_prompt(prompt: str) -> Dict[str, Any]:
         if source in safe_prompt:
             safe_prompt = safe_prompt.replace(source, target)
             replacements.append({"source": source, "target": target})
+    for marker, text in protected.items():
+        safe_prompt = safe_prompt.replace(marker, text)
     return {
         "prompt": safe_prompt,
         "sanitized": bool(replacements),

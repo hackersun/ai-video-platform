@@ -651,7 +651,7 @@ SPEAKER_NAME_BLOCKLIST = {
     "他说",
     "她说",
     "他低声",
-    "她低声",
+    "她低声", "喊道", "问道", "答道", "回答", "回应",
 }
 
 
@@ -713,14 +713,14 @@ def extract_chapter_dialogue_lines(content: str, known_names: list[str]) -> list
     last_speaker: Optional[str] = None
 
     for sentence in sentences:
-        matches = list(re.finditer(rf"{speech_verb}[：:][“\"']?([^。！？\n]+)", sentence))
+        matches = list(re.finditer(rf"{speech_verb}[：:][“‘\"']?([^。！？\n]+)", sentence))
         if not matches:
             last_speaker = _last_speaker_in_text(sentence, speakers) or last_speaker
             continue
         for match in matches:
             prefix = sentence[:match.start()]
             speaker = _last_speaker_in_text(prefix, speakers) or last_speaker
-            text = match.group(1).strip().strip("“”\"' ")
+            text = match.group(1).strip().strip("“”‘’\"' ")
             if speaker and text:
                 lines.append({"speaker": speaker, "text": text})
                 last_speaker = speaker

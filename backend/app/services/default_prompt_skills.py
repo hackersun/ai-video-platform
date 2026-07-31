@@ -21,6 +21,7 @@ def _skill(
     content: str,
     priority: int,
     variables: Dict[str, Any],
+    version: int = 1,
 ) -> Dict[str, Any]:
     return {
         "id": f"builtin-{task}-standard",
@@ -33,7 +34,7 @@ def _skill(
         "variables": variables,
         "priority": priority,
         "inject_position": "before_constraints",
-        "version": 1,
+        "version": version,
         "is_active": True,
         "is_builtin": True,
         "tags": ["标准", "内置", "全流程"],
@@ -99,11 +100,15 @@ STANDARD_PROMPT_SKILLS: List[Dict[str, Any]] = [
         description="从小说、章节或剧本中抽取可用于资产和分镜生产的角色、场景、道具和事件。",
         stage="analysis",
         priority=45,
+        version=2,
         variables={"entity_types": "character、scene、prop、event", "output_format": "JSON 数组"},
         content="""
 标准实体/资产抽取技能：只抽取原文中有明确证据、后续能用于分镜、资产或视频一致性的对象。
 允许的实体类型为：{entity_types}，输出格式必须是「{output_format}」。
-角色必须是可持续追踪的单一个体；群体背景、情绪词、身体部位、动作短语不能当作角色。
+角色必须是可持续追踪的单一个体，至少满足明确姓名/稳定称谓，并具备动作、对白、身份或关系证据。
+群体背景、情绪词、身体部位、动作短语、时间短语和地点片段不能当作角色。
+尤其禁止把“地下室、警戒线外、午夜前、这可能、蓝雾退、某人伸手”等空间/时间/判断/动作片段识别为角色。
+姓名与动作相邻时只保留姓名主体，例如“季衡伸手”应抽取“季衡”；虚构身份个体（如“影潮使”）有持续行动证据时可以保留。
 场景必须是可复用空间；道具必须是可见且需要前后一致的物件；事件必须是剧情变化，不要和人物、场景、道具混淆。
 每个实体都要带 evidence 和 confidence；没有证据就不要凭题材臆造资产。
 """,
@@ -157,7 +162,20 @@ STANDARD_PROMPT_SKILLS: List[Dict[str, Any]] = [
         content="""
 标准场景图技能：生成「{scene_type}」参考图，光线为「{lighting}」。
 画面必须是一个连续空间，明确时代、建筑结构、天气、光源方向、色彩基调和可行动区域。
-不要拼接多个地点，不要出现无关人物特写，后续镜头必须继承该场景空间结构。
+        不要拼接多个地点，不要出现无关人物特写，后续镜头必须继承该场景空间结构。
+""",
+    ),
+    _skill(
+        task="series_reference_board",
+        name="标准系列复合参考设定板技能",
+        description="生成同时绑定多角色视觉规范和全局风格的单一复合参考图。",
+        stage="asset",
+        priority=85,
+        variables={"characters": "主角", "style": "电影感动漫", "layout": "左角色、右风格板"},
+        content="""
+标准系列复合参考设定板技能：为角色「{characters}」生成单一复合参考图，整体风格为「{style}」。
+布局必须遵循「{layout}」：每名角色提供可辨认的正面、四分之三侧面和全身规范视图，另设独立全局风格、色板、线条与光影区域。
+同一角色的脸型、发型、服装和标志道具必须一致；禁止遗漏已声明角色、拆成多个文件、生成无关人物、文字或水印。
 """,
     ),
     _skill(
@@ -241,7 +259,9 @@ STANDARD_PROMPT_SKILLS: List[Dict[str, Any]] = [
 ]
 
 
-async def ensure_standard_prompt_skills(db: AsyncSession) -> None:
+async def ensure_standard_prompt_skills(
+    db: AsyncSession, *, commit: bool = True,
+) -> None:
     """Create or refresh built-in Prompt skills without touching user clones."""
     expected_ids = [item["id"] for item in STANDARD_PROMPT_SKILLS]
     result = await db.execute(select(PromptSkill).where(PromptSkill.id.in_(expected_ids)))
@@ -259,5 +279,7 @@ async def ensure_standard_prompt_skills(db: AsyncSession) -> None:
                 setattr(skill, key, value)
                 changed = True
 
-    if changed:
+    if changed and commit:
         await db.commit()
+    elif changed:
+        await db.flush()

@@ -51,8 +51,39 @@ def _asset_matches(asset: Asset, entity: StoryEntity) -> bool:
     params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
     if params.get("composite_reference_rule") == "single_artifact_dual_role_v1":
         bindings = _role_bindings(asset, "character_canonical")
-        return len(bindings) == 1 and str(bindings[0].get("entity_id") or "") == entity.id
+        return any(str(binding.get("entity_id") or "") == entity.id for binding in bindings)
     return asset.entity_id == entity.id
+
+
+def _entity_multiview_key(asset: Asset) -> str:
+    params = asset.generation_params if isinstance(asset.generation_params, dict) else {}
+    if (
+        params.get("source") != "entity_multiview"
+        or params.get("status") not in {None, "succeeded"}
+        or str(asset.entity_type or "") != "character"
+    ):
+        return ""
+    return str(params.get("view_key") or params.get("view_angle") or "").strip()
+
+
+def _complete_character_multiview(
+    assets: list[Asset], entity: StoryEntity,
+) -> tuple[list[Asset], list[dict[str, Any]]]:
+    required = ("front", "side", "back")
+    by_view: dict[str, list[Asset]] = {key: [] for key in required}
+    for asset in assets:
+        if asset.entity_id != entity.id or not asset.is_final:
+            continue
+        key = _entity_multiview_key(asset)
+        if key in by_view:
+            by_view[key].append(asset)
+    conflicts = [
+        {"entity_id": entity.id, "view_key": key, "asset_ids": [item.id for item in rows]}
+        for key, rows in by_view.items() if len(rows) > 1
+    ]
+    if conflicts or any(len(by_view[key]) != 1 for key in required):
+        return [], conflicts
+    return [by_view[key][0] for key in required], []
 
 
 async def _story_issues(
@@ -127,7 +158,26 @@ def _required_asset(entity: StoryEntity) -> tuple[bool, set[str]]:
     return required, roles
 
 
-def _select_assets(assets: list[Asset], visible: list[StoryEntity], novel_id: str) -> tuple[list[Asset], list[str], list[str], list[dict[str, Any]]]:
+def _select_assets(
+    assets: list[Asset],
+    visible: list[StoryEntity],
+    novel_id: str,
+    *,
+    preferred_composite_asset_id: str | None = None,
+) -> tuple[list[Asset], list[str], list[str], list[dict[str, Any]]]:
+    preferred = next(
+        (item for item in assets if item.id == preferred_composite_asset_id),
+        None,
+    )
+    if preferred and (preferred.generation_params or {}).get(
+        "composite_reference_rule"
+    ) == "single_artifact_dual_role_v1":
+        assets = [
+            item for item in assets
+            if item.id == preferred.id or (item.generation_params or {}).get(
+                "composite_reference_rule"
+            ) != "single_artifact_dual_role_v1"
+        ]
     selected: list[Asset] = []
     missing: list[str] = []
     unlocked: list[str] = []
@@ -136,6 +186,13 @@ def _select_assets(assets: list[Asset], visible: list[StoryEntity], novel_id: st
         required, roles = _required_asset(entity)
         if not required:
             continue
+        if entity.entity_type == "character":
+            multiview, multiview_conflicts = _complete_character_multiview(assets, entity)
+            conflicts.extend(multiview_conflicts)
+            if multiview:
+                selected.extend(multiview)
+                unlocked.extend(item.id for item in multiview if not item.is_locked)
+                continue
         candidates = [item for item in assets if _asset_matches(item, entity) and item.is_final and roles.issubset(_asset_roles(item))]
         canonical = candidates[0] if len(candidates) == 1 else None
         if len(candidates) > 1:
@@ -147,10 +204,13 @@ def _select_assets(assets: list[Asset], visible: list[StoryEntity], novel_id: st
             if not canonical.is_locked:
                 unlocked.append(canonical.id)
     styles = [item for item in assets if item.category == "style" and item.is_final
-              and "global_style_board" in _asset_roles(item) and (
-                  (item.generation_params or {}).get("composite_reference_rule") != "single_artifact_dual_role_v1"
-                  or any(str(binding.get("novel_id") or "") == novel_id for binding in _role_bindings(item, "global_style_board"))
-              )]
+              and "global_style_board" in _asset_roles(item)
+              and (item.generation_params or {}).get("composite_reference_rule") != "single_artifact_dual_role_v1"]
+    if not styles:
+        styles = [item for item in assets if item.category == "style" and item.is_final
+                  and "global_style_board" in _asset_roles(item)
+                  and any(str(binding.get("novel_id") or "") == novel_id
+                          for binding in _role_bindings(item, "global_style_board"))]
     style = styles[0] if len(styles) == 1 else None
     if len(styles) > 1:
         conflicts.append({"entity_id": "global_style_board", "asset_ids": [item.id for item in styles]})
@@ -160,7 +220,8 @@ def _select_assets(assets: list[Asset], visible: list[StoryEntity], novel_id: st
         selected.append(style)
         if not style.is_locked:
             unlocked.append(style.id)
-    return selected, missing, unlocked, conflicts
+    selected = list({item.id: item for item in selected}.values())
+    return selected, missing, list(dict.fromkeys(unlocked)), conflicts
 
 
 async def _asset_state(db: AsyncSession, run: SeriesProductionRun, visible: list[StoryEntity]) -> _AssetState:
@@ -168,7 +229,11 @@ async def _asset_state(db: AsyncSession, run: SeriesProductionRun, visible: list
         Asset.is_active.is_(True), or_(Asset.user_id == run.user_id, Asset.is_public.is_(True)),
         Asset.novel_id == run.novel_id,
     ))).all())
-    selected, missing, unlocked, conflicts = _select_assets(assets, visible, run.novel_id)
+    reference = (run.run_metadata or {}).get("reference_preparation") or {}
+    selected, missing, unlocked, conflicts = _select_assets(
+        assets, visible, run.novel_id,
+        preferred_composite_asset_id=str(reference.get("asset_id") or "") or None,
+    )
     issues: list[dict[str, Any]] = []
     if missing:
         issues.append(_issue("canonical_assets_missing", "缺少规范资产", items=missing))

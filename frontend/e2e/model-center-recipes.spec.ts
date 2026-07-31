@@ -115,7 +115,7 @@ test('creates validates and publishes a recipe from the frontend', async ({ page
   await page.getByLabel('发布原因').fill('前端组合验收');
   await page.getByRole('button', { name: '确认发布' }).click();
 
-  await expect(page.getByText('已发布')).toBeVisible();
+  await expect(page.getByText('生产方案已发布。', { exact: true })).toBeVisible();
   expect(publishBody).toMatchObject({ expected_revision: 1, reason: '前端组合验收' });
 });
 

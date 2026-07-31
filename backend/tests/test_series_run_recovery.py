@@ -87,6 +87,18 @@ def test_succeeded_operation_has_no_recovery_action() -> None:
     assert descriptor.actions == ()
 
 
+def test_unverified_persisted_reference_offers_no_charge_artifact_recovery() -> None:
+    operation = _operation("unknown_manual_reconcile", capability="image")
+    operation.recovery_reason = "reference_artifact_unverified"
+
+    descriptor = recovery_for_operation(operation)
+
+    assert descriptor.title == "参考图已生成，等待重新校验"
+    assert [item.code for item in descriptor.actions] == ["recover_reference_artifact"]
+    assert descriptor.safe_retry is True
+    assert descriptor.retry_scope == "persisted_reference_only"
+
+
 @pytest.mark.asyncio
 async def test_recovery_api_is_owner_scoped_and_rejects_stale_run_version(recovery_api_records) -> None:
     owner, other, run_id, operation_id = recovery_api_records

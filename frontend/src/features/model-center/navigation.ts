@@ -4,6 +4,9 @@ export type ModelCenterLocation = {
   section?: ModelCenterSection;
   capability?: ModelCapability;
   runId?: string;
+  level?: 'connection' | 'contract' | 'live';
+  profileVersionId?: string;
+  connectionId?: string;
   returnTo?: string;
 };
 
@@ -25,6 +28,9 @@ export function modelCenterHref(location: ModelCenterLocation = {}) {
   params.set('section', location.section && sections.has(location.section) ? location.section : 'overview');
   if (location.capability && capabilities.has(location.capability)) params.set('capability', location.capability);
   if (location.runId) params.set('runId', location.runId);
+  if (location.level) params.set('level', location.level);
+  if (location.profileVersionId) params.set('profileVersionId', location.profileVersionId);
+  if (location.connectionId) params.set('connectionId', location.connectionId);
   const returnTo = safeReturnTo(location.returnTo);
   if (returnTo) params.set('returnTo', returnTo);
   return `/llm-config?${params.toString()}`;
@@ -56,6 +62,10 @@ export function readModelCenterLocation(params: SearchParamsLike): Required<Pick
     section: section && sections.has(section as ModelCenterSection) ? section as ModelCenterSection : 'overview',
     capability: capability && capabilities.has(capability as ModelCapability) ? capability as ModelCapability : undefined,
     runId: params.get('runId') || undefined,
+    level: ['connection', 'contract', 'live'].includes(params.get('level') || '')
+      ? params.get('level') as ModelCenterLocation['level'] : undefined,
+    profileVersionId: params.get('profileVersionId') || undefined,
+    connectionId: params.get('connectionId') || undefined,
     returnTo: safeReturnTo(params.get('returnTo') || undefined),
   };
 }

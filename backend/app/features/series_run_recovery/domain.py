@@ -54,6 +54,17 @@ def recovery_for_operation(operation: Any) -> RecoveryDescriptor:
             "本次请求已明确未被供应商受理，费用预留已释放。修改并验证配置后可仅重试失败阶段。",
             "released", True, True, "failed_stage", _confirmed_actions(capability),
         )
+    if (
+        status == "unknown_manual_reconcile"
+        and capability == "image"
+        and str(getattr(operation, "recovery_reason", "")) == "reference_artifact_unverified"
+    ):
+        return RecoveryDescriptor(
+            str(operation.id), capability, stage, status, "参考图已生成，等待重新校验",
+            "参考图已落盘且不会再次调用生图模型。可重新发布到七牛并完成质量校验。",
+            "held", True, False, "persisted_reference_only",
+            (RecoveryAction("recover_reference_artifact", "恢复已生成参考图"),),
+        )
     if status in _UNCERTAIN:
         return RecoveryDescriptor(
             str(operation.id), capability, stage, status, "等待确认供应商状态",

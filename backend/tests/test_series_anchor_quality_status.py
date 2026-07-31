@@ -38,8 +38,15 @@ def test_deterministic_quality_requires_acceptance_only_bindings_and_jobs():
 @pytest.mark.asyncio
 async def test_real_artifact_is_never_presented_as_content_verified_without_evaluator():
     job = SimpleNamespace(
-        extra_data={"artifact_id": "artifact-1"}, output_manifest_url=None,
-        output_video_url="https://media.invalid/video.mp4",
+        extra_data={
+            "artifact_id": "artifact-1",
+            "subtitle_public_video_url": "https://media.invalid/public-subtitled.mp4",
+            "subtitle_sync_status": "script_aligned_pending_audio_verification",
+            "audio_verification_required": True,
+        },
+        output_manifest_url=None,
+        output_video_url="/static/generated/subtitled.mp4",
+        subtitle_track_id="subtitle-track-1",
     )
 
     result = await unevaluated_quality_results(
@@ -53,6 +60,11 @@ async def test_real_artifact_is_never_presented_as_content_verified_without_eval
         "ready": False, "overall_readiness": "trusted_multimodal_evaluation_required",
         "evidence_source": "not_evaluated", "episode_number": 4,
         "preceding_artifact_id": None,
+        "output_video_url": "/static/generated/subtitled.mp4",
+        "public_video_url": "https://media.invalid/public-subtitled.mp4",
+        "subtitle_track_id": "subtitle-track-1",
+        "subtitle_sync_status": "script_aligned_pending_audio_verification",
+        "audio_verification_required": True,
     }]
     assert "score" not in result[0] and "dimensions" not in result[0]
 

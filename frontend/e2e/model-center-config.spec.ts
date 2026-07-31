@@ -54,6 +54,95 @@ test('模型中心按能力展示真实目录，并提供组合检查器', async
   await test.info().attach('model-center-catalog', { path: screenshot, contentType: 'image/png' });
 });
 
+test('目录模型可以查看、校验并携带精确参数进入测试和设置', async ({ page }) => {
+  let candidateRequest = '';
+  let certificationBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/certification-candidates?**', async (route) => {
+    candidateRequest = route.request().url();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      items: [{
+        id: 'profile-1:connection-1',
+        profile: { id: 'profile-1', name: 'Seedance 1.5 Pro', api_model_id: 'doubao-seedance-1-5-pro', provider_id: 'provider-1', provider_name: '火山引擎', capabilities: ['video_generation'] },
+        connection: { id: 'connection-1', name: '主视频连接', provider_id: 'provider-1', status: 'verified' },
+      }],
+      meta: { page: 1, page_size: 100, total: 1 },
+    }) });
+  });
+  await page.route('**/api/v1/model-center/certifications', async (route) => {
+    certificationBody = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      ...certification, id: 'run-contract-complete', status: 'success', level: 'contract',
+    }) });
+  });
+  await page.route('**/api/v1/model-center/certifications/run-contract-complete', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      ...certification, id: 'run-contract-complete', status: 'success', level: 'contract',
+    }) });
+  });
+  await page.route('**/api/v1/model-center/profile-versions/profile-1/validate', async (route) => {
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ valid: true, errors: [], audit_event_id: 'audit-contract-1' }),
+    });
+  });
+  await page.goto('/llm-config?section=catalog&capability=video_generation&returnTo=%2Fstudio');
+
+  await page.getByRole('button', { name: '查看 Seedance 1.5 Pro' }).click();
+  await expect(page.getByRole('dialog', { name: 'Seedance 1.5 Pro 模型详情' })).toBeVisible();
+  await page.getByRole('button', { name: '免费检查配置' }).click();
+  await expect(page.getByText('配置检查通过')).toBeVisible();
+
+  await page.getByRole('link', { name: '进入测试实验室' }).click();
+  await expect(page).toHaveURL(/section=test-lab/);
+  await expect(page).toHaveURL(/profileVersionId=profile-1/);
+  await expect(page).toHaveURL(/level=contract/);
+  await expect(page).toHaveURL(/returnTo=%2Fstudio/);
+  await expect(page.getByLabel('兼容模型与连接')).toHaveValue('profile-1:connection-1');
+  await page.getByLabel('操作原因').fill('验证模型契约');
+  await page.getByRole('button', { name: '提交认证' }).click();
+  await expect(page).toHaveURL(/runId=run-contract-complete/);
+  await expect(page.getByText('已通过', { exact: true })).toBeVisible();
+  expect(candidateRequest).toContain('profile_version_id=profile-1');
+  expect(candidateRequest).toContain('level=contract');
+  expect(certificationBody).toMatchObject({
+    profile_version_id: 'profile-1', connection_id: 'connection-1', level: 'contract',
+  });
+});
+
+test('有密钥的草稿连接可以进入精确预选的连接认证', async ({ page }) => {
+  await page.route('**/api/v1/model-center/connections?**', async (route) => {
+    await route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({
+        ...connectionPage,
+        items: [{ ...connectionPage.items[0], enabled: false }],
+      }),
+    });
+  });
+  await page.goto('/llm-config?section=connections');
+
+  const testButton = page.getByRole('button', { name: '测试可用性' });
+  await expect(testButton).toBeEnabled();
+  await testButton.click();
+  await expect(page).toHaveURL(/section=test-lab/);
+  await expect(page).toHaveURL(/connectionId=connection-1/);
+  await expect(page).toHaveURL(/level=connection/);
+});
+
+test('指定模型没有可用连接时提供可执行的连接配置入口', async ({ page }) => {
+  await page.route('**/api/v1/model-center/certification-candidates?**', async (route) => {
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ items: [], meta: { page: 1, page_size: 100, total: 0 } }),
+    });
+  });
+  await page.goto('/llm-config?section=test-lab&capability=text_generation&level=contract&profileVersionId=profile-missing-connection&returnTo=%2Fstudio');
+
+  const setupLink = page.getByRole('link', { name: '先配置模型连接' });
+  await expect(setupLink).toBeVisible();
+  await setupLink.click();
+  await expect(page).toHaveURL('/llm-config?section=connections&capability=text_generation&returnTo=%2Fstudio');
+});
+
 test('旧生产适配和提示词入口会保留为模型中心深链接', async ({ page }) => {
   await page.goto('/production-adapters?capability=audio');
   await expect(page).toHaveURL(/\/llm-config\?section=connections&capability=speech_generation$/);
@@ -61,9 +150,24 @@ test('旧生产适配和提示词入口会保留为模型中心深链接', async
   await expect(page).toHaveURL(/\/llm-config\?section=prompts$/);
 });
 
-test('连接认证完成后会直接进入带运行证据的测试实验室，并保留工作台返回地址', async ({ page }) => {
+test('连接认证会精确预选模型，完成后展示脱敏证据并保留工作台返回地址', async ({ page }) => {
+  await page.route('**/api/v1/model-center/certification-candidates?**', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      items: [{
+        id: 'profile-1:connection-1',
+        profile: { id: 'profile-1', name: 'Seedance 1.5 Pro', api_model_id: 'doubao-seedance-1-5-pro', provider_id: 'provider-1', provider_name: '火山引擎', capabilities: ['video_generation'] },
+        connection: { id: 'connection-1', name: '主视频连接', provider_id: 'provider-1', status: 'verified' },
+      }], meta: { page: 1, page_size: 100, total: 1 },
+    }),
+  }));
+  await page.route('**/api/v1/model-center/certifications', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify(certification),
+  }));
   await page.goto('/llm-config?section=connections&returnTo=%2Fstudio');
-  await page.getByRole('button', { name: '测试连接' }).click();
+  await page.getByRole('button', { name: '测试可用性' }).click();
+  await expect(page.getByLabel('兼容模型与连接')).toHaveValue('profile-1:connection-1');
+  await page.getByLabel('操作原因').fill('验证主视频连接');
+  await page.getByRole('button', { name: '提交认证' }).click();
   await expect(page).toHaveURL('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
   await page.getByText('已脱敏响应证据').click();
   await expect(page.getByText('evidence-17')).toBeVisible();
@@ -83,5 +187,5 @@ test('概览修复链接和窄屏导航保留当前工作台上下文', async ({
 
   await page.setViewportSize({ width: 1024, height: 800 });
   await page.goto('/llm-config?section=catalog');
-  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /能力绑定/ })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /默认模型/ })).toBeVisible();
 });

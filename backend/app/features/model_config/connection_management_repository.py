@@ -21,6 +21,7 @@ class ConnectionRow:
     provider_id: str
     name: str
     status: str
+    endpoint_overrides: dict
     has_secret: bool
     secret_updated_at: object | None
     revision: int
@@ -29,14 +30,15 @@ class ConnectionRow:
 def as_connection_row(row: ModelConnection) -> ConnectionRow:
     return ConnectionRow(
         id=row.id, user_id=row.user_id, provider_id=row.provider_id, name=row.name,
-        status=row.status, has_secret=bool(row.api_key or row.api_secret),
+        status=row.status, endpoint_overrides=dict(row.endpoint_overrides or {}),
+        has_secret=bool(row.api_key or row.api_secret),
         secret_updated_at=row.updated_at, revision=row.revision,
     )
 
 
 async def create_connection(
     db: AsyncSession, *, user_id: str, provider_id: str, name: str,
-    api_key: str | None, api_secret: str | None, reason: str,
+    api_key: str | None, api_secret: str | None, base_url: str | None, reason: str,
 ) -> ConnectionRow | None:
     provider = await db.get(ModelProvider, provider_id)
     if provider is None:
@@ -44,12 +46,15 @@ async def create_connection(
     if provider is None:
         return None
     row = ModelConnection(
-        id=str(uuid4()), user_id=user_id, provider_id=provider.id, name=name, status="draft",
+        id=str(uuid4()), user_id=user_id, provider_id=provider.id, name=name,
+        endpoint_overrides={"base_url": base_url} if base_url else {}, status="draft",
     )
     row.set_api_key_encrypted(api_key or "")
     row.set_api_secret_encrypted(api_secret)
     db.add(row)
-    db.add(_audit(row, action="create", reason=reason, summary={"has_secret": bool(api_key or api_secret)}))
+    db.add(_audit(row, action="create", reason=reason, summary={
+        "has_secret": bool(api_key or api_secret), "has_custom_base_url": bool(base_url),
+    }))
     await db.flush()
     return as_connection_row(row)
 

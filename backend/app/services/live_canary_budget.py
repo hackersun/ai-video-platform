@@ -19,6 +19,7 @@ from app.services.live_canary_bindings import (
     BindingValidationError,
     required_tested_at_for_run,
     validate_model_bindings,
+    validate_required_model_bindings,
 )
 from app.services.live_canary_policy import (
     InvalidAccountingInput,
@@ -26,6 +27,7 @@ from app.services.live_canary_policy import (
     money_text as _text,
     trusted_live_canary_policy,
 )
+from app.services.live_canary_repair_budget import effective_budget_maximum
 
 
 class BudgetExceeded(ValueError):
@@ -73,7 +75,7 @@ async def reserve_budget(
         raise BudgetExceeded("series run budget is blocked")
     spent = _money(summary["spent_rmb"])
     reserved = _money(summary["reserved_rmb"])
-    maximum = _money((run.budget_policy or {}).get("max_rmb", "0"))
+    maximum = effective_budget_maximum(run)
     if spent + reserved + estimate > maximum:
         raise BudgetExceeded("series run RMB budget would be exceeded")
     reservation = {"estimate_rmb": _text(estimate), "state": "reserved"}
@@ -370,7 +372,7 @@ async def reconcile_reservation(
     summary["reserved_rmb"] = _text(_money(summary["reserved_rmb"]) - estimate)
     summary["spent_rmb"] = _text(_money(summary["spent_rmb"]) + actual)
     total = _money(summary["spent_rmb"]) + _money(summary["reserved_rmb"])
-    maximum = _money((run.budget_policy or {}).get("max_rmb", "0"))
+    maximum = effective_budget_maximum(run)
     state = "reconciled"
     if total > maximum:
         state = "reconciled_over_budget"

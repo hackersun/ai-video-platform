@@ -1,5 +1,6 @@
 """Prepare transport-neutral inputs for separate video and TTS generation."""
 
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -199,8 +200,13 @@ def _dialogue_contract(
         segments.append({"speaker": fallback, "text": subtitle.strip()})
     speakers = [item["speaker"] for item in segments if item.get("speaker")]
     end = round(float(duration), 3)
+    canonical_subtitle = "\n".join(
+        f"{item['speaker']}：{item['text']}" if item.get("speaker") else str(item["text"])
+        for item in segments if item.get("text")
+    )
     return {
-        "version": 1, "speaker": speakers[0] if speakers else fallback, "subtitle_text": subtitle,
+        "version": 1, "speaker": speakers[0] if speakers else fallback,
+        "subtitle_text": canonical_subtitle or subtitle,
         "spoken_text": "\n".join(item["text"] for item in segments if item.get("text")) or subtitle,
         "segments": [{**item, "start_seconds": 0.0, "end_seconds": end} for item in segments],
         "start_seconds": 0.0, "end_seconds": end,
@@ -216,6 +222,7 @@ def _append_dialogue_prompt(prompt: str, contract: Optional[dict]) -> str:
     speaker = contract.get("speaker") or "当前说话角色"
     timing = f"{contract.get('end_seconds')} 秒内" if contract.get("end_seconds") else "本镜头内"
     if contract.get("video_native_audio"):
+        prompt = _visual_prompt_without_spoken_copy(prompt)
         segments = contract.get("segments") or []
         dialogue = "\n".join(
             f"{item.get('speaker') or speaker}：{str(item.get('text') or '').strip()}"
@@ -234,7 +241,8 @@ def _append_dialogue_prompt(prompt: str, contract: Optional[dict]) -> str:
             f"{prompt}\n\n原生有声视频约束（硬性）：本镜头由视频模型直接生成画面、普通话人声和环境声；"
             f"{speaker_rule}"
             "不得增删或改写台词，不得加入旁白或其他角色人声；人物必须自然开口，口型逐句匹配台词，"
-            f"在{timing}完成开口、停顿和收口；动作、表情与语气一致，环境声不得遮盖对白。"
+            f"在{timing}完成开口、停顿和收口；动作、表情与语气一致，环境声不得遮盖对白；"
+            "画面不得生成字幕、标题、对白文字或其他文字，字幕由后处理统一添加。"
         )
     return (
         f"{prompt}\n\n对白同步约束（硬性）：本镜头采用视频与TTS分步生产，"
@@ -242,6 +250,16 @@ def _append_dialogue_prompt(prompt: str, contract: Optional[dict]) -> str:
         f"说话人：{speaker}；口型表演对应台词：『{str(contract['spoken_text']).strip()}』；"
         f"画面动作需要在{timing}为这句台词预留自然开口、停顿和收口节奏。"
     )
+
+
+_QUOTED_SPEECH = re.compile(r"[“「『\"]([^”」』\"\n]{1,500})[”」』\"]")
+_DIALOGUE_FIELD = re.compile(r"^\s*-?\s*(?:对白|字幕/对白|字幕文本)\s*[：:].*$")
+
+
+def _visual_prompt_without_spoken_copy(prompt: str) -> str:
+    """Remove screenplay dialogue copies; the canonical contract is appended once below."""
+    visual_lines = [line for line in str(prompt or "").splitlines() if not _DIALOGUE_FIELD.match(line)]
+    return _QUOTED_SPEECH.sub("", "\n".join(visual_lines)).strip()
 
 
 def _validate_dialogue(shot: Shot, subtitle: str, contract: Optional[dict]) -> None:
@@ -291,6 +309,7 @@ async def _quality_inputs(command: PrepareSeparateMediaCommand, values: dict) ->
         requested_story_bible_id=request.story_bible_id,
         default_voice=provider_compatible_tts_voice(request.voice_model, values["audio"]),
         default_speed=request.speed, default_voice_source="provider_default_tts",
+        require_voice_locks=not request.native_audio,
     ))
     return references, locks
 
@@ -323,7 +342,8 @@ async def _runtime_flags(command: PrepareSeparateMediaCommand, values: dict) -> 
 async def _reference_for_shot(command: PrepareSeparateMediaCommand, values: dict, shot: Shot, lineage: dict) -> Optional[dict]:
     if not supports_reference_package(values["limits"]) and not command.request.require_provider_reference_image:
         return None
-    package = values["quality_references"].get(shot.id)
+    shot_first_frame = bool(command.request.native_audio and shot.image_url)
+    package = None if shot_first_frame else values["quality_references"].get(shot.id)
     if package is None:
         package = await build_reference_package(
             command.context.db, command.context.user_id, shot=shot, lineage=lineage,
@@ -334,6 +354,8 @@ async def _reference_for_shot(command: PrepareSeparateMediaCommand, values: dict
             model_id=str(values["model_id"] or values["video_request"].model),
             allow_canonical_public_fallback=True,
         )
+        if shot_first_frame:
+            package = {**package, "reference_image_source": "shot_image"}
     return package
 
 
@@ -374,7 +396,7 @@ async def _prepare_shot(command: PrepareSeparateMediaCommand, shared: dict, shot
         resolution=request.resolution, workflow_id=context.workflow.id, novel_id=context.workflow.novel_id,
         chapter_id=context.workflow.chapter_id, script_id=context.workflow.script_id,
         storyboard_id=context.workflow.storyboard_id or shot.storyboard_id, shot_id=shot.id,
-        image_url=shot.image_url, use_consistency_context=True,
+        image_url=shot.image_url, use_consistency_context=True, native_audio=request.native_audio,
     )
     try:
         lineage = await video_kernel.resolve_video_lineage(context.db, context.user_id, video_request)

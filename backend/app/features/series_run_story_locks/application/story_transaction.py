@@ -3,12 +3,17 @@ from __future__ import annotations
 from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 from app.models import Chapter, Shot, StoryEntity
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.series_production_run import SeriesProductionRun
 from app.services.dialogue_lineage_service import extract_explicit_dialogue
 from app.services.live_canary_budget import BindingValidationError, required_tested_at_for_run, validate_model_bindings
 from app.services.episode_production_service import create_or_resolve_shots_stage
+from app.services.series_run_skill_routing import (
+    resolve_required_series_run_skill,
+    skill_audit_evidence,
+)
 from app.services.deterministic_provider_fake import deterministic_provider_fake_enabled
 from app.services.story_entity_lifecycle import APPROVED, CANDIDATE, get_entity_review_status, set_entity_review_status
 from app.core.time_utils import utc_now
@@ -60,7 +65,9 @@ async def _reset_selected_refs_to_signed_sources(
                             entity_type = canonical.entity_type
                     candidates = list((await db.scalars(select(StoryEntity).where(
                         StoryEntity.user_id == run.user_id, StoryEntity.novel_id == run.novel_id,
-                        StoryEntity.chapter_id == extra.get("chapter_id"),
+                        StoryEntity.chapter_id == (
+                            extra.get("chapter_id") or (episode.get("chapter_ids") or [None])[0]
+                        ),
                         StoryEntity.entity_type == entity_type,
                     ))).all())
                     local = [candidate for candidate in candidates
@@ -117,43 +124,96 @@ def _approve_deterministic_required(entities: list[Any], user_id: str) -> None:
             "reason": "deterministic_verified_required_fact"}}
         set_entity_review_status(entity, APPROVED, changed_by=user_id,
                                  reason="deterministic_verified_required_fact")
+
+
+async def _backfill_verified_auto_approval_records(
+    db: AsyncSession, run: SeriesProductionRun,
+) -> None:
+    entities = list((await db.scalars(select(StoryEntity).where(
+        StoryEntity.user_id == run.user_id,
+        StoryEntity.novel_id == run.novel_id,
+        StoryEntity.source == "deterministic",
+    ).with_for_update())).all())
+    for entity in entities:
+        attributes = dict(entity.attributes or {})
+        lifecycle = dict((entity.extra_data or {}).get("lifecycle") or {})
+        evidence = dict(attributes.get("evidence_contract") or {})
+        if (
+            get_entity_review_status(entity) == APPROVED
+            and not attributes.get("approval_record")
+            and lifecycle.get("reason") == "entity_extraction_v2:auto_approve"
+            and evidence.get("status") == "verified"
+        ):
+            attributes["approval_record"] = {
+                "approved_by": lifecycle.get("changed_by") or run.user_id,
+                "approved_at": lifecycle.get("changed_at") or utc_now().isoformat(),
+                "reason": "entity_extraction_v2:auto_approve",
+            }
+            entity.attributes = attributes
+
+
 async def apply_closure_v2_transaction(db: AsyncSession, run_id: str, request: dict[str, Any] | None,
                                        expected_run_version: int, fail_at: str | None = None,
                                        user_id: str | None = None,
-                                       tts_snapshot: dict[str, str] | None = None) -> dict[str, Any]:
+                                       tts_snapshot: dict[str, str] | None = None,
+                                       native_audio: bool = False) -> dict[str, Any]:
     async with db.begin():
+        transaction_run_version = expected_run_version
         if request is None:
             fresh_run = await db.scalar(select(SeriesProductionRun).where(
                 SeriesProductionRun.id == run_id).with_for_update())
             if fresh_run is None: raise StoryLockPreparationBlocked("run missing")
             selected = set((fresh_run.run_metadata or {}).get("selected_anchor_shot_ids") or [])
-            if tts_snapshot:
-                first_lock = not ((fresh_run.run_metadata or {}).get("story_locks") or {}).get("story_bible_id")
-                migration_ids = await _selected_reference_ids(db, fresh_run, selected) if first_lock else set()
+            await _backfill_verified_auto_approval_records(db, fresh_run)
+            if tts_snapshot or native_audio:
+                first_lock = not bool(
+                    (((fresh_run.run_metadata or {}).get("story_locks") or {}).get("story_bible_id"))
+                )
+                migration_ids = (
+                    await _selected_reference_ids(db, fresh_run, selected)
+                    if first_lock else set()
+                )
                 if migration_ids:
                     for episode in fresh_run.episodes or []:
                         if selected.intersection((episode.get("canonical_ids") or {}).get("shot_ids") or []):
                             await create_or_resolve_shots_stage(db, run=fresh_run, episode=episode)
                 trusted_reference_ids = migration_ids
                 await _prepare_explicit_dialogue_facts(
-                    db, fresh_run, await _ordered_run_chapters(db, fresh_run), tts_snapshot)
+                    db, fresh_run, await _ordered_run_chapters(db, fresh_run), tts_snapshot,
+                    native_audio=native_audio,
+                )
                 for episode in fresh_run.episodes or []:
                     if selected.intersection((episode.get("canonical_ids") or {}).get("shot_ids") or []):
                         await _reset_selected_refs_to_signed_sources(
                             db, fresh_run, selected, episode, trusted_reference_ids)
                         await create_or_resolve_shots_stage(db, run=fresh_run, episode=episode)
-            if getattr(fresh_run, "status", None) == "media_running":
+            metadata = fresh_run.run_metadata or {}
+            has_existing_lock = bool(
+                ((metadata.get("story_locks") or {}).get("story_bible_id"))
+            )
+            has_superseded_lock = bool(metadata.get("superseded_story_locks"))
+            should_refresh_refs = getattr(fresh_run, "status", None) == "media_running" or (
+                not has_existing_lock and has_superseded_lock
+            ) or bool(tts_snapshot or native_audio)
+            if has_existing_lock and not should_refresh_refs:
+                await build_closure_v2_request(
+                    db, fresh_run.id, expected_run_version=fresh_run.version,
+                    user_id=fresh_run.user_id,
+                )
+            if should_refresh_refs:
                 for shot_id in selected:
                     shot = await db.get(Shot, shot_id)
                     if shot is None:
                         raise ValueError("selected shot is missing")
                     await refresh_scoped_for_shot(db, fresh_run, shot)
+                await db.flush()
             required = await load_required_context(StoryLockRepository(db),fresh_run)
             _approve_deterministic_required(list(required.required_entities), fresh_run.user_id)
+            transaction_run_version = int(fresh_run.version)
         effective = request or await build_closure_v2_request(
-            db,run_id,expected_run_version=expected_run_version,user_id=user_id)
+            db,run_id,expected_run_version=transaction_run_version,user_id=user_id)
         return await persist_production_closure_v2(db, run_id, effective,
-            expected_run_version=expected_run_version, fail_at=fail_at, enrich_shots=request is None)
+            expected_run_version=transaction_run_version, fail_at=fail_at, enrich_shots=request is None)
 
 
 async def _ensure_story_lock_preparation_state(
@@ -178,13 +238,15 @@ async def _ensure_story_lock_preparation_state(
         raise StoryLockPreparationBlocked("selected media jobs are still active")
 
 
-async def prepare_story_locks(db: AsyncSession, run: SeriesProductionRun) -> dict[str, Any]:
+async def prepare_story_locks(
+    db: AsyncSession, run: SeriesProductionRun, *, native_audio: bool = False,
+) -> dict[str, Any]:
     """Validate external binding state first, then atomically persist every story-lock mutation."""
     await _ensure_story_lock_preparation_state(db, run)
     chapters = await _ordered_run_chapters(db, run)
     has_explicit_dialogue = any(extract_explicit_dialogue(str(chapter.content or "")) for chapter in chapters)
     tts_snapshot: dict[str, str] | None = None
-    if has_explicit_dialogue:
+    if has_explicit_dialogue and not native_audio:
         bindings = {
             capability: str((((run.model_bindings or {}).get("capabilities") or {}).get(capability) or {}).get("config_id") or "")
             for capability in ("text", "image", "tts", "video")
@@ -200,8 +262,38 @@ async def prepare_story_locks(db: AsyncSession, run: SeriesProductionRun) -> dic
     run_id, user_id, expected_version = run.id, run.user_id, int(run.version)
     await db.rollback()
     try:
-        return await apply_closure_v2_transaction(
-            db, run_id, None, expected_version, user_id=user_id, tts_snapshot=tts_snapshot)
+        result = await apply_closure_v2_transaction(
+            db, run_id, None, expected_version, user_id=user_id,
+            tts_snapshot=tts_snapshot, native_audio=native_audio,
+        )
+        persisted_run = await db.get(SeriesProductionRun, run_id)
+        if persisted_run is None:
+            raise StoryLockPreparationBlocked("series run disappeared after story lock")
+        entity_skill_route = await resolve_required_series_run_skill(
+            db,
+            user_id=user_id,
+            task="entity_extraction",
+            stage="analysis",
+            context={
+                "entity_types": "character、scene、prop、event",
+                "source_type": "series_run_chapters",
+                "source_content": "\n\n".join(str(chapter.content or "") for chapter in chapters),
+                "output_format": "JSON 数组",
+            },
+            internal_prompt="从四章原文抽取可跨章追踪的角色、场景、道具和事件。",
+        )
+        entity_skill_evidence = skill_audit_evidence(entity_skill_route)
+        metadata = dict(persisted_run.run_metadata or {})
+        previous_skill_evidence = dict(metadata.get("skill_evidence") or {})
+        previous_entity_evidence = dict(previous_skill_evidence.get("entity_extraction") or {})
+        metadata["skill_evidence"] = {
+            **previous_skill_evidence,
+            "entity_extraction": {**previous_entity_evidence, **entity_skill_evidence},
+        }
+        persisted_run.run_metadata = metadata
+        flag_modified(persisted_run, "run_metadata")
+        await db.commit()
+        return result
     except StoryLockPreparationBlocked:
         raise
     except StoryLockSourceStale:

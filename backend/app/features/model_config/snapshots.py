@@ -20,6 +20,7 @@ _FORBIDDEN_KEYS = frozenset({"api_key", "api_secret", "authorization", "prompt",
 _CREDENTIAL_VALUE_PREFIXES = ("bearer ", "basic ", "sk-", "ak", "gaaaaa")
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
 _SAFE_RESOLUTION = re.compile(r"^(?:[1-9][0-9]{2,3}p|[1248]K)$")
+_SAFE_IMAGE_SIZE = re.compile(r"^(?:[1-9][0-9]{2,4}[xX][1-9][0-9]{2,4}|[1-8][kK](?:_[wh])?)$")
 _SAFE_ASPECT_RATIO = re.compile(r"^[1-9][0-9]?:[1-9][0-9]?$")
 SNAPSHOT_PARAM_ALLOWLIST = frozenset({
     "duration", "resolution", "aspect_ratio", "native_audio", "reference_image_count",
@@ -93,7 +94,7 @@ def _valid_param(key: str, value: Any) -> bool:
     if key == "image_count":
         return _is_int(value, minimum=1, maximum=16)
     if key == "image_size":
-        return isinstance(value, str) and bool(_SAFE_RESOLUTION.fullmatch(value))
+        return isinstance(value, str) and bool(_SAFE_IMAGE_SIZE.fullmatch(value))
     if key == "seed":
         return _is_int(value)
     if key == "speed":

@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import asyncio
 from copy import deepcopy
+from decimal import Decimal
 import json
 from pathlib import Path
 
@@ -10,12 +11,14 @@ import httpx
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import DATABASE_DIAGNOSTIC, get_db
 from app.core.security import get_current_user_id
 from app.features.model_config.recipes import stable_recipe_checksum
+from app.features.model_config.certification_repository import complete_certification_run
+from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.model_center import (
     ModelBinding,
     ModelCertificationRun,
@@ -297,6 +300,58 @@ async def test_catalog_filters_before_pagination_and_returns_readable_labels(cli
 
 
 @pytest.mark.asyncio
+async def test_catalog_prefers_canonical_profile_over_matching_legacy_model(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            LLMProvider(
+                id="legacy-catalog-provider", name="catalog_dupe_vendor",
+                name_cn="重复目录供应商", is_active=True,
+            ),
+            LLMModel(
+                id="legacy-catalog-model", provider_id="legacy-catalog-provider",
+                model_id="catalog-dupe-api", model_name="Catalog Duplicate",
+                model_name_cn="重复目录模型", model_type="chat", is_active=True,
+            ),
+            ModelProvider(
+                id="canonical-catalog-provider", code="catalog-dupe-vendor",
+                display_name="正式目录供应商", provider_family="test", enabled=True,
+            ),
+            ModelProfile(
+                id="canonical-catalog-profile", provider_id="canonical-catalog-provider",
+                profile_key="catalog-duplicate", display_name="正式目录模型", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="canonical-catalog-version", model_id="canonical-catalog-profile",
+                version=1, api_model_id="catalog-dupe-api", driver_key="local_ffmpeg",
+                capabilities=["text_generation"], input_contract={}, output_contract={},
+                parameter_schema={}, default_params={}, limits={}, pricing={},
+                contract_version="v1", status="published", checksum="d" * 64,
+            ),
+        ])
+        await db.commit()
+
+    try:
+        response = await client.get(
+            "/api/v1/model-center/catalog", params={"q": "catalog-dupe-api"},
+        )
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 1
+        assert response.json()["items"][0]["profile_version_id"] == "canonical-catalog-version"
+        assert response.json()["items"][0]["legacy_model_id"] is None
+    finally:
+        async with AsyncSessionLocal() as db:
+            for model, key in (
+                (ModelProfileVersion, "canonical-catalog-version"),
+                (ModelProfile, "canonical-catalog-profile"),
+                (ModelProvider, "canonical-catalog-provider"),
+                (LLMModel, "legacy-catalog-model"),
+                (LLMProvider, "legacy-catalog-provider"),
+            ):
+                await db.execute(delete(model).where(model.id == key))
+            await db.commit()
+
+
+@pytest.mark.asyncio
 async def test_connections_return_readable_provider_labels(client):
     response = await client.get("/api/v1/model-center/connections")
 
@@ -323,6 +378,43 @@ async def test_enabled_providers_are_available_for_connection_picker(client):
         }],
         "meta": {"page": 1, "page_size": 20, "total": 1},
     }
+
+
+@pytest.mark.asyncio
+async def test_internal_test_providers_are_hidden_from_connection_picker(client):
+    internal_rows = [
+        ModelProvider(
+            id="internal-tts-provider",
+            code="tts-provider-02c09f4f-8c5a-42f2-8299-64087eb6be21",
+            display_name="预检供应商",
+            provider_family="test",
+            enabled=True,
+        ),
+        ModelProvider(
+            id="internal-deterministic-provider",
+            code="deterministic-acceptance",
+            display_name="确定性验收",
+            provider_family="local",
+            enabled=True,
+        ),
+    ]
+    async with AsyncSessionLocal() as db:
+        db.add_all(internal_rows)
+        await db.commit()
+
+    try:
+        response = await client.get("/api/v1/model-center/providers")
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 1
+        assert {item["id"] for item in response.json()["items"]} == {"provider-1"}
+    finally:
+        async with AsyncSessionLocal() as db:
+            for internal in internal_rows:
+                row = await db.get(ModelProvider, internal.id)
+                if row is not None:
+                    await db.delete(row)
+            await db.commit()
 
 
 @pytest.mark.asyncio
@@ -904,7 +996,7 @@ async def test_connection_mutations_redact_secrets_and_queue_safe_test_intent(cl
         "/api/v1/model-center/connections",
         json={
             "provider_id": "provider-1", "name": "Task 16 Connection", "api_key": "new-secret-key",
-            "reason": "保存新连接",
+            "reason": "保存新连接", "base_url": "https://provider.example/api/v3",
         },
     )
     assert created.status_code == 200
@@ -912,7 +1004,12 @@ async def test_connection_mutations_redact_secrets_and_queue_safe_test_intent(cl
     assert payload["status"] == "draft"
     assert payload["has_secret"] is True
     assert payload["revision"] == 1
+    assert payload["base_url"] == "https://provider.example/api/v3"
     assert "new-secret-key" not in created.text
+
+    async with AsyncSessionLocal() as db:
+        stored = await db.get(ModelConnection, payload["id"])
+        assert stored.endpoint_overrides == {"base_url": "https://provider.example/api/v3"}
 
     replacement = await client.put(
         f"/api/v1/model-center/connections/{payload['id']}",
@@ -1042,6 +1139,226 @@ async def test_recipe_binding_resolution_marks_profile_capability_mismatch_unava
     assert video["profile"] is None
 
 
+@pytest.mark.asyncio
+async def test_connection_certification_candidates_include_only_the_requested_draft_connection(client):
+    async with AsyncSessionLocal() as db:
+        await _seed_local_certification_rows(db)
+    draft_id = "connection-draft-certification"
+
+    connection = await client.get(
+        "/api/v1/model-center/certification-candidates",
+        params={
+            "level": "connection", "profile_version_id": "profile-local-cert-v1",
+            "connection_id": draft_id,
+        },
+    )
+    contract = await client.get(
+        "/api/v1/model-center/certification-candidates",
+        params={
+            "level": "contract", "profile_version_id": "profile-local-cert-v1",
+            "connection_id": draft_id,
+        },
+    )
+
+    assert connection.status_code == 200
+    assert connection.json()["meta"]["total"] == 1
+    assert connection.json()["items"][0]["id"] == f"profile-local-cert-v1:{draft_id}"
+    assert contract.status_code == 200
+    assert contract.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_contract_certification_completes_with_local_sanitized_evidence(client):
+    async with AsyncSessionLocal() as db:
+        await _seed_local_certification_rows(db)
+
+    response = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-local-cert-v1", "connection_id": "connection-1",
+            "level": "contract", "reason": "验证本地渲染契约",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    assert payload["completed_at"]
+    assert payload["sanitized_evidence"] == {
+        "execution_mode": "local_contract_validation",
+        "valid": True,
+        "driver_key": "local_ffmpeg_v1",
+        "contract_version": "v1",
+    }
+    assert "secret-value" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_connection_certification_executes_driver_and_persists_result(client):
+    async with AsyncSessionLocal() as db:
+        await _seed_local_certification_rows(db)
+    draft_id = "connection-draft-certification"
+    response = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-local-cert-v1", "connection_id": draft_id,
+            "level": "connection", "reason": "验证本地连接可用",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] in {"success", "failed"}
+    assert payload["completed_at"]
+    assert payload["sanitized_evidence"]["execution_mode"] == "driver_connection_test"
+    assert payload["sanitized_evidence"]["driver_key"] == "local_ffmpeg_v1"
+    assert "draft-certification-secret" not in response.text
+    async with AsyncSessionLocal() as db:
+        connection = await db.get(ModelConnection, draft_id)
+        assert connection.status == (
+            "connection_verified" if payload["status"] == "success" else "failed"
+        )
+        assert connection.tested_at is not None
+
+
+@pytest.mark.asyncio
+async def test_successful_legacy_connection_certification_refreshes_llm_config(client):
+    async with AsyncSessionLocal() as db:
+        await _seed_local_certification_rows(db)
+        db.add_all([
+            LLMProvider(
+                id="legacy-cert-provider", name="legacy_cert_provider",
+                name_cn="旧版认证提供方", is_active=True,
+            ),
+            LLMModel(
+                id="legacy-cert-model", provider_id="legacy-cert-provider",
+                model_id="local-ffmpeg", model_name="Legacy Local FFmpeg",
+                model_type="video", capabilities=["video"], is_active=True,
+            ),
+            LLMConfig(
+                id="legacy-cert-config", user_id=USER_ID,
+                model_id="legacy-cert-model", name="Legacy Certification",
+                is_active=True, test_status="pending",
+            ),
+        ])
+        connection = await db.get(ModelConnection, "connection-draft-certification")
+        connection.connection_params = {
+            "legacy_config_id": "legacy-cert-config",
+            "legacy_provider_id": "provider-1",
+        }
+        await db.commit()
+
+    response = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-local-cert-v1",
+            "connection_id": "connection-draft-certification",
+            "level": "connection", "reason": "同步旧版配置测试新鲜度",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    async with AsyncSessionLocal() as db:
+        legacy = await db.get(LLMConfig, "legacy-cert-config")
+        assert legacy.test_status == "success"
+        assert legacy.tested_at is not None
+        assert legacy.test_message == "模型中心连接认证通过"
+
+
+@pytest.mark.asyncio
+async def test_transient_connection_timeout_preserves_previous_legacy_success(client):
+    async with AsyncSessionLocal() as db:
+        await _seed_local_certification_rows(db)
+        db.add_all([
+            LLMProvider(
+                id="legacy-timeout-provider", name="legacy_timeout_provider",
+                name_cn="瞬时超时认证提供方", is_active=True,
+            ),
+            LLMModel(
+                id="legacy-timeout-model", provider_id="legacy-timeout-provider",
+                model_id="local-ffmpeg", model_name="Legacy Timeout Model",
+                model_type="video", capabilities=["video"], is_active=True,
+            ),
+            LLMConfig(
+                id="legacy-timeout-config", user_id=USER_ID,
+                model_id="legacy-timeout-model", name="Legacy Timeout Certification",
+                is_active=True, test_status="success", test_message="此前认证通过",
+            ),
+        ])
+        connection = await db.get(ModelConnection, "connection-draft-certification")
+        connection.connection_params = {
+            "legacy_config_id": "legacy-timeout-config",
+            "legacy_provider_id": "provider-1",
+        }
+        run = ModelCertificationRun(
+            id="transient-timeout-certification", user_id=USER_ID,
+            profile_version_id="profile-local-cert-v1",
+            connection_id=connection.id, level="connection", status="queued",
+            request_fingerprint="t" * 64, sanitized_evidence={},
+            estimated_cost_rmb=Decimal("0"), actual_cost_rmb=Decimal("0"),
+        )
+        db.add(run)
+        await db.commit()
+        legacy = await db.get(LLMConfig, "legacy-timeout-config")
+        previous_tested_at = legacy.tested_at
+
+        await complete_certification_run(
+            db, user_id=USER_ID, run_id=run.id, status="failed",
+            evidence={
+                "execution_mode": "driver_connection_test",
+                "response_evidence": {"provider_error_type": "TimeoutError"},
+            },
+            connection_status="failed",
+        )
+        await db.commit()
+
+        legacy = await db.get(LLMConfig, "legacy-timeout-config")
+        assert legacy.test_status == "success"
+        assert legacy.test_message == "此前认证通过"
+        assert legacy.tested_at == previous_tested_at
+
+
+@pytest.mark.asyncio
+async def test_connection_certification_returns_actionable_failure_for_unreadable_secret(client, monkeypatch):
+    async with AsyncSessionLocal() as db:
+        await _seed_local_certification_rows(db)
+
+    def unreadable_secret(_connection):
+        raise ValueError("raw-secret-must-not-leak")
+
+    monkeypatch.setattr(ModelConnection, "get_api_key_decrypted", unreadable_secret)
+    response = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-local-cert-v1",
+            "connection_id": "connection-draft-certification",
+            "level": "connection", "reason": "验证历史凭证异常提示",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "failed"
+    assert response.json()["sanitized_evidence"]["error_code"] == "ValueError"
+    assert response.json()["sanitized_evidence"]["retry_eligible"] is True
+    assert "raw-secret-must-not-leak" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_contract_certification_for_uninstalled_driver_returns_actionable_error(client):
+    response = await client.post(
+        "/api/v1/model-center/certifications",
+        json={
+            "profile_version_id": "profile-video-v1", "connection_id": "connection-1",
+            "level": "contract", "reason": "验证未安装驱动提示",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "driver_not_installed"
+    assert response.json()["detail"]["action_code"] == "install_or_select_driver"
+
+
 def test_feature_api_does_not_import_legacy_endpoint_modules():
     api_root = Path(__file__).parents[1] / "app/features/model_config/api"
     violations = []
@@ -1060,6 +1377,31 @@ def test_api_service_contains_no_orm_or_sqlalchemy_ownership():
     tree = ast.parse(source)
     imports = [getattr(node, "module", "") or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]
     assert not any(module.startswith("sqlalchemy") or module.startswith("app.models") for module in imports)
+
+
+async def _seed_local_certification_rows(db: AsyncSession) -> None:
+    if await db.get(ModelProfileVersion, "profile-local-cert-v1") is None:
+        db.add_all([
+            ModelProfile(
+                id="model-local-cert", provider_id="provider-1", profile_key="local-cert",
+                display_name="Local Certification", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="profile-local-cert-v1", model_id="model-local-cert", version=1,
+                api_model_id="local-ffmpeg", driver_key="local_ffmpeg_v1",
+                capabilities=["media_render"], input_contract={}, output_contract={},
+                parameter_schema={}, default_params={}, limits={}, pricing={},
+                contract_version="v1", status="published", checksum="l" * 64,
+            ),
+        ])
+    if await db.get(ModelConnection, "connection-draft-certification") is None:
+        draft = ModelConnection(
+            id="connection-draft-certification", user_id=USER_ID, provider_id="provider-1",
+            name="Draft Certification", status="draft",
+        )
+        draft.set_api_key_encrypted("draft-certification-secret")
+        db.add(draft)
+    await db.commit()
 
 
 async def _seed_collection_rows(db: AsyncSession) -> None:

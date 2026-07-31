@@ -81,12 +81,12 @@ class RuleApprovalCommand:
     evidence: list[dict[str, Any]]
     verified: list[str]
     evidence_hash: str
-    voice: VoiceApprovalContext
+    voice: VoiceApprovalContext | None
     run: SeriesProductionRun
     chapters: list[Chapter]
     existing: list[StoryEntity]
     approved_at: str
-    snapshot: dict[str, str]
+    snapshot: dict[str, str] | None
 
 
 def _dialogue_evidence(chapters: list[Chapter]) -> dict[str, list[dict[str, Any]]]:
@@ -155,7 +155,7 @@ def _resolve_entity(
     if len(active) > 1 or _normalizable_single(candidate, speaker, evidence, verified):
         entity = _normalize_safe_dialogue_duplicates(
             active, speaker=speaker, evidence=evidence, evidence_hash=evidence_hash, user_id=run.user_id,
-            chapter_order={str(chapter.id): int(chapter.chapter_number) for chapter in chapters},
+            chapter_order={str(chapter.id): index for index, chapter in enumerate(chapters, 1)},
         )
         return entity, [entity], verified
     entity = active[0] if active else matches[0] if matches else StoryEntity(
@@ -168,14 +168,21 @@ def _resolve_entity(
 
 
 def _accept_existing(
-    entity: StoryEntity, matches: list[StoryEntity], voice: VoiceApprovalContext,
-    snapshot: dict[str, str], evidence_hash: str,
+    entity: StoryEntity, matches: list[StoryEntity], voice: VoiceApprovalContext | None,
+    snapshot: dict[str, str] | None, evidence_hash: str,
 ) -> bool:
     if not matches:
         return False
     attrs, status = dict(entity.attributes or {}), get_entity_review_status(entity)
     existing_voice = dict(attrs.get("voice_binding") or {})
     rule = dict((entity.extra_data or {}).get("explicit_dialogue_rule") or {})
+    if voice is None:
+        return bool(
+            entity.source == "system" and status == APPROVED
+            and rule.get("rule") == "rule_based_explicit_dialogue_native_audio_v1"
+            and rule.get("evidence_hash") == evidence_hash
+            and not existing_voice
+        )
     if status == APPROVED and entity.source != "system":
         expected = {"config_id": voice.config.id, "provider_id": voice.provider_id,
                     "db_model_id": voice.model.id, "api_model_id": voice.model.model_id,
@@ -209,24 +216,28 @@ def _apply_approval(command: RuleApprovalCommand) -> None:
     evidence, verified, evidence_hash = command.evidence, command.verified, command.evidence_hash
     voice, run, chapters = command.voice, command.run, command.chapters
     existing, approved_at, snapshot = command.existing, command.approved_at, command.snapshot
+    reason = "rule_based_explicit_dialogue_v1" if voice else "rule_based_explicit_dialogue_native_audio_v1"
     if not matches:
         set_entity_review_status(entity, CANDIDATE, changed_by=run.user_id, reason="rule_based_explicit_dialogue_v1")
         entity.extra_data = {**(entity.extra_data or {}), "explicit_dialogue_rule": {
-            "rule": "rule_based_explicit_dialogue_v1", "evidence_hash": evidence_hash}}
+            "rule": reason, "evidence_hash": evidence_hash}}
         db.add(entity)
         existing.append(entity)
     attrs = dict(entity.attributes or {})
     history = attrs.get("extraction_metadata_history") or []
     attrs.update({"approval_record": {"approved_by": run.user_id, "approved_at": approved_at,
-        "reason": "rule_based_explicit_dialogue_v1", "verified_evidence_hashes": verified,
+        "reason": reason, "verified_evidence_hashes": verified,
         "candidate_source_hashes": sorted({_fingerprint({"source_entity_id": item.get("source_entity_id"),
             "chapter_id": item.get("chapter_id"), "evidence_hash": item.get("evidence_hash"),
             "metadata_hash": item.get("metadata_hash")}) for item in history})},
-        "speaking": True, "dialogue_evidence": evidence, "dialogue_evidence_hash": evidence_hash,
-        "voice_binding": {"voice_id": voice.selection["voice_id"], "version": int(voice.selection["version"]),
+        "speaking": True, "dialogue_evidence": evidence, "dialogue_evidence_hash": evidence_hash})
+    if voice and snapshot:
+        attrs["voice_binding"] = {"voice_id": voice.selection["voice_id"], "version": int(voice.selection["version"]),
             "status": "locked", "provider_id": voice.provider_id, "config_id": voice.config.id,
             "db_model_id": voice.model.id, "api_model_id": voice.model.model_id,
-            "tested_at": snapshot["tested_at"]}})
+            "tested_at": snapshot["tested_at"]}
+    else:
+        attrs.pop("voice_binding", None)
     chapter = next(item for item in chapters if item.id == evidence[0]["chapter_id"])
     attrs["evidence_contract"] = {"status": "verified", "chapter_id": chapter.id,
         "source_span": list(evidence[0]["source_span"]),
@@ -236,7 +247,7 @@ def _apply_approval(command: RuleApprovalCommand) -> None:
         "parser_version": "explicit-dialogue-v1"}
     entity.attributes = attrs
     entity.evidence = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
-    set_entity_review_status(entity, APPROVED, changed_by=run.user_id, reason="rule_based_explicit_dialogue_v1")
+    set_entity_review_status(entity, APPROVED, changed_by=run.user_id, reason=reason)
 
 
 def _chapter_evidence(line: dict[str, Any], chapter: Chapter) -> dict[str, Any]:
@@ -257,7 +268,10 @@ def _ensure_local_mentions(
         if str(entity.chapter_id) == chapter_id:
             entity.attributes = {**(entity.attributes or {}),
                 "evidence_contract": _chapter_evidence(line, by_chapter[chapter_id])}
-            if len(evidence) == 1:
+            merged_ids = list(
+                ((entity.extra_data or {}).get("entity_normalization") or {}).get("merged_entity_ids") or []
+            )
+            if len(evidence) == 1 and not merged_ids:
                 continue
         local = [item for item in existing if item.id != entity.id
                  and item.entity_type == "character" and str(item.chapter_id) == chapter_id
@@ -295,12 +309,15 @@ def _ensure_local_mentions(
 
 
 async def _prepare_explicit_dialogue_facts(
-    db: AsyncSession, run: SeriesProductionRun, chapters: list[Chapter], tts_snapshot: dict[str, str],
+    db: AsyncSession, run: SeriesProductionRun, chapters: list[Chapter],
+    tts_snapshot: dict[str, str] | None, *, native_audio: bool = False,
 ) -> list[StoryEntity]:
     grouped = _dialogue_evidence(chapters)
     if not grouped:
         return []
-    voice = await _voice_context(db, run, tts_snapshot)
+    if tts_snapshot is None and not native_audio:
+        raise StoryLockPreparationBlocked("TTS binding is required when native audio is disabled")
+    voice = await _voice_context(db, run, tts_snapshot) if tts_snapshot else None
     existing = list((await db.scalars(
         locked_dialogue_entities_statement(run.user_id, run.novel_id))).all())
     prepared: list[StoryEntity] = []

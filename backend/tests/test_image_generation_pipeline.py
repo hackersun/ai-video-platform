@@ -93,3 +93,4 @@ def test_non_minimax_image_prompt_is_not_compacted() -> None:
     )
 
     assert calls[0]["prompt"] == prompt
+    assert calls[0]["watermark"] is False

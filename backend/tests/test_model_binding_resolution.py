@@ -20,6 +20,7 @@ from app.features.model_config.public import (
     resolve_retry_binding,
     route_policy_for,
 )
+from app.features.model_config.domain import ModelProfileContract, ResolvedModelBinding
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.model_center import ModelProfileVersion
 from tests.model_binding_test_support import (
@@ -56,6 +57,26 @@ def test_production_adapters_expose_binding_context_paths_and_keep_legacy_builde
     assert "execute_generation" in image_source
     assert "resolve_generation_context" in text_source
     assert "create_text_generation_service" in text_source
+
+
+def test_text_catalog_limits_are_normalized_to_driver_command_contract() -> None:
+    from app.features.model_config.generation_context import _runtime_execution_binding
+
+    profile = ModelProfileContract(
+        profile_version_id="text-v1", provider_id="volcano", api_model_id="ark-code-latest",
+        driver_key="legacy_text_v1", capabilities=frozenset({"text_generation"}),
+        input_contract={}, output_contract={}, parameter_schema={}, default_params={},
+        limits={"context_window": 256000, "max_tokens": 4096}, pricing={},
+        prompt_profile_key=None, contract_version="text.v1",
+    )
+    binding = ResolvedModelBinding(
+        task="script_generation", capability="text_generation", profile=profile,
+        connection_id="connection-1", binding_version=2, source_scope="user",
+    )
+
+    normalized = _runtime_execution_binding(binding)
+
+    assert normalized.profile.limits == {"max_prompt_chars": 256000}
 
 
 @pytest.mark.asyncio
@@ -267,6 +288,32 @@ async def test_image_submitter_executes_selected_non_ark_driver_context(
     assert result["image_urls"] == ["https://example.test/image.png"]
     assert captured["driver"] is context.driver_context
     assert captured["command"].params["response_format"] == "base64"
+
+
+@pytest.mark.asyncio
+async def test_image_submitter_preserves_reference_image_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import image_generation_pipeline
+
+    context = SimpleNamespace(
+        profile=SimpleNamespace(default_params={}),
+        driver_context=SimpleNamespace(driver_key="volcano_ark_image_v3"),
+    )
+    captured = {}
+
+    async def execute(_registry, command, _driver):
+        captured["command"] = command
+        return SimpleNamespace(output={"image_urls": ["https://example.test/frame.png"]}, provider_task_id=None)
+
+    monkeypatch.setattr(image_generation_pipeline.driver_kernel, "execute_generation", execute)
+    await image_generation_pipeline.call_image_generation_provider(
+        object(), provider_name="volcano", model_id="ignored", prompt="same character",
+        generation_context=context,
+        reference_images=["https://example.test/character-board.png"],
+    )
+
+    assert captured["command"].reference_images == ("https://example.test/character-board.png",)
 
 
 @pytest.mark.asyncio
@@ -559,6 +606,35 @@ async def test_legacy_fallback_preserves_version_zero_contract(
     assert resolved.binding_version == 0
     assert resolved.connection_id == legacy.id
     assert resolved.profile.api_model_id == "legacy-api-model"
+
+
+@pytest.mark.asyncio
+async def test_text_cutover_can_prefer_verified_canonical_binding_in_legacy_mode(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MODEL_CENTER_READ_MODE", "legacy")
+    profile, connection = await _seed_profile(
+        db_session, "preferred-text", capabilities=("text_generation",),
+    )
+    binding = _binding(
+        "preferred-text", profile, connection, scope_type="user", scope_id="user-1",
+    )
+    binding.task = "script_generation"
+    binding.capability = "text_generation"
+    db_session.add(binding)
+    await _seed_legacy_config(db_session)
+    await db_session.commit()
+
+    resolved = await resolve_model_binding(
+        db_session,
+        user_id="user-1",
+        task="script_generation",
+        capability="text_generation",
+        prefer_canonical_binding=True,
+    )
+
+    assert resolved.source_scope == "user"
+    assert resolved.profile.api_model_id == "api-preferred-text"
 
 
 @pytest.mark.asyncio

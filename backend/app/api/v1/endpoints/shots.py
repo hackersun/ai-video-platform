@@ -28,8 +28,16 @@ from app.services.image_generation_pipeline import (
 )
 from app.services.image_prompt_policy import append_global_image_constraints
 from app.services.image_result_parser import extract_image_urls_from_provider_result
+from app.services.shot_reference_input_service import (
+    ShotReferenceInputError,
+    resolve_shot_reference_images,
+)
 from app.services.image_execution_trace import image_asset_trace, image_submission_trace, merge_image_execution_trace
-from app.services.media_persistence import persist_remote_media_url
+from app.services.shot_image_delivery import (
+    persist_shot_image_publicly,
+    should_refresh_shot_entity_refs,
+    should_use_dev_shot_image_fallback,
+)
 from app.services.asset_generation_service import style_keywords_for
 from app.features.workflow_media.public import finish_live_provider_attempt, prepare_live_provider_attempt, resolve_live_series_run_for_shot
 from app.api.v1.workflow_media_transport import workflow_media_result
@@ -499,15 +507,15 @@ def _build_shot_reference_image_prompt(base_prompt: str, style_prompt: str) -> s
             f"画面风格要求：{style_prompt}" if style_prompt else "",
             (
                 "人物一致性：如果镜头中出现人物，必须保持小说/角色/实体中记录的性别、年龄感、脸型、发型、"
-                "服装、身份和气质；不得把女性生成为男性，不得把男性生成为女性。"
+                "服装、身份和气质；必须完整穿着已锁定服装，不得脱下、替换或简化，不得改变角色性别。"
             ),
             (
                 "场景与道具一致性：如果镜头中出现场景或道具，必须让场景空间结构、时代氛围、光线方向、"
                 "天气、关键道具外观和道具位置与剧本/镜头/实体设定一致。"
             ),
             (
-                "镜头画面硬约束：单张完整动漫镜头画面；不要只生成局部身体特写，不要只生成衣服胸口或无头人物，"
-                "不要生成无关人物，不要拼贴多张小图，不要丢失关键场景和道具。"
+                "镜头画面硬约束：单张完整动漫镜头画面；对白仅用于表情与口型语义，禁止任何可读文字、字幕、"
+                "标题、logo 或水印；不要生成无关人物、拼贴小图，也不要丢失关键场景和道具。"
             ),
         ]
         if part
@@ -949,6 +957,9 @@ async def generate_shot_image(
     shot = result.scalar_one_or_none()
     if not shot:
         raise HTTPException(status_code=404, detail="镜头不存在")
+    live_run = await workflow_media_result(
+        resolve_live_series_run_for_shot(db, user_id=user_id, shot=shot)
+    )
 
     storyboard = None
     script = None
@@ -963,7 +974,7 @@ async def generate_shot_image(
         script = script_result.scalar_one_or_none()
     inferred_novel_id = getattr(storyboard, "novel_id", None) or getattr(script, "novel_id", None)
     inferred_chapter_id = getattr(storyboard, "chapter_id", None) or getattr(script, "chapter_id", None)
-    if inferred_novel_id:
+    if inferred_novel_id and should_refresh_shot_entity_refs(live_run=live_run):
         shot = await auto_fill_shot_entity_refs(db, shot, inferred_novel_id, inferred_chapter_id)
         await db.flush()
 
@@ -992,8 +1003,8 @@ async def generate_shot_image(
     result = {}
     image_operation = None
     returned_image_urls = []
+    reference_images = []
     live_reservation = None
-    live_run = None
 
     try:
         api_key, provider_name, model_id, base_url = await get_user_image_model_config(
@@ -1002,9 +1013,20 @@ async def generate_shot_image(
             config_id=request.model_config_id if request else None,
         )
         service = create_image_generation_service(api_key or "", provider_name or "", base_url)
-        live_run = await workflow_media_result(
-            resolve_live_series_run_for_shot(db, user_id=user_id, shot=shot)
-        )
+        try:
+            run_reference = (live_run.run_metadata or {}).get("reference_preparation") if live_run else {}
+            reference_images = await resolve_shot_reference_images(
+                db, user_id, shot, required=live_run is not None,
+                fallback_asset_ids=[str(run_reference.get("asset_id"))]
+                if run_reference and run_reference.get("asset_id") else None,
+            )
+        except ShotReferenceInputError as error:
+            raise HTTPException(status_code=422, detail=error.detail) from error
+        if reference_images:
+            prompt = (
+                f"{prompt}\n参考图硬约束：输入图片是本小说已锁定的统一角色与风格设定板；"
+                "当前镜头必须继承其中角色的性别、脸型、发型、体型、服装与标志物，不得重新设计角色。"
+            )
         live_reservation = await workflow_media_result(prepare_live_provider_attempt(
             db, live_run, capability="image",
             reservation_id=f"{shot.id}:shot-image:{uuid.uuid4()}",
@@ -1018,6 +1040,7 @@ async def generate_shot_image(
             num=1,
             size="2K",
             aspect_ratio="1:1",
+            reference_images=reference_images,
             openai_size="1024x1024", db=db, user_id=user_id, config_id=request.model_config_id if request else None, **image_submission_trace(shot.id, live_run),
         )
         task_id = provider_task_id(result, provider_name=provider_name)
@@ -1042,13 +1065,23 @@ async def generate_shot_image(
                 db, live_run, reservation_id=live_reservation,
                 provider_task_id=task_id, job_id=shot.id, capability="image",
             )
-    except HTTPException:
+    except HTTPException as exc:
         if live_reservation and live_run:
             await finish_live_provider_attempt(
                 db, live_run, live_reservation, submission_failed=True
             )
             raise
-        if not is_dev_mode():
+        if not is_dev_mode() or not should_use_dev_shot_image_fallback(
+            live_run=live_run,
+            model_config_id=request.model_config_id if request else None,
+        ):
+            shot.image_status = "failed"
+            shot.extra_data = {
+                **(shot.extra_data if isinstance(shot.extra_data, dict) else {}),
+                "image_generation_error": str(exc.detail),
+            }
+            shot.updated_at = utc_now()
+            await db.commit()
             raise
         task_id = f"dev-shot-image-{shot_id}"
         result = {"data": [{"url": dev_image_url(shot_id, f"shot-{shot.shot_number}")}]}
@@ -1074,19 +1107,16 @@ async def generate_shot_image(
 
     if image_url:
         try:
-            image_url = await persist_remote_media_url(
-                image_url,
-                media_type="image",
-                subdir="images",
-                prefix=f"shot-{shot_id[:8]}",
-                max_bytes=20 * 1024 * 1024,
-                optimize_image=True,
-                image_max_dimension=512,
-                image_quality=76,
-            ) or image_url
+            image_delivery = await persist_shot_image_publicly(
+                db, user_id=user_id, source_url=image_url, shot_id=shot_id,
+            )
+            image_url = image_delivery.storage_url
         except Exception:
-            pass
+            image_delivery = None
 
+        successful_extra = dict(shot.extra_data or {})
+        successful_extra.pop("image_generation_error", None)
+        shot.extra_data = successful_extra
         shot.image_url = image_url
         shot.image_status = "succeeded"
         shot.updated_at = utc_now()
@@ -1104,8 +1134,11 @@ async def generate_shot_image(
                 "style": image_style,
                 "style_prompt": style_prompt,
                 "consistency": context["metadata"],
+                "locked_reference_image_count": len(reference_images),
                 "provider": provider_name,
-                "model": model_id, **image_asset_trace(result),
+                "model": model_id,
+                "storage_delivery": image_delivery.delivery if image_delivery else None,
+                **image_asset_trace(result),
             },
         )
         db.add(asset)

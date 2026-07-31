@@ -44,7 +44,7 @@ def is_product_visible_provider(provider) -> bool:
     normalized = " ".join(values).lower()
     return bool(normalized) and not (
         name_cn in _INTERNAL_PROVIDER_LABELS
-        or _field(provider, "id").lower() in _INTERNAL_PROVIDER_IDS
+        or any(value.lower() in _INTERNAL_PROVIDER_IDS for value in values)
         or any(part.startswith(_INTERNAL_PROVIDER_PREFIXES) for part in normalized.split())
         or "tts-provider-" in normalized
     )
@@ -84,6 +84,12 @@ def is_product_visible_external_provider(provider) -> bool:
         or "test" in normalized
         or "external-provider-" in normalized
     )
+
+
+def provider_model_identity(provider_code: str, api_model_id: str) -> tuple[str, str]:
+    """Match legacy and canonical rows despite dash/underscore provider aliases."""
+    normalized_provider = "".join(character for character in provider_code.casefold() if character.isalnum())
+    return normalized_provider, api_model_id.strip().casefold()
 
 
 def legacy_model_capability_group(model) -> str:
@@ -200,6 +206,7 @@ __all__ = [
     "is_product_visible_external_provider",
     "is_product_visible_model",
     "is_product_visible_provider",
+    "provider_model_identity",
     "legacy_model_capability_group",
     "select_legacy_external_providers",
     "select_primary_legacy_config",

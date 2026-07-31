@@ -60,7 +60,9 @@ async def persist_production_closure_v2(
     automatic_reasons = {"deterministic_verified_required_fact", "rule_based_explicit_dialogue_v1"}
     auto = sum(((item.attributes or {}).get("approval_record") or {}).get("reason")
                in automatic_reasons for item in approved)
-    return {**result,"status":"locked","candidate_counts":preview["candidate_counts"],
+    return {**result,"status":"locked",
+        "entity_extraction_contract_version": request.get("entity_extraction_contract_version"),
+        "candidate_counts":preview["candidate_counts"],
         "unrelated_candidate_count":preview["unrelated_candidate_count"],
         "auto_approved_count":auto,"manual_approved_count":len(approved)-auto,
         "unresolved_count":len(unresolved),

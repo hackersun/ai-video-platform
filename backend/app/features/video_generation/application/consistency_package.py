@@ -38,6 +38,7 @@ class _PackageState:
     chapter_id: Optional[str]
     characters: list[Any]
     character_by_id: dict[str, Any]
+    story_character_by_id: dict[str, Any] = field(default_factory=dict)
     character_refs: list[dict[str, Any]] = field(default_factory=list)
     filtered_refs: list[dict[str, Any]] = field(default_factory=list)
     scene_refs: list[dict[str, Any]] = field(default_factory=list)
@@ -107,6 +108,20 @@ def _merge_character_ref(character: Any, source: str, ref: Optional[dict[str, An
     return merged
 
 
+def _merge_story_character_ref(entity: Any, ref: dict[str, Any]) -> dict[str, Any]:
+    attrs = json_dict(getattr(entity, "attributes", None))
+    merged = dict(ref)
+    merged.update({
+        "entity_id": entity.id,
+        "name": entity.canonical_name or entity.name,
+        "description": entity.description,
+        "appearance": entity.appearance,
+        "visual_dna": attrs.get("visual_dna") or {},
+        "source": "story_entity_lock",
+    })
+    return merged
+
+
 def lookup_character_by_name(characters: list[Any], name: str, novel_id: Optional[str], chapter_id: Optional[str]) -> Any:
     def matches(item: Any) -> bool:
         names = [getattr(item, "name", None)]
@@ -136,6 +151,9 @@ def _format_visual_locks(refs: list[dict[str, Any]]) -> str:
     lines = []
     for ref in refs[:6]:
         details = [f"{label}:{ref[key]}" for key, label in (("appearance", "外貌"), ("description", "身份"), ("personality", "性格")) if ref.get(key)]
+        visual_dna = json_dict(ref.get("visual_dna"))
+        if visual_dna:
+            details.append("视觉DNA:" + "、".join(f"{key}={value}" for key, value in visual_dna.items()))
         if ref.get("name"):
             lines.append(f"{ref['name']}（{'；'.join(details) if details else '使用角色设定'}）")
     return "；".join(lines)
@@ -193,7 +211,7 @@ def _format_multiview(refs: list[dict[str, Any]], limit: int = 12) -> str:
 
 
 async def _load_state(context: VideoConsistencyPackageContext) -> _PackageState:
-    from app.models import Character
+    from app.models import Character, StoryEntity
     request, lineage = context.request, context.lineage
     novel_id, chapter_id = request.novel_id or lineage.get("novel_id"), request.chapter_id or lineage.get("chapter_id")
     filters = [Character.user_id == context.user_id]
@@ -202,8 +220,17 @@ async def _load_state(context: VideoConsistencyPackageContext) -> _PackageState:
     elif chapter_id:
         filters.append(or_(Character.chapter_id == chapter_id, Character.novel_id.is_(None)))
     characters = list((await context.db.scalars(select(Character).where(and_(*filters)).order_by(desc(Character.updated_at)))).all())
+    entity_filters = [StoryEntity.user_id == context.user_id, StoryEntity.entity_type == "character"]
+    if novel_id:
+        entity_filters.append(StoryEntity.novel_id == novel_id)
+    story_entities = list((await context.db.scalars(select(StoryEntity).where(and_(*entity_filters)))).all())
+    story_by_id = {item.id: item for item in story_entities}
+    for item in story_entities:
+        canonical_id = str((item.attributes or {}).get("merged_into_entity_id") or "")
+        if canonical_id and canonical_id in story_by_id:
+            story_by_id[item.id] = story_by_id[canonical_id]
     return _PackageState(context, lineage.get("shot"), extract_shot_generation_context(lineage.get("shot")),
-                         novel_id, chapter_id, characters, {item.id: item for item in characters})
+                         novel_id, chapter_id, characters, {item.id: item for item in characters}, story_by_id)
 
 
 def _resolve_character_refs(state: _PackageState) -> None:
@@ -215,6 +242,10 @@ def _resolve_character_refs(state: _PackageState) -> None:
         character = state.character_by_id.get(ref.get("character_id") or ref.get("id")) or lookup_character_by_name(state.characters, _ref_name(ref), state.novel_id, state.chapter_id)
         if character:
             state.character_refs.append(_merge_character_ref(character, ref.get("source") or "shot_ref", ref))
+        elif story := state.story_character_by_id.get(
+            str(ref.get("canonical_entity_id") or ref.get("entity_id") or ref.get("source_entity_id") or "")
+        ):
+            state.character_refs.append(_merge_story_character_ref(story, ref))
         elif _valid_story_character(ref):
             state.character_refs.append(dict(ref))
         else:
@@ -335,18 +366,23 @@ def _prompt_context(state: _PackageState) -> dict[str, Any]:
     return {"用户提示词": request.prompt, **extra}
 
 
+def _prompt_skill_task(request: Any) -> str:
+    return "shot_audio_video" if bool(getattr(request, "native_audio", False)) else "shot_video"
+
+
 async def _compose_prompt(state: _PackageState) -> None:
     request, context = state.context.request, _prompt_context(state)
-    state.prompt_skills = await active_prompt_skill_entries(state.context.db, state.context.user_id, task="shot_video", context=context)
+    task = _prompt_skill_task(request)
+    state.prompt_skills = await active_prompt_skill_entries(state.context.db, state.context.user_id, task=task, context=context)
     locks = [{"type": lock.get("category") or "资产", "name": lock.get("entity_name") or lock.get("name") or "Unknown"} for lock in state.asset_locks]
-    state.final_prompt = compose_generation_prompt(task="shot_video", shot=state.shot, story_bible=state.story_bible,
+    state.final_prompt = compose_generation_prompt(task=task, shot=state.shot, story_bible=state.story_bible,
         characters=[state.character_by_id[ref["character_id"]] for ref in state.character_refs if ref.get("character_id") in state.character_by_id],
         project=state.project, extra_context=context, locked_assets=locks, skill_blocks=[entry["content"] for entry in state.prompt_skills])
 
 
 def _metadata(state: _PackageState) -> dict[str, Any]:
     request, lineage, continuity = state.context.request, state.context.lineage, state.continuity
-    result = {"task": "shot_video", "story_bible_id": state.story_bible.id if state.story_bible else request.story_bible_id,
+    result = {"task": _prompt_skill_task(request), "story_bible_id": state.story_bible.id if state.story_bible else request.story_bible_id,
         "project_id": state.project.id if state.project else request.project_id or lineage.get("project_id"), "novel_id": state.novel_id,
         "chapter_id": state.chapter_id, "shot_id": request.shot_id or lineage.get("shot_id"), "storyboard_id": request.storyboard_id or lineage.get("storyboard_id"),
         "character_ids": [ref["character_id"] for ref in state.character_refs if ref.get("character_id")],
@@ -354,6 +390,7 @@ def _metadata(state: _PackageState) -> dict[str, Any]:
         "subtitle_text": state.shot_context["subtitle_text"], "default_model_id": (get_task_default("shot_video") or {}).get("default_model_id"),
         "series_seed": state.seeds["series"], "novel_series_seed": state.seeds["series"], "chapter_seed": state.seeds["chapter"],
         "storyboard_seed": state.seeds["storyboard"], "style_lock": state.style_lock, "prompt_skill_count": len(state.prompt_skills),
+        "rendered_prompt_sha256": hashlib.sha256(state.final_prompt.encode("utf-8")).hexdigest(),
         "prompt_skills": [{**{key: entry[key] for key in ("id", "name", "task", "stage", "version")}, "prompt_profile_version_id": entry.get("prompt_profile_version_id")} for entry in state.prompt_skills],
         "character_visual_locks": state.character_refs, "character_multiview_refs": state.multiview_refs,
         "reference_image_source": state.reference_source, "invalid_entity_ref_count": len(state.filtered_refs), "seed": state.seeds["shot"]}

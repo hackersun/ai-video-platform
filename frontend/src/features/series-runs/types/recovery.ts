@@ -29,4 +29,6 @@ export type RecoveryAcknowledgement = {
   retry_scope: string | null;
   requires_provider_submission: boolean;
   next_action: string;
+  reference_preparation?: ReferencePreparation | null;
 };
+import type { ReferencePreparation } from '@/lib/api-client';

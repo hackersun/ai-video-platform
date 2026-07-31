@@ -49,6 +49,8 @@ export type AnchorShotRecommendation = {
   reason: string;
 };
 
+export type AnchorMode = 'smoke' | 'representative' | 'full';
+
 export type LivePreflightPlan = {
   run_id: string; ready: boolean;
   blockers: Array<{ code: string; message: string; shot_id?: string }>;
@@ -74,15 +76,18 @@ export type VoiceOptions = {
 export type ReferencePreparation = {
   run_id: string; asset_id: string; asset_version: number; provider_binding_id: string;
   roles: string[]; status: string; idempotent: boolean; resumed: boolean;
-  operation: { id: string; status: string; provider_task_id?: string | null; reservation_id: string; actual_rmb?: string | null; cost_source?: string | null };
-  artifact: { id: string; url: string; checksum: string; layout_evidence: Record<string, any>; width: number; height: number; byte_size: number };
+  operation?: { id: string; status: string; provider_task_id?: string | null; reservation_id: string; actual_rmb?: string | null; cost_source?: string | null };
+  artifact?: { id: string; url: string; checksum: string; layout_evidence: Record<string, any>; width: number; height: number; byte_size: number };
 };
 
 export type AnchorGenerationResponse = {
   status: 'provider_pending' | 'provider_ready' | 'completed' | 'failed';
   selected_shot_ids: string[];
   workflow_batches: any[];
-  quality_results: Array<{ shot_id: string; artifact_id?: string; evaluation_ids?: string[]; ready?: boolean; overall_readiness: string }>;
+  quality_results: Array<{
+    shot_id: string; artifact_id?: string; evaluation_ids?: string[]; ready?: boolean;
+    overall_readiness: string; subtitle_sync_status?: string; audio_verification_required?: boolean;
+  }>;
   video_job_ids?: string[];
   tts_job_ids?: string[];
   media_job_ids?: string[];
@@ -90,6 +95,13 @@ export type AnchorGenerationResponse = {
   pending_tts_job_ids?: string[];
   failed_video_job_ids?: string[];
   failed_tts_job_ids?: string[];
+};
+
+export type AnchorDeliverable = {
+  id: string; shot_id?: string; title?: string; output_video_url?: string;
+  public_video_url?: string; subtitle_track_id?: string; duration_seconds?: number;
+  resolution?: string; status: string; video_native_audio?: boolean;
+  subtitle_sync_status?: string; audio_verification_required?: boolean;
 };
 
 type TTSJob = {
@@ -480,6 +492,7 @@ export type WorkflowShotRegenerateRequest = {
   model_config_id?: string | null;
   audio_model_config_id?: string | null;
   audio_mode?: 'model_audio' | 'none';
+  native_audio?: boolean;
 };
 
 export type WorkflowShotRegenerateResponse = {
@@ -650,6 +663,10 @@ class ApiClient {
     return this.request<SeriesProductionRun>(`/series-runs/${runId}/execute`, { method: 'POST' });
   }
 
+  async executeSeriesRunAsync(runId: string) {
+    return this.request<SeriesProductionRun & { execution_status: string }>(`/series-runs/${runId}/execute-async`, { method: 'POST' });
+  }
+
   async pauseSeriesRun(runId: string) {
     return this.request<SeriesProductionRun>(`/series-runs/${runId}/pause`, { method: 'POST' });
   }
@@ -658,7 +675,7 @@ class ApiClient {
     return this.request<SeriesProductionRun>(`/series-runs/${runId}/resume`, { method: 'POST' });
   }
 
-  async validateSeriesRunBindings(runId: string, bindings: Record<'text' | 'image' | 'tts' | 'video', string>) {
+  async validateSeriesRunBindings(runId: string, bindings: { image?: string; video: string; text?: string; tts?: string; native_audio?: boolean }) {
     return this.request<{ model_bindings: Record<string, any>; version: number }>(`/series-runs/${runId}/live-bindings/validate`, {
       method: 'POST', body: JSON.stringify(bindings),
     });
@@ -679,19 +696,21 @@ class ApiClient {
     });
   }
 
-  async prepareSeriesRunStoryLocks(runId: string) {
-    return this.request(`/series-runs/${runId}/prepare-story-locks`, { method: 'POST' });
+  async prepareSeriesRunStoryLocks(runId: string, nativeAudio = false) {
+    const query = nativeAudio ? '?native_audio=true' : '';
+    return this.request(`/series-runs/${runId}/prepare-story-locks${query}`, { method: 'POST' });
   }
 
-  async prepareSeriesRunReference(runId: string) {
-    return this.request<ReferencePreparation>(`/series-runs/${runId}/prepare-reference`, { method: 'POST' });
+  async prepareSeriesRunReference(runId: string, nativeAudio = false) {
+    const query = nativeAudio ? '?native_audio=true' : '';
+    return this.request<ReferencePreparation>(`/series-runs/${runId}/prepare-reference${query}`, { method: 'POST' });
   }
 
   async getSeriesRunAnchors(runId: string) {
-    return this.request<{ selected_shot_ids: string[]; selected_mode?: 'smoke' | 'full' | null; smoke: AnchorShotRecommendation[]; full: AnchorShotRecommendation[]; blockers?: Record<'smoke' | 'full', { code: string; message: string } | null> }>(`/series-runs/${runId}/anchor-shots`);
+    return this.request<{ selected_shot_ids: string[]; selected_mode?: AnchorMode | null; smoke: AnchorShotRecommendation[]; representative: AnchorShotRecommendation[]; full: AnchorShotRecommendation[]; blockers?: Record<AnchorMode, { code: string; message: string } | null> }>(`/series-runs/${runId}/anchor-shots`);
   }
 
-  async saveSeriesRunAnchors(runId: string, shotIds: string[], mode: 'smoke' | 'full') {
+  async saveSeriesRunAnchors(runId: string, shotIds: string[], mode: AnchorMode) {
     return this.request<{ selected_shot_ids: string[]; version: number }>(`/series-runs/${runId}/anchor-shots`, {
       method: 'PUT', body: JSON.stringify({ shot_ids: shotIds, mode }),
     });
@@ -700,7 +719,7 @@ class ApiClient {
   async generateSelectedSeriesRunAnchors(
     runId: string,
     shotIds: string[],
-    mode: 'smoke' | 'full',
+    mode: AnchorMode,
     nativeAudio = false,
   ) {
     return this.request<AnchorGenerationResponse>(`/series-runs/${runId}/generate-selected`, {
@@ -1646,6 +1665,7 @@ class ApiClient {
     resolution?: string;
     subtitle_mode?: string;
     audio_mode?: string;
+    native_audio?: boolean;
     model_config_id?: string;
     audio_model_config_id?: string;
     voice_model?: string;
@@ -1770,6 +1790,20 @@ class ApiClient {
     });
     const qs = searchParams.toString();
     return this.request<any[]>(`/media/jobs${qs ? `?${qs}` : ''}`);
+  }
+
+  async getMediaJob(jobId: string) {
+    return this.request<any>(`/media/jobs/${jobId}`);
+  }
+
+  async getMediaPlaybackUrl(jobId: string) {
+    const result = await this.request<{ job_id: string; url: string; delivery_method: string }>(
+      `/media/jobs/${jobId}/playback-url`,
+    );
+    if (result.url?.startsWith('/')) {
+      result.url = `${API_BASE_URL.replace(/\/api\/v1\/?$/, '')}${result.url}`;
+    }
+    return result;
   }
 
   async cancelMediaJob(jobId: string) {

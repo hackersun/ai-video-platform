@@ -7,20 +7,24 @@ import hashlib
 import json
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.time_utils import utc_now
-from app.models import Asset, LLMConfig, LLMModel, ProviderAssetBinding, Shot, StoryBible, StoryEntity, Workflow
+from app.models import Asset, LLMConfig, LLMModel, ProviderAssetBinding, Shot, StoryBible, Workflow
 from app.models.series_production_run import SeriesProductionRun
 from app.services.live_canary_budget import (
     BindingValidationError,
     required_tested_at_for_run,
     validate_model_bindings,
 )
+from app.services.live_canary_bindings import validate_persisted_model_bindings
+from app.services.live_canary_repair_budget import effective_budget_maximum
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
 from app.services.shot_quality_service import extract_dialogue_speaker
+from app.services.shot_image_delivery import is_live_ready_shot_image
+from app.services.anchor_shot_service import ANCHOR_MODE_CONTRACTS
 from app.features.series_run_story_locks.public import (
     StoryLockPreparationBlocked,
     inspect_story_lock_freshness,
@@ -109,7 +113,8 @@ def _money_text(value: Decimal) -> str:
 
 async def _selected_anchor_shots(db: AsyncSession, run: SeriesProductionRun) -> list[tuple[int, Shot]]:
     selected = [str(item) for item in ((run.run_metadata or {}).get("selected_anchor_shot_ids") or [])]
-    required_count = 6 if (run.run_metadata or {}).get("selected_anchor_mode") == "full" else 2
+    mode = str((run.run_metadata or {}).get("selected_anchor_mode") or "smoke")
+    required_count = ANCHOR_MODE_CONTRACTS.get(mode, ANCHOR_MODE_CONTRACTS["smoke"])["target_count"]
     if len(selected) != required_count or len(set(selected)) != required_count:
         return []
     episode_by_shot: dict[str, int] = {}
@@ -133,31 +138,12 @@ async def _story_preflight(
     blockers: list[dict[str, Any]] = []
     freshness = await inspect_story_lock_freshness(db, run, supersede=False)
     if freshness.get("code") == "story_lock_stale":
-        blockers.append({"code": "story_lock_stale", "message": "四章、实体、风格、Bible 或运行输入已变化"})
+        blockers.append({"code": "story_lock_stale", "message": "章节、实体、风格、Bible 或运行输入已变化"})
         return {
             "ready": False,
             "issues": [dict(blockers[0])],
             "codes": ["story_lock_stale"],
         }, blockers
-    lock = (run.run_metadata or {}).get("story_locks") or {}
-    bible = await db.get(StoryBible, str(lock.get("story_bible_id") or "")) if lock.get("story_bible_id") else None
-    approved_ids = (
-        ((bible.extra_data or {}).get("series_story_lock") or {}).get("approved_entity_ids") or []
-        if bible else []
-    )
-    required_character_count = 0
-    if approved_ids:
-        required_character_count = int(await db.scalar(select(func.count()).select_from(StoryEntity).where(
-            StoryEntity.id.in_(approved_ids), StoryEntity.user_id == run.user_id,
-            StoryEntity.novel_id == run.novel_id, StoryEntity.entity_type == "character",
-            StoryEntity.is_approved.is_(True),
-        )) or 0)
-    if required_character_count > 1:
-        blockers.append({
-            "code": "reference_capacity_exceeded",
-            "message": "单张复合设定板仅支持一个必需角色；多角色需要分别预算和生成规范资产",
-            "required_character_count": required_character_count,
-        })
     try:
         hard_preflight = await evaluate_media_preflight(db, run, native_audio=native_audio)
         blockers.extend(hard_preflight.get("issues") or [])
@@ -176,11 +162,15 @@ async def _anchor_preflight(
     voice_selection_required = False
 
     anchors = await _selected_anchor_shots(db, run)
-    selected_mode = (run.run_metadata or {}).get("selected_anchor_mode")
-    required_anchor_count = 6 if selected_mode == "full" else 2
-    required_episode_count = 4 if selected_mode == "full" else 2
+    selected_mode = str((run.run_metadata or {}).get("selected_anchor_mode") or "smoke")
+    contract = ANCHOR_MODE_CONTRACTS.get(selected_mode, ANCHOR_MODE_CONTRACTS["smoke"])
+    required_anchor_count = contract["target_count"]
+    required_episode_count = contract["required_episodes"]
     if len(anchors) != required_anchor_count or len({item[0] for item in anchors}) < required_episode_count:
-        blockers.append({"code": "two_cross_episode_anchors_required", "message": "需要两个跨集关键镜头"})
+        blockers.append({
+            "code": "anchor_coverage_insufficient",
+            "message": f"需要 {required_anchor_count} 个关键镜头覆盖 {required_episode_count} 章",
+        })
     for episode_number, shot in anchors:
         extra = shot.extra_data or {}
         dialogue = str(shot.dialogue or extra.get("subtitle_text") or "").strip()
@@ -196,13 +186,21 @@ async def _anchor_preflight(
             "shot_id": shot.id, "episode_number": episode_number, "dialogue": dialogue,
             "speaker": speaker, "requires_tts": bool(dialogue) and not native_audio,
             "audio_route": "video_native_audio" if native_audio and dialogue else "tts" if dialogue else "none",
+            "first_frame_ready": is_live_ready_shot_image(shot.image_url),
             "contract_hash": _fingerprint({"shot_id": shot.id, "dialogue": dialogue, "speaker": speaker}),
         })
+        if not is_live_ready_shot_image(shot.image_url):
+            blockers.append({
+                "code": "shot_first_frame_missing",
+                "message": "关键镜头缺少已生成首帧，请先补齐首帧后再生成视频",
+                "shot_id": shot.id,
+            })
     return dialogue_contracts, dialogue_count, voice_selection_required, blockers
 
 
 def _budget_preflight(
     run: SeriesProductionRun, *, anchor_count: int, dialogue_count: int,
+    missing_first_frame_count: int = 0,
     native_audio: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, str], list[dict[str, Any]]]:
     blockers: list[dict[str, Any]] = []
@@ -218,7 +216,7 @@ def _budget_preflight(
     reference = (run.run_metadata or {}).get("reference_preparation") or {}
     reference_required = not bool(reference.get("asset_id") and reference.get("asset_version"))
     requirements = (
-        ("image", 1 if reference_required else 0),
+        ("image", (1 if reference_required else 0) + missing_first_frame_count),
         ("video", anchor_count),
         ("tts", 0 if native_audio else dialogue_count),
     )
@@ -252,7 +250,11 @@ def _budget_preflight(
         blockers.append({"code": "trusted_budget_policy_missing", "message": "缺少服务端可信预算策略"})
         maximum = Decimal("0")
     else:
-        maximum = min(configured_maximum, wave_one_maximum)
+        maximum = (
+            effective_budget_maximum(run)
+            if configured_maximum == wave_one_maximum
+            else min(configured_maximum, wave_one_maximum)
+        )
         if configured_maximum != wave_one_maximum:
             blockers.append({"code": "wave_one_budget_policy_invalid", "message": "Wave 1 服务端预算上限必须恰好为 RMB10"})
     remaining = max(Decimal("0"), maximum - spent - reserved)
@@ -268,31 +270,35 @@ def _budget_preflight(
 
 
 async def _binding_preflight(
-    db: AsyncSession, run: SeriesProductionRun, *, voice_selection_required: bool
+    db: AsyncSession, run: SeriesProductionRun, *, required_capabilities: set[str],
+    voice_selection_required: bool,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     blockers: list[dict[str, Any]] = []
     capabilities = (run.model_bindings or {}).get("capabilities") or {}
-    config_ids = {name: str((capabilities.get(name) or {}).get("config_id") or "") for name in ("text", "image", "tts", "video")}
+    config_ids = {
+        name: str((capabilities.get(name) or {}).get("config_id") or "")
+        for name in required_capabilities
+    }
     voice_options = None
     try:
-        await validate_model_bindings(
-            db, run, config_ids, required_tested_at=required_tested_at_for_run(run),
-            freshness_seconds=900, persist=False,
+        await validate_persisted_model_bindings(
+            db, run, required_capabilities=required_capabilities,
         )
-        snapshot, _voice_config, _voice_model, allowlist = await _validated_voice_context(db, run)
-        selection = _valid_voice_selection(run, snapshot, allowlist)
-        if (run.run_metadata or {}).get("voice_selection") and selection is None:
-            blockers.append({"code": "voice_selection_stale", "message": "声线选择所依赖的配置测试快照已变化，需要重新选择"})
-        voice_options = {
-            "config_id": snapshot["config_id"], "model_id": snapshot["db_model_id"],
-            "provider_id": snapshot["provider_id"], "tested_at": snapshot["tested_at"],
-            "options": [{"voice_id": voice_id, "label": voice_id} for voice_id in allowlist],
-            "selection": selection,
-        }
-        if voice_selection_required and selection is None:
-            blockers.append({"code": "voice_selection_required", "message": "需要从当前 TTS 配置的安全声线列表中显式锁定声线"})
+        if "tts" in required_capabilities:
+            snapshot, _voice_config, _voice_model, allowlist = await _validated_voice_context(db, run)
+            selection = _valid_voice_selection(run, snapshot, allowlist)
+            if (run.run_metadata or {}).get("voice_selection") and selection is None:
+                blockers.append({"code": "voice_selection_stale", "message": "声线选择所依赖的配置测试快照已变化，需要重新选择"})
+            voice_options = {
+                "config_id": snapshot["config_id"], "model_id": snapshot["db_model_id"],
+                "provider_id": snapshot["provider_id"], "tested_at": snapshot["tested_at"],
+                "options": [{"voice_id": voice_id, "label": voice_id} for voice_id in allowlist],
+                "selection": selection,
+            }
+            if voice_selection_required and selection is None:
+                blockers.append({"code": "voice_selection_required", "message": "需要从当前 TTS 配置的安全声线列表中显式锁定声线"})
     except BindingValidationError:
-        if (run.run_metadata or {}).get("voice_selection"):
+        if "tts" in required_capabilities and (run.run_metadata or {}).get("voice_selection"):
             blockers.append({"code": "voice_selection_stale", "message": "声线选择所依赖的配置测试快照已失效，需要重新测试并选择"})
         blockers.append({"code": "model_bindings_not_fresh", "message": "模型配置缺少新鲜且有效的服务端测试"})
     return voice_options, blockers
@@ -319,10 +325,24 @@ async def build_live_preflight_plan(
         db, run, native_audio=native_audio,
     )
     cost_breakdown, budget, budget_blockers = _budget_preflight(
-        run, anchor_count=len(contracts), dialogue_count=dialogue_count, native_audio=native_audio,
+        run,
+        anchor_count=len(contracts),
+        dialogue_count=dialogue_count,
+        missing_first_frame_count=sum(not item["first_frame_ready"] for item in contracts),
+        native_audio=native_audio,
     )
+    reference = (run.run_metadata or {}).get("reference_preparation") or {}
+    required_capabilities = {"video"}
+    if (
+        not (reference.get("asset_id") and reference.get("asset_version"))
+        or any(not item["first_frame_ready"] for item in contracts)
+    ):
+        required_capabilities.add("image")
+    if dialogue_count and not native_audio:
+        required_capabilities.add("tts")
     voice_options, binding_blockers = await _binding_preflight(
-        db, run, voice_selection_required=voice_required,
+        db, run, required_capabilities=required_capabilities,
+        voice_selection_required=voice_required,
     )
     deduped = _dedupe_blockers(
         story_blockers + anchor_blockers + budget_blockers + binding_blockers
@@ -334,6 +354,7 @@ async def build_live_preflight_plan(
         "blocker_codes": list(dict.fromkeys(item["code"] for item in deduped)),
         "hard_preflight": hard_preflight,
         "anchor_dialogue_contracts": contracts,
+        "required_capabilities": sorted(required_capabilities),
         "voice_options": voice_options,
         "cost_breakdown": cost_breakdown,
         "budget": budget,

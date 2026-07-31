@@ -13,6 +13,7 @@ from app.features.model_config.catalog import (
     group_legacy_configs,
     is_product_visible_model,
     is_product_visible_provider,
+    provider_model_identity,
     select_primary_legacy_config,
 )
 from app.features.model_config.domain import (
@@ -437,7 +438,7 @@ async def list_product_catalog(
             certification_status=_certification_status(profile.id if profile else None, config, certification_levels),
             capabilities=frozenset(normalize_capabilities(model.model_type, profile.capabilities if profile else model.capabilities or [])),
         )
-        items[(item.provider_id, item.api_model_id)] = item
+        items[provider_model_identity(provider.name, item.api_model_id)] = item
     for profile in sorted(profiles_by_model.values(), key=lambda item: (item.model_id, -item.version, item.id)):
         if profile.model_id in legacy_ids or not is_product_visible_model(profile):
             continue
@@ -448,7 +449,7 @@ async def list_product_catalog(
         provider = canonical_providers.get(canonical_provider_id)
         if provider is None or not is_product_visible_provider(provider):
             continue
-        key = (canonical_provider_id, profile.api_model_id)
+        key = provider_model_identity(provider.code, profile.api_model_id)
         items[key] = ProductCatalogItem(
             provider_id=canonical_provider_id,
             provider_name=provider.display_name,

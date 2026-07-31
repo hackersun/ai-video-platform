@@ -200,6 +200,50 @@ async def upload_local_static_to_qiniu(
     }
 
 
+async def refresh_existing_qiniu_media_url(
+    db: AsyncSession,
+    user_id: str,
+    media_url: Optional[str],
+    *,
+    storage_config_id: Optional[str] = None,
+) -> dict[str, Any]:
+    """Create a fresh download URL for an already-uploaded static object."""
+    source_url = str(media_url or "").strip()
+    storage = await _get_default_storage_config(db, user_id, storage_config_id)
+    if not source_url or not storage:
+        return {"provider_url": None, "delivery_method": None}
+    config, provider = storage
+    extra = config.extra_config or {}
+    storage_provider = str(extra.get("storage_provider") or extra.get("provider") or "").strip().lower()
+    if storage_provider not in {"qiniu", "kodo", "qiniu_kodo"}:
+        return {"provider_url": None, "delivery_method": None}
+    public_base_url = str(extra.get("public_base_url") or config.custom_base_url or provider.base_url or "").strip()
+    public_url = _public_static_url(
+        source_url,
+        public_base_url=public_base_url,
+        local_static_prefix=extra.get("local_static_prefix") or "/static/",
+        public_static_prefix=extra.get("public_static_prefix") or "/static/",
+    )
+    if not public_url or not is_cloud_accessible_http_url(public_url):
+        return {"provider_url": None, "delivery_method": None}
+    if extra.get("private_download") or extra.get("private_bucket"):
+        access_key = config.get_api_key_decrypted()
+        secret_key = config.get_api_secret_decrypted()
+        if not access_key or not secret_key:
+            return {"provider_url": None, "delivery_method": None}
+        public_url = _qiniu_private_download_url(
+            public_url,
+            access_key=access_key,
+            secret_key=secret_key,
+            ttl_seconds=int(extra.get("download_url_ttl_seconds") or 3600),
+        )
+    return {
+        "provider_url": public_url,
+        "delivery_method": "qiniu_signed_refresh",
+        "storage_config_id": config.id,
+    }
+
+
 async def resolve_provider_media_url(
     db: AsyncSession,
     user_id: str,

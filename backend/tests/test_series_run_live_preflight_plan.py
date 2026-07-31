@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timedelta
+from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 import hashlib
@@ -33,15 +34,18 @@ from app.services.series_run_live_preflight import (
 from app.services.series_run_reference_preparation import (
     ReferencePreSubmitRejected,
     ReferencePreparationBlocked,
+    _fetch_and_verify_image,
     prepare_series_reference,
 )
 from app.services.series_reference_provider import ReferenceAdapterStageError
+from app.services.series_reference_artifact_recovery import PersistedReferenceArtifactAdapter
 from app.services.story_entity_lifecycle import APPROVED, get_entity_review_status, set_entity_review_status
 from app.services.chapter_fact_timeline import project_entities_as_of_chapter
 from app.services.reference_layout_evaluator import evaluate_reference_layout, validate_layout_evidence
 from app.api.v1.endpoints.series_runs import AnchorSelectionRequest, DeterministicAcceptanceSetupRequest, GenerateSelectedRequest, PrepareReferenceResponse, _run_shots, generate_selected_series_run_anchors, get_series_run_live_preflight_plan, post_series_run_prepare_reference, post_series_run_prepare_story_locks, put_series_run_anchor_shots, setup_deterministic_acceptance
 from app.services.anchor_shot_service import recommend_anchor_shots
 from app.services.live_canary_budget import required_tested_at_for_run, validate_model_bindings
+from app.services.live_canary_repair_budget import grant_live_canary_repair_extension
 from app.features.series_run_story_locks.application.explicit_dialogue_approval import (
     _prepare_explicit_dialogue_facts,
 )
@@ -365,6 +369,27 @@ async def _explicit_dialogue_source(db: AsyncSession, run: SeriesProductionRun) 
     run.episodes = episodes
     await db.commit()
 
+
+@pytest.mark.asyncio
+async def test_native_audio_story_lock_does_not_require_tts_binding(db_session: AsyncSession) -> None:
+    run = await _fixture(db_session)
+    await _explicit_dialogue_source(db_session, run)
+    await _refresh_fixture_production_contracts(db_session, run)
+
+    result = await prepare_story_locks(db_session, run, native_audio=True)
+    repeated = await prepare_story_locks(db_session, run, native_audio=True)
+    speaker = await db_session.scalar(select(StoryEntity).where(
+        StoryEntity.novel_id == run.novel_id,
+        StoryEntity.entity_type == "character",
+        StoryEntity.name == "沈砚",
+    ))
+
+    assert result["status"] == "locked"
+    assert repeated["story_bible_id"] == result["story_bible_id"]
+    assert speaker is not None and speaker.is_approved is True
+    assert speaker.attributes["speaking"] is True
+    assert "voice_binding" not in speaker.attributes
+
 @pytest.mark.asyncio
 async def test_explicit_dialogue_rule_atomically_creates_approved_entity_voice_and_enriches_two_anchors(db_session: AsyncSession) -> None:
     run = await _fixture(db_session)
@@ -491,6 +516,64 @@ async def test_explicit_dialogue_normalizes_safe_deterministic_duplicates_then_a
     with pytest.raises(StoryLockPreparationBlocked, match="story_lock_source_invalid"):
         await prepare_story_locks(db_session, run)
 
+
+@pytest.mark.asyncio
+async def test_explicit_dialogue_uses_run_episode_order_when_chapter_numbers_repeat(
+    db_session: AsyncSession,
+) -> None:
+    run = await _fixture(db_session)
+    chapters = list((await db_session.scalars(select(Chapter).where(
+        Chapter.novel_id == run.novel_id,
+    ))).all())
+    for chapter in chapters:
+        chapter.chapter_number = 1
+    await db_session.execute(delete(StoryEntity).where(StoryEntity.novel_id == run.novel_id))
+    await db_session.commit()
+    await _explicit_dialogue_source(db_session, run)
+    episodes = [dict(item) for item in run.episodes]
+    final_chapter = await db_session.get(Chapter, episodes[3]["chapter_ids"][0])
+    final_chapter.content = "影潮使说：“第四章明确对白。”"
+    final_chapter.updated_at = utc_now()
+    episodes[3]["input_hash"] = f"{final_chapter.id}:{final_chapter.updated_at.isoformat()}"
+    final_shot = await db_session.get(Shot, episodes[3]["canonical_ids"]["shot_ids"][0])
+    final_shot.dialogue = "影潮使：第四章明确对白。"
+    final_shot.extra_data = {**(final_shot.extra_data or {}),
+        "dialogue_speaker": "影潮使", "parsed_speaker": "影潮使"}
+    first_shot = await db_session.get(Shot, episodes[0]["canonical_ids"]["shot_ids"][0])
+    first_shot.extra_data = {**(first_shot.extra_data or {}),
+        "prompt_skill": {"id": "test-shot-skill", "version": 1}}
+    run.episodes = episodes
+    await db_session.commit()
+    created_at = utc_now() - timedelta(minutes=10)
+    entity_ids = ["z-first-episode", "y-second-episode", "a-third-episode", "x-fourth-episode"]
+    for index, episode in enumerate(run.episodes):
+        db_session.add(StoryEntity(
+            id=entity_ids[index], user_id=run.user_id, novel_id=run.novel_id,
+            chapter_id=episode["chapter_ids"][0], first_seen_chapter_id=episode["chapter_ids"][0],
+            entity_type="character", name="沈砚", canonical_name="沈砚", source="deterministic",
+            version=1, description="规则识别人物", attributes={"gender": "male"},
+            relations=[], state_changes=[], tags=[], extra_data={},
+            created_at=created_at + timedelta(seconds=index),
+        ))
+    await db_session.commit()
+    run.run_metadata = {**(run.run_metadata or {}), "selected_anchor_shot_ids": [
+        run.episodes[0]["canonical_ids"]["shot_ids"][0],
+        run.episodes[3]["canonical_ids"]["shot_ids"][0],
+    ]}
+    await db_session.commit()
+    await _fresh_bindings(db_session, run)
+
+    result = await prepare_story_locks(db_session, run, native_audio=True)
+    active = list((await db_session.scalars(select(StoryEntity).where(
+        StoryEntity.novel_id == run.novel_id,
+        StoryEntity.name == "沈砚",
+    ))).all())
+    canonical = next(item for item in active if get_entity_review_status(item) != "archived")
+
+    assert result["status"] == "locked"
+    assert canonical.chapter_id == run.episodes[0]["chapter_ids"][0]
+    assert canonical.attributes["source_chapter_index"] == 1
+
 @pytest.mark.asyncio
 async def test_explicit_dialogue_does_not_merge_manual_or_visual_conflicts(db_session: AsyncSession) -> None:
     run = await _fixture(db_session)
@@ -548,6 +631,41 @@ async def test_explicit_dialogue_does_not_merge_conflicting_system_identity_attr
         await prepare_story_locks(db_session, run)
     persisted = list((await db_session.scalars(select(StoryEntity).where(StoryEntity.id.in_(row_ids)))).all())
     assert all(get_entity_review_status(row) != "archived" for row in persisted)
+
+
+@pytest.mark.asyncio
+async def test_explicit_dialogue_merges_placeholder_costume_into_concrete_visual_dna(
+    db_session: AsyncSession,
+) -> None:
+    run = await _fixture(db_session)
+    await db_session.execute(delete(StoryEntity).where(StoryEntity.novel_id == run.novel_id))
+    await db_session.commit()
+    await _explicit_dialogue_source(db_session, run)
+    shared = {
+        "identity_anchor": "沈砚",
+        "silhouette": "沈砚 的稳定头身比例和脸型",
+        "palette": "依据作品统一色彩",
+    }
+    rows = [StoryEntity(
+        id=str(uuid4()), user_id=run.user_id, novel_id=run.novel_id,
+        chapter_id=run.episodes[index]["chapter_ids"][0], entity_type="character",
+        name="沈砚", canonical_name="沈砚", source="deterministic", version=1,
+        attributes={"visual_dna": {**shared, "costume": costume}}, extra_data={},
+    ) for index, costume in enumerate([
+        "深蓝旧呢大衣", "依据原文固定服装与标志配饰", "依据原文固定服装与标志配饰",
+    ])]
+    db_session.add_all(rows)
+    await db_session.commit()
+    await _fresh_bindings(db_session, run)
+
+    result = await prepare_story_locks(db_session, run, native_audio=True)
+
+    assert result["status"] == "locked"
+    active = list((await db_session.scalars(select(StoryEntity).where(
+        StoryEntity.novel_id == run.novel_id, StoryEntity.is_approved.is_(True),
+    ))).all())
+    assert len(active) == 1
+    assert active[0].attributes["visual_dna"]["costume"] == "深蓝旧呢大衣"
 
 @pytest.mark.asyncio
 async def test_explicit_dialogue_ignores_only_versioned_system_extraction_metadata(db_session: AsyncSession) -> None:
@@ -1049,6 +1167,36 @@ async def test_prepare_story_locks_is_idempotent_versioned_and_approved_only(db_
 
 
 @pytest.mark.asyncio
+async def test_current_entity_extraction_contract_story_lock_is_fresh(db_session: AsyncSession) -> None:
+    run = await _fixture(db_session)
+    await prepare_story_locks(db_session, run)
+
+    freshness = await inspect_story_lock_freshness(db_session, run)
+
+    assert freshness["ready"] is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_entity_extraction_contract_story_lock_is_stale(db_session: AsyncSession) -> None:
+    run = await _fixture(db_session)
+    result = await prepare_story_locks(db_session, run)
+    bible = await db_session.get(StoryBible, result["story_bible_id"])
+    run_lock = dict((run.run_metadata or {})["story_locks"])
+    run_lock.pop("entity_extraction_contract_version", None)
+    run.run_metadata = {**(run.run_metadata or {}), "story_locks": run_lock}
+    bible_lock = dict((bible.extra_data or {})["series_story_lock"])
+    bible_lock.pop("entity_extraction_contract_version", None)
+    bible.extra_data = {**(bible.extra_data or {}), "series_story_lock": bible_lock}
+    await db_session.commit()
+
+    freshness = await inspect_story_lock_freshness(db_session, run)
+
+    assert freshness["ready"] is False
+    assert freshness["code"] == "story_lock_stale"
+    assert freshness["story_blocker_code"] == "entity_extraction_contract_stale"
+
+
+@pytest.mark.asyncio
 async def test_media_running_retry_refreshes_scoped_refs_after_dialogue_changes(
     db_session: AsyncSession,
 ) -> None:
@@ -1066,6 +1214,49 @@ async def test_media_running_retry_refreshes_scoped_refs_after_dialogue_changes(
 
     assert second["version"] == first["version"] + 1
     assert shot.extra_data["entity_refs"]["characters"][0]["shot_input_sha256"] != old_reference_hash
+
+
+@pytest.mark.asyncio
+async def test_shots_ready_story_lock_refreshes_scoped_refs_after_entity_review(
+    db_session: AsyncSession,
+) -> None:
+    run = await _fixture(db_session)
+    first = await prepare_story_locks(db_session, run)
+    shot_id = (run.run_metadata or {})["selected_anchor_shot_ids"][0]
+    shot = await db_session.get(Shot, shot_id)
+    old_reference_hash = shot.extra_data["entity_refs"]["characters"][0]["shot_input_sha256"]
+    shot.dialogue = f"{shot.dialogue} 审核后刷新镜头实体引用"
+    metadata = dict(run.run_metadata or {})
+    previous_lock = dict(metadata.pop("story_locks"))
+    metadata["superseded_story_locks"] = [previous_lock]
+    run.run_metadata = metadata
+    await db_session.commit()
+
+    second = await prepare_story_locks(db_session, run)
+    await db_session.refresh(shot)
+
+    assert second["version"] == first["version"] + 1
+    assert shot.extra_data["entity_refs"]["characters"][0]["shot_input_sha256"] != old_reference_hash
+
+
+@pytest.mark.asyncio
+async def test_story_lock_refresh_blocks_when_rejected_entity_is_only_shot_reference(
+    db_session: AsyncSession,
+) -> None:
+    run = await _fixture(db_session)
+    first = await prepare_story_locks(db_session, run)
+    shot_id = (run.run_metadata or {})["selected_anchor_shot_ids"][1]
+    shot = await db_session.get(Shot, shot_id)
+    rejected_id = shot.extra_data["entity_refs"]["events"][0]["canonical_entity_id"]
+    rejected = await db_session.get(StoryEntity, rejected_id)
+    set_entity_review_status(rejected, "rejected", changed_by=run.user_id, reason="manual_review")
+    await db_session.commit()
+
+    with pytest.raises(StoryLockPreparationBlocked):
+        await prepare_story_locks(db_session, run)
+    await db_session.refresh(run)
+
+    assert run.run_metadata["story_locks"]["version"] == first["version"]
 
 @pytest.mark.asyncio
 async def test_prepare_story_locks_has_no_future_leakage_in_chapter_snapshots(db_session: AsyncSession) -> None:
@@ -1336,8 +1527,9 @@ async def test_live_preflight_plan_uses_trusted_cost_and_dialogue_contracts(db_s
     plan = await build_live_preflight_plan(db_session, run)
 
     assert plan["budget"]["maximum_rmb"] == "10.00"
-    assert plan["budget"]["projected_total_rmb"] == "8.00"
+    assert plan["budget"]["projected_total_rmb"] == "10.00"
     assert [item["capability"] for item in plan["cost_breakdown"]] == ["image", "video", "tts"]
+    assert plan["cost_breakdown"][0]["quantity"] == 3
     assert plan["cost_breakdown"][1]["quantity"] == 2
     assert plan["cost_breakdown"][2]["quantity"] == 2
     assert len(plan["anchor_dialogue_contracts"]) == 2
@@ -1348,19 +1540,49 @@ async def test_live_preflight_plan_uses_trusted_cost_and_dialogue_contracts(db_s
 @pytest.mark.asyncio
 async def test_native_audio_preflight_reuses_locked_reference_and_skips_tts_cost(db_session: AsyncSession) -> None:
     run = await _fixture(db_session)
+    bindings = await _fresh_bindings(db_session, run)
     run.run_metadata = {
         **(run.run_metadata or {}),
         "reference_preparation": {"asset_id": "locked-reference", "asset_version": 1},
+    }
+    for capability in ("text", "image", "tts"):
+        config = await db_session.get(LLMConfig, bindings[capability])
+        config.tested_at = utc_now() - timedelta(hours=2)
+    await db_session.commit()
+
+    plan = await build_live_preflight_plan(db_session, run, native_audio=True)
+
+    assert [item["capability"] for item in plan["cost_breakdown"]] == ["image", "video"]
+    assert plan["cost_breakdown"][0]["quantity"] == 2
+    assert plan["budget"]["projected_increment_rmb"] == "8.00"
+    assert all(item["requires_tts"] is False for item in plan["anchor_dialogue_contracts"])
+    assert all(item["audio_route"] == "video_native_audio" for item in plan["anchor_dialogue_contracts"])
+    assert "voice_binding_missing" not in plan["blocker_codes"]
+    assert "shot_first_frame_missing" in plan["blocker_codes"]
+    assert "model_bindings_not_fresh" in plan["blocker_codes"]
+
+
+@pytest.mark.asyncio
+async def test_representative_preflight_accepts_three_cross_episode_native_audio_anchors(
+    db_session: AsyncSession,
+) -> None:
+    run = await _fixture(db_session)
+    shots, _ = await _run_shots(db_session, run)
+    selected = [item["shot_id"] for item in recommend_anchor_shots(shots, mode="representative")]
+    request = AnchorSelectionRequest(shot_ids=selected, mode="representative")
+    run.run_metadata = {
+        **(run.run_metadata or {}),
+        "selected_anchor_shot_ids": request.shot_ids,
+        "selected_anchor_mode": request.mode,
     }
     await db_session.commit()
 
     plan = await build_live_preflight_plan(db_session, run, native_audio=True)
 
-    assert [item["capability"] for item in plan["cost_breakdown"]] == ["video"]
-    assert plan["budget"]["projected_increment_rmb"] == "6.00"
-    assert all(item["requires_tts"] is False for item in plan["anchor_dialogue_contracts"])
-    assert all(item["audio_route"] == "video_native_audio" for item in plan["anchor_dialogue_contracts"])
-    assert "voice_binding_missing" not in plan["blocker_codes"]
+    assert len(plan["anchor_dialogue_contracts"]) == 3
+    assert {item["episode_number"] for item in plan["anchor_dialogue_contracts"]} == {1, 3, 4}
+    assert plan["cost_breakdown"][1]["quantity"] == 3
+    assert "anchor_coverage_insufficient" not in plan["blocker_codes"]
 
 
 @pytest.mark.asyncio
@@ -1404,6 +1626,25 @@ async def test_live_preflight_plan_never_uses_a_ceiling_above_wave_one_rmb_ten(d
     assert plan["budget"]["maximum_rmb"] == "10.00"
     assert "projected_budget_exceeded" in plan["blocker_codes"]
     assert "wave_one_budget_policy_invalid" in plan["blocker_codes"]
+
+
+@pytest.mark.asyncio
+async def test_live_preflight_plan_accepts_one_audited_repair_yuan_above_wave_one(
+    db_session: AsyncSession,
+) -> None:
+    run = await _fixture(db_session)
+    run.cost_summary = {"spent_rmb": "7.00", "reserved_rmb": "0.00", "reservations": {}}
+    await db_session.commit()
+    await grant_live_canary_repair_extension(
+        db_session, run, amount=Decimal("1.00"), reason="hair_color_consistency_repair",
+        artifact_ids=["stale-reference", "wrong-first-frame"],
+    )
+
+    plan = await build_live_preflight_plan(db_session, run)
+
+    assert plan["budget"]["maximum_rmb"] == "11.00"
+    assert "wave_one_budget_policy_invalid" not in plan["blocker_codes"]
+
 
 @pytest.mark.asyncio
 async def test_live_preflight_routes_enforce_run_ownership(db_session: AsyncSession) -> None:
@@ -1847,12 +2088,45 @@ async def test_prepare_reference_prompt_uses_exact_shared_layout_geometry(db_ses
     assert "三个等宽面板" in adapter.last_prompt
     assert "右侧严格占画布 40%" in adapter.last_prompt
 
+
+@pytest.mark.asyncio
+async def test_prepare_reference_preserves_native_audio_budget_route(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.series_run_reference_preparation as preparation
+
+    run = await _fixture(db_session)
+    bindings = await _fresh_live_bindings(db_session, run)
+    await prepare_story_locks(db_session, run, native_audio=True)
+    observed: list[bool] = []
+    original = preparation.build_live_preflight_plan
+
+    async def capture_native_audio(db, owned_run, *, native_audio=False):
+        observed.append(native_audio)
+        return await original(db, owned_run, native_audio=native_audio)
+
+    monkeypatch.setattr(preparation, "build_live_preflight_plan", capture_native_audio)
+    with pytest.raises(ReferencePreparationBlocked):
+        await prepare_series_reference(
+            db_session,
+            run,
+            adapter=_ReferenceAdapter({"status": "rejected"}),
+            binding_ids=bindings,
+            native_audio=True,
+        )
+
+    assert observed == [True]
+
 @pytest.mark.asyncio
 async def test_prepare_reference_precommits_budget_then_locks_one_composite_asset_idempotently(
     db_session: AsyncSession, reference_http_server: str,
 ) -> None:
     run = await _fixture(db_session)
     bindings = await _fresh_live_bindings(db_session, run)
+    for capability in ("text", "tts"):
+        config = await db_session.get(LLMConfig, bindings[capability])
+        config.tested_at = utc_now() - timedelta(hours=2)
+    await db_session.commit()
     tested_at_before = {capability: (await db_session.get(LLMConfig, config_id)).tested_at for capability, config_id in bindings.items()}
     await prepare_story_locks(db_session, run)
     adapter = _ReferenceAdapter({
@@ -1957,6 +2231,40 @@ async def test_media_retry_refreshes_expired_qiniu_reference_without_image_gener
     assert second["asset_id"] == first["asset_id"]
     assert asset.url.startswith("https://cdn.example.com/reference.png")
     assert binding.public_url_expires_at == datetime(2100, 1, 1)
+
+
+@pytest.mark.asyncio
+async def test_media_retry_rebuilds_reference_after_prior_artifact_was_superseded(
+    db_session: AsyncSession, reference_http_server: str,
+) -> None:
+    run = await _fixture(db_session)
+    bindings = await _fresh_live_bindings(db_session, run)
+    await prepare_story_locks(db_session, run)
+    first = await prepare_series_reference(db_session, run, adapter=_ReferenceAdapter({
+        "status": "completed", "public_url": f"{reference_http_server}/valid.png",
+        "provider_task_id": "old-reference", "actual_cost_rmb": "0.80",
+        "visual_evidence": _visual_evidence(),
+    }), binding_ids=bindings)
+    old_asset = await db_session.get(Asset, first["asset_id"])
+    old_asset.is_active = False
+    old_asset.generation_params = {**(old_asset.generation_params or {}), "status": "superseded"}
+    run.run_metadata = {key: value for key, value in (run.run_metadata or {}).items()
+                        if key != "reference_preparation"}
+    run.status = "media_running"
+    await db_session.commit()
+
+    adapter = _ReferenceAdapter({
+        "status": "completed", "public_url": f"{reference_http_server}/valid.png",
+        "provider_task_id": "replacement-reference", "actual_cost_rmb": "0.80",
+        "visual_evidence": _visual_evidence(),
+    })
+    replacement = await prepare_series_reference(
+        db_session, run, adapter=adapter, binding_ids=bindings,
+    )
+
+    assert adapter.calls == 1
+    assert replacement["asset_id"] != first["asset_id"]
+
 
 @pytest.mark.asyncio
 async def test_prepare_reference_over_budget_fails_before_operation_or_adapter(db_session: AsyncSession) -> None:
@@ -2119,6 +2427,95 @@ async def test_prepare_reference_rejects_non_image_corrupt_or_too_small_http_art
 
     assert await db_session.scalar(select(Asset.id).where(Asset.novel_id == run.novel_id)) is None
     assert await db_session.scalar(select(ProviderAssetBinding.id)) is None
+
+
+@pytest.mark.asyncio
+async def test_reference_verification_bypasses_broken_environment_proxy(
+    reference_http_server: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:1")
+    monkeypatch.setenv("NO_PROXY", "")
+
+    evidence = await _fetch_and_verify_image(f"{reference_http_server}/valid.png")
+
+    assert evidence["width"] == 1536
+    assert evidence["height"] == 1024
+
+
+@pytest.mark.asyncio
+async def test_reference_recovery_reuses_held_operation_without_resubmission(
+    db_session: AsyncSession, reference_http_server: str,
+) -> None:
+    run = await _fixture(db_session)
+    bindings = await _fresh_live_bindings(db_session, run)
+    await prepare_story_locks(db_session, run, native_audio=True)
+    broken = _ReferenceAdapter({
+        "status": "completed", "public_url": f"{reference_http_server}/bad.png",
+        "provider_task_id": None,
+    })
+    with pytest.raises(ReferencePreparationBlocked):
+        await prepare_series_reference(
+            db_session, run, adapter=broken, binding_ids=bindings, native_audio=True,
+        )
+    operation = await db_session.scalar(select(LiveCanaryProviderOperation))
+    assert operation.status == "unknown_manual_reconcile"
+    assert operation.recovery_reason == "reference_artifact_unverified"
+
+    recovered = await prepare_series_reference(
+        db_session,
+        run,
+        adapter=_ReferenceAdapter({
+            "status": "completed", "public_url": f"{reference_http_server}/valid.png",
+            "provider_task_id": f"sync-recovered:{operation.id}",
+            "actual_cost_rmb": None,
+        }),
+        binding_ids=bindings,
+        native_audio=True,
+        recovery_operation_id=operation.id,
+    )
+
+    assert recovered["status"] == "locked"
+    assert await db_session.scalar(select(func.count()).select_from(LiveCanaryProviderOperation)) == 1
+    await db_session.refresh(run)
+    assert run.cost_summary["spent_rmb"] == "1.00"
+    assert run.cost_summary["reserved_rmb"] == "0.00"
+    assert run.budget_policy.get("blocked") is not True
+
+
+@pytest.mark.asyncio
+async def test_persisted_reference_adapter_republishes_exact_operation_artifact(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.services.series_reference_artifact_recovery as recovery
+
+    folder = tmp_path / "generated" / "series-references"
+    folder.mkdir(parents=True)
+    image_path = folder / "reference-operation-1-stable.jpg"
+    Image.new("RGB", (1536, 1024), "white").save(image_path, "JPEG")
+    observed: list[str] = []
+
+    async def publish(db, user_id, local_url, *, media_type):
+        observed.append(local_url)
+        return {
+            "provider_url": "https://qiniu.example/reference.jpg?e=4102444800&token=redacted",
+            "delivery_method": "qiniu_object_upload",
+            "storage_config_id": "storage-1",
+            "object_key": "generated/series-references/reference-operation-1-stable.jpg",
+        }
+
+    monkeypatch.setattr(recovery, "STATIC_ROOT", tmp_path)
+    monkeypatch.setattr(recovery, "resolve_provider_media_url", publish)
+    result = await PersistedReferenceArtifactAdapter().generate(
+        db=db_session if False else object(),
+        run=type("Run", (), {"user_id": "user-1"})(),
+        prompt="unused", image_config_id="image-1",
+        operation=type("Operation", (), {"id": "operation-1"})(),
+    )
+
+    assert observed == ["/static/generated/series-references/reference-operation-1-stable.jpg"]
+    assert result["status"] == "completed"
+    assert result["provider_task_id"] == "sync-recovered:operation-1"
 
 @pytest.mark.asyncio
 async def test_prepare_reference_rejects_unfetchable_deterministic_invalid_and_metadata_only(

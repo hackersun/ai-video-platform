@@ -19,14 +19,14 @@ EVENT_RE = re.compile(r"(?:事件|剧情|发生)[:：]\s*([^\n。；;]+)")
 EXPLICIT_CHARACTER_RE = re.compile(
     r"(?:角色|人物|主角|配角)[:：]\s*([^\n，。；;]+)|"
     r"([\u4e00-\u9fff]{2,4})[：:][“\"']|"
-    r"(?<![\u4e00-\u9fff])([\u4e00-\u9fff]{2,4}?)(?:坚定地|微笑|小声|低声)?(?:回答|说|问|喊|叫道|说道|低声道|名字叫|名为)"
+    r"(?<![\u4e00-\u9fff])([\u4e00-\u9fff]{2,4}?)(?:坚定地|微笑|小声|低声)?(?:质问|回答|说|问|喊|叫道|说道|低声道|名字叫|名为)"
 )
 DESCRIPTOR_CHARACTER_RE = re.compile(
     r"(?:星灯猫|女孩|少年|少女|男子|女子)([\u4e00-\u9fff]{2,4}?)(?=(?:蹲|站|走|说|问|低声|小声|，|。|、|在|从|和|一起|$))"
 )
 PERSON_ACTION_RE = re.compile(
     r"(?<![\u4e00-\u9fff])([\u4e00-\u9fff]{2,4}?)"
-    r"(?:低声道|说道|叫道|守在|站在|打在|停在|指向|说|问|喊|在|从|向|把|将|醒来|发现|看见|拿起|抬手|转身)"
+    r"(?:仍保持|仍是|低声道|说道|叫道|质问|面对|守在|站在|打在|停在|指向|说|问|喊|在|从|向|把|将|以|醒来|发现|看见|拿起|抬手|转身)"
 )
 SCENE_SUFFIXES = (
     "外门石屋",
@@ -74,8 +74,14 @@ SCENE_SUFFIXES = (
     "列车",
     "车厢",
     "实验室",
+    "秘境",
+    "云台",
+    "剑阵",
+    "霜河",
 )
 PROP_SUFFIXES = (
+    "六棱密钥",
+    "密钥",
     "星锚罗盘",
     "罗盘",
     "蓝焰灯芯",
@@ -263,7 +269,11 @@ NON_CHARACTER_NAME_MARKERS = (
     "来的不",
 )
 CHARACTER_RECIPIENT_PREFIXES = ("对", "向", "给", "把", "将", "被", "在", "从")
-COMMON_CN_SURNAMES = set("赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤")
+COMMON_CN_SURNAMES = set("赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦许何吕施张孔曹严华金魏陶姜谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤林陆季江")
+NAMED_PERSON_ACTION_RE = re.compile(
+    rf"(?<![\u4e00-\u9fff])([{''.join(sorted(COMMON_CN_SURNAMES))}阿][\u4e00-\u9fff]{{1,2}}?)"
+    r"(?=仍保持|仍是|低声道|低声说|说道|叫道|喊道|质问|回答|面对|伸手|守在|站在|停在|指向|说|问|喊|答|在|从|向|把|将|以|醒来|发现|看见|拿起|举起|接回|跃上|抬手|转身)"
+)
 SINGLE_CHAR_PROP_SUFFIXES = ("剑", "刀", "枪", "符", "丹", "药", "书", "灯", "铃", "镜", "甲", "衣", "钩")
 NON_PROP_WORDS = {
     "开场钩",
@@ -375,6 +385,8 @@ def _is_production_copy_prop_name(name: str) -> bool:
         return True
     if re.match(r"^[\u4e00-\u9fff]{2,4}(?:在|从|向|把|将)[\u4e00-\u9fff]{2,}", text):
         return True
+    if text.startswith(("是", "仍是")):
+        return True
     if text in NON_PROP_WORDS:
         return True
     if text.endswith("钩") and _contains_any(text, NON_PROP_HOOK_MARKERS):
@@ -407,16 +419,30 @@ def _looks_like_chinese_person_name(name: str) -> bool:
     return bool(re.fullmatch(r"[\u4e00-\u9fff]{2,4}", name))
 
 
+def _is_plausible_action_character_name(name: str) -> bool:
+    text = name.strip()
+    return bool(
+        re.fullmatch(r"[\u4e00-\u9fff]{2,3}", text)
+        and (text[0] in COMMON_CN_SURNAMES or text.startswith("阿") or text.endswith("使"))
+    )
+
+
 def _normalize_name_for_type(entity_type: str, name: str) -> str:
     cleaned = _clean_name(name)
     if entity_type == "character":
         cleaned = re.sub(r"^(?:巡港员|港员|修表师|少年|少女|男子|女子)", "", cleaned)
-        cleaned = re.sub(r"(?:坚定地|微笑|小声|低声说|低声道|说道|叫道|回答|低声|说|问|喊|蹲在|站在|站|扶|看|走|冲|握紧|握|拿|抬|转|戴着|戴|指|蜷)$", "", cleaned)
+        cleaned = re.sub(r"(?:坚定地|微笑|小声|低声说|低声道|说道|叫道|喊道|回答|低声|伸手|说|问|喊|答|蹲在|站在|站|扶|看|走|冲|握紧|握|拿|抬|转|戴着|戴|指|蜷)$", "", cleaned)
     if entity_type == "prop":
+        if cleaned.startswith(("她没有", "他没有", "仍能", "此")) or "嵌入封印并" in cleaned:
+            return ""
+        for marker in ("映出", "成为"):
+            if marker in cleaned:
+                subject = cleaned.split(marker, 1)[0]
+                return subject if _endswith_any(subject, PROP_SUFFIXES) else ""
         if "通往" in cleaned:
             target = cleaned.rsplit("通往", 1)[-1]
             return target if len(target) > 1 else ""
-        cleaned = re.sub(r"^.*(?:别碰|触碰|拿起|拿着|握着|握紧|握住|取出|举起|发现|认出|佩戴|佩着|戴着|背负|背着|手持|携带|悬挂|挂着|拔出|听见|照出|夺走|举着|摇响|圈住|装进|插进|嵌进|选择让|找第一段|守住|吹灭|合上|刻着|把|将)", "", cleaned)
+        cleaned = re.sub(r"^.*(?:别碰|触碰|拿起|拿着|握着|握紧|握住|取出|举起|发现|认出|佩戴|佩着|腰佩|戴着|背负|背着|手持|携带|携|悬挂|挂着|拔出|听见|照出|夺走|举着|摇响|圈住|装进|插进|嵌进|转动|选择让|找第一段|守住|吹灭|合上|刻着|查清|把|将|以)", "", cleaned)
         cleaned = re.sub(r"^.*(?:推向|指向|注意到|注意力推向)", "", cleaned)
         cleaned = re.sub(r"^(?:着|了|紧|远处|整排)?(?:同一枚|一枚|这枚|那枚|他们用|他用|她用|你|如果|不要让|通往|登上|沿|同样的)?", "", cleaned)
         cleaned = re.sub(r"^整排(?=路灯)", "", cleaned)
@@ -434,11 +460,15 @@ def _normalize_name_for_type(entity_type: str, name: str) -> str:
         if re.search(r"[与和]", cleaned) and _endswith_any(cleaned, PROP_SUFFIXES):
             cleaned = re.split(r"[与和]", cleaned)[-1]
     if entity_type == "scene":
+        if "成为" in cleaned:
+            return ""
         cleaned = re.sub(r"^(?:在|到|至|抵达|进入|离开|前往|来到|走进)", "", cleaned)
         cleaned = re.sub(r"^.*(?:交代|展示|呈现)", "", cleaned)
         for marker in ("站在", "守在", "看向", "走向", "冲向"):
             if marker in cleaned and _endswith_any(cleaned, SCENE_SUFFIXES):
                 cleaned = cleaned.rsplit(marker, 1)[-1]
+        if "在" in cleaned and _endswith_any(cleaned, SCENE_SUFFIXES):
+            cleaned = cleaned.rsplit("在", 1)[-1]
         cleaned = re.sub(r"^(?:空荡)(?=车厢)", "", cleaned)
         for marker in ("穿过", "通往"):
             if marker in cleaned and _endswith_any(cleaned, SCENE_SUFFIXES):
@@ -513,6 +543,14 @@ def _infer_prop_material(name: str, context: str) -> str:
     return "依据原文设定的固定材质"
 
 
+def _infer_character_costume(name: str, context: str) -> str | None:
+    match = re.search(
+        rf"{re.escape(name)}(?:一直|仍然|依旧)?(?:穿着|身穿)([^，。；;\n]{{2,20}}?)(?=抵达|来到|走|站|转身|说|喊|，|。|；|$)",
+        context,
+    )
+    return match.group(1).strip() if match else None
+
+
 def _ensure_production_attributes(
     entity_type: str,
     name: str,
@@ -529,7 +567,7 @@ def _ensure_production_attributes(
         visual_dna = dict(normalized_attrs.get("visual_dna") or {})
         visual_dna.setdefault("identity_anchor", name)
         visual_dna.setdefault("silhouette", f"{name} 的稳定头身比例和脸型")
-        visual_dna.setdefault("costume", "依据原文固定服装与标志配饰")
+        visual_dna.setdefault("costume", _infer_character_costume(name, context) or "依据原文固定服装与标志配饰")
         visual_dna.setdefault("palette", "依据作品统一色彩")
         normalized_attrs["visual_dna"] = visual_dna
         requirements = dict(normalized_attrs.get("reference_requirements") or {})
@@ -628,11 +666,11 @@ def _append_normalized_entity(
         existing_name = existing["name"]
         if entity["entity_type"] == "character":
             if existing_name in entity["name"]:
-                return
-            if entity["name"] in existing_name:
                 seen.discard((existing["entity_type"], existing_name))
                 normalized[index] = entity
                 seen.add(key)
+                return
+            if entity["name"] in existing_name:
                 return
         if existing_name in entity["name"] and len(entity["name"]) > len(existing_name):
             existing_desc = str(existing.get("description") or "")
@@ -828,6 +866,13 @@ def extract_story_entities(
             _add_entity(entities, seen, entity_type, match.group(1), description, match.group(0))
 
     if "character" in requested:
+        from app.services.dialogue_lineage_service import extract_explicit_dialogue
+
+        for line in extract_explicit_dialogue(source_text):
+            _add_entity(
+                entities, seen, "character", str(line["speaker"]),
+                "规则识别人物", source_text[line["source_span"][0]:line["source_span"][1]],
+            )
         for match in DESCRIPTOR_CHARACTER_RE.finditer(source_text):
             name = _clean_name(match.group(1))
             if not name or _is_group_or_non_character_name(name):
@@ -838,33 +883,50 @@ def extract_story_entities(
             name = next((group for group in match.groups() if group), None)
             if not name:
                 continue
+            if match.group(2) and str(name).endswith(
+                ("低声说", "低声道", "说道", "叫道", "喊道", "回答", "质问", "说", "问", "喊", "答")
+            ):
+                continue
             name = _clean_name(name)
+            if match.group(3) and not _is_plausible_action_character_name(_normalize_name_for_type("character", name)):
+                continue
             if name.startswith(("第一", "第二", "第三", "第四", "第五", "第六", "第七", "第八", "第九", "第十")):
                 continue
             if name in NON_CHARACTER_WORDS:
                 continue
             window = source_text[max(0, match.start() - 16): match.end() + 24]
             _add_entity(entities, seen, "character", name, "规则识别人物", window)
+        for match in NAMED_PERSON_ACTION_RE.finditer(source_text):
+            name = _normalize_name_for_type("character", match.group(1))
+            if not _is_plausible_action_character_name(name):
+                continue
+            window = source_text[max(0, match.start() - 16): match.end() + 24]
+            _add_entity(entities, seen, "character", name, "规则识别人物动作", window)
         for match in PERSON_ACTION_RE.finditer(source_text):
-            name = _clean_name(match.group(1))
+            name = _normalize_name_for_type("character", match.group(1))
             if (
                 not name
                 or name.startswith(("第一", "第二", "第三", "第四", "第五", "第六", "第七", "第八", "第九", "第十"))
                 or _is_group_or_non_character_name(name)
                 or (len(name) > 2 and _contains_any(name, PROP_SUFFIXES))
                 or _endswith_any(name, SCENE_SUFFIXES)
+                or not _is_plausible_action_character_name(name)
             ):
                 continue
             window = source_text[max(0, match.start() - 16): match.end() + 24]
             _add_entity(entities, seen, "character", name, "规则识别人物动作", window)
-        for match in re.finditer(r"([\u4e00-\u9fff]{2,4})(?:是|戴着|仍穿|回答|说)", source_text):
-            name = _clean_name(match.group(1))
+        for match in re.finditer(
+            r"([\u4e00-\u9fff]{2,4}?)(?:仍保持|仍是|是|戴着|仍穿|回答|说)",
+            source_text,
+        ):
+            name = _normalize_name_for_type("character", match.group(1))
             if (
                 not name
                 or name.startswith(("第一", "第二", "第三", "第四", "第五", "第六", "第七", "第八", "第九", "第十"))
                 or _is_group_or_non_character_name(name)
                 or _endswith_any(name, SCENE_SUFFIXES)
                 or _endswith_any(name, PROP_SUFFIXES)
+                or not _is_plausible_action_character_name(name)
             ):
                 continue
             window = source_text[max(0, match.start() - 16): match.end() + 24]
@@ -875,7 +937,7 @@ def extract_story_entities(
             if term in source_text:
                 _add_entity(entities, seen, "scene", term, "规则识别地点", term)
         for marker in SCENE_SUFFIXES:
-            pattern = re.compile(rf"(?:在|到|至|抵达|进入|离开|前往|来到|走进|去|穿过|登上)([\u4e00-\u9fff]{{0,8}}{marker})")
+            pattern = re.compile(rf"(?:在|到|至|抵达|进入|离开|前往|来到|走进|去|穿过|登上)([\u4e00-\u9fff]{{0,12}}{marker})")
             for match in pattern.finditer(source_text):
                 _add_entity(entities, seen, "scene", match.group(1), "规则识别地点", match.group(0))
             locative_pattern = re.compile(rf"([\u4e00-\u9fff]{{0,8}}{marker})(?:里|中|外|上|下|前|后|边|尽头|中央|在|的|像|从|滑出)")
@@ -887,16 +949,18 @@ def extract_story_entities(
             if term in source_text:
                 _add_entity(entities, seen, "prop", term, "规则识别道具", term)
         for marker in PROP_SUFFIXES:
-            pattern = re.compile(rf"[\u4e00-\u9fff]{{0,6}}{marker}")
+            guard = {"剑": r"(?!修|阵|意|气|光|术|道|诀|宗)", "衣": r"(?!物)", "灯": r"(?!火)"}.get(marker, "")
+            pattern = re.compile(rf"[\u4e00-\u9fff]{{0,6}}{marker}{guard}")
             for match in pattern.finditer(source_text):
                 _add_entity(entities, seen, "prop", match.group(0), "规则识别道具", match.group(0))
 
     if "event" in requested:
-        sentences = re.split(r"[。！？!?\n]\s*", source_text)
+        event_source = re.sub(r"“[^”]*”|\"[^\"]*\"|'[^']*'", "", source_text)
+        sentences = re.split(r"[。！？!?\n]\s*", event_source)
         for sentence in sentences:
-            sentence = _clean_name(re.sub(r"^(?:事件|剧情|发生)[:：]\s*", "", sentence))
-            if any(marker in sentence for marker in ("发现", "遭遇", "决定", "战斗", "逃离", "抵达", "失踪", "爆发", "响", "打开", "求救", "关门", "闪过", "传来")):
-                _add_entity(entities, seen, "event", sentence[:40], "规则识别事件", sentence)
+            candidate = _clean_name(re.sub(r"^(?:事件|剧情|发生)[:：]\s*", "", sentence))
+            if any(marker in candidate for marker in ("发现", "遭遇", "决定", "战斗", "逃离", "抵达", "失踪", "爆发", "响", "打开", "求救", "关门", "闪过", "传来")):
+                _add_entity(entities, seen, "event", candidate[:40], "规则识别事件", candidate)
 
     for entity in entities:
         entity["source_chapter_id"] = source_chapter_id
@@ -905,6 +969,17 @@ def extract_story_entities(
         raw_evidence = re.sub(r"^(?:角色|人物|主角|配角|场景|地点|场地|道具|物品|装备|事件|剧情|发生)[:：]\s*", "", raw_evidence)
         entity["evidence_span"] = raw_evidence.strip(" ：:，。；;、“”\"'\t\n")
     normalized = normalize_extracted_entities(entities, requested)
+    for entity in normalized:
+        if entity.get("entity_type") != "character":
+            continue
+        costume = _infer_character_costume(str(entity.get("name") or ""), source_text)
+        if not costume:
+            continue
+        attributes = dict(entity.get("attributes") or {})
+        visual_dna = dict(attributes.get("visual_dna") or {})
+        visual_dna["costume"] = costume
+        attributes["visual_dna"] = visual_dna
+        entity["attributes"] = attributes
     if source_chapter_id and source_chapter_index:
         attach_chapter_evidence_contracts(normalized, content=source_text, chapter_id=source_chapter_id)
     if source_chapter_id and source_chapter_index:

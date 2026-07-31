@@ -16,6 +16,12 @@ DIMENSIONS = (
     "delivery_integrity",
 )
 
+ANCHOR_MODE_CONTRACTS = {
+    "smoke": {"target_count": 2, "required_episodes": 2},
+    "representative": {"target_count": 3, "required_episodes": 3},
+    "full": {"target_count": 6, "required_episodes": 4},
+}
+
 
 @dataclass(frozen=True)
 class AnchorShotInput:
@@ -118,8 +124,8 @@ def _score(shot: Any, recurring_characters: set[str]) -> tuple[int, int, int, st
 
 
 def recommend_anchor_shots(shots: Iterable[Any], *, mode: str = "smoke") -> list[dict[str, Any]]:
-    if mode not in {"smoke", "full"}:
-        raise ValueError("anchor mode must be smoke or full")
+    if mode not in ANCHOR_MODE_CONTRACTS:
+        raise ValueError("anchor mode must be smoke, representative or full")
     shot_list = list(shots)
     character_counts: dict[str, int] = defaultdict(int)
     for shot in shot_list:
@@ -132,16 +138,17 @@ def recommend_anchor_shots(shots: Iterable[Any], *, mode: str = "smoke") -> list
         if episode > 0:
             grouped[episode].append(shot)
     ordered_episodes = sorted(grouped)
-    target = 2 if mode == "smoke" else 6
+    target = ANCHOR_MODE_CONTRACTS[mode]["target_count"]
     selected: list[Any] = []
-    primary_episodes = (
-        [ordered_episodes[0], ordered_episodes[-1]]
-        if mode == "smoke" and len(ordered_episodes) > 1
-        else ordered_episodes
-    )
+    if mode == "smoke" and len(ordered_episodes) > 1:
+        primary_episodes = [ordered_episodes[0], ordered_episodes[-1]]
+    elif mode == "representative" and len(ordered_episodes) > 2:
+        primary_episodes = [ordered_episodes[0], ordered_episodes[len(ordered_episodes) // 2], ordered_episodes[-1]]
+    else:
+        primary_episodes = ordered_episodes
     for episode in primary_episodes:
         selected.append(sorted(grouped[episode], key=lambda shot: _score(shot, recurring_characters))[0])
-        if mode == "smoke" and len(selected) == target:
+        if mode in {"smoke", "representative"} and len(selected) == target:
             break
     remaining = [shot for episode in ordered_episodes for shot in grouped[episode] if shot not in selected]
     selected.extend(sorted(remaining, key=lambda shot: _score(shot, recurring_characters))[: max(0, target - len(selected))])
@@ -168,11 +175,13 @@ def validate_anchor_selection(selected_ids: Iterable[str], allowed_ids: set[str]
 
 
 def anchor_coverage_blocker(recommendations: list[dict[str, Any]], *, mode: str) -> dict[str, Any] | None:
-    required_count = 2 if mode == "smoke" else 6
-    required_episodes = 2 if mode == "smoke" else 4
+    if mode not in ANCHOR_MODE_CONTRACTS:
+        raise ValueError("anchor mode must be smoke, representative or full")
+    required_count = ANCHOR_MODE_CONTRACTS[mode]["target_count"]
+    required_episodes = ANCHOR_MODE_CONTRACTS[mode]["required_episodes"]
     covered_episodes = {item["episode_number"] for item in recommendations}
     covered_dimensions = set().union(*(set(item["dimensions"]) for item in recommendations)) if recommendations else set()
-    dimensions_missing = [] if mode == "smoke" else [item for item in DIMENSIONS if item not in covered_dimensions]
+    dimensions_missing = [item for item in DIMENSIONS if item not in covered_dimensions] if mode == "full" else []
     if len(recommendations) >= required_count and len(covered_episodes) >= required_episodes and not dimensions_missing:
         return None
     return {
@@ -185,4 +194,4 @@ def anchor_coverage_blocker(recommendations: list[dict[str, Any]], *, mode: str)
     }
 
 
-__all__ = ["AnchorShotInput", "DIMENSIONS", "anchor_shot_input", "recommend_anchor_shots", "validate_anchor_selection", "anchor_coverage_blocker"]
+__all__ = ["ANCHOR_MODE_CONTRACTS", "AnchorShotInput", "DIMENSIONS", "anchor_shot_input", "recommend_anchor_shots", "validate_anchor_selection", "anchor_coverage_blocker"]

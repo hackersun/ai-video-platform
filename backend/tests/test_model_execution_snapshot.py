@@ -85,6 +85,17 @@ def test_execution_snapshot_rejects_secrets_and_prompt_content() -> None:
         sanitize_snapshot_params({"prompt": "private full prompt"})
 
 
+@pytest.mark.parametrize("image_size", ["1k", "2k", "3k", "2k_w", "2K", "1024x1024"])
+def test_execution_snapshot_accepts_supported_image_generation_sizes(image_size: str) -> None:
+    assert sanitize_snapshot_params({"image_size": image_size}) == {"image_size": image_size}
+
+
+@pytest.mark.parametrize("image_size", ["2k;secret", "../../key", "2k wide"])
+def test_execution_snapshot_rejects_unsafe_image_generation_sizes(image_size: str) -> None:
+    with pytest.raises(UnsafeSnapshotError, match="image_size"):
+        sanitize_snapshot_params({"image_size": image_size})
+
+
 @pytest.mark.asyncio
 async def test_driver_evidence_never_keeps_raw_provider_exception_text() -> None:
     from app.features.model_drivers.domain import DriverExecutionError

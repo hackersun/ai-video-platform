@@ -79,10 +79,14 @@ def _invalidate_contracts(workflows: list[object], reason: str, now: str) -> boo
     return changed
 
 
-def _invalidate_run_metadata(run: SeriesProductionRun, reason: str, now: str) -> None:
+def _invalidate_run_metadata(
+    run: SeriesProductionRun, reason: str, now: str, *, preserve_reference: bool = False,
+) -> None:
     metadata = dict(run.run_metadata or {})
-    for current_key, history_key in (("story_locks", "superseded_story_locks"),
-                                     ("reference_preparation", "superseded_references")):
+    lineage_keys = [("story_locks", "superseded_story_locks")]
+    if not preserve_reference:
+        lineage_keys.append(("reference_preparation", "superseded_references"))
+    for current_key, history_key in lineage_keys:
         current = metadata.pop(current_key, None)
         if current:
             metadata.setdefault(history_key, []).append({**current, "reason": reason, "superseded_at": now})
@@ -106,7 +110,8 @@ def _invalidate_run_metadata(run: SeriesProductionRun, reason: str, now: str) ->
 
 
 async def invalidate_lineage(
-    repository: StoryLockLineageRepository, run: SeriesProductionRun, *, reason: str, commit: bool = True,
+    repository: StoryLockLineageRepository, run: SeriesProductionRun, *, reason: str,
+    commit: bool = True, preserve_reference: bool = False,
 ) -> None:
     now = utc_now().isoformat()
     metadata = dict(run.run_metadata or {})
@@ -115,9 +120,10 @@ async def invalidate_lineage(
     asset, bindings = await repository.reference_asset(run)
     workflows, shots = await repository.workflows_and_shots(run)
     _invalidate_bible(bible, lock, reason, now)
-    _invalidate_reference(asset, bindings, reference, reason, now)
+    if not preserve_reference:
+        _invalidate_reference(asset, bindings, reference, reason, now)
     _invalidate_shots(shots, reason, now)
     _invalidate_contracts(workflows, reason, now)
-    _invalidate_run_metadata(run, reason, now)
+    _invalidate_run_metadata(run, reason, now, preserve_reference=preserve_reference)
     if commit:
         await repository.commit()

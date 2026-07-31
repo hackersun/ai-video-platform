@@ -262,7 +262,7 @@ async def persist_remote_media_url(
     if media_type not in ALLOWED_CONTENT_TYPES:
         raise ValueError(f"不支持的媒体类型: {media_type}")
 
-    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True, trust_env=False) as client:
         response = await client.get(url, headers={"Accept": f"{media_type}/*"})
         response.raise_for_status()
         content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()

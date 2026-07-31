@@ -119,7 +119,7 @@ def _prepare_image_prompt_for_provider(provider_name: str, prompt: str) -> str:
 async def _create_image_execution_snapshot(
     generation_context: Any, *, db: Any, user_id: str | None, run_id: str | None,
     job_id: str | None, aspect_ratio: str, image_count: int, image_size: str,
-    prompt_compacted: bool,
+    prompt_compacted: bool, reference_image_count: int,
 ) -> str | None:
     if db is None or not user_id or getattr(generation_context, "binding", None) is None:
         return None
@@ -134,6 +134,7 @@ async def _create_image_execution_snapshot(
             prompt_profile_version_id=getattr(generation_context, "prompt_profile_version_id", None),
             sanitized_params={
                 "aspect_ratio": aspect_ratio, "image_count": image_count, "image_size": image_size,
+                "reference_image_count": reference_image_count,
                 "parameter_normalization": {"prompt_compacted": prompt_compacted},
             },
         ),
@@ -161,6 +162,7 @@ async def call_image_generation_provider(
     run_id: str | None = None,
     recipe_version_id: str | None = None,
     prompt_profile_version_id: str | None = None,
+    reference_images: list[str] | tuple[str, ...] = (),
 ) -> dict:
     """Call a configured image provider with stable endpoint semantics."""
     if generation_context is None and db is not None and user_id:
@@ -188,10 +190,15 @@ async def call_image_generation_provider(
             generation_context, db=db, user_id=user_id, run_id=run_id, job_id=job_id,
             aspect_ratio=aspect_ratio, image_count=num, image_size=size,
             prompt_compacted=prepared_prompt != prompt,
+            reference_image_count=len(reference_images),
         )
         submission = await driver_kernel.execute_generation(
             driver_kernel.build_builtin_driver_registry(),
-            driver_kernel.ImageCommand(prompt=prepared_prompt, params=params),
+            driver_kernel.ImageCommand(
+                prompt=prepared_prompt,
+                reference_images=tuple(reference_images),
+                params=params,
+            ),
             replace(driver, execution_snapshot_id=snapshot_id) if snapshot_id else driver,
         )
         output = dict(submission.output)
@@ -203,7 +210,11 @@ async def call_image_generation_provider(
     provider = (provider_name or "").lower()
     prepared_prompt = _prepare_image_prompt_for_provider(provider, prompt)
     if provider in ("volcano", "volcano_agent_plan"):
-        return await service.generate_image(prompt=prepared_prompt, model=model_id, size=size, num=num)
+        return await service.generate_image(
+            prompt=prepared_prompt, model=model_id, size=size, num=num,
+            watermark=False,
+            **({"image": list(reference_images)} if reference_images else {}),
+        )
     if provider == "minimax":
         return await service.generate_image(
             prompt=prepared_prompt,

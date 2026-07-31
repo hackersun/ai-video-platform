@@ -2,16 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { acknowledgeSeriesRunRecovery, getSeriesRunRecovery } from '../api';
 import type { RecoveryAction, RecoveryOperation, SeriesRunRecovery } from '../types/recovery';
+import type { ReferencePreparation } from '@/lib/api-client';
 
 type Inputs = {
   runId?: string;
   selectedShotCount: number;
   projectedIncrement?: string;
   retryFailedStage: () => Promise<void>;
+  onReferenceRecovered: (reference: ReferencePreparation) => void | Promise<void>;
 };
 
 export function useSeriesRunRecovery({
-  runId, selectedShotCount, projectedIncrement, retryFailedStage,
+  runId, selectedShotCount, projectedIncrement, retryFailedStage, onReferenceRecovered,
 }: Inputs) {
   const [data, setData] = useState<SeriesRunRecovery | null>(null);
   const [loading, setLoading] = useState(false);
@@ -41,7 +43,13 @@ export function useSeriesRunRecovery({
     }
     setActionBusy(action.code); setError('');
     try {
-      await acknowledgeSeriesRunRecovery(runId, action.code, operation.operation_id, data.run_version);
+      const latest = await getSeriesRunRecovery(runId);
+      const current = latest.operations.find((item) => item.operation_id === operation.operation_id);
+      if (!current?.actions.some((item) => item.code === action.code)) {
+        throw new Error('该问题已被处理或状态已变化，请按最新提示继续');
+      }
+      const result = await acknowledgeSeriesRunRecovery(runId, action.code, operation.operation_id, latest.run_version);
+      if (result.reference_preparation) await onReferenceRecovered(result.reference_preparation);
       if (action.code === 'edit_voice') document.querySelector<HTMLSelectElement>('[aria-label="配音声线"]')?.focus();
       if (action.code === 'retest_config') window.location.assign('/llm-config?capability=audio');
       if (action.code === 'retry_failed_stage') await retryFailedStage();

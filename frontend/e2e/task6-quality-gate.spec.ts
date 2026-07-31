@@ -72,24 +72,29 @@ test('shot review triggers server evaluation and repairs wrong voice and wrong p
   });
 
   await page.goto('/studio/shot-review?workflow_id=wf-quality');
-  await page.getByRole('button', { name: '评估镜头 1 六维质量' }).click();
+  await page.getByRole('button', { name: '开始检查镜头 1' }).click();
   await expect.poll(() => evaluateRequests).toContainEqual({ shot_id: 'shot-1' });
   const voiceGate = page.getByTestId('quality-gate-shot-1');
+  await expect(voiceGate).toContainText('交付检查（6 项）');
+  await expect(voiceGate).toContainText('1 项需要处理');
+  await expect(voiceGate.getByTestId('quality-dimension-shot-1-voice_lipsync')).toContainText('说话人与锁定角色不一致或无法确认');
+  await expect(voiceGate.locator('pre')).toHaveCount(0);
   await voiceGate.getByRole('button', { name: '重新生成镜头 1 配音并重跑口型' }).click();
   await expect.poll(() => repairRequests).toContainEqual({ shot_id: 'shot-1', issue_code: 'wrong_speaker' });
   expect(repairResponses[0].unchanged_artifact_ids).toEqual(['video-1', 'video-2', 'tts-2']);
   await expect(page.getByText('已完成最小返修；未改动 3 个无关任务')).toBeVisible();
-  await expect(page.getByTestId('quality-gate-shot-1')).toContainText('可交付');
-  await expect(page.getByRole('button', { name: '评估镜头 2 六维质量' })).toBeVisible();
+  await expect(page.getByTestId('quality-gate-shot-1')).toContainText('全部通过，可以进入成片复审');
+  await expect(page.getByRole('button', { name: '开始检查镜头 2' })).toBeVisible();
 
-  await page.getByRole('button', { name: '评估镜头 2 六维质量' }).click();
+  await page.getByRole('button', { name: '开始检查镜头 2' }).click();
   await expect.poll(() => evaluateRequests).toContainEqual({ shot_id: 'shot-2' });
   const propGate = page.getByTestId('quality-gate-shot-2');
+  await expect(propGate.getByTestId('quality-dimension-shot-2-scene_prop_state')).toContainText('道具归属与故事设定不一致');
   await propGate.getByRole('button', { name: '重新生成镜头 2 视频并复审画面' }).click();
   await expect.poll(() => repairRequests).toContainEqual({ shot_id: 'shot-2', issue_code: 'wrong_prop_owner' });
   expect(repairResponses[1].unchanged_artifact_ids).toEqual(['video-1', 'tts-1-repaired', 'tts-2']);
   await expect(page.getByText('已完成最小返修；未改动 3 个无关任务')).toBeVisible();
-  await expect(page.getByTestId('quality-gate-shot-2')).toContainText('可交付');
-  await expect(page.getByTestId('quality-gate-shot-1')).toContainText('可交付');
+  await expect(page.getByTestId('quality-gate-shot-2')).toContainText('全部通过，可以进入成片复审');
+  await expect(page.getByTestId('quality-gate-shot-1')).toContainText('全部通过，可以进入成片复审');
   await expect(page.getByRole('button', { name: /重试全部/ })).toHaveCount(0);
 });

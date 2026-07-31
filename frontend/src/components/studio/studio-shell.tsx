@@ -306,6 +306,8 @@ export function StudioShell() {
   const [error, setError] = useState('');
   const [snapshotRetryMessage, setSnapshotRetryMessage] = useState('');
   const snapshotRequestIdRef = useRef(0);
+  const workflowBootstrapStartedRef = useRef(false);
+  const snapshotEffectKeyRef = useRef('');
 
   const activeSnapshot = useMemo(() => {
     if (!snapshot) return null;
@@ -341,8 +343,8 @@ export function StudioShell() {
   }, [router, workflowId]);
 
   const loadSnapshot = useCallback(async (
-    targetWorkflowId = workflowId,
-    nextMode = mode,
+    targetWorkflowId: string,
+    nextMode: StudioRunMode,
     policy?: { allow_test_bypass?: boolean; bypass_reason?: string }
   ) => {
     if (!targetWorkflowId) return;
@@ -375,9 +377,11 @@ export function StudioShell() {
         setLoading(false);
       }
     }
-  }, [mode, workflowId]);
+  }, []);
 
   useEffect(() => {
+    if (workflowBootstrapStartedRef.current) return;
+    workflowBootstrapStartedRef.current = true;
     loadWorkflows();
   }, [loadWorkflows]);
 
@@ -395,7 +399,11 @@ export function StudioShell() {
   }, [searchParams, workflowId]);
 
   useEffect(() => {
-    if (workflowId) loadSnapshot(workflowId, mode);
+    if (!workflowId) return;
+    const requestKey = `${workflowId}:${mode}`;
+    if (snapshotEffectKeyRef.current === requestKey) return;
+    snapshotEffectKeyRef.current = requestKey;
+    loadSnapshot(workflowId, mode);
   }, [workflowId, mode, loadSnapshot]);
 
   useEffect(() => {
@@ -426,7 +434,6 @@ export function StudioShell() {
     setError('');
     setSnapshotRetryMessage('正在加载工作台快照…');
     setLoading(true);
-    setWorkflowId(value);
     router.replace(`/studio?workflow_id=${value}`);
   };
 

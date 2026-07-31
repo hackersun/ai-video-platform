@@ -33,6 +33,10 @@ from app.services.live_canary_budget import (
     validate_model_bindings,
 )
 from app.services.live_canary_staging_proof import PROOF_KEY, build_staging_proof
+from app.services.live_canary_bindings import (
+    validate_persisted_model_bindings,
+    validate_required_model_bindings,
+)
 
 
 @pytest_asyncio.fixture
@@ -58,6 +62,32 @@ async def _run(db: AsyncSession, *, maximum: str = "10.00") -> SeriesProductionR
     db.add_all([novel, run])
     await db.commit()
     return run
+
+
+@pytest.mark.asyncio
+async def test_persisted_run_binding_survives_elapsed_freshness_but_not_config_change(db: AsyncSession) -> None:
+    run = await _run(db)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    provider = LLMProvider(id=str(uuid4()), name=f"snapshot-{uuid4()}", is_active=True)
+    model = LLMModel(id=str(uuid4()), provider_id=provider.id, model_id="snapshot-video",
+                     model_name="snapshot", model_type="video-generation",
+                     capabilities=["video-generation"], is_active=True)
+    config = LLMConfig(id=str(uuid4()), user_id=run.user_id, model_id=model.id, name="snapshot",
+                       api_key=b"opaque", is_active=True, test_status="success", tested_at=now)
+    db.add_all([provider, model, config])
+    await db.commit()
+    await validate_required_model_bindings(
+        db, run, {"video": config.id}, required_tested_at=now - timedelta(seconds=1),
+        freshness_seconds=300, persist=True,
+    )
+
+    verified = await validate_persisted_model_bindings(db, run, required_capabilities={"video"})
+    assert verified["video"]["config_id"] == config.id
+
+    config.is_active = False
+    await db.commit()
+    with pytest.raises(BindingValidationError, match="video"):
+        await validate_persisted_model_bindings(db, run, required_capabilities={"video"})
 
 
 @pytest.mark.asyncio

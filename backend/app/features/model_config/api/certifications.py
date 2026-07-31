@@ -22,11 +22,15 @@ router = APIRouter()
 async def list_certification_candidates(
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100),
     capability: str | None = Query(default=None), q: str | None = Query(default=None),
+    level: str | None = Query(default=None, pattern="^(connection|contract|live)$"),
+    profile_version_id: str | None = Query(default=None),
+    connection_id: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
 ):
     return await service.certification_candidates(
         db, user_id=user_id, page=page, page_size=page_size,
-        capability=capability, query=q,
+        capability=capability, query=q, level=level,
+        profile_version_id=profile_version_id, connection_id=connection_id,
     )
 
 

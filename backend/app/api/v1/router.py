@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
 )
 from app.features.series_anchor_generation.api import router as series_anchor_generation_router
 from app.features.series_run_recovery.api import router as series_run_recovery_router
+from app.features.series_run_story_locks.api import router as series_story_lock_router
 from app.features.assets.api import router as asset_maintenance_router
 from app.features.model_config.api import router as model_center_router
 
@@ -137,3 +138,4 @@ api_router.include_router(production_cards.router, prefix="/production-cards", t
 api_router.include_router(series_runs.router, prefix="", tags=["整书生产运行"])
 api_router.include_router(series_anchor_generation_router, prefix="", tags=["整书生产运行"])
 api_router.include_router(series_run_recovery_router, prefix="", tags=["整书生产恢复"])
+api_router.include_router(series_story_lock_router, prefix="", tags=["整书生产资产修复"])

@@ -108,6 +108,35 @@ def test_create_is_idempotent_user_isolated_and_validates_episode_sources(client
     assert client.post("/api/v1/series-runs", json=wrong_chapter, headers=_headers(owner)).status_code == 422
 
 
+def test_execute_async_returns_immediately_and_queues_owned_run(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.api.v1.endpoints.series_runs as series_endpoint
+
+    user_id = f"series-run-async-{uuid4()}"
+    novel_id, chapter_ids = _series_source(client, user_id)
+    created = client.post(
+        "/api/v1/series-runs",
+        json=_run_payload(novel_id, chapter_ids, "async-execute"),
+        headers=_headers(user_id),
+    )
+    queued: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        series_endpoint,
+        "start_series_run_execution",
+        lambda run_id, owner: queued.append((run_id, owner)) or True,
+    )
+
+    response = client.post(
+        f"/api/v1/series-runs/{created.json()['id']}/execute-async",
+        headers=_headers(user_id),
+    )
+
+    assert response.status_code == 202
+    assert response.json()["execution_status"] == "queued"
+    assert queued == [(created.json()["id"], user_id)]
+
+
 def test_live_canary_policy_is_derived_only_from_server_environment(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     user_id = f"trusted-policy-{uuid4()}"
     novel_id, chapter_ids = _series_source(client, user_id)
@@ -139,6 +168,12 @@ def test_live_canary_policy_is_derived_only_from_server_environment(client: Test
     )
     assert enabled.status_code == 200
     assert enabled.json()["budget_policy"]["max_rmb"] == "10.00"
+    monkeypatch.setenv("LIVE_CANARY_MAX_RMB", "15")
+    refreshed = client.post(
+        f"/api/v1/series-runs/{deterministic.json()['id']}/live-canary/enable", headers=_headers(user_id)
+    )
+    assert refreshed.status_code == 200
+    assert refreshed.json()["budget_policy"]["max_rmb"] == "15.00"
     created = client.post(
         "/api/v1/series-runs",
         json={**payload, "idempotency_key": "trusted-policy-ok", "budget_policy": {"profile": "isolated_live_canary"}},
@@ -146,7 +181,7 @@ def test_live_canary_policy_is_derived_only_from_server_environment(client: Test
     )
     assert created.status_code == 201
     assert created.json()["budget_policy"] == {
-        "profile": "isolated_live_canary", "live_canary": True, "max_rmb": "10.00",
+        "profile": "isolated_live_canary", "live_canary": True, "max_rmb": "15.00",
         "estimates_rmb": {"image": "1.00", "video": "2.00", "tts": "0.50"},
     }
 
@@ -243,7 +278,7 @@ async def test_generate_selected_rejects_stale_bindings_before_provider_and_grou
     assert calls == []
 
     async def fresh(*_args, **_kwargs): return {}
-    monkeypatch.setattr(anchor_generation, "validate_model_bindings", fresh)
+    monkeypatch.setattr(anchor_generation, "validate_persisted_model_bindings", fresh)
     async with AsyncSessionLocal() as db:
         run = await db.get(SeriesProductionRun, run_id)
         run.model_bindings = {"capabilities": {name: {"config_id": f"config-{name}"} for name in ("text", "image", "tts", "video")}}

@@ -42,7 +42,7 @@ async def _seed_legacy_catalog(db: AsyncSession) -> LLMConfig:
     )
     model = LLMModel(
         id=f"model-{uuid4()}", provider_id=provider.id,
-        model_id="seedance-test", model_name="Seedance Test", model_type="video",
+        model_id="doubao-seedance-1-5-pro-251215", model_name="Seedance 1.5 Pro", model_type="video",
         capabilities=["text-to-video"], is_active=True,
     )
     config = LLMConfig(
@@ -91,6 +91,40 @@ async def test_check_mode_reports_plan_without_writing(db_session: AsyncSession)
     assert report.created_total == 0
     assert await _canonical_counts(db_session) == before
     assert "sk-backfill-secret" not in report.sanitized_dict().__repr__()
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_internal_test_catalog_rows(db_session: AsyncSession) -> None:
+    from app.features.model_config.backfill import backfill_model_center
+
+    providers = [
+        LLMProvider(
+            id=f"provider-{uuid4()}", name=f"preflight-provider-{uuid4()}",
+            name_cn="预检供应商", is_active=True,
+        ),
+        LLMProvider(
+            id=f"tts-provider-{uuid4()}", name=f"tts-provider-{uuid4()}",
+            name_cn="TTS开通供应商", is_active=True,
+        ),
+    ]
+    for index, provider in enumerate(providers):
+        model = LLMModel(
+            id=f"tts-model-{uuid4()}", provider_id=provider.id,
+            model_id=f"tts-api-model-{uuid4()}", model_name="tts API Model",
+            model_type="tts", capabilities=["text-to-speech"], is_active=True,
+        )
+        config = LLMConfig(
+            id=f"config-{uuid4()}", user_id=f"internal-user-{index}", model_id=model.id,
+            name="内部测试配置", is_active=True, test_status="pending",
+        )
+        config.set_api_key_encrypted("sk-internal-test")
+        db_session.add_all([provider, model, config])
+    await db_session.commit()
+
+    report = await backfill_model_center(db_session, apply=True)
+
+    assert report.providers_created == 0
+    assert await _canonical_counts(db_session) == (0, 0, 0, 0, 0, 0)
 
 
 @pytest.mark.asyncio

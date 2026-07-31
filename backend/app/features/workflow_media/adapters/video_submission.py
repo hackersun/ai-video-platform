@@ -88,9 +88,21 @@ def _reference_image_source(prepared: PreparedVideoSubmission) -> Optional[str]:
     return reference.get("reference_image_source") or prepared.consistency_package.get("reference_image_source")
 
 
+def _is_persisted_shot_first_frame(command: VideoSubmissionCommand) -> bool:
+    shot_url = str(getattr(command.shot, "image_url", None) or "")
+    request_url = str(command.prepared.video_request.image_url or "")
+    return bool(shot_url and request_url == shot_url)
+
+
+def _effective_reference_image_source(command: VideoSubmissionCommand) -> Optional[str]:
+    if command.request.native_audio and _is_persisted_shot_first_frame(command):
+        return "shot_image"
+    return _reference_image_source(command.prepared)
+
+
 def _validate_seedance_first_frame(command: VideoSubmissionCommand, *, image_count: int) -> None:
     model_id = command.runtime.selected_model.get("api_model_id") or command.prepared.video_request.model
-    source = _reference_image_source(command.prepared)
+    source = _effective_reference_image_source(command)
     if model_id in video_kernel.SEEDANCE_NATIVE_AUDIO_MODEL_IDS and image_count > 0 and source != "shot_image":
         raise WorkflowMediaError(422, {
             "code": "seedance_first_frame_must_be_shot_image",
@@ -98,6 +110,21 @@ def _validate_seedance_first_frame(command: VideoSubmissionCommand, *, image_cou
             "shot_id": command.shot.id,
             "reference_image_source": source,
         })
+
+
+def _provider_parameter_rejection_detail(error: Exception) -> Optional[dict[str, str]]:
+    message = str(error)
+    if "InvalidParameter" not in message:
+        return None
+    if "invalid role specified for image content" in message:
+        return {
+            "code": "seedance_image_role_rejected",
+            "message": "视频模型拒绝了参考图角色参数；本次请求未受理、不会自动重试，请刷新模型适配配置后重试。",
+        }
+    return {
+        "code": "video_provider_parameter_rejected",
+        "message": "视频模型拒绝了请求参数；本次请求未受理、不会自动重试，请检查模型适配配置后重试。",
+    }
 
 
 async def _build_submission_data(command: VideoSubmissionCommand) -> dict[str, Any]:
@@ -110,7 +137,10 @@ async def _build_submission_data(command: VideoSubmissionCommand) -> dict[str, A
     prompt = prepared.final_video_prompt
     if delivery["image_url_omitted_reason"]:
         prompt = video_kernel.append_provider_image_note(prompt, delivery["image_url_omitted_reason"])
-    provider_prompt = sanitize_provider_video_prompt(prompt)
+    protected_texts = []
+    if request.native_audio and prepared.dialogue_sync_contract:
+        protected_texts.append(str(prepared.dialogue_sync_contract.get("spoken_text") or ""))
+    provider_prompt = sanitize_provider_video_prompt(prompt, protected_texts=protected_texts)
     prompt_parameters = video_kernel.video_prompt_parameters(
         prepared.video_request.model_copy(update={"image_url": prepared.effective_image_url}),
         prepared.video_seed, provider_image_url, delivery["image_url_omitted_reason"],
@@ -168,10 +198,39 @@ def _build_extra_data(command: VideoSubmissionCommand, prompt_parameters: dict) 
 
 def _build_provider_content(command: VideoSubmissionCommand, data: dict) -> dict[str, Any]:
     prepared, runtime, request = command.prepared, command.runtime, command.request
+    model_id = runtime.selected_model.get("api_model_id") or prepared.video_request.model
+    provider_image_url = data["provider_image_url"]
+    reference_package = prepared.reference_package
+    reference_source = _effective_reference_image_source(command)
+    if (
+        request.native_audio
+        and model_id in video_kernel.SEEDANCE_NATIVE_AUDIO_MODEL_IDS
+        and reference_source != "shot_image"
+    ):
+        raise WorkflowMediaError(422, {
+            "code": "native_audio_shot_first_frame_required",
+            "message": "原生配音镜头必须先生成当前镜头专用首帧，不能仅靠复合设定板裸生成；请先生成镜头参考图后重试。",
+            "shot_id": command.shot.id,
+            "shot_number": command.shot.shot_number,
+            "reference_image_source": reference_source,
+            "repair_action": "generate_shot_first_frame",
+        })
+    if (
+        model_id in video_kernel.SEEDANCE_NATIVE_AUDIO_MODEL_IDS
+        and reference_source != "shot_image"
+    ):
+        package = dict(reference_package or {})
+        images = [item for item in package.get("images") or [] if isinstance(item, dict)]
+        package["images"] = []
+        package["dropped"] = [*(package.get("dropped") or []), *images]
+        reference_package = package
+        provider_image_url = None
+        data["provider_image_url"] = None
+        data["prompt_parameters"]["composite_reference_prompt_only"] = True
     content = build_video_provider_content(
         final_prompt=data["provider_prompt"], duration=prepared.video_request.duration,
-        resolution=request.resolution, provider_image_url=data["provider_image_url"],
-        reference_package=prepared.reference_package, model_limits=runtime.reference_limits,
+        resolution=request.resolution, provider_image_url=provider_image_url,
+        reference_package=reference_package, model_limits=runtime.reference_limits,
         model_id=runtime.selected_model_id, provider=runtime.selected_provider,
         camera_fixed=False, watermark=video_kernel.PROVIDER_VIDEO_WATERMARK_ENABLED,
     )
@@ -331,7 +390,8 @@ async def _recover_bound_driver_error(
     cause = getattr(error, "cause", None) or error
     image_error = video_kernel.provider_image_url_error_message(cause, data.get("provider_image_url"))
     text_error = provider_text_safety_error_message(cause)
-    if image_error or text_error:
+    parameter_error = _provider_parameter_rejection_detail(cause)
+    if image_error or text_error or parameter_error:
         await finish_live_provider_attempt(
             command.context.db, command.context.series_run, reservation, submission_failed=True,
         )
@@ -346,8 +406,8 @@ async def _recover_bound_driver_error(
                 reservation_id=retry_reservation, provider_task_id=task_id,
             )
         return task_id, retry_reservation, retry_content
-    if image_error or text_error:
-        raise WorkflowMediaError(422, image_error or text_error) from error
+    if image_error or text_error or parameter_error:
+        raise WorkflowMediaError(422, image_error or text_error or parameter_error) from error
     if getattr(error, "cause", None) is not None:
         raise error.cause
     raise WorkflowMediaError(422, str(error)) from error
@@ -404,12 +464,15 @@ async def _submit_live(
     except Exception as error:
         image_error = video_kernel.provider_image_url_error_message(error, data["provider_image_url"])
         text_error = provider_text_safety_error_message(error)
-        if image_error or text_error:
+        parameter_error = _provider_parameter_rejection_detail(error)
+        if image_error or text_error or parameter_error:
             await finish_live_provider_attempt(
                 command.context.db, command.context.series_run, reservation, submission_failed=True,
             )
         if image_error:
             raise WorkflowMediaError(422, image_error) from error
+        if parameter_error:
+            raise WorkflowMediaError(422, parameter_error) from error
         if not text_error:
             raise
         if os.getenv("LIVE_CANARY_PROVIDER_RETRIES", "1") == "0":
@@ -466,13 +529,13 @@ def _build_job(
     video_url = dev_video_url(job_id, duration_seconds=prepared.video_request.duration) if runtime.use_dev_video else None
     job = VideoJob(
         id=job_id, user_id=context.user_id, project_id=_extra(shot).get("project_id"),
-        workflow_id=context.workflow.id, task_id=task_id, title=f"镜头{shot.shot_number} 视频",
+        workflow_id=context.workflow.id, shot_id=shot.id, task_id=task_id, title=f"镜头{shot.shot_number} 视频",
         prompt=data["provider_prompt"],
         model_id=runtime.selected_model.get("api_model_id") or prepared.video_request.model,
         model_name=(f"{runtime.selected_model.get('model_name')} (DEV_MODE)"
                     if runtime.use_dev_video else runtime.selected_model.get("model_name")),
         duration=prepared.video_request.duration, resolution=command.request.resolution,
-        image_url=prepared.effective_image_url,
+        image_url=data.get("provider_image_url"),
         status="succeeded" if runtime.use_dev_video else "pending",
         progress=100 if runtime.use_dev_video else 10, video_url=video_url,
         cover_url=None, extra_data=data["extra_data"],

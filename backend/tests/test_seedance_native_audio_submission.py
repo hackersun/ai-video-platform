@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.features.video_generation.schemas import VideoGenerateRequest
+from app.features.video_generation.application.consistency_package import _prompt_skill_task
 from app.features.series_anchor_generation.generation import _activate, _generation_groups, _generation_key
 from app.features.workflow_media.adapters.video_submission import (
     PreparedVideoSubmission,
@@ -10,6 +11,7 @@ from app.features.workflow_media.adapters.video_submission import (
     VideoSubmissionRuntime,
     _build_extra_data,
     _build_job,
+    _build_provider_content,
     _create_kwargs,
     _validate_seedance_first_frame,
 )
@@ -20,6 +22,8 @@ from app.features.workflow_media.application.prepare_separate_media import (
 )
 from app.features.workflow_media.errors import WorkflowMediaError
 from app.features.workflow_media.schemas import WorkflowMediaBatchRequest
+from app.services.series_run_orchestrator import SeriesRunOrchestrator
+from app.services.provider_prompt_safety import sanitize_provider_video_prompt
 
 
 def _command(*, native_audio: bool = True, model_id: str = "doubao-seedance-1-5-pro-251215"):
@@ -83,9 +87,14 @@ def test_seedance_native_audio_request_carries_dialogue_and_does_not_use_referen
     extra = _build_extra_data(command, {})
     job = _build_job(
         command,
-        {"provider_prompt": command.prepared.final_video_prompt, "extra_data": extra},
+        {
+            "provider_prompt": command.prepared.final_video_prompt,
+            "provider_image_url": command.prepared.effective_image_url,
+            "extra_data": extra,
+        },
         "video-job-1",
         "provider-task-1",
+        None,
         None,
     )
 
@@ -97,6 +106,7 @@ def test_seedance_native_audio_request_carries_dialogue_and_does_not_use_referen
     assert "口型" in command.prepared.final_video_prompt
     assert extra["video_native_audio"] is True
     assert extra["dialogue_sync_contract"]["audio_source"] == "video_native_audio"
+    assert job.shot_id == "shot-1"
     assert job.image_url == "https://cdn.example.com/reference.png"
     assert job.cover_url is None
 
@@ -110,7 +120,7 @@ def test_native_audio_rejects_non_seedance_15_model() -> None:
     assert caught.value.detail["code"] == "native_audio_model_unsupported"
 
 
-def test_seedance_15_rejects_composite_reference_as_first_frame() -> None:
+def test_seedance_15_blocks_native_audio_without_shot_owned_first_frame() -> None:
     command = _command()
     command = VideoSubmissionCommand(
         command.context,
@@ -129,11 +139,62 @@ def test_seedance_15_rejects_composite_reference_as_first_frame() -> None:
         command.runtime,
     )
 
+    data = {"provider_prompt": command.prepared.final_video_prompt,
+            "provider_image_url": command.prepared.effective_image_url,
+            "prompt_parameters": {}, "extra_data": {}}
     with pytest.raises(WorkflowMediaError) as caught:
-        _validate_seedance_first_frame(command, image_count=1)
+        _build_provider_content(command, data)
 
-    assert caught.value.detail["code"] == "seedance_first_frame_must_be_shot_image"
-    assert "复合参考图" in caught.value.detail["message"]
+    assert caught.value.detail["code"] == "native_audio_shot_first_frame_required"
+    assert caught.value.detail["shot_id"] == "shot-1"
+
+
+def test_seedance_15_accepts_persisted_shot_first_frame_when_legacy_source_is_request() -> None:
+    command = _command()
+    command.shot.image_url = command.prepared.video_request.image_url
+    command = VideoSubmissionCommand(
+        command.context,
+        command.request,
+        command.shot,
+        PreparedVideoSubmission(
+            **{
+                **command.prepared.__dict__,
+                "reference_package": {"reference_image_source": "request"},
+                "consistency_package": {
+                    **command.prepared.consistency_package,
+                    "reference_image_source": "request",
+                },
+            }
+        ),
+        command.runtime,
+    )
+
+    _validate_seedance_first_frame(command, image_count=1)
+
+
+def test_native_audio_canonicalizes_speaker_and_removes_other_dialogue_from_prompt() -> None:
+    shot = SimpleNamespace(
+        id="shot-4",
+        shot_number=1,
+        character_refs=[],
+        extra_data={},
+        visual_description=(
+            '影潮使低声说：“星灯一亮，我的影潮就会消失。”'
+            '苏澜回答：“那就让雾海看见黎明。”'
+            '顾言接回能量核心，喊道：“能源接通，转动密钥！”'
+        ),
+    )
+
+    contract = _dialogue_contract(
+        shot, "喊道：能源接通，转动密钥！", 4.0, video_native_audio=True,
+    )
+    prompt = _append_dialogue_prompt(shot.visual_description, contract)
+
+    assert contract["speaker"] == "顾言"
+    assert contract["subtitle_text"] == "顾言：能源接通，转动密钥！"
+    assert prompt.count("能源接通，转动密钥") == 1
+    assert "星灯一亮，我的影潮就会消失" not in prompt
+    assert "那就让雾海看见黎明" not in prompt
 
 
 def test_native_audio_preserves_multi_speaker_dialogue_constraints() -> None:
@@ -147,6 +208,81 @@ def test_native_audio_preserves_multi_speaker_dialogue_constraints() -> None:
     assert "沈砚：别回头" in prompt
     assert "林澜：我听见铜铃了" in prompt
     assert "不得串词" in prompt
+
+
+def test_native_audio_safety_rewrite_preserves_canonical_spoken_text() -> None:
+    prompt = (
+        "画面表现失踪船队留下的空港。\n"
+        "原生有声视频约束（硬性）：唯一说话人：沈砚；"
+        "必须完整、清晰地说：『我会查清失踪船队的去向。』；"
+        "画面不得生成字幕、标题或其他文字。"
+    )
+
+    result = sanitize_provider_video_prompt(
+        prompt,
+        protected_texts=["我会查清失踪船队的去向。"],
+    )
+
+    assert "画面表现待查船队留下的空港" in result["prompt"]
+    assert "『我会查清失踪船队的去向。』" in result["prompt"]
+
+
+def test_native_audio_prompt_delegates_subtitles_to_post_processing_only() -> None:
+    contract = _dialogue_contract(
+        SimpleNamespace(), "沈砚：所有人立刻撤离灯塔。", 4.0,
+        video_native_audio=True,
+    )
+
+    prompt = _append_dialogue_prompt("3D灯塔镜头", contract)
+
+    assert "画面不得生成字幕" in prompt
+    assert "字幕由后处理统一添加" in prompt
+
+
+def test_native_audio_uses_the_audio_video_prompt_skill() -> None:
+    native = VideoGenerateRequest(prompt="有对白", native_audio=True)
+    silent = VideoGenerateRequest(prompt="无对白")
+
+    assert _prompt_skill_task(native) == "shot_audio_video"
+    assert _prompt_skill_task(silent) == "shot_video"
+
+
+def test_native_audio_prompt_preserves_visual_and_locked_asset_constraints() -> None:
+    from app.services.prompt_composer import compose_generation_prompt
+
+    prompt = compose_generation_prompt(
+        task="shot_audio_video",
+        locked_assets=[{"type": "角色", "name": "沈砚定稿"}],
+    )
+
+    assert "视频一致性约束" in prompt
+    assert "锁定资产一致性约束" in prompt
+    assert "沈砚定稿" in prompt
+
+
+def test_native_audio_job_produces_sanitized_series_skill_evidence() -> None:
+    from app.features.series_anchor_generation.skill_evidence import job_skill_evidence
+
+    job = SimpleNamespace(id="video-job-1", extra_data={
+        "shot_id": "shot-1",
+        "consistency": {
+            "task": "shot_audio_video",
+            "rendered_prompt_sha256": "prompt-sha256",
+            "prompt_skills": [{
+                "id": "builtin-shot-audio-video-standard", "name": "标准音视频直生技能",
+                "version": 2, "prompt_profile_version_id": "profile-v2",
+            }],
+        },
+    })
+
+    evidence = job_skill_evidence(job)
+
+    assert evidence["task"] == "shot_audio_video"
+    assert evidence["artifact_id"] == "video-job-1"
+    assert evidence["shot_id"] == "shot-1"
+    assert evidence["execution_mode"] == "provider_model"
+    assert evidence["rendered_prompt_sha256"] == "prompt-sha256"
+    assert "content" not in evidence
 
 
 def test_native_audio_is_part_of_series_generation_idempotency_key() -> None:
@@ -226,20 +362,32 @@ async def test_generation_group_reuse_compares_the_fresh_shot_context(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_generation_activation_persists_the_native_audio_preflight_snapshot() -> None:
+async def test_generation_activation_persists_the_native_audio_preflight_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class FakeDb:
         async def commit(self):
             return None
 
-    run = SimpleNamespace(status="media_running", gate_summary={"other": True})
+    observed: dict[str, bool] = {}
+
+    async def enter_media(_self, _db, run, *, native_audio=False):
+        observed["native_audio"] = native_audio
+        run.status = "media_running"
+        return run
+
+    monkeypatch.setattr(SeriesRunOrchestrator, "enter_media_running", enter_media)
+    run = SimpleNamespace(status="shots_ready", gate_summary={"other": True})
     submission = SimpleNamespace(status=None)
 
     await _activate(
         FakeDb(), run=run, submission=submission, contexts={}, selected_by_id={}, is_new=False,
         media_preflight={"ready": True, "snapshot_hash": "native-snapshot"},
+        native_audio=True,
     )
 
     assert run.gate_summary["media_preflight"] == {
         "ready": True, "snapshot_hash": "native-snapshot",
     }
     assert submission.status == "pending"
+    assert observed["native_audio"] is True

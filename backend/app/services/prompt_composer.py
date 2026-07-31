@@ -134,14 +134,14 @@ def compose_generation_prompt(
         sections.append("Prompt技能约束:")
         sections.extend(f"- {block}" for block in skill_blocks if block)
 
-    if task == "shot_video":
+    if task in {"shot_video", "shot_audio_video"}:
         sections.append(
             "视频一致性约束: 严格保持以上人物身份、外貌、服装、场景环境、道具状态、事件关系和整体画风；"
             "同一角色不要更换发型、年龄、脸型或服饰，同一场景不要更换时代、天气、空间结构或光影基调。"
         )
 
     # 在视频任务中添加锁定资产约束
-    if task == "shot_video" and locked_assets:
+    if task in {"shot_video", "shot_audio_video"} and locked_assets:
         sections.append("【锁定资产一致性约束】")
         for asset in locked_assets:
             sections.append(

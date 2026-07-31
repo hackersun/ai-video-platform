@@ -44,6 +44,7 @@ def _name_tokens(ref: Dict[str, Any]) -> List[str]:
 
 
 def _entity_ref(entity: StoryEntity, character: Optional[Character] = None) -> Dict[str, Any]:
+    visual_dna = _json_dict(_json_dict(entity.attributes).get("visual_dna"))
     ref = {
         "entity_id": entity.id,
         "entity_type": entity.entity_type,
@@ -52,6 +53,7 @@ def _entity_ref(entity: StoryEntity, character: Optional[Character] = None) -> D
         "aliases": entity.aliases or [],
         "confidence": entity.confidence or 0,
         "source": entity.source or "deterministic",
+        "visual_dna": visual_dna,
     }
     if character:
         ref.update(
@@ -149,12 +151,26 @@ def _summarize_refs(refs: List[Dict[str, Any]]) -> str:
     parts = []
     for ref in refs:
         name = ref.get("name")
-        description = ref.get("description") or ref.get("appearance")
+        visual_dna = _json_dict(ref.get("visual_dna"))
+        description = ref.get("description") or ref.get("appearance") or "；".join(str(value) for value in visual_dna.values() if value)
         if name and description:
             parts.append(f"{name}: {description}")
         elif name:
             parts.append(str(name))
     return "；".join(parts)
+
+
+def _merge_prompt_scope_entities(
+    chapter_entities: List[StoryEntity], novel_entities: List[StoryEntity],
+) -> List[StoryEntity]:
+    """Keep chapter context while inheriting approved novel-wide identity locks."""
+    merged = list(chapter_entities)
+    seen = {entity.id for entity in merged}
+    for entity in novel_entities:
+        if entity.entity_type == "character" and entity.id not in seen:
+            merged.append(entity)
+            seen.add(entity.id)
+    return merged
 
 
 def _character_scope_rank(character: Character, novel_id: Optional[str], chapter_id: Optional[str]) -> int:
@@ -266,6 +282,11 @@ async def load_or_extract_story_entities(
         novel_id=novel_id,
         chapter_id=chapter_id,
     )
+    if novel_id and chapter_id:
+        novel_entities = await query_story_entities_for_prompt_context(
+            db, user_id=user_id, novel_id=novel_id,
+        )
+        entities = _merge_prompt_scope_entities(entities, novel_entities)
 
     if not persist_missing or not text:
         return entities
@@ -281,12 +302,18 @@ async def load_or_extract_story_entities(
         entity_types=sorted(ENTITY_TYPES),
         persist=True,
     )
-    return await query_story_entities_for_prompt_context(
+    refreshed = await query_story_entities_for_prompt_context(
         db,
         user_id=user_id,
         novel_id=novel_id,
         chapter_id=chapter_id,
     )
+    if novel_id and chapter_id:
+        novel_entities = await query_story_entities_for_prompt_context(
+            db, user_id=user_id, novel_id=novel_id,
+        )
+        return _merge_prompt_scope_entities(refreshed, novel_entities)
+    return refreshed
 
 
 async def build_shot_entity_context(

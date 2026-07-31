@@ -10,6 +10,7 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
 from app.models.media_generation_job import MediaGenerationJob
@@ -19,7 +20,7 @@ from app.models.shot import Shot
 from app.models.workflow import Workflow
 from app.services.anchor_shot_service import anchor_coverage_blocker, recommend_anchor_shots, validate_anchor_selection
 from app.services.deterministic_provider_fake import deterministic_provider_fake_enabled
-from app.services.live_canary_budget import BindingValidationError, required_tested_at_for_run, validate_model_bindings
+from app.services.live_canary_bindings import BindingValidationError, validate_persisted_model_bindings
 from app.services.series_run_live_preflight import build_live_preflight_plan
 from app.services.series_run_orchestrator import InvalidRunTransition, SeriesRunOrchestrator, SeriesRunPreflightBlocked
 
@@ -27,6 +28,7 @@ from .deterministic_quality import evaluate_deterministic_anchors
 from .errors import SeriesAnchorError
 from .media_reconciliation import pending_source_response
 from .quality_status import unevaluated_quality_results
+from .skill_evidence import record_anchor_skill_evidence
 
 
 MediaBatch = Callable[[str, list[str], str | None, str | None], Awaitable[dict]]
@@ -94,12 +96,8 @@ async def _preflight(db: AsyncSession, run: SeriesProductionRun, *, native_audio
     if policy.get("profile") != "isolated_live_canary" or policy.get("live_canary") is not True:
         raise SeriesAnchorError(409, {"code": "live_canary_policy_required",
                                      "message": "真实关键镜头生成必须使用服务端受信 live canary 预算策略"})
-    capabilities = (run.model_bindings or {}).get("capabilities") or {}
-    ids = {name: str((capabilities.get(name) or {}).get("config_id") or "")
-           for name in ("text", "image", "tts", "video")}
     try:
-        await validate_model_bindings(db, run, ids, required_tested_at=required_tested_at_for_run(run),
-                                      freshness_seconds=900, persist=False)
+        await validate_persisted_model_bindings(db, run, required_capabilities={"video"})
     except BindingValidationError as error:
         await db.rollback()
         raise SeriesAnchorError(409, {"code": "model_bindings_not_fresh",
@@ -151,7 +149,6 @@ def _shot_input_fingerprint(shot: Shot) -> str:
         "visual_description": shot.visual_description,
         "dialogue": shot.dialogue,
         "subtitle_text": extra.get("subtitle_text"),
-        "image_url": shot.image_url,
     }
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
 
@@ -226,17 +223,23 @@ async def _activate(
     db: AsyncSession, *, run: SeriesProductionRun, submission: SeriesAnchorGenerationSubmission,
     contexts: dict[str, dict], selected_by_id: dict[str, Shot], is_new: bool,
     media_preflight: dict | None = None,
+    native_audio: bool = False,
 ) -> None:
-    for shot_id, context in contexts.items():
-        selected_by_id[shot_id].extra_data = {**(selected_by_id[shot_id].extra_data or {}), "production_context": context}
     try:
         if run.status != "media_running":
-            await SeriesRunOrchestrator().enter_media_running(db, run)
+            await SeriesRunOrchestrator().enter_media_running(
+                db, run, native_audio=native_audio,
+            )
     except (BindingValidationError, SeriesRunPreflightBlocked, InvalidRunTransition) as error:
         await db.rollback()
         detail = error.detail if isinstance(error, SeriesRunPreflightBlocked) else {
             "code": "generation_transition_blocked", "message": "生成状态切换未通过服务端校验"}
         raise SeriesAnchorError(409, detail) from error
+    for shot_id, context in contexts.items():
+        selected_by_id[shot_id].extra_data = {
+            **(selected_by_id[shot_id].extra_data or {}), "production_context": context,
+        }
+        flag_modified(selected_by_id[shot_id], "extra_data")
     submission.status = "pending"
     if media_preflight is not None:
         run.gate_summary = {**(run.gate_summary or {}), "media_preflight": media_preflight}
@@ -317,7 +320,7 @@ async def generate_selected(
         submission = SeriesAnchorGenerationSubmission(id=submission_id, run_id=run.id, user_id=user_id,
             generation_key=key, status="pending", response_payload={})
     await _activate(db, run=run, submission=submission, contexts=contexts, selected_by_id=selected_by_id,
-                    is_new=is_new, media_preflight=media)
+                    is_new=is_new, media_preflight=media, native_audio=native_audio)
     bindings = (run.model_bindings or {}).get("capabilities") or {}
     try:
         batches = [await generate_batch(
@@ -335,6 +338,7 @@ async def generate_selected(
         await db.commit()
         raise
     if reused: batches.append({"reused": True, "media_job_ids": reused})
+    await record_anchor_skill_evidence(db, run, batches)
     pending = pending_source_response(selected, batches)
     if pending is not None:
         submission.status, submission.response_payload = pending["status"], pending

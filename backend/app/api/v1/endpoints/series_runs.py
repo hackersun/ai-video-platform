@@ -47,6 +47,10 @@ from app.services.series_run_orchestrator import (
     SeriesRunPreflightBlocked,
     transition_run,
 )
+from app.services.series_run_execution_queue import (
+    series_run_execution_active,
+    start_series_run_execution,
+)
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
 from app.features.series_run_acceptance import setup_acceptance_fixture
 from app.features.series_anchor_generation import (
@@ -174,10 +178,11 @@ async def post_series_run_prepare_story_locks(
     run_id: str,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
+    native_audio: bool = False,
 ):
     run = await _owned_run(db, user_id, run_id)
     try:
-        return await prepare_story_locks(db, run)
+        return await prepare_story_locks(db, run, native_audio=native_audio)
     except StoryLockPreparationBlocked as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -189,10 +194,16 @@ async def post_series_run_prepare_reference(
     run_id: str,
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
+    native_audio: bool = False,
 ):
     run = await _owned_run(db, user_id, run_id)
     try:
-        return await prepare_series_reference(db, run, adapter=default_reference_adapter())
+        return await prepare_series_reference(
+            db,
+            run,
+            adapter=default_reference_adapter(),
+            native_audio=native_audio,
+        )
     except ReferencePreparationBlocked as error:
         detail = {"code": "reference_preparation_blocked", "message": str(error)}
         if error.operation is not None:
@@ -303,6 +314,27 @@ async def execute_series_run(
     return _payload(run)
 
 
+@router.post("/series-runs/{run_id}/execute-async")
+async def execute_series_run_async(
+    run_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Queue resumable episode work and return without holding the browser request."""
+    run = await _owned_run(db, user_id, run_id)
+    if run.status in {"shots_ready", "anchor_ready", "completed", "paused"}:
+        queued = False
+    else:
+        queued = start_series_run_execution(run.id, user_id)
+    return JSONResponse(
+        status_code=status.HTTP_202_ACCEPTED,
+        content={
+            **_payload(run),
+            "execution_status": "queued" if queued else "already_running" if series_run_execution_active(run.id) else "not_required",
+        },
+    )
+
+
 @router.get("/series-runs/{run_id}/media-preflight")
 async def get_series_run_media_preflight(
     run_id: str,
@@ -373,7 +405,7 @@ async def validate_series_run_live_bindings(
         snapshot = await SeriesRunOrchestrator().validate_live_model_bindings(
             db,
             run,
-            {key: getattr(request, key) for key in ("text", "image", "tts", "video")},
+            request.required_bindings(),
             required_tested_at=required_tested_at_for_run(run),
             freshness_seconds=900,
         )
@@ -394,8 +426,6 @@ async def enable_series_run_live_canary(
 ):
     """Explicitly opt a run into the server-owned isolated live budget profile."""
     run = await _owned_run(db, user_id, run_id)
-    if (run.budget_policy or {}).get("profile") == "isolated_live_canary" and (run.budget_policy or {}).get("live_canary") is True:
-        return _payload(run)
     try:
         run.budget_policy = trusted_live_canary_policy({"profile": "isolated_live_canary"})
     except InvalidAccountingInput as error:
@@ -417,13 +447,19 @@ async def get_series_run_anchor_shots(
     shots, _ = await _run_shots(db, run)
     metadata = run.run_metadata or {}
     smoke = recommend_anchor_shots(shots, mode="smoke")
+    representative = recommend_anchor_shots(shots, mode="representative")
     full = recommend_anchor_shots(shots, mode="full")
     return {
         "selected_shot_ids": metadata.get("selected_anchor_shot_ids") or [],
         "selected_mode": metadata.get("selected_anchor_mode"),
         "smoke": smoke,
+        "representative": representative,
         "full": full,
-        "blockers": {"smoke": anchor_coverage_blocker(smoke, mode="smoke"), "full": anchor_coverage_blocker(full, mode="full")},
+        "blockers": {
+            "smoke": anchor_coverage_blocker(smoke, mode="smoke"),
+            "representative": anchor_coverage_blocker(representative, mode="representative"),
+            "full": anchor_coverage_blocker(full, mode="full"),
+        },
     }
 
 
@@ -475,7 +511,8 @@ async def generate_selected_series_run_anchors(
                     strategy=("direct_av_first" if deterministic_provider_fake_enabled() else "separate_video_tts"),
                     model_config_id=video_config_id, audio_model_config_id=audio_config_id,
                     native_audio=request.native_audio,
-                    require_real_video=True, require_provider_reference_image=True,
+                    require_real_video=True,
+                    require_provider_reference_image=not request.native_audio,
                 ),
             ))
         )

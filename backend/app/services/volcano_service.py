@@ -128,35 +128,47 @@ class VolcanoService:
             "9:16":  "960x3840",     # 3686400 ✅
             "16:9":  "1920x1080",   # 2073600 < 3686400 ❌ 不够
         }
-        resolved_size = size_map.get(size, size) if size else "2048x2048"
+        seedream_50 = endpoint_id == "doubao-seedream-5-0-260128"
+        if seedream_50:
+            semantic_size = str(size or "2K").upper()
+            resolved_size = semantic_size if semantic_size in {"1K", "2K", "4K"} else "2K"
+        else:
+            resolved_size = size_map.get(size, size) if size else "2048x2048"
 
         # 如果显式指定了像素数不够，自动扩大
-        if resolved_size:
-            try:
-                parts = resolved_size.split("x")
-                w, h = int(parts[0]), int(parts[1])
-                if w * h < 3686400:
-                    # 等比放大到满足最小像素
-                    scale = (3686400 / (w * h)) ** 0.5
-                    new_w = int(w * scale)
-                    new_h = int(h * scale)
-                    # 调整为16的倍数
-                    new_w = (new_w // 16) * 16
-                    new_h = (new_h // 16) * 16
-                    resolved_size = f"{new_w}x{new_h}"
-            except (ValueError, IndexError):
+        if not seedream_50:
+            if resolved_size:
+                try:
+                    parts = resolved_size.split("x")
+                    w, h = int(parts[0]), int(parts[1])
+                    if w * h < 3686400:
+                        # 等比放大到满足最小像素
+                        scale = (3686400 / (w * h)) ** 0.5
+                        new_w = int(w * scale)
+                        new_h = int(h * scale)
+                        # 调整为16的倍数
+                        new_w = (new_w // 16) * 16
+                        new_h = (new_h // 16) * 16
+                        resolved_size = f"{new_w}x{new_h}"
+                except (ValueError, IndexError):
+                    resolved_size = "2048x2048"
+            else:
                 resolved_size = "2048x2048"
-        else:
-            resolved_size = "2048x2048"
 
         payload = {
             "model": endpoint_id,
             "prompt": full_prompt,
             "size": resolved_size,
-            "n": num,
             "response_format": "url",
             "stream": False,
         }
+        if seedream_50 and num > 1:
+            payload.update({
+                "sequential_image_generation": "auto",
+                "sequential_image_generation_options": {"max_images": num},
+            })
+        elif not seedream_50:
+            payload["n"] = num
         payload.update(kwargs)
 
         url = f"{self.base_url}/images/generations"

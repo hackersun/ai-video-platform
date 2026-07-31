@@ -2,6 +2,8 @@
 
 from typing import Optional
 
+import httpx
+
 
 def create_ark_client(api_key: str, base_url: Optional[str] = None):
     from volcenginesdkarkruntime import Ark
@@ -9,6 +11,8 @@ def create_ark_client(api_key: str, base_url: Optional[str] = None):
     return Ark(
         base_url=base_url or "https://ark.cn-beijing.volces.com/api/v3",
         api_key=api_key,
+        http_client=httpx.Client(trust_env=False),
+        max_retries=0,
     )
 
 

@@ -91,6 +91,7 @@ async def _load_lock_snapshots(
         default_voice=request.voice_model,
         default_speed=request.speed,
         default_voice_source="provider_default_tts",
+        require_voice_locks=not request.native_audio,
     ))
 
 

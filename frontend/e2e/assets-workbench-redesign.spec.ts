@@ -62,6 +62,11 @@ async function installMocks(page: any, assetItems: Record<string, any>[] = asset
     if (path === '/api/v1/assets/view-presets') return route.fulfill({ json: { presets: [] } });
     if (path === '/api/v1/assets/style-templates') return route.fulfill({ json: { templates: [] } });
     if (path === '/api/v1/chapters/novel/novel-workbench' || path === '/api/v1/scripts') return route.fulfill({ json: [] });
+    if (path === '/api/v1/asset-maintenance/entity-options') return route.fulfill({ json: [
+      { id: 'character-xiao-yun', name: '萧云', entity_type: 'character' },
+      { id: 'prop-bell', name: '青铜铃', entity_type: 'prop' },
+      { id: 'scene-fog-port', name: '雾港', entity_type: 'scene' },
+    ] });
     if (path === '/api/v1/story-bibles/entities') return route.fulfill({ json: [
       { id: 'character-xiao-yun', name: '萧云', entity_type: 'character' },
       { id: 'prop-bell', name: '青铜铃', entity_type: 'prop' },
@@ -98,6 +103,27 @@ test('asset workbench prioritizes failure recovery, inspection and batch mainten
   await expect(page.getByTestId('asset-inspector').getByRole('button', { name: '版本' })).toBeVisible();
   await expect(page.getByTestId('asset-inspector').getByRole('button', { name: '设为全局' })).toBeVisible();
   await expect(page.getByTestId('asset-inspector').getByRole('button', { name: '归档' })).toBeVisible();
+});
+
+test('图像尺寸快照失败显示可理解说明和明确重试入口', async ({ page }) => {
+  const failedCharacter = {
+    ...assets[0],
+    id: 'asset-character-front-failed',
+    name: '萧云正面生成失败',
+    url: undefined,
+    thumbnail_url: undefined,
+    is_locked: false,
+    is_final: false,
+    status: 'failed',
+    error_message: 'invalid_snapshot_params: image_size',
+    generation_params: { view_key: 'front', view_label: '正面', retryable: true },
+  };
+  await installMocks(page, [failedCharacter]);
+  await page.goto('/assets?novel_id=novel-workbench&entity_type=character&entity_id=character-xiao-yun');
+
+  const wizard = page.getByTestId('asset-wizard');
+  await expect(wizard.getByText('图像尺寸参数与当前模型不兼容，可直接重试；如仍失败，请展开“生成设置”后重建资产包。')).toBeVisible();
+  await expect(wizard.getByRole('button', { name: '重试生成' })).toHaveText('重试');
 });
 
 test('asset workbench remains usable on a mobile viewport', async ({ page }) => {

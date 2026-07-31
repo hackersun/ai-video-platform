@@ -42,10 +42,18 @@ test('studio shot review renders evidence and regenerates failed shots before co
         shot_id: 'shot-1',
         shot_number: 1,
         video_url: '/static/review/shot-1.mp4',
+        reference_image_url: '/static/review/shot-1-reference.jpg',
+        reference_image_status: 'succeeded',
+        reference_asset_id: 'asset-front-1',
         status: 'succeeded',
         duration: 4,
         subtitle_text: '孙剑推开云上列车的舱门。',
         character_names: ['孙剑'],
+        reference_entities: {
+          characters: [{ id: 'character-sunjian', name: '孙剑' }],
+          scenes: [{ id: 'scene-rain', name: '雨夜街道' }],
+          props: [{ id: 'prop-umbrella', name: '黑伞' }],
+        },
         evidence: {
           strategy_routing: 'draft_fast',
           reference_package_mode: '角色参考包',
@@ -167,18 +175,24 @@ test('studio shot review renders evidence and regenerates failed shots before co
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
 
-  await page.goto('/studio/shot-review?workflow_id=wf-review');
+  await page.goto('/studio/shot-review?focus=references&workflow_id=wf-review&novel_id=novel-review&source=studio&return_to=%2Fstudio%3Fworkflow_id%3Dwf-review');
 
   await expect(page.getByRole('heading', { name: '镜头审阅' })).toBeVisible();
-  await expect(page.getByText('镜头 1')).toBeVisible();
+  await expect(page.getByRole('heading', { name: '镜头 1', exact: true })).toBeVisible();
   await expect(page.getByText('孙剑推开云上列车的舱门。')).toBeVisible();
-  await expect(page.getByText('draft_fast').first()).toBeVisible();
+  await expect(page.getByRole('img', { name: '镜头 1 生成使用的参考图' })).toHaveAttribute('src', /shot-1-reference\.jpg$/);
+  await expect(page.getByTestId('shot-reference-entities-shot-1')).toContainText('角色：孙剑');
+  await expect(page.getByTestId('shot-reference-entities-shot-1')).toContainText('场景：雨夜街道');
+  await expect(page.getByTestId('shot-reference-entities-shot-1')).toContainText('道具：黑伞');
+  await expect(page.getByTestId('shot-reference-entities-shot-1').getByRole('link', { name: '修复角色、场景与道具引用' })).toHaveAttribute('href', /\/assets\?.*novel_id=novel-review/);
+  await expect(page.getByRole('link', { name: '返回工作台继续处理' })).toHaveAttribute('href', '/studio?workflow_id=wf-review');
+  await expect(page.getByTestId('shot-review-card-shot-1').getByText('draft_fast')).toBeVisible();
   await expect(page.getByText('角色参考包')).toBeVisible();
   await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('3图');
   await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('1视频');
   await expect(page.getByText('预检通过')).toBeVisible();
-  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('74分');
-  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('待人审');
+  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('74 分');
+  await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('待人工确认');
   await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('抽帧 2');
   await expect(page.getByText('阿月在雨幕里回头。')).toBeVisible();
   await expect(page.getByText('视频生成超时')).toBeVisible();

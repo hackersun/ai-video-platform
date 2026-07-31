@@ -28,6 +28,7 @@ class VideoGenerateRequest(BaseModel):
     story_bible_id: Optional[str] = Field(None, description="用于一致性约束的 Story Bible ID")
     character_ids: List[str] = Field(default_factory=list, description="需要注入一致性设定的角色ID列表")
     use_consistency_context: bool = Field(True, description="是否自动注入 Story Bible/项目/镜头/角色一致性上下文")
+    native_audio: bool = Field(False, description="是否由视频模型直接生成对白音频，用于选择有声视频 Prompt Skill")
     unsafe_skip_consistency_preflight: bool = Field(
         False,
         description="仅用于明确的生产降级调试：跳过一致性上下文注入；生产硬预检仍会执行",

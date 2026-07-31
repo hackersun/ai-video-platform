@@ -122,3 +122,35 @@ async def test_sync_video_job_does_not_auto_record_visual_consistency_by_default
     assert "visual_consistency" not in job.extra_data
     assert "visual_consistency_score" not in shot.extra_data["quality_report"]
     assert "visual_consistency_history" not in asset.generation_params
+
+
+@pytest.mark.asyncio
+async def test_sync_video_job_prefers_configured_public_storage_delivery(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.video_generation.application import job_sync
+    from app.features.video_generation.public import VideoJobSyncCommand, sync_video_job_and_shot
+
+    async def persist(*_args, **_kwargs):
+        return "/static/generated/videos/shot.mp4"
+
+    async def deliver(_db, _user_id, media_url, **_kwargs):
+        assert media_url == "/static/generated/videos/shot.mp4"
+        return {"provider_url": "https://cdn.example.com/static/generated/videos/shot.mp4"}
+
+    monkeypatch.setattr(job_sync, "persist_remote_media_url", persist)
+    monkeypatch.setattr(job_sync, "resolve_provider_media_url", deliver)
+    user_id = f"user-{uuid4()}"
+    shot = _shot(user_id)
+    job = _video_job(user_id, shot.id, auto_check=False)
+    db_session.add_all([shot, job])
+    await db_session.flush()
+
+    await sync_video_job_and_shot(
+        db_session, job,
+        VideoJobSyncCommand("succeeded", 100, "https://provider.example.com/shot.mp4", None),
+    )
+
+    assert job.video_url == "https://cdn.example.com/static/generated/videos/shot.mp4"
+    assert shot.video_url == job.video_url
+    assert job.extra_data["video_public_delivery"] is True

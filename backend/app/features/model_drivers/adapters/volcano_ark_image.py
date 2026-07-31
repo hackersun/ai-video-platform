@@ -18,7 +18,9 @@ class VolcanoArkImageDriver:
         from app.services.volcano_service import VolcanoService
 
         result = await VolcanoService(context.api_key, context.base_url).generate_image(
-            command.prompt, model=context.profile.api_model_id, **dict(command.params)
+            command.prompt, model=context.profile.api_model_id,
+            **({"image": list(command.reference_images)} if command.reference_images else {}),
+            **dict(command.params),
         )
         if isinstance(result, dict) and isinstance(result.get("data"), list):
             image_urls = [

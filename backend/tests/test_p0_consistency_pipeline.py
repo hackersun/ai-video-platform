@@ -52,6 +52,29 @@ def test_character_extraction_prompt_requests_complete_character_set():
     assert "不得因为数量较多而省略" in prompt
 
 
+@pytest.mark.asyncio
+async def test_character_extraction_routes_prompt_through_entity_skill(monkeypatch):
+    from app.api.v1.endpoints import characters
+
+    captured = {}
+
+    async def fake_route(_db, **kwargs):
+        captured.update(kwargs)
+        return {"prompt": "已应用实体提取 Skill"}
+
+    monkeypatch.setattr(characters, "select_prompt_skill_for_model", fake_route, raising=False)
+
+    prompt = await characters._build_routed_character_extraction_prompt(
+        object(), "user-1", provider_name="volcano", model_id="model-1",
+        text="张三遇见李四。", chunk_index=1, chunk_total=1,
+    )
+
+    assert prompt == "已应用实体提取 Skill"
+    assert captured["task"] == "entity_extraction"
+    assert captured["stage"] == "analysis"
+    assert captured["output_contract"] == "json_array"
+
+
 def test_merge_character_records_keeps_more_than_thirty_and_merges_aliases():
     from app.api.v1.endpoints.characters import _merge_character_records
 

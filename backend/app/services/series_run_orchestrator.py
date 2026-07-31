@@ -17,10 +17,13 @@ from app.services.live_canary_budget import (
     reconcile_reservation,
     release_reservation,
     reserve_budget,
-    required_tested_at_for_run,
     recover_provider_operations,
-    validate_model_bindings,
 )
+from app.services.live_canary_bindings import (
+    validate_persisted_model_bindings,
+    validate_required_model_bindings,
+)
+from app.services.series_run_live_preflight import build_live_preflight_plan
 from app.services.episode_production_service import (
     create_or_resolve_script_stage,
     create_or_resolve_shots_stage,
@@ -108,7 +111,8 @@ class SeriesRunOrchestrator:
         self._stage_builder = stage_builder
 
     async def validate_live_model_bindings(self, db: AsyncSession, run: SeriesProductionRun, bindings, **constraints):
-        return await validate_model_bindings(db, run, bindings, **constraints)
+        constraints.setdefault("persist", True)
+        return await validate_required_model_bindings(db, run, bindings, **constraints)
 
     async def reserve_live_budget(self, db: AsyncSession, run: SeriesProductionRun, **reservation):
         return await reserve_budget(db, run, **reservation)
@@ -131,7 +135,9 @@ class SeriesRunOrchestrator:
             return run
         return await self.build_episodes(db, run)
 
-    async def enter_media_running(self, db: AsyncSession, run: SeriesProductionRun) -> SeriesProductionRun:
+    async def enter_media_running(
+        self, db: AsyncSession, run: SeriesProductionRun, *, native_audio: bool = False,
+    ) -> SeriesProductionRun:
         if run.status not in {"shots_ready", "anchor_ready"}:
             raise InvalidRunTransition(f"cannot start media from {run.status}")
         if (run.budget_policy or {}).get("live_canary") is True:
@@ -141,15 +147,14 @@ class SeriesRunOrchestrator:
                 db, adapters={}, user_id=run.user_id,
                 stale_before=utc_now() - timedelta(minutes=15),
             )
-            capabilities = (run.model_bindings or {}).get("capabilities") or {}
-            config_ids = {
-                capability: str((capabilities.get(capability) or {}).get("config_id") or "")
-                for capability in ("text", "image", "tts", "video")
-            }
-            await validate_model_bindings(
-                db, run, config_ids, required_tested_at=required_tested_at_for_run(run), freshness_seconds=900
+            live_plan = await build_live_preflight_plan(
+                db, run, native_audio=native_audio,
             )
-        preflight = await evaluate_media_preflight(db, run)
+            required_capabilities = set(live_plan["required_capabilities"])
+            await validate_persisted_model_bindings(
+                db, run, required_capabilities=required_capabilities,
+            )
+        preflight = await evaluate_media_preflight(db, run, native_audio=native_audio)
         run.gate_summary = {**(run.gate_summary or {}), "media_preflight": preflight}
         if not preflight["ready"]:
             await db.commit()

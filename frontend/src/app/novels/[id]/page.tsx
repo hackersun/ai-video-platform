@@ -55,6 +55,7 @@ import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
 import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
 import { SeriesRunPanel } from '@/components/novels/series-run-panel';
+import { SeriesPlanSetupCard } from '@/components/novels/series-plan-setup-card';
 import { getStoryExcerpt } from '@/components/novels/story-workbench-panel';
 import {
   getDefaultConfigForCapability,
@@ -644,6 +645,7 @@ export default function NovelDetailPage() {
       if (seriesPlanRes.ok) {
         const planData = await seriesPlanRes.json();
         setSeriesPlan(planData && Object.keys(planData).length > 0 ? planData : null);
+        if (planData?.style) setImageStyle(planData.style);
       } else {
         setSeriesPlan(null);
       }
@@ -991,7 +993,7 @@ export default function NovelDetailPage() {
         target_episode_count: chapters.length > 0 ? Math.min(100, chapters.length) : undefined,
         target_duration_seconds: 60,
         aspect_ratio: '9:16',
-        style: novel?.genre || 'anime',
+        style: imageStyle || novel?.genre || 'anime',
         persist: true,
       });
       setSeriesPlan(plan);
@@ -1668,21 +1670,8 @@ export default function NovelDetailPage() {
                     <p className="text-sm">先导入或创建章节后，再生成整书生产计划</p>
                   </div>
                 ) : !seriesPlan?.episodes?.length ? (
-                  <div className="rounded-lg border border-dashed border-white/15 bg-white/5 p-6 text-center">
-                    <ListChecks className="mx-auto mb-3 h-10 w-10 text-blue-300" />
-                    <div className="text-white font-medium">还没有整书生产计划</div>
-                    <p className="mx-auto mt-2 max-w-2xl text-sm text-white/50">
-                      生成后会得到每集覆盖章节、剧情钩子、冲突/反转/悬念、关键角色场景道具事件，以及剧本、分镜、镜头和音视频生产状态。
-                    </p>
-                    <Button
-                      className="mt-4 bg-violet-600 hover:bg-violet-700"
-                      onClick={handleGenerateSeriesPlan}
-                      disabled={generatingSeriesPlan}
-                    >
-                      {generatingSeriesPlan ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                      AI 生成多集计划
-                    </Button>
-                  </div>
+                  <SeriesPlanSetupCard templates={styleTemplates} style={imageStyle} onStyleChange={setImageStyle}
+                    onGenerate={handleGenerateSeriesPlan} generating={generatingSeriesPlan} toMediaUrl={toMediaUrl} />
                 ) : (
                   <>
                     <SeriesRunPanel
@@ -1690,6 +1679,7 @@ export default function NovelDetailPage() {
                       chapters={chapters}
                       seriesPlan={seriesPlan}
                       modelConfigs={modelConfigs}
+                      visualStyle={seriesPlan.style || imageStyle}
                     />
                     <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

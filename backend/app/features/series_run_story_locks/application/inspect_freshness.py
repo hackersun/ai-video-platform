@@ -16,15 +16,16 @@ from ..repositories.story_lock_repository import StoryLockRepository
 
 
 class StoryLockFreshnessBlocked(StoryLockSourceStale):
-    """The persisted run no longer describes a valid four-chapter source."""
+    """The persisted run no longer describes a valid contiguous chapter source."""
 
 
 def run_chapter_ids(run: SeriesProductionRun) -> list[str]:
     ordered = sorted(run.episodes or [], key=lambda item: int(item.get("episode_number") or 0))
-    if [int(item.get("episode_number") or 0) for item in ordered] != [1, 2, 3, 4]:
+    episode_numbers = [int(item.get("episode_number") or 0) for item in ordered]
+    if not ordered or episode_numbers != list(range(1, len(ordered) + 1)):
         raise StoryLockFreshnessBlocked("episode_order_invalid")
     chapter_ids = [str(value) for episode in ordered for value in (episode.get("chapter_ids") or [])]
-    if len(chapter_ids) != 4 or len(set(chapter_ids)) != 4:
+    if len(chapter_ids) != len(ordered) or len(set(chapter_ids)) != len(ordered):
         raise StoryLockFreshnessBlocked("episode_chapter_shape_invalid")
     return chapter_ids
 
@@ -184,10 +185,22 @@ async def _inspect_v2(
     repository: StoryLockLineageRepository, run: SeriesProductionRun, bible: StoryBible,
     lock: dict[str, Any], *, supersede: bool, commit_invalidation: bool,
 ) -> dict[str, Any]:
-    from .closure_v2_request import build_closure_v2_request
+    from .closure_v2_request import ENTITY_EXTRACTION_CONTRACT_VERSION, build_closure_v2_request
     from .closure_versioning import preview_v2_lock
     from ..domain.scoped_reference import canonical_json_sha256
 
+    embedded = dict((bible.extra_data or {}).get("series_story_lock") or {})
+    if any(source.get("entity_extraction_contract_version") != ENTITY_EXTRACTION_CONTRACT_VERSION
+           for source in (lock, embedded)):
+        if supersede:
+            from .invalidate_lineage import invalidate_lineage
+            await invalidate_lineage(repository, run, reason="story_lock_stale",
+                                     commit=commit_invalidation)
+        return {"ready": False, "code": "story_lock_stale", "inputs_valid": False,
+                "story_blocker_code": "entity_extraction_contract_stale",
+                "unresolved_entity_ids": []}
+
+    unresolved_ids: list[str] = []
     try:
         run_chapter_ids(run)
         request = await build_closure_v2_request(
@@ -198,13 +211,16 @@ async def _inspect_v2(
             "source_hash": preview["source_hash"], "closure_hash": preview["closure_hash"],
             "snapshot_hash": preview["snapshot_hash"], "subjects": request["subjects"],
             "evidence_edges": request["evidence_edges"],
+            "entity_extraction_contract_version": request["entity_extraction_contract_version"],
             "candidate_counts": request["candidate_counts"]})
         expected = {"closure_contract_version": "required_entity_closure_v2",
+            "entity_extraction_contract_version": request["entity_extraction_contract_version"],
             "request_fingerprint": persisted_fingerprint,
             "source_hash": preview["source_hash"], "closure_hash": preview["closure_hash"],
             "snapshot_hash": preview["snapshot_hash"], "subjects": request["subjects"],
             "evidence_edges": request["evidence_edges"]}
-        embedded = dict((bible.extra_data or {}).get("series_story_lock") or {})
+        required_lifecycle = list((request.get("drift_factors") or {}).get("required_entity_lifecycle") or [])
+        unresolved_ids = [str(entity_id) for entity_id, status in required_lifecycle if status != "approved"]
         selected = await StoryLockRepository(repository.db).selected_shots(run)
         lineage = {"story_bible_id": bible.id,
             "closure_contract_version": "required_entity_closure_v2",
@@ -216,9 +232,12 @@ async def _inspect_v2(
         episodes_current = all(item.get("story_bible_id") == bible.id
             and item.get("closure_contract_version") == "required_entity_closure_v2"
             and item.get("contract_version") == preview["snapshot_hash"] for item in run.episodes or [])
-        bible_current = all(getattr(bible, field) in (None, "", {}, []) for field in (
-            "style", "worldview", "character_rules", "scene_rules", "prop_rules",
-            "event_timeline", "negative_prompt"))
+        bible_current = (
+            str(bible.style or "") == str((request.get("drift_factors") or {}).get("visual_style") or "")
+            and all(getattr(bible, field) in (None, "", {}, []) for field in (
+                "worldview", "character_rules", "scene_rules", "prop_rules",
+                "event_timeline", "negative_prompt"))
+        )
         ready = all(lock.get(key) == value and embedded.get(key) == value
                     for key, value in expected.items()) and shots_current and episodes_current and bible_current
     except (KeyError, RequiredEntityBlocked, StoryLockSourceStale, ValueError):
@@ -230,4 +249,6 @@ async def _inspect_v2(
         from .invalidate_lineage import invalidate_lineage
         await invalidate_lineage(repository, run, reason="story_lock_stale",
                                  commit=commit_invalidation)
-    return {"ready": False, "code": "story_lock_stale", "inputs_valid": False}
+    return {"ready": False, "code": "story_lock_stale", "inputs_valid": False,
+            "story_blocker_code": "production_entities_unapproved" if unresolved_ids else None,
+            "unresolved_entity_ids": unresolved_ids}

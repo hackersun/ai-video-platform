@@ -184,6 +184,7 @@ class BindingUpdateRequest(BindingCreateRequest):
 class ConnectionCreateRequest(NonblankReasonRequest):
     provider_id: str
     name: str = Field(min_length=1, max_length=120)
+    base_url: str | None = Field(default=None, min_length=1, max_length=500)
     api_key: str | None = Field(default=None, min_length=1, repr=False)
     api_secret: str | None = Field(default=None, min_length=1, repr=False)
 

@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 from decimal import Decimal
-import hashlib
-from io import BytesIO
-import json
 import os
 from typing import Any, Protocol
 from uuid import uuid4
@@ -13,10 +10,9 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
-import httpx
-from PIL import Image, UnidentifiedImageError
 
 from app.core.time_utils import utc_now
+from app.features.series_reference_skill.public import bind_series_reference_skill
 from app.models import Asset, ProviderAssetBinding, StoryBible, StoryEntity
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
 from app.models.series_production_run import SeriesProductionRun
@@ -27,18 +23,32 @@ from app.services.live_canary_budget import (
     bind_provider_operation_task,
     mark_operation_manual_reconcile,
     prepare_provider_operation,
-    required_tested_at_for_run,
     settle_confirmed_provider_rejection,
     settle_provider_operation,
     settle_synchronous_provider_operation,
-    validate_model_bindings,
 )
+from app.services.live_canary_bindings import validate_persisted_model_bindings
 from app.services.provider_asset_binding_service import upsert_provider_binding, verify_provider_binding
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.reference_failure_evidence import record_reference_failure_evidence
-from app.services.reference_layout_evaluator import (
-    ReferenceLayoutValidationError, evaluate_reference_layout,
-    reference_layout_prompt_instruction, validate_layout_evidence,
+from app.services.reference_layout_evaluator import validate_layout_evidence
+from app.services.series_reference_artifact_validation import (
+    ReferenceArtifactValidationError,
+    fetch_and_verify_reference_image as _fetch_and_verify_image,
+)
+from app.services.series_reference_budget import reference_budget_plan_is_safe
+from app.services.series_reference_contract import (
+    canonical_hash as _hash,
+    character_role_bindings as _character_role_bindings,
+    model_binding_ids as _binding_ids,
+    provider_operation_payload as _operation_payload,
+    reference_artifact_payload as _artifact_payload,
+    reference_visual_contract_hash,
+    reference_visual_contract_matches as _reference_visual_contract_matches,
+)
+from app.services.series_reference_rebinding import (
+    rebind_run_shots_reference as _rebind_run_shots_reference,
+    rebind_shot_reference_context,
 )
 from app.services.series_reference_provider import (
     ConfiguredReferenceAdapter,
@@ -68,19 +78,10 @@ class ReferencePreparationAdapter(Protocol):
     ) -> dict[str, Any]: ...
 
 
-def _hash(value: Any) -> str:
-    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def _binding_ids(run: SeriesProductionRun) -> dict[str, str]:
-    capabilities = (run.model_bindings or {}).get("capabilities") or {}
-    return {name: str((capabilities.get(name) or {}).get("config_id") or "") for name in ("text", "image", "tts", "video")}
-
 async def _story_lock(db: AsyncSession, run: SeriesProductionRun) -> tuple[StoryBible, dict[str, Any]]:
     freshness = await inspect_story_lock_freshness(db, run, supersede=True)
     if not freshness.get("ready"):
-        raise ReferencePreparationBlocked(f"story locks are not current: {freshness.get('code')}")
+        raise ReferencePreparationBlocked(f"story locks are not current: {freshness.get('story_blocker_code') or freshness.get('code')}")
     lock = (run.run_metadata or {}).get("story_locks") or {}
     bible_id = str(lock.get("story_bible_id") or "")
     bible = await db.get(StoryBible, bible_id) if bible_id else None
@@ -105,50 +106,6 @@ async def _story_lock(db: AsyncSession, run: SeriesProductionRun) -> tuple[Story
     return bible, preparation
 
 
-async def _fetch_and_verify_image(public_url: str) -> dict[str, Any]:
-    max_bytes = 10 * 1024 * 1024
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(public_url, headers={"Accept": "image/*"})
-            response.raise_for_status()
-    except (httpx.HTTPError, ValueError) as error:
-        raise ReferencePreparationBlocked("reference artifact URL is not fetchable") from error
-    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
-        raise ReferencePreparationBlocked("reference artifact content type is not an allowed image")
-    content_length = response.headers.get("content-length")
-    try:
-        if content_length is not None and int(content_length) > max_bytes:
-            raise ReferencePreparationBlocked("reference artifact exceeds size limit")
-    except ValueError as error:
-        raise ReferencePreparationBlocked("reference artifact content length is invalid") from error
-    data = response.content
-    if not data or len(data) > max_bytes:
-        raise ReferencePreparationBlocked("reference artifact bytes are missing or oversized")
-    try:
-        with Image.open(BytesIO(data)) as image:
-            image.verify()
-        with Image.open(BytesIO(data)) as image:
-            image.load()
-            width, height = image.size
-            image_format = str(image.format or "").upper()
-    except (UnidentifiedImageError, OSError, ValueError) as error:
-        raise ReferencePreparationBlocked("reference artifact is not a decodable image") from error
-    if width < 1024 or height < 768:
-        raise ReferencePreparationBlocked("reference artifact pixel dimensions are too small")
-    try:
-        layout_evidence = evaluate_reference_layout(data)
-    except ReferenceLayoutValidationError as error:
-        raise ReferencePreparationBlocked(
-            f"reference layout evidence failed: {error}", failure_evidence=error.summary,
-        ) from error
-    return {
-        "sha256": hashlib.sha256(data).hexdigest(), "byte_size": len(data),
-        "content_type": content_type, "width": width, "height": height, "format": image_format,
-        "layout_evidence": layout_evidence,
-    }
-
-
 async def _required_characters(db: AsyncSession, run: SeriesProductionRun, approved_ids: list[str]) -> list[StoryEntity]:
     rows = list((await db.scalars(select(StoryEntity).where(
         StoryEntity.id.in_(approved_ids),
@@ -161,32 +118,6 @@ async def _required_characters(db: AsyncSession, run: SeriesProductionRun, appro
     if not rows:
         raise ReferencePreparationBlocked("story locks have no approved required characters")
     return sorted(rows, key=lambda item: (item.chapter_id or "", item.id))
-
-
-def _operation_payload(operation: LiveCanaryProviderOperation) -> dict[str, Any]:
-    return {
-        "id": operation.id,
-        "status": operation.status,
-        "provider_task_id": operation.provider_task_id,
-        "reservation_id": operation.reservation_id,
-        "actual_rmb": operation.actual_rmb,
-        "cost_source": operation.cost_source,
-    }
-
-
-def _artifact_payload(asset: Asset) -> dict[str, Any]:
-    evidence = (asset.generation_params or {}).get("evidence") or {}
-    return {
-        "id": asset.id,
-        "url": asset.url,
-        "checksum": evidence.get("checksum"),
-        "layout_evidence": evidence.get("layout_evidence") or {},
-        "width": evidence.get("width"),
-        "height": evidence.get("height"),
-        "byte_size": evidence.get("byte_size"),
-        "public_url_expires_at": evidence.get("public_url_expires_at"),
-        "storage_delivery": evidence.get("storage_delivery") or {},
-    }
 
 
 async def _completed_result(
@@ -224,6 +155,7 @@ async def _exact_binding(db: AsyncSession, run: SeriesProductionRun, asset: Asse
 
 async def _finalize_candidate(
     db: AsyncSession, run: SeriesProductionRun, asset: Asset, *, resumed: bool,
+    superseded_asset_id: str | None = None,
 ) -> dict[str, Any]:
     params = dict(asset.generation_params or {})
     evidence = params.get("evidence") or {}
@@ -237,7 +169,6 @@ async def _finalize_candidate(
         params.get("composite_reference_rule") != "single_artifact_dual_role_v1"
         or {item.get("role") for item in roles if isinstance(item, dict)} != {"character_canonical", "global_style_board"}
         or not character_role_ids
-        or len(character_role_ids) != 1
         or len(character_role_ids) != len(set(character_role_ids))
         or set(character_role_ids) != set(evidence.get("required_character_entity_ids") or [])
         or len(global_roles) != 1
@@ -289,9 +220,17 @@ async def _finalize_candidate(
             "asset_id": asset.id, "asset_version": int(asset.version or 1),
             "provider_binding_id": binding.id, "evidence_hash": _hash(evidence),
             "roles": ["character_canonical", "global_style_board"], "completed_at": now.isoformat(),
+            "prompt_skill": params.get("prompt_skill") or {},
         }
         run.run_metadata = metadata
         flag_modified(run, "run_metadata")
+        if superseded_asset_id:
+            await _rebind_run_shots_reference(
+                db, run,
+                superseded_asset_id=superseded_asset_id,
+                replacement_asset=asset,
+                rebound_at=now.isoformat(),
+            )
         await db.commit()
     except Exception:
         await db.rollback()
@@ -358,31 +297,51 @@ async def prepare_series_reference(
     *,
     adapter: ReferencePreparationAdapter,
     binding_ids: dict[str, str] | None = None,
+    native_audio: bool = False,
+    recovery_operation_id: str | None = None,
 ) -> dict[str, Any]:
     if run.status not in {"shots_ready", "anchor_ready", "media_running"} or (run.budget_policy or {}).get("live_canary") is not True:
         raise ReferencePreparationBlocked("owned live run is required")
     media_retry = run.status == "media_running"
     bible, story_lock = await _story_lock(db, run)
     required_characters = await _required_characters(db, run, list(story_lock.get("approved_entity_ids") or []))
-    if len(required_characters) != 1:
-        raise ReferencePreparationBlocked(
-            "reference_capacity_exceeded: single composite reference supports exactly one required character"
-        )
     protagonist = required_characters[0]
 
     ids = binding_ids or _binding_ids(run)
+    metadata = run.run_metadata or {}
+    completed = metadata.get("reference_preparation") or {}
+    completed_asset = await db.get(Asset, completed["asset_id"]) if completed.get("asset_id") else None
+    stale_asset = completed_asset if (
+        completed_asset and not _reference_visual_contract_matches(completed_asset, required_characters)
+    ) else None
+    if stale_asset:
+        completed = {}
+    required_capabilities = {"video"} if completed.get("asset_id") else {"image", "video"}
     try:
-        await validate_model_bindings(
-            db, run, ids, required_tested_at=required_tested_at_for_run(run), freshness_seconds=900,
+        await validate_persisted_model_bindings(
+            db, run, required_capabilities=required_capabilities, persist_missing=True,
         )
     except BindingValidationError as error:
         await db.rollback()
         raise ReferencePreparationBlocked(f"fresh image/video binding is required: {error}") from error
 
-    metadata = run.run_metadata or {}
-    completed = metadata.get("reference_preparation") or {}
+    if stale_asset:
+        params = dict(stale_asset.generation_params or {})
+        stale_asset.is_active = False
+        stale_asset.is_final = False
+        stale_asset.is_locked = False
+        stale_asset.generation_params = {
+            **params, "status": "superseded", "superseded_reason": "visual_contract_stale",
+        }
+        metadata = dict(run.run_metadata or {})
+        metadata.pop("reference_preparation", None)
+        run.run_metadata = metadata
+        flag_modified(stale_asset, "generation_params")
+        flag_modified(run, "run_metadata")
+        await db.commit()
+
     if completed.get("asset_id"):
-        asset = await db.get(Asset, completed["asset_id"])
+        asset = completed_asset
         binding = await _exact_binding(db, run, asset) if asset else None
         if asset and binding and asset.is_final and asset.is_locked and binding.upload_status == "ready" and binding.verified_at:
             if binding.public_url_expires_at and binding.public_url_expires_at <= utc_now():
@@ -393,50 +352,77 @@ async def prepare_series_reference(
         LiveCanaryProviderOperation.run_id == run.id,
         LiveCanaryProviderOperation.job_type == "series_composite_reference",
     ).order_by(LiveCanaryProviderOperation.created_at.desc()))).all())
+    superseded_artifact = False
+    recovery_operation: LiveCanaryProviderOperation | None = None
     for operation in existing_operations:
+        if recovery_operation_id == operation.id:
+            if (
+                operation.status != "unknown_manual_reconcile"
+                or operation.recovery_reason != "reference_artifact_unverified"
+                or operation.artifact_id
+            ):
+                raise ReferencePreparationBlocked("reference operation is not recoverable")
+            recovery_operation = operation
+            continue
         if operation.status == "reconciled" and operation.artifact_id:
             candidate = await db.get(Asset, operation.artifact_id)
             if candidate and candidate.is_active and (candidate.generation_params or {}).get("status") != "superseded":
                 return await _finalize_candidate(db, run, candidate, resumed=True)
+            superseded_artifact = bool(candidate) and (
+                not candidate.is_active or (candidate.generation_params or {}).get("status") == "superseded"
+            )
         if operation.status in {"reserved", "accepted", "unknown_manual_reconcile"}:
             raise ReferencePreparationBlocked(
                 f"provider state {operation.status} requires recovery",
                 operation=_operation_payload(operation),
             )
 
-    if media_retry:
+    if recovery_operation_id and recovery_operation is None:
+        raise ReferencePreparationBlocked("reference recovery operation was not found")
+
+    if media_retry and not superseded_artifact and recovery_operation is None:
         raise ReferencePreparationBlocked("media retry may only refresh an existing reference artifact")
 
-    plan = await build_live_preflight_plan(db, run)
-    unsafe_codes = {
-        "trusted_budget_policy_missing", "wave_one_budget_policy_invalid", "image_estimate_missing",
-        "video_estimate_missing", "tts_estimate_missing", "projected_budget_exceeded", "model_bindings_not_fresh", "production_entities_unapproved", "production_entity_conflict",
-    }
-    present_unsafe = [code for code in plan["blocker_codes"] if code in unsafe_codes]
-    if present_unsafe or Decimal(plan["budget"]["projected_total_rmb"]) > Decimal("10.00"):
-        raise ReferencePreparationBlocked(f"server budget plan is not safe: {','.join(present_unsafe) or 'over budget'}")
-
-    attempt = len(existing_operations) + 1
-    estimate = ((run.budget_policy or {}).get("estimates_rmb") or {}).get("image")
-    if estimate is None:
-        raise ReferencePreparationBlocked("server image budget estimate is missing")
-    job_id = f"series-reference:{run.id}:{attempt}"
-    reservation_id = f"series-reference:{run.id}:{story_lock['source_hash'][:16]}:{attempt}"
-    try:
-        operation = await prepare_provider_operation(
-            db, run, capability="image", job_type="series_composite_reference",
-            job_id=job_id, reservation_id=reservation_id, estimate_rmb=Decimal(str(estimate)),
+    if recovery_operation is not None:
+        operation = recovery_operation
+    else:
+        estimate = ((run.budget_policy or {}).get("estimates_rmb") or {}).get("image")
+        if estimate is None:
+            raise ReferencePreparationBlocked("server image budget estimate is missing")
+        plan = await build_live_preflight_plan(db, run, native_audio=native_audio)
+        repair = (run.run_metadata or {}).get("repair_budget_extension") or {}
+        scoped_repair = (
+            Decimal(str(estimate))
+            if repair.get("status") == "approved" and repair.get("artifact_ids")
+            else None
         )
-    except BudgetExceeded as error:
-        await db.rollback()
-        raise ReferencePreparationBlocked(f"budget reservation failed: {error}") from error
+        if not reference_budget_plan_is_safe(
+            plan, scoped_repair_reservation_rmb=scoped_repair,
+        ):
+            present_unsafe = [
+                code for code in plan["blocker_codes"]
+                if code != "provider_binding_not_ready"
+            ]
+            raise ReferencePreparationBlocked(f"server budget plan is not safe: {','.join(present_unsafe) or 'over budget'}")
 
-    character_names = "、".join(character.canonical_name or character.name for character in required_characters)
-    prompt = (
-        f"为《{bible.title}》制作一张单一复合动漫设定板。左侧是所需角色 {character_names} "
-        "的正面、四分之三侧面和全身三视图；右侧是同一作品的全局动漫风格板、色板、线条和光影规则。"
-        f"{reference_layout_prompt_instruction()}统一风格：{bible.style}。禁止拆成多个文件，禁止文字水印。"
+        attempt = len(existing_operations) + 1
+        job_id = f"series-reference:{run.id}:{attempt}"
+        reservation_id = f"series-reference:{run.id}:{story_lock['source_hash'][:16]}:{attempt}"
+        try:
+            operation = await prepare_provider_operation(
+                db, run, capability="image", job_type="series_composite_reference",
+                job_id=job_id, reservation_id=reservation_id, estimate_rmb=Decimal(str(estimate)),
+            )
+        except BudgetExceeded as error:
+            await db.rollback()
+            raise ReferencePreparationBlocked(f"budget reservation failed: {error}") from error
+
+    character_bindings = _character_role_bindings(required_characters)
+    asset_id = str(uuid4())
+    reference_skill = await bind_series_reference_skill(
+        db, run=run, bible=bible, characters=required_characters, asset_id=asset_id,
     )
+    prompt = reference_skill.rendered_prompt
     try:
         result = await adapter.generate(
             db=db, run=run, prompt=prompt, image_config_id=ids["image"], operation=operation,
@@ -505,7 +491,7 @@ async def prepare_series_reference(
 
     try:
         artifact_evidence = await _fetch_and_verify_image(public_url)
-    except ReferencePreparationBlocked as error:
+    except ReferenceArtifactValidationError as error:
         if task_id:
             operation = await bind_provider_operation_task(db, operation, provider_task_id=task_id)
         await mark_operation_manual_reconcile(db, operation, reason="reference_artifact_unverified")
@@ -523,23 +509,25 @@ async def prepare_series_reference(
     checksum = artifact_evidence["sha256"]
     now = utc_now()
     asset = Asset(
-        id=str(uuid4()), user_id=run.user_id, novel_id=run.novel_id, entity_id=protagonist.id,
+        id=asset_id, user_id=run.user_id, novel_id=run.novel_id, entity_id=protagonist.id,
         entity_type="character", category="style", name=f"{protagonist.name} 角色与全局风格复合设定板",
         description="单一产物同时承载角色规范三视图与全局动漫风格板。",
         asset_type="image", url=public_url, version=1, is_active=True, is_final=False, is_locked=False,
         source_job_id=operation.id, source_prompt=prompt,
         generation_params={
+            "prompt_skill": reference_skill.evidence,
             "composite_reference_rule": "single_artifact_dual_role_v1",
             "canonical_roles": ["front", "three_quarter", "full_body", "global_style_board"],
             "role_bindings": [
-                {"role": "character_canonical", "entity_id": protagonist.id},
+                *character_bindings,
                 {"role": "global_style_board", "novel_id": run.novel_id},
             ],
             "evidence": {
                 "status": "completed", "checksum": checksum, "operation_id": operation.id,
                 "reservation_id": operation.reservation_id, "provider_task_id": task_id,
                 "story_bible_id": bible.id, "story_lock_version": story_lock.get("version"),
-                "required_character_entity_ids": [protagonist.id],
+                "required_character_entity_ids": [item["entity_id"] for item in character_bindings],
+                "visual_contract_hash": reference_visual_contract_hash(required_characters),
                 "image_config_id": ids["image"], "generated_at": now.isoformat(),
                 "width": artifact_evidence["width"], "height": artifact_evidence["height"],
                 "byte_size": artifact_evidence["byte_size"], "content_type": artifact_evidence["content_type"],
@@ -553,8 +541,20 @@ async def prepare_series_reference(
     db.add(asset)
     await db.commit()
     await settle_synchronous_provider_operation(db, operation, provider_actual_rmb=result.get("actual_cost_rmb"))
-    return await _finalize_candidate(db, run, asset, resumed=False)
+    if recovery_operation is not None:
+        policy = dict(run.budget_policy or {})
+        policy.pop("blocked", None)
+        policy.pop("blocked_reason", None)
+        run.budget_policy = policy
+        flag_modified(run, "budget_policy")
+        await db.commit()
+    return await _finalize_candidate(
+        db, run, asset, resumed=False,
+        superseded_asset_id=str(stale_asset.id) if stale_asset else None,
+    )
 
 
 __all__ = ["ConfiguredReferenceAdapter", "DeterministicReferenceAdapter", "ReferencePreparationBlocked",
-           "ReferencePreSubmitRejected", "default_reference_adapter", "prepare_series_reference"]
+           "ReferencePreSubmitRejected", "default_reference_adapter", "prepare_series_reference",
+           "rebind_shot_reference_context", "reference_budget_plan_is_safe",
+           "reference_visual_contract_hash"]

@@ -45,6 +45,13 @@ from app.models.quality_evaluation import QUALITY_DIMENSIONS
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.services.media_persistence import audit_media_url, local_static_path_for_url
+from app.services.media_job_selection import (
+    is_superseded as _is_superseded,
+    job_created_key as _job_created_key,
+    job_lineage_value as _lineage_value,
+    job_shot_id as _job_shot_id,
+    latest_non_superseded_by_shot as _latest_non_superseded_by_shot,
+)
 from app.services.audio_route_service import resolve_shot_audio_route
 from app.services.episode_contract_service import lock_episode_contract
 from app.services.production_bible import build_production_bible_summary
@@ -54,6 +61,7 @@ from app.services.quality_evaluation_service import evaluate_artifact
 from app.services.reference_package_builder import bind_reference_package, build_reference_package
 from app.services.repair_planner import plan_minimal_repair
 from app.services.shot_quality_service import estimate_quality_repair_cost_risk
+from app.services.shot_review_projection import shot_reference_review_fields
 from app.services.deterministic_provider_fake import deterministic_media_provider_artifacts, deterministic_provider_fake_enabled
 from app.services.dialogue_parser import parse_dialogue
 from app.services.video_reference_adapter import (
@@ -63,7 +71,6 @@ from app.services.video_reference_adapter import (
     enrich_prompt_parameters_with_reference_contract,
 )
 from app.services.visual_consistency_service import record_completed_shot_visual_consistency
-
 router = APIRouter(tags=["工作流"])
 
 _DIALOGUE_SYNC_DURATION_TOLERANCE_SECONDS = 0.75
@@ -154,47 +161,10 @@ def _latest_synthesis_job_id(workflow: Workflow) -> Optional[str]:
     return ids[-1] if ids else None
 
 
-def _lineage_value(job: Any, key: str) -> Optional[str]:
-    extra = _extra(job)
-    value = getattr(job, key, None) or extra.get(key)
-    if not value and isinstance(extra.get("lineage"), dict):
-        value = extra["lineage"].get(key)
-    return str(value) if value else None
-
-
 def _clean_text(value: Any) -> Optional[str]:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
-
-
-def _job_created_key(job: Any) -> str:
-    created_at = getattr(job, "created_at", None)
-    return created_at.isoformat() if created_at else ""
-
-
-def _job_shot_id(job: Any) -> Optional[str]:
-    return _lineage_value(job, "shot_id")
-
-
-def _is_superseded(job: Any) -> bool:
-    return _extra(job).get("superseded_by_regeneration") is True
-
-
-def _latest_non_superseded_by_shot(jobs: List[Any]) -> Dict[str, Any]:
-    latest: Dict[str, Any] = {}
-    fallback: Dict[str, Any] = {}
-    for job in jobs:
-        shot_id = _job_shot_id(job)
-        if not shot_id:
-            continue
-        if shot_id not in fallback or _job_created_key(job) > _job_created_key(fallback[shot_id]):
-            fallback[shot_id] = job
-        if _is_superseded(job):
-            continue
-        if shot_id not in latest or _job_created_key(job) > _job_created_key(latest[shot_id]):
-            latest[shot_id] = job
-    return {**fallback, **latest}
 
 
 def _job_has_ready_video(job: Any) -> bool:
@@ -455,7 +425,7 @@ def _shot_review_item(
         "status": getattr(latest_video, "status", None) if latest_video else (shot.video_status or "pending"),
         "duration": getattr(latest_video, "duration", None) if latest_video else shot.duration,
         "subtitle_text": subtitle_text,
-        "character_names": workflow_media_helper.shot_character_names(shot),
+        **shot_reference_review_fields(shot, latest_video=latest_video, video_extra=video_extra, fallback_character_names=workflow_media_helper.shot_character_names(shot)),
         "evidence": {
             "strategy_routing": video_extra.get("strategy_routing"),
             "reference_package_mode": _reference_package_mode(video_extra),
@@ -2103,6 +2073,7 @@ class WorkflowShotRegenerateRequest(BaseModel):
     model_config_id: Optional[str] = None
     audio_model_config_id: Optional[str] = None
     audio_mode: str = "model_audio"
+    native_audio: bool = False
 
 
 class WorkflowShotRegenerateResponse(BaseModel):
@@ -2649,6 +2620,7 @@ async def regenerate_workflow_shots(
             strategy="separate_video_tts",
             shot_ids=target_ids,
             audio_mode=request.audio_mode,
+            native_audio=request.native_audio,
             model_config_id=request.model_config_id,
             audio_model_config_id=request.audio_model_config_id,
         ))))

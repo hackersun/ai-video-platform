@@ -212,7 +212,9 @@ class StoryEntityUpdateRequest(BaseModel):
     script_id: Optional[str] = None
     entity_type: Optional[str] = None
     name: Optional[str] = Field(None, min_length=1, max_length=200)
+    canonical_name: Optional[str] = Field(None, max_length=200)
     description: Optional[str] = None
+    appearance: Optional[str] = None
     aliases: Optional[List[str]] = None
     attributes: Optional[Dict[str, Any]] = None
     evidence: Optional[str] = None

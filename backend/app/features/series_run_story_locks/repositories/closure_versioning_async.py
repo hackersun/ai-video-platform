@@ -32,6 +32,7 @@ def _fingerprint(request: Mapping[str, Any], preview: Mapping[str, Any]) -> str:
         "source_hash": preview["source_hash"],
         "closure_hash": preview["closure_hash"],
         "snapshot_hash": preview["snapshot_hash"],
+        "entity_extraction_contract_version": request.get("entity_extraction_contract_version"),
         "subjects": request.get("subjects"),
         "evidence_edges": request.get("evidence_edges"),
         "candidate_counts": request.get("candidate_counts"),
@@ -140,6 +141,7 @@ class AsyncClosureVersioningAdapter:
         if lock.get("closure_contract_version") != CLOSURE_VERSION:
             return None
         expected = {"closure_contract_version": CLOSURE_VERSION,
+                    "entity_extraction_contract_version": request.get("entity_extraction_contract_version"),
                     "request_fingerprint": fingerprint,
                     "source_hash": preview["source_hash"], "closure_hash": preview["closure_hash"],
                     "snapshot_hash": preview["snapshot_hash"], "subjects": request.get("subjects"),
@@ -181,6 +183,7 @@ class AsyncClosureVersioningAdapter:
         preview: Mapping[str, Any],
     ) -> StoryBible:
         lock = {**_lock_payload(run, bible_id, fingerprint, preview), "version": version,
+                "entity_extraction_contract_version": request.get("entity_extraction_contract_version"),
                 "subjects": request.get("subjects"), "evidence_edges": request.get("evidence_edges")}
         return StoryBible(
             id=bible_id, user_id=run.user_id, novel_id=run.novel_id,
@@ -200,6 +203,7 @@ class AsyncClosureVersioningAdapter:
     ) -> None:
         metadata = copy.deepcopy(run.run_metadata or {})
         metadata["story_locks"] = {**_lock_payload(run, bible_id, fingerprint, preview),
+                                   "entity_extraction_contract_version": request.get("entity_extraction_contract_version"),
                                    "version": version, "subjects": request.get("subjects"),
                                    "evidence_edges": request.get("evidence_edges"),
                                    "required_entity_ids": [item["canonical_entity_id"]

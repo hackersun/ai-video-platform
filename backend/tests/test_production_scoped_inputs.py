@@ -159,21 +159,17 @@ async def test_closure_preserves_explicit_3d_style_from_novel_description(scoped
 
 
 @pytest.mark.asyncio
-async def test_required_entity_lifecycle_change_drifts_closure_snapshot(scoped_db):
+async def test_terminal_required_entity_lifecycle_blocks_closure_refresh(scoped_db):
     from app.services.story_entity_lifecycle import ARCHIVED, set_entity_review_status
 
     run, _shot = await _persist_scoped_shot(scoped_db)
-    initial = preview_v2_lock(await build_closure_v2_request(
-        scoped_db, run.id, expected_run_version=run.version, user_id=run.user_id,
-    ))
     entity = await scoped_db.get(StoryEntity, "entity-1")
     set_entity_review_status(entity, ARCHIVED, changed_by=run.user_id, reason="regression")
     await scoped_db.flush()
-    changed = preview_v2_lock(await build_closure_v2_request(
-        scoped_db, run.id, expected_run_version=run.version, user_id=run.user_id,
-    ))
-
-    assert changed["snapshot_hash"] != initial["snapshot_hash"]
+    with pytest.raises(ValueError, match="terminal review status"):
+        await build_closure_v2_request(
+            scoped_db, run.id, expected_run_version=run.version, user_id=run.user_id,
+        )
 
 
 @pytest.mark.asyncio

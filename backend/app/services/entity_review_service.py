@@ -27,8 +27,13 @@ from app.services.entity_extraction_service import (
     extract_story_entities_with_quality,
 )
 from app.services.entity_evidence_mentions import build_story_entity_mention as _build_mention
+from app.services.entity_evidence_contract import (
+    attach_chapter_evidence_contracts,
+    build_chapter_evidence_contract,
+)
 from app.services.entity_quality_service import AUTO_APPROVE, REJECT_NOISE, score_entity_candidate
-from app.services.prompt_template_router import select_prompt_skill_for_model
+from app.features.series_skill_execution.entity_stage import resolve_entity_candidates
+from app.features.series_skill_execution.public import bind_series_stage_skill
 from app.services.story_entity_lifecycle import (
     APPROVED,
     CANDIDATE,
@@ -36,6 +41,7 @@ from app.services.story_entity_lifecycle import (
     LEGACY_ACTIVE,
     REJECTED,
     get_entity_review_status,
+    is_entity_production_visible,
     query_story_entities_for_review,
     set_entity_review_status,
 )
@@ -128,6 +134,60 @@ async def _load_existing_entities(
     query = query.where(StoryEntity.script_id == script_id if script_id else StoryEntity.script_id.is_(None))
     result = await db.execute(query)
     return {_entity_key(entity.entity_type, entity.name): entity for entity in result.scalars().all()}
+
+
+async def reconcile_chapter_entity_evidence(
+    db: AsyncSession, *, user_id: str, novel_id: Optional[str], chapter_id: str,
+    entity_types: Iterable[str], content: str,
+) -> None:
+    result = await db.execute(select(StoryEntity).where(
+        StoryEntity.user_id == user_id,
+        StoryEntity.novel_id == novel_id,
+        StoryEntity.chapter_id == chapter_id,
+        StoryEntity.entity_type.in_(list(entity_types)),
+    ))
+    content_hash = _text_hash(content)
+    for entity in result.scalars().all():
+        if not is_entity_production_visible(entity):
+            continue
+        attributes = _json_dict(entity.attributes)
+        evidence = _json_dict(attributes.get("evidence_contract"))
+        span = evidence.get("source_span")
+        valid_span = (
+            isinstance(span, list) and len(span) == 2
+            and all(isinstance(value, int) for value in span)
+            and 0 <= span[0] < span[1] <= len(content)
+        )
+        excerpt_matches = (
+            valid_span
+            and evidence.get("source_excerpt") == content[span[0]:span[1]]
+        )
+        if (
+            evidence.get("status") == "verified"
+            and evidence.get("chapter_id") == chapter_id
+            and evidence.get("content_hash") == content_hash
+            and excerpt_matches
+        ):
+            continue
+        if excerpt_matches:
+            continue
+        contract = next((
+            candidate for candidate in (
+                build_chapter_evidence_contract(
+                    evidence=str(entity.evidence or ""), content=content, chapter_id=chapter_id,
+                ),
+                build_chapter_evidence_contract(
+                    evidence=str(entity.name or ""), content=content, chapter_id=chapter_id,
+                ),
+            ) if candidate is not None
+        ), None)
+        if contract is None:
+            set_entity_review_status(
+                entity, ARCHIVED, changed_by=user_id,
+                reason="chapter_source_evidence_stale",
+            )
+            continue
+        entity.attributes = {**attributes, "evidence_contract": contract}
 
 
 def _merge_quality_metadata(entity: StoryEntity, *, run_id: str, item: dict[str, Any], quality: dict[str, Any]) -> None:
@@ -246,6 +306,7 @@ async def run_candidate_entity_extraction(
     model_id: Optional[str] = None,
     prompt_version: Optional[str] = None,
     persist: bool = True,
+    commit: bool = True,
     persist_rejected: bool = False,
     allow_auto_approve: bool = False,
     candidate_items: Optional[list[dict[str, Any]]] = None,
@@ -255,13 +316,13 @@ async def run_candidate_entity_extraction(
     if unknown:
         raise ValueError(f"不支持的实体类型: {', '.join(sorted(unknown))}")
 
-    prompt_route = await select_prompt_skill_for_model(
+    run_id = str(uuid4())
+    prompt_binding = await bind_series_stage_skill(
         db,
         user_id=user_id,
         task="entity_extraction",
         provider_name=provider,
         model_id=model_id,
-        model_capabilities=[],
         output_contract="json_array",
         stage="analysis",
         context={
@@ -272,10 +333,19 @@ async def run_candidate_entity_extraction(
             "output_format": "JSON 数组",
         },
         internal_prompt="抽取小说动漫制作实体候选，必须保留证据，并由质量门禁决定候选/拒绝/批准状态。",
+        artifact_type="entity_extraction_run", artifact_id=run_id,
+        execution_mode="deterministic_skill_contract",
     )
-    prompt_route_metadata = {key: value for key, value in prompt_route.items() if key != "prompt"}
+    skill_evidence = prompt_binding.evidence
+    prompt_route_metadata = {
+        **skill_evidence,
+        "used_prompt_skill": True,
+        "prompt_skill_id": skill_evidence["id"],
+        "prompt_skill_name": skill_evidence["name"],
+        "prompt_skill_version": skill_evidence["version"],
+        "prompt_profile_version_id": skill_evidence["profile_version_id"],
+    }
 
-    run_id = str(uuid4())
     run = EntityExtractionRun(
         id=run_id,
         user_id=user_id,
@@ -297,12 +367,17 @@ async def run_candidate_entity_extraction(
     )
     if persist:
         db.add(run)
-
-    items = (
-        [dict(item) for item in candidate_items if item.get("entity_type") in requested]
-        if candidate_items is not None
-        else _candidate_items(text, requested, include_rejected=persist_rejected)
-    )
+    items, model_evidence = await resolve_entity_candidates(db, user_id=user_id, rendered_prompt=prompt_binding.rendered_prompt,
+        source_text=text or "", requested_types=requested, supplied=candidate_items, model_config_id=model_config_id,
+        fallback=lambda: _candidate_items(text, requested, include_rejected=persist_rejected))
+    prompt_route_metadata.update(model_execution=model_evidence, execution_mode=model_evidence["execution_mode"])
+    run.extra_data = {**(run.extra_data or {}), "prompt_routing": prompt_route_metadata}
+    if source_type == "chapter" and chapter_id:
+        attach_chapter_evidence_contracts(items, content=text or "", chapter_id=chapter_id)
+        await reconcile_chapter_entity_evidence(
+            db, user_id=user_id, novel_id=novel_id, chapter_id=chapter_id,
+            entity_types=requested, content=text or "",
+        )
     existing_by_key = await _load_existing_entities(
         db,
         user_id=user_id,
@@ -351,6 +426,12 @@ async def run_candidate_entity_extraction(
         preserve_existing_status = existing is not None and previous_status in {APPROVED, LEGACY_ACTIVE}
         if not preserve_existing_status:
             _apply_candidate_fields(entity, item)
+        evidence_contract = _json_dict(_json_dict(item.get("attributes")).get("evidence_contract"))
+        if evidence_contract.get("status") == "verified":
+            entity.attributes = {
+                **_json_dict(entity.attributes),
+                "evidence_contract": evidence_contract,
+            }
         _merge_quality_metadata(entity, run_id=run_id, item=item, quality=quality)
 
         mention = _build_mention(
@@ -388,6 +469,20 @@ async def run_candidate_entity_extraction(
             stats["updated"] += 1
 
         set_entity_review_status(entity, final_status, changed_by=user_id, reason=f"entity_extraction_v2:{auto_decision}")
+        if (
+            final_status == APPROVED
+            and allow_auto_approve
+            and auto_decision == AUTO_APPROVE
+            and _mention_has_approval_evidence(mention)
+        ):
+            attributes = dict(entity.attributes or {})
+            attributes["approval_record"] = {
+                **dict(attributes.get("approval_record") or {}),
+                "approved_by": user_id,
+                "approved_at": utc_now().isoformat(),
+                "reason": "entity_extraction_v2:auto_approve",
+            }
+            entity.attributes = attributes
         entities.append(entity)
         mentions.append(mention)
 
@@ -395,13 +490,17 @@ async def run_candidate_entity_extraction(
     run.completed_at = utc_now()
     run.stats = stats
     run.quality_summary = _quality_summary(items)
-    if persist:
+    if persist and commit:
         for mention in mentions:
             db.add(mention)
         await db.commit()
         await db.refresh(run)
         for entity in entities:
             await db.refresh(entity)
+    elif persist:
+        for mention in mentions:
+            db.add(mention)
+        await db.flush()
 
     return {
         "run_id": run.id,

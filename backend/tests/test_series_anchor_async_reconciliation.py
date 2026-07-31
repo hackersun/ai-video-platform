@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select
 from app.core.database import AsyncSessionLocal
 from app.core.time_utils import utc_now
 from app.features.series_anchor_generation.media_reconciliation import (
+    _native_subtitle_already_finalized,
     pending_source_response,
     reconcile_selected_media,
 )
@@ -62,6 +63,25 @@ def test_pending_source_response_distinguishes_waiting_and_provider_ready() -> N
     assert pending["pending_video_job_ids"] == ["video-1"]
     assert ready and ready["status"] == "provider_ready"
     assert pending_source_response(["shot-1"], [{"media_job_ids": ["media-1"]}]) is None
+
+
+def test_native_subtitle_finalize_is_idempotent_for_same_track_and_dialogue() -> None:
+    digest = "a" * 64
+    video = type("Video", (), {
+        "video_url": "/static/generated/videos/native-subtitled.mp4",
+        "extra_data": {
+            "subtitle_burned": True,
+            "subtitle_track_id": "track-1",
+            "expected_dialogue_sha256": digest,
+            "subtitle_timing_contract_version": "native_audio_activity_v7",
+        },
+    })()
+    track = type("Track", (), {
+        "id": "track-1",
+        "export_urls": {"burned_video": "/static/generated/videos/native-subtitled.mp4"},
+    })()
+
+    assert _native_subtitle_already_finalized(video, track, digest) is True
 
 
 async def _seed_source_jobs(
@@ -196,6 +216,78 @@ async def test_reconcile_aggregates_successful_sources_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconcile_uses_latest_regenerated_video_when_submission_keeps_stale_job_id() -> None:
+    ids = await _seed_source_jobs(video_status="succeeded")
+    replacement_id = str(uuid4())
+    replacement_operation_id = str(uuid4())
+
+    async with AsyncSessionLocal() as db:
+        initial = await reconcile_selected_media(db, run_id=ids["run"], user_id=ids["user"])
+        assert initial["status"] == "completed"
+
+    async with AsyncSessionLocal() as db:
+        original = await db.get(VideoJob, ids["video"])
+        original.extra_data = {
+            **(original.extra_data or {}),
+            "superseded_by_regeneration": True,
+            "superseded_at": utc_now().isoformat(),
+        }
+        db.add(VideoJob(
+            id=replacement_id,
+            user_id=ids["user"],
+            workflow_id=ids["workflow"],
+            task_id="provider-video-regenerated",
+            title="regenerated video",
+            prompt="关键镜头",
+            model_id="seedance",
+            model_name="Seedance",
+            duration=4,
+            resolution="720p",
+            status="succeeded",
+            progress=100,
+            video_url="https://media.example/regenerated.mp4",
+            extra_data={
+                **(original.extra_data or {}),
+                "superseded_by_regeneration": False,
+                "replaces_job_id": ids["video"],
+                "lineage": {"shot_id": ids["shot"]},
+                "live_canary_accounting": {
+                    "operation_id": replacement_operation_id,
+                    "capability": "video",
+                },
+            },
+        ))
+        db.add(LiveCanaryProviderOperation(
+            id=replacement_operation_id,
+            run_id=ids["run"],
+            user_id=ids["user"],
+            reservation_id=f"reservation:{replacement_operation_id}",
+            capability="video",
+            job_type="video_job",
+            job_id=replacement_id,
+            provider_task_id="provider-video-regenerated",
+            status="accepted",
+            created_at=utc_now(),
+            updated_at=utc_now(),
+        ))
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        result = await reconcile_selected_media(db, run_id=ids["run"], user_id=ids["user"])
+        aggregate = await db.scalar(select(MediaGenerationJob).where(
+            MediaGenerationJob.workflow_id == ids["workflow"],
+        ))
+
+    assert result["status"] == "completed"
+    assert result["workflow_batches"][0]["video_job_ids"] == [replacement_id]
+    assert aggregate.source_job_ids["video_job_id"] == replacement_id
+    assert aggregate.output_video_url == "https://media.example/regenerated.mp4"
+    assert next(
+        item for item in aggregate.extra_data["provider_calls"] if item["capability"] == "video"
+    )["provider_task_id"] == "provider-video-regenerated"
+
+
+@pytest.mark.asyncio
 async def test_reconcile_native_audio_without_fabricating_tts_source() -> None:
     ids = await _seed_source_jobs(video_status="succeeded", native_audio=True)
 
@@ -220,6 +312,10 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
     ids = await _seed_source_jobs(video_status="succeeded", native_audio=True)
     track_id, segment_id = str(uuid4()), str(uuid4())
     async with AsyncSessionLocal() as db:
+        video = await db.get(VideoJob, ids["video"])
+        video.extra_data = {**(video.extra_data or {}), "video_delivery": {
+            "object_key": "static/generated/videos/provider-local.mp4",
+        }}
         db.add(SubtitleTrack(
             id=track_id, user_id=ids["user"], workflow_id=ids["workflow"],
             shot_id=ids["shot"], title="原生有声字幕", source="video_native_audio", status="draft",
@@ -231,13 +327,18 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
         await db.commit()
 
     def fake_burn(video_url, segments):
-        assert video_url == "https://media.example/video.mp4"
+        assert video_url == "/static/generated/videos/provider-local.mp4"
         assert segments[0]["text"] == "主角：继续。"
         return {
             "video_url": "/static/generated/videos/native-subtitled.mp4",
             "local_path": "/tmp/native-subtitled.mp4",
             "subtitle_count": 1,
             "audio_preserved": True,
+            "audio_loudness": {
+                "input_mean_db": -32.2, "input_max_db": -15.7,
+                "output_mean_db": -20.1, "output_max_db": -3.6,
+                "normalized": True, "gain_db": 12.2,
+            },
         }
 
     async def fake_delivery(*args, **kwargs):
@@ -273,6 +374,37 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
     assert track.status == "ready"
     assert track.export_urls["public_video"] == "https://cdn.example/native-subtitled.mp4"
     assert video.extra_data["subtitle_audio_preserved"] is True
+    assert video.extra_data["native_audio_loudness"]["normalized"] is True
+    assert video.extra_data["subtitle_timing_contract_version"] == "native_audio_activity_v7"
+    assert video.extra_data["subtitle_sync_status"] == "script_aligned_pending_audio_verification"
+    assert video.extra_data["audio_verification_required"] is True
+    assert len(video.extra_data["expected_dialogue_sha256"]) == 64
+    assert aggregate.extra_data["subtitle_sync_status"] == "script_aligned_pending_audio_verification"
+    assert aggregate.extra_data["audio_verification_required"] is True
+    assert aggregate.extra_data["native_audio_loudness"]["output_mean_db"] == -20.1
+    assert track.metadata_["timing_source"] == "script_contract"
+    assert track.metadata_["audio_verified"] is False
+
+    async with AsyncSessionLocal() as db:
+        stale_aggregate = await db.get(MediaGenerationJob, aggregate.id)
+        stale_video = await db.get(VideoJob, ids["video"])
+        stale_aggregate.extra_data = {
+            **(stale_aggregate.extra_data or {}),
+            "subtitle_delivery": {"object_key": "static/generated/videos/stale.mp4"},
+        }
+        stale_video.extra_data = {
+            **(stale_video.extra_data or {}),
+            "subtitle_timing_contract_version": "native_audio_activity_v6",
+        }
+        await db.commit()
+        repeated = await reconcile_selected_media(db, run_id=ids["run"], user_id=ids["user"])
+        repeated_job = await db.get(MediaGenerationJob, aggregate.id)
+
+    assert repeated["status"] == "completed"
+    assert repeated_job.output_video_url == "/static/generated/videos/native-subtitled.mp4"
+    assert repeated_job.extra_data["subtitle_delivery"]["object_key"] == (
+        "static/generated/videos/native-subtitled.mp4"
+    )
 
 
 @pytest.mark.asyncio

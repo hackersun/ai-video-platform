@@ -33,7 +33,7 @@ from app.services.story_state_machine import get_story_state_machine
 from app.services.production_bible import build_production_bible_summary
 from app.services.production_graph_service import project_story_state
 from app.services.consistency_ledger_service import build_consistency_ledger
-from app.services.series_production import get_series_plan, resolve_production_graph_artifact_impact
+from app.services.series_production import resolve_production_graph_artifact_impact
 from app.services.series_studio_flags import series_studio_contract
 
 
@@ -240,6 +240,13 @@ def _series_plan_with_current_episode(plan: Dict[str, Any], chapter_id: Optional
         current_episode = episodes[0]
     payload["current_episode"] = current_episode
     return payload
+
+
+def _saved_series_plan(novel: Optional[Novel], chapter_id: Optional[str]) -> Dict[str, Any]:
+    if novel is None:
+        return {}
+    plan = _json_dict(_json_dict(novel.extra_data).get("series_plan"))
+    return _series_plan_with_current_episode(plan, chapter_id)
 
 
 async def _get_or_none(db: AsyncSession, model: Any, item_id: Optional[str], user_id: str) -> Any:
@@ -706,12 +713,7 @@ async def build_studio_snapshot(
         production_bible_summary = await build_production_bible_summary(
             db, user_id, workflow.novel_id, as_of_chapter_id=workflow.chapter_id
         )
-    series_plan = {}
-    if workflow.novel_id:
-        series_plan = _series_plan_with_current_episode(
-            await get_series_plan(db, user_id, workflow.novel_id),
-            workflow.chapter_id,
-        )
+    series_plan = _saved_series_plan(novel, workflow.chapter_id)
     episode_contract = metadata.get("episode_contract") if isinstance(metadata.get("episode_contract"), dict) else None
     production_graph = await _production_graph_payload(db, user_id, workflow.novel_id)
     consistency_ledger = build_consistency_ledger(

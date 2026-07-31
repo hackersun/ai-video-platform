@@ -1,18 +1,14 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertCircle, CheckCircle2, Film, RefreshCcw, RotateCcw } from 'lucide-react';
+import { AlertCircle, CheckCircle2, RefreshCcw, RotateCcw } from 'lucide-react';
 import { MainLayout } from '@/components/layout/main-layout';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
-import { HistoryReferencePackageEvidence } from '@/components/production/history-preflight-evidence';
-import { QualityGatePanel } from '@/components/studio/quality-gate-panel';
-import apiClient, { WorkflowRenderArtifacts, WorkflowShotReviewItem, WorkflowShotReviewResponse } from '@/lib/api-client';
+import { ShotReviewCard } from '@/components/studio/shot-review-card';
+import apiClient, { WorkflowRenderArtifacts, WorkflowShotReviewResponse } from '@/lib/api-client';
 import { resumeEpisodePreviewFromConcatenate } from '@/lib/episode-preview-production';
-import type { QualityGateSummary } from '@/lib/studio-types';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const API_ROOT = API_BASE.replace(/\/api\/v1\/?$/, '');
@@ -21,48 +17,6 @@ function mediaUrl(value?: string | null) {
   if (!value) return '';
   if (/^https?:\/\//i.test(value)) return value;
   return `${API_ROOT}${value.startsWith('/') ? value : `/${value}`}`;
-}
-
-function statusLabel(status?: string) {
-  if (status === 'succeeded' || status === 'completed') return '成功';
-  if (status === 'failed') return '失败';
-  if (status === 'running') return '生成中';
-  if (status === 'queued' || status === 'pending') return '等待中';
-  if (status === 'processing') return '生成中';
-  return status || '待生成';
-}
-
-function isShotWaiting(status?: string) {
-  return status === 'queued' || status === 'pending' || status === 'running' || status === 'processing';
-}
-
-function evidenceText(value: any) {
-  if (value == null || value === '') return '暂无';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'boolean') return value ? '是' : '否';
-  if (typeof value === 'number') return String(value);
-  if (typeof value === 'object') {
-    if (typeof value.message === 'string') return value.message;
-    if (typeof value.reason === 'string') return value.reason;
-    if (value.ready === true) return '预检通过';
-    if (value.ready === false) return '预检未通过';
-  }
-  return JSON.stringify(value);
-}
-
-function visualConsistencyStatusLabel(status?: string | null) {
-  if (status === 'passed') return '通过';
-  if (status === 'needs_review') return '待人审';
-  if (status === 'skipped') return '跳过';
-  return status || '未检测';
-}
-
-function visualConsistencyScoreText(shot: WorkflowShotReviewItem) {
-  const evidence = shot.evidence?.visual_consistency;
-  const score = shot.visual_consistency_score ?? evidence?.score;
-  if (score == null) return '未检测';
-  const rounded = Math.round(Number(score));
-  return `${Number.isFinite(rounded) ? rounded : score}分 · ${visualConsistencyStatusLabel(evidence?.status)}`;
 }
 
 type ArtifactLinks = {
@@ -132,130 +86,28 @@ function ReviewArtifactLinks({ artifacts }: { artifacts: ArtifactLinks }) {
   );
 }
 
-function ShotCard({
-  shot,
-  selected,
-  target,
-  onSelectedChange,
-  repairLoading,
-  onQualityRepair,
-  onQualityEvaluate,
-}: {
-  shot: WorkflowShotReviewItem;
-  selected: boolean;
-  target: boolean;
-  onSelectedChange: (checked: boolean) => void;
-  repairLoading?: boolean;
-  onQualityRepair: (shotId: string, issueCode: string) => void;
-  onQualityEvaluate: (shotId: string) => void;
-}) {
-  const isFailed = shot.status === 'failed';
-  const waiting = isShotWaiting(shot.status);
-  const video = mediaUrl(shot.video_url);
-  const qualityGate = (shot as WorkflowShotReviewItem & { quality_gate?: QualityGateSummary }).quality_gate;
+type ShotReviewReferenceFields = {
+  reference_image_url?: string | null;
+};
 
-  return (
-    <Card
-      id={`shot-review-${shot.shot_id}`}
-      className="overflow-hidden border-white/10 bg-white/[0.04] text-white shadow-none"
-      data-testid={`shot-review-card-${shot.shot_id}`}
-      data-shot-id={shot.shot_id}
-      data-target-shot={target ? 'true' : undefined}
-    >
-      <div className="relative aspect-video bg-slate-950">
-        {video ? (
-          <video src={video} className="h-full w-full object-cover" controls muted playsInline />
-        ) : (
-          <div className="flex h-full items-center justify-center text-white/35">
-            <Film className="h-10 w-10" aria-hidden="true" />
-          </div>
-        )}
-        <div className="absolute left-3 top-3 flex items-center gap-2">
-          <Checkbox checked={selected} onCheckedChange={(value) => onSelectedChange(value === true)} aria-label={`选择镜头 ${shot.shot_number}`} />
-          <Badge variant={isFailed ? 'danger' : 'secondary'}>{statusLabel(shot.status)}</Badge>
-        </div>
-      </div>
-
-      <CardHeader className="space-y-3 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <CardTitle className="text-lg leading-6">镜头 {shot.shot_number}</CardTitle>
-            <p className="mt-1 text-sm text-white/55">{shot.duration || 0}s</p>
-          </div>
-          <span className="rounded-md bg-white/[0.06] px-2.5 py-1 text-xs text-white/65">
-            重生 {shot.regeneration_count || 0} 次
-          </span>
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-3 p-4 pt-0">
-        {waiting ? (
-          <div className="rounded-md border border-cyan-300/25 bg-cyan-400/10 px-3 py-2 text-xs leading-5 text-cyan-50">
-            重生进行中，等待视频/声音完成后再合成
-          </div>
-        ) : null}
-
-        <p className="min-h-[2.5rem] text-sm leading-5 text-white/72">{shot.subtitle_text || '暂无字幕/对白'}</p>
-
-        <div className="flex flex-wrap gap-2">
-          {(shot.character_names || []).length ? (
-            (shot.character_names || []).map((name) => (
-              <span key={name} className="rounded-full bg-cyan-400/10 px-2.5 py-1 text-xs text-cyan-100">
-                {name}
-              </span>
-            ))
-          ) : (
-            <span className="rounded-full bg-white/[0.06] px-2.5 py-1 text-xs text-white/50">未绑定角色</span>
-          )}
-        </div>
-
-        <div className="grid gap-2 text-xs text-white/70">
-          <div className="rounded-md bg-white/[0.05] px-3 py-2">
-            <div className="text-white/40">策略路由</div>
-            <div className="mt-1 font-medium text-white">{evidenceText(shot.evidence?.strategy_routing)}</div>
-          </div>
-          <div className="rounded-md bg-white/[0.05] px-3 py-2">
-            <div className="text-white/40">参考包</div>
-            <div className="mt-1 font-medium text-white">{evidenceText(shot.evidence?.reference_package_mode)}</div>
-            <HistoryReferencePackageEvidence
-              referencePackage={shot.evidence?.reference_package}
-              testId={`shot-review-reference-package-${shot.shot_id}`}
-            />
-          </div>
-          <div className="rounded-md bg-white/[0.05] px-3 py-2">
-            <div className="text-white/40">预检</div>
-            <div className="mt-1 font-medium text-white">{evidenceText(shot.evidence?.generation_preflight)}</div>
-          </div>
-          <div
-            className="rounded-md bg-white/[0.05] px-3 py-2"
-            data-testid={`shot-review-visual-consistency-${shot.shot_id}`}
-          >
-            <div className="text-white/40">视觉一致性</div>
-            <div className="mt-1 font-medium text-white">{visualConsistencyScoreText(shot)}</div>
-            {shot.evidence?.visual_consistency?.frame_count != null ? (
-              <div className="mt-1 text-white/45">
-                抽帧 {shot.evidence.visual_consistency.frame_count}
-              </div>
-            ) : null}
-          </div>
-        </div>
-        <QualityGatePanel
-          qualityGate={qualityGate}
-          shotId={shot.shot_id}
-          shotNumber={shot.shot_number}
-          loading={repairLoading}
-          onRepair={onQualityRepair}
-          onEvaluate={onQualityEvaluate}
-        />
-      </CardContent>
-    </Card>
-  );
+function referenceRepairHref(rawQuery: string) {
+  const current = new URLSearchParams(rawQuery);
+  const context = new URLSearchParams();
+  ['novel_id', 'chapter_id', 'script_id', 'storyboard_id'].forEach((key) => {
+    const value = current.get(key);
+    if (value) context.set(key, value);
+  });
+  context.set('source', 'studio');
+  context.set('return_to', `/studio/shot-review?${current.toString()}`);
+  return `/assets?${context.toString()}`;
 }
 
 function ShotReviewContent() {
   const searchParams = useSearchParams();
+  const queryString = searchParams.toString();
   const workflowId = searchParams.get('workflow_id') || '';
   const targetShotId = searchParams.get('shot_id') || '';
+  const focus = searchParams.get('focus') || '';
   const sourceIssueCode = searchParams.get('source_issue_code') || searchParams.get('source_issue') || '';
   const [data, setData] = useState<WorkflowShotReviewResponse | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -308,6 +160,7 @@ function ShotReviewContent() {
     const renderArtifacts = artifactsFromRenderResult(renderResult);
     return hasArtifactLinks(renderArtifacts) ? renderArtifacts : artifactsFromReview(data?.latest_render_artifacts);
   }, [data?.latest_render_artifacts, renderResult]);
+  const assetHref = useMemo(() => referenceRepairHref(queryString), [queryString]);
   const hasArtifacts = hasArtifactLinks(artifactLinks);
 
   const toggleShot = (shotId: string, checked: boolean) => {
@@ -332,6 +185,7 @@ function ShotReviewContent() {
       const result = await apiClient.regenerateWorkflowShots(workflowId, {
         ...payload,
         audio_mode: 'model_audio',
+        native_audio: true,
       });
       const concatenateVideoJobIds = result.concatenate_video_job_ids || result.video_job_ids || [];
       const concatenateMediaJobIds = result.concatenate_media_job_ids || result.media_job_ids || [];
@@ -401,7 +255,7 @@ function ShotReviewContent() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(typeof result?.detail === 'string' ? result.detail : '质量评估失败');
-      setMessage(result.ready ? '六维质量评估通过' : `六维质量评估发现 ${(result.blockers || []).length} 个阻断`);
+      setMessage(result.ready ? '交付检查通过' : `交付检查发现 ${(result.blockers || []).length} 项需要处理`);
       await loadReview();
     } catch (err: any) {
       setError(err?.message || '质量评估失败');
@@ -464,6 +318,22 @@ function ShotReviewContent() {
           </div>
         </header>
 
+        {focus === 'references' ? (
+          <section data-testid="shot-reference-guide" className="rounded-xl border border-cyan-300/25 bg-cyan-400/[0.07] p-4 sm:p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h2 className="text-base font-semibold text-cyan-50">镜头参考检查怎么处理</h2>
+                <ol className="mt-2 grid gap-2 text-sm leading-6 text-white/65 sm:grid-cols-3">
+                  <li><span className="mr-2 text-cyan-300">1</span>对照参考图与当前视频</li>
+                  <li><span className="mr-2 text-cyan-300">2</span>核对角色、场景和道具名字</li>
+                  <li><span className="mr-2 text-cyan-300">3</span>有误先修复引用，再回来重新检查</li>
+                </ol>
+              </div>
+              <Button asChild variant="outline" className="shrink-0"><Link href={assetHref}>打开资产工作台修复引用</Link></Button>
+            </div>
+          </section>
+        ) : null}
+
         {sourceIssueCode ? (
           <div className="rounded-md border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-sm text-amber-50">
             来自问题：{sourceIssueCode}
@@ -494,17 +364,20 @@ function ShotReviewContent() {
         ) : null}
 
         {loading ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {[0, 1, 2].map((item) => <div key={item} className="h-80 animate-pulse rounded-lg bg-white/[0.05]" />)}
+          <div className="space-y-4">
+            {[0, 1].map((item) => <div key={item} className="h-96 animate-pulse rounded-xl bg-white/[0.05]" />)}
           </div>
         ) : null}
 
         {data && !loading ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="space-y-5">
             {data.shots.map((shot) => (
-              <ShotCard
+              <ShotReviewCard
                 key={shot.shot_id}
                 shot={shot}
+                referenceImageUrl={mediaUrl((shot as typeof shot & ShotReviewReferenceFields).reference_image_url)}
+                videoUrl={mediaUrl(shot.video_url)}
+                assetHref={assetHref}
                 selected={selectedIds.includes(shot.shot_id)}
                 target={targetShotId === shot.shot_id}
                 onSelectedChange={(checked) => toggleShot(shot.shot_id, checked)}

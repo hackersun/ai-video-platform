@@ -28,6 +28,34 @@ REQUIRED_BY_ANCHOR = {
 }
 
 
+def test_story_lock_accepts_five_contiguous_episode_chapters() -> None:
+    from app.features.series_run_story_locks.application.inspect_freshness import run_chapter_ids
+
+    run = SeriesProductionRun(
+        episodes=[
+            {"episode_number": number, "chapter_ids": [f"chapter-{number}"]}
+            for number in range(1, 6)
+        ]
+    )
+
+    assert run_chapter_ids(run) == [f"chapter-{number}" for number in range(1, 6)]
+
+
+def test_story_lock_rejects_non_contiguous_episode_order() -> None:
+    from app.features.series_run_story_locks.application.inspect_freshness import (
+        StoryLockFreshnessBlocked,
+        run_chapter_ids,
+    )
+
+    run = SeriesProductionRun(episodes=[
+        {"episode_number": 1, "chapter_ids": ["chapter-1"]},
+        {"episode_number": 3, "chapter_ids": ["chapter-3"]},
+    ])
+
+    with pytest.raises(StoryLockFreshnessBlocked, match="episode_order_invalid"):
+        run_chapter_ids(run)
+
+
 def _public_api():
     from app.features.series_run_story_locks.public import (
         StoryLockPreparationBlocked,
@@ -422,6 +450,7 @@ async def test_four_chapter_persistence_owner_chain_locks_8_of_46_candidates(
     result = await prepare_story_locks(db_session, run)
 
     assert result["status"] == "locked"
+    assert result["entity_extraction_contract_version"] == "entity-extraction-v3"
     assert result["candidate_counts"] == ENTITY_COUNTS
     assert result["required_counts"] == {kind: 2 for kind in ENTITY_COUNTS}
     assert len(result["required_entity_ids"]) == 8
@@ -435,6 +464,7 @@ async def test_series_production_shot_owner_persists_chapter_owned_typed_refs(
 ) -> None:
     from app.api.v1.endpoints import chapters as chapter_endpoints
     from app.services.entity_evidence_contract import attach_chapter_evidence_contracts
+    from app.services.story_entity_lifecycle import APPROVED, set_entity_review_status
     from app.services.episode_production_service import (
         create_or_resolve_script_stage,
         create_or_resolve_shots_stage,
@@ -476,6 +506,14 @@ async def test_series_production_shot_owner_persists_chapter_owned_typed_refs(
     for chapter in chapters:
         await chapter_endpoints.persist_story_context_from_chapter(
             db_session, run.user_id, novel, chapter,
+        )
+    await db_session.flush()
+    persisted_entities = list((await db_session.scalars(
+        select(StoryEntity).where(StoryEntity.novel_id == run.novel_id)
+    )).all())
+    for entity in persisted_entities:
+        set_entity_review_status(
+            entity, APPROVED, changed_by=run.user_id, reason="test production-visible fixture",
         )
     await db_session.flush()
 
@@ -581,6 +619,66 @@ async def test_owned_shot_resolver_rejects_ambiguous_and_cross_chapter_entities(
     )
 
     assert context["entity_refs"] == {"characters": [], "scenes": [], "props": [], "events": []}
+
+
+@pytest.mark.asyncio
+async def test_owned_shot_resolver_prefers_one_signed_local_mention_over_its_canonical(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.series_run_story_locks.domain.scoped_reference import (
+        canonical_identity_sha256,
+        sign_merge_edge,
+    )
+    from app.services.owned_shot_entity_refs import resolve_owned_shot_entity_context
+    from app.services.story_entity_lifecycle import ARCHIVED, set_entity_review_status
+
+    now = utc_now()
+    user_id, novel_id, chapter_id = str(uuid4()), str(uuid4()), str(uuid4())
+    content = "沈岚说：守住师门。"
+    db_session.add(Novel(id=novel_id, user_id=user_id, title="五章", created_at=now, updated_at=now))
+    db_session.add(Chapter(
+        id=chapter_id, user_id=user_id, novel_id=novel_id, title="第一章",
+        content=content, chapter_number=1, created_at=now, updated_at=now,
+    ))
+    evidence = {
+        "status": "verified", "chapter_id": chapter_id, "source_span": [0, 2],
+        "content_hash": hashlib.sha256(content.encode()).hexdigest(),
+        "source_excerpt": "沈岚", "parser_version": "explicit-dialogue-v1",
+    }
+    canonical = StoryEntity(
+        id=str(uuid4()), user_id=user_id, novel_id=novel_id, chapter_id=chapter_id,
+        first_seen_chapter_id=chapter_id, entity_type="character", name="沈岚",
+        canonical_name="沈岚", source="system", attributes={"evidence_contract": evidence},
+        extra_data={"lifecycle": {"status": "approved"}}, is_approved=True,
+    )
+    mention = StoryEntity(
+        id=str(uuid4()), user_id=user_id, novel_id=novel_id, chapter_id=chapter_id,
+        first_seen_chapter_id=chapter_id, entity_type="character", name="沈岚",
+        canonical_name="沈岚", source="system",
+        attributes={"evidence_contract": evidence, "merged_into_entity_id": canonical.id},
+        extra_data={}, is_approved=False,
+    )
+    edge = sign_merge_edge({
+        "source_entity_id": mention.id, "canonical_entity_id": canonical.id,
+        "user_id": user_id, "novel_id": novel_id, "entity_type": "character",
+        "canonical_identity_sha256": canonical_identity_sha256(
+            entity_type="character", canonical_name="沈岚",
+        ),
+    })
+    mention.extra_data = {
+        "merge_edges": [edge],
+        "normalized_merge": {"status": "merged_superseded", "canonical_entity_id": canonical.id},
+    }
+    set_entity_review_status(mention, ARCHIVED, changed_by=user_id, reason="explicit_dialogue_chapter_local_mention")
+    db_session.add_all([canonical, mention])
+    await db_session.flush()
+
+    context = await resolve_owned_shot_entity_context(
+        db_session, user_id=user_id, novel_id=novel_id, chapter_ids=[chapter_id],
+        as_of_chapter_id=chapter_id, source_text=content, shot_text=content,
+    )
+
+    assert [item["entity_id"] for item in context["entity_refs"]["characters"]] == [mention.id]
 
 
 @pytest.mark.asyncio

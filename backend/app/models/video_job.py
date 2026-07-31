@@ -15,6 +15,7 @@ class VideoJob(Base):
     user_id = Column(String(36), nullable=False, index=True)
     project_id = Column(String(36), nullable=True, index=True)
     workflow_id = Column(String(36), nullable=True, index=True)
+    shot_id = Column(String(36), nullable=True, index=True)
     task_id = Column(String(64), index=True)  # 第三方任务ID
     title = Column(String(200))
     prompt = Column(Text)

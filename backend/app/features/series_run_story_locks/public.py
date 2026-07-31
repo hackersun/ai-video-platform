@@ -29,10 +29,12 @@ def build_required_entity_closure(*, selected_shots: list[object], candidates: l
     return build_closure(referenced_entity_ids(selected_shots), facts).as_dict()
 
 
-async def prepare_story_locks(db: AsyncSession, run: SeriesProductionRun) -> dict[str, object]:
+async def prepare_story_locks(
+    db: AsyncSession, run: SeriesProductionRun, *, native_audio: bool = False,
+) -> dict[str, object]:
     repository = StoryLockRepository(db)
     try:
-        return await prepare_transaction(db, run)
+        return await prepare_transaction(db, run, native_audio=native_audio)
     except RequiredEntityBlocked as error:
         await db.rollback()
         raise StoryLockPreparationBlocked(

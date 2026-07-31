@@ -7,6 +7,7 @@ without mixing quotas, endpoints, or model names.
 
 VOLCANO_AGENT_PLAN_PROVIDER_ID = "volcano_agent_plan"
 VOLCANO_AGENT_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/plan/v3"
+VOLCANO_CODING_PLAN_BASE_URL = "https://ark.cn-beijing.volces.com/api/coding/v3"
 
 VOLCANO_AGENT_PLAN_PROVIDER = {
     "id": VOLCANO_AGENT_PLAN_PROVIDER_ID,

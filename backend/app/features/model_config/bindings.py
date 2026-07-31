@@ -288,7 +288,15 @@ async def _resolve_by_read_mode(
     capability: ModelCapability,
     project_id: str | None,
     series_id: str | None,
+    prefer_canonical_binding: bool,
 ) -> ResolvedModelBinding:
+    if prefer_canonical_binding:
+        preferred = await _resolve_canonical_binding(
+            db, user_id=user_id, task=task, capability=capability,
+            project_id=project_id, series_id=series_id,
+        )
+        if preferred is not None:
+            return preferred
     mode = model_center_read_mode()
     if mode is ModelCenterReadMode.CANONICAL:
         canonical = await _resolve_canonical_binding(
@@ -344,6 +352,7 @@ async def resolve_model_binding(
     explicit_config_id: str | None = None,
     project_id: str | None = None,
     series_id: str | None = None,
+    prefer_canonical_binding: bool = False,
 ) -> ResolvedModelBinding:
     if explicit_profile_version_id and explicit_config_id:
         raise ModelBindingError("conflicting_explicit_overrides")
@@ -360,6 +369,7 @@ async def resolve_model_binding(
     return await _resolve_by_read_mode(
         db, user_id=user_id, task=task, capability=capability,
         project_id=project_id, series_id=series_id,
+        prefer_canonical_binding=prefer_canonical_binding,
     )
 
 

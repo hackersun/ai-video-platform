@@ -14,6 +14,8 @@ from uuid import uuid4
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time_utils import utc_now
+from app.models.llm_config import LLMConfig, LLMModel
 from app.models.model_center import (
     ModelCertificationRun,
     ModelConfigAuditEvent,
@@ -29,6 +31,9 @@ _SENSITIVE_EVIDENCE_MARKERS = (
     "apikey", "apisecret", "authorization", "token", "password", "secret",
     "credential", "header", "prompt", "rawrequest", "rawresponse",
 )
+_TRANSIENT_PROVIDER_ERRORS = frozenset({
+    "ConnectTimeout", "ReadTimeout", "TimeoutError", "TimeoutException",
+})
 
 
 def _safe_evidence(value):
@@ -69,6 +74,42 @@ def as_certification_row(row: ModelCertificationRun) -> CertificationRow:
         estimated_cost_rmb=Decimal(row.estimated_cost_rmb), actual_cost_rmb=Decimal(row.actual_cost_rmb),
         created_at=row.created_at, completed_at=row.completed_at,
     )
+
+
+def _is_transient_provider_failure(run: ModelCertificationRun) -> bool:
+    evidence = run.sanitized_evidence or {}
+    response = evidence.get("response_evidence") or {}
+    error_type = response.get("provider_error_type") or evidence.get("error_code")
+    return str(error_type or "") in _TRANSIENT_PROVIDER_ERRORS
+
+
+async def _sync_legacy_config_test(
+    db: AsyncSession, *, run: ModelCertificationRun,
+    connection: ModelConnection, connection_status: str,
+) -> None:
+    legacy_config_id = (connection.connection_params or {}).get("legacy_config_id")
+    if not legacy_config_id:
+        return
+    config = await db.scalar(
+        select(LLMConfig).join(LLMModel, LLMModel.id == LLMConfig.model_id).join(
+            ModelProfileVersion,
+            ModelProfileVersion.api_model_id == LLMModel.model_id,
+        ).where(
+            LLMConfig.id == legacy_config_id,
+            LLMConfig.user_id == run.user_id,
+            ModelProfileVersion.id == run.profile_version_id,
+        )
+    )
+    if config is None:
+        return
+    passed = connection_status == "connection_verified"
+    if not passed and config.test_status == "success" and _is_transient_provider_failure(run):
+        return
+    config.test_status = "success" if passed else "failed"
+    config.test_message = (
+        "模型中心连接认证通过" if passed else "模型中心连接认证失败"
+    )
+    config.tested_at = run.completed_at
 
 
 async def validate_certification_target(
@@ -124,6 +165,8 @@ async def load_certification_intent(
 async def certification_candidates_page(
     db: AsyncSession, *, user_id: str, page: int, page_size: int,
     capability: str | None = None, query: str | None = None,
+    level: str | None = None, profile_version_id: str | None = None,
+    connection_id: str | None = None,
 ) -> dict:
     rows = (await db.execute(select(
         ModelProfileVersion, ModelProfile, ModelProvider, ModelConnection,
@@ -132,11 +175,19 @@ async def certification_candidates_page(
     ).join(ModelConnection, ModelConnection.provider_id == ModelProvider.id).where(
         ModelProfileVersion.status == "published", ModelProfile.enabled == True,
         ModelProvider.enabled == True, ModelConnection.user_id == user_id,
-        ModelConnection.status.in_(VERIFIED_CONNECTION_STATUSES),
     ).order_by(ModelProfile.display_name, ModelConnection.name))).all()
     keyword = (query or "").strip().casefold()
     candidates = []
     for version, profile, provider, connection in rows:
+        if profile_version_id and version.id != profile_version_id:
+            continue
+        if connection_id and connection.id != connection_id:
+            continue
+        if level == "connection":
+            if not (connection.api_key or connection.api_secret):
+                continue
+        elif connection.status not in VERIFIED_CONNECTION_STATUSES:
+            continue
         if capability and capability not in set(version.capabilities or []):
             continue
         searchable = " ".join((
@@ -163,6 +214,34 @@ async def certification_candidates_page(
         "items": candidates[start:start + page_size],
         "meta": {"page": page, "page_size": page_size, "total": len(candidates)},
     }
+
+
+async def complete_certification_run(
+    db: AsyncSession, *, user_id: str, run_id: str, status: str,
+    evidence: dict, connection_status: str | None = None,
+) -> CertificationRow | None:
+    run = await db.scalar(select(ModelCertificationRun).where(
+        ModelCertificationRun.id == run_id, ModelCertificationRun.user_id == user_id,
+    ))
+    if run is None:
+        return None
+    run.status = status
+    run.sanitized_evidence = _safe_evidence(evidence)
+    run.completed_at = utc_now()
+    if connection_status is not None:
+        connection = await db.scalar(select(ModelConnection).where(
+            ModelConnection.id == run.connection_id, ModelConnection.user_id == user_id,
+        ))
+        if connection is not None:
+            connection.status = connection_status
+            connection.tested_at = run.completed_at
+            connection.revision += 1
+            await _sync_legacy_config_test(
+                db, run=run, connection=connection,
+                connection_status=connection_status,
+            )
+    await db.flush()
+    return as_certification_row(run)
 
 
 async def certification_history_page(

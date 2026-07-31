@@ -8,8 +8,7 @@ const enabled = process.env.PRODUCTION_OS_LIVE === '1';
 const userId = process.env.FOUR_CHAPTER_CANARY_USER_ID || '';
 const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
 const allowlist = new Set([
-  '18e068a4-200b-4f17-9ffa-c8b1ee108caa', '5f20af31-3cda-48e3-a6eb-fc766ba14549',
-  'sunqy-volcano-seed-tts-2-0', '980cb5db-0281-4835-9486-a739fcb35d98',
+  'f03311c6-5ca3-4e88-a552-fb5623a394bd', '980cb5db-0281-4835-9486-a739fcb35d98',
 ]);
 
 test.describe.configure({ retries: 0 });
@@ -91,7 +90,7 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
   }, { id: userId, tokenValue: token });
 
   // Fixture creation is non-provider setup; every production action below is a visible workbench control.
-  const created = await page.request.post(`${apiBase}/novels`, { headers, data: { title: `四章实模验收-${Date.now()}`, genre: 'anime', description: 'Wave 1' } });
+  const created = await page.request.post(`${apiBase}/novels`, { headers, data: { title: `四章3D实模验收-${Date.now()}`, genre: '3d-animation', description: '3D 动漫，跨章节角色一致性验收' } });
   expect(created.ok()).toBe(true);
   const novel = await created.json();
   const fakeProbe = await page.request.post(`${apiBase}/series-runs/deterministic-acceptance/setup`, { headers, data: { novel_id: novel.id } });
@@ -126,7 +125,11 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
   const initialRun = await createdRun.json();
   await page.evaluate(({ id, runId }) => localStorage.setItem(`series-run:${id}`, runId), { id: novel.id, runId: initialRun.id });
   await page.goto(`/novels/${novel.id}?tab=series-plan`);
+  await page.getByRole('tab', { name: '整书计划 (4)', exact: true }).click();
   await expect(page.getByRole('button', { name: '继续推进' })).toBeVisible();
+
+  const nativeAudioToggle = page.getByLabel('本次使用 Seedance 1.5 原生配音');
+  await nativeAudioToggle.check();
 
   const sequence: string[] = [];
   let referenceEvidence: any = null;
@@ -153,13 +156,8 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
   await expect(page.getByText(/实模关键镜头验证已启用/)).toBeVisible({ timeout: 120_000 });
   expect(sequence).toEqual(['validate']);
   const preflight = page.getByTestId('live-preflight-plan');
-  const voiceSelect = preflight.getByLabel('配音声线');
-  await expect(voiceSelect).toBeVisible({ timeout: 120_000 });
-  await expect(voiceSelect.locator('option')).not.toHaveCount(0);
-  await voiceSelect.selectOption({ index: 0 });
-  await preflight.getByRole('button', { name: '锁定声线' }).click();
-  await expect.poll(() => voiceSelectionStatus).toBe(200);
-  await expect(preflight).toContainText('已锁定：', { timeout: 120_000 });
+  await expect(preflight.getByLabel('配音声线')).toHaveCount(0);
+  await expect(preflight).toContainText('当前由视频模型原生配音，无需锁定 TTS 声线。');
   await page.getByRole('button', { name: '继续推进' }).click();
   await expect(page.getByTestId('series-run-episodes').getByText('镜头就绪')).toHaveCount(4, { timeout: 180_000 });
   await page.screenshot({ path: testInfo.outputPath('01-shots-ready.png'), fullPage: true });
@@ -168,9 +166,9 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
   const labels = await selected.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('aria-label')));
   expect(labels.sort()).toEqual(['选择第1章镜头', '选择第4章镜头']);
   const runId = initialRun.id;
-  const beforePreparation = await (await page.request.get(`${apiBase}/series-runs/${runId}/live-preflight-plan`, { headers })).json();
+  const beforePreparation = await (await page.request.get(`${apiBase}/series-runs/${runId}/live-preflight-plan?native_audio=true`, { headers })).json();
   expect(beforePreparation.anchor_dialogue_contracts).toHaveLength(2);
-  expect(beforePreparation.anchor_dialogue_contracts.every((item: any) => item.requires_tts === true)).toBe(true);
+  expect(beforePreparation.anchor_dialogue_contracts.every((item: any) => item.audio_route === 'video_native_audio')).toBe(true);
   expect(Number(beforePreparation.budget.maximum_rmb)).toBeLessThanOrEqual(10);
   expect(Number(beforePreparation.budget.projected_increment_rmb)).toBeLessThanOrEqual(10);
   await page.screenshot({ path: testInfo.outputPath('02-cross-episode-anchors.png'), fullPage: true });
@@ -193,13 +191,24 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
   expect(referenceEvidence?.operation?.provider_task_id || referenceEvidence?.operation?.id).toBeTruthy();
   expect(referenceEvidence?.artifact?.checksum).toBeTruthy();
   expect(Number(referenceEvidence?.artifact?.layout_evidence?.layout_score)).toBeGreaterThanOrEqual(0.75);
-  const readyPlan = await (await page.request.get(`${apiBase}/series-runs/${runId}/live-preflight-plan`, { headers })).json();
+  const runWithSelection = await (await page.request.get(`${apiBase}/series-runs/${runId}`, { headers })).json();
+  const selectedShotIds = runWithSelection.run_metadata?.selected_anchor_shot_ids || [];
+  expect(selectedShotIds).toHaveLength(2);
+  for (const shotId of selectedShotIds) {
+    const imageResponse = await page.request.post(`${apiBase}/shots/${shotId}/generate-image`, {
+      headers, data: { style: 'realistic-3d', model_config_id: 'f03311c6-5ca3-4e88-a552-fb5623a394bd' },
+    });
+    expect(imageResponse.ok(), `shot image ${shotId}: ${await imageResponse.text()}`).toBe(true);
+    await expect.poll(async () => {
+      const shot = await (await page.request.get(`${apiBase}/shots/${shotId}`, { headers })).json();
+      return shot.image_status === 'succeeded' && Boolean(shot.image_url);
+    }, { timeout: 10 * 60_000, intervals: [2_000, 5_000, 10_000] }).toBe(true);
+  }
+  const readyPlan = await (await page.request.get(`${apiBase}/series-runs/${runId}/live-preflight-plan?native_audio=true`, { headers })).json();
   expect(readyPlan.ready).toBe(true);
   expect(Number(readyPlan.budget.projected_increment_rmb)).toBeLessThanOrEqual(10);
   await page.screenshot({ path: testInfo.outputPath('03-reference-and-ready-plan.png'), fullPage: true });
-  const nativeAudioToggle = page.getByLabel('本次使用 Seedance 1.5 原生配音');
-  await expect(nativeAudioToggle).not.toBeChecked();
-  await nativeAudioToggle.check();
+  await expect(nativeAudioToggle).toBeChecked();
   await expect(preflight.getByLabel('配音声线')).toHaveCount(0);
   await expect(preflight).toContainText('当前由视频模型原生配音，无需锁定 TTS 声线。');
   const generationResponsePromise = page.waitForResponse((response) =>

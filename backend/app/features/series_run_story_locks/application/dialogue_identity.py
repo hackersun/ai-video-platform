@@ -45,11 +45,43 @@ _OPERATIONAL_CHARACTER_ATTRS = {
     "source_chapter_id", "source_chapter_index", "source_chapter_number", "introduced_at",
     "merged_into_entity_id", "identity_fact_provenance", "description_provenance",
 }
+_VISUAL_DNA_PLACEHOLDERS = {
+    "默认服装", "依据原文固定服装与标志配饰",
+}
 
 
 def _taxonomy_value(value: Any, taxonomy: dict[str, str]) -> str:
     normalized = " ".join(str(value or "").strip().casefold().replace("_", "-").split())
     return taxonomy.get(normalized, normalized)
+
+
+def _visual_dna_facts(values: list[Any]) -> tuple[list[set[str]], list[dict[str, Any]]]:
+    dictionaries = [value for value in values if isinstance(value, dict)]
+    conflict_values: list[set[str]] = []
+    fields: list[dict[str, Any]] = []
+    for key in sorted({name for value in dictionaries for name in value}):
+        raw_values = [value[key] for value in dictionaries
+                      if value.get(key) not in (None, "", [], {})
+                      and value.get(key) not in _VISUAL_DNA_PLACEHOLDERS]
+        fingerprints = {_fingerprint(value) for value in raw_values}
+        conflict_values.append(fingerprints)
+        if len(fingerprints) > 1:
+            fields.append({"category": "identity_attribute", "field": f"visual_dna.{key}",
+                           "values": raw_values})
+    return conflict_values, fields
+
+
+def _merged_visual_dna(active: list[StoryEntity]) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    for item in active:
+        value = (item.attributes or {}).get("visual_dna")
+        if not isinstance(value, dict):
+            continue
+        for key, raw in value.items():
+            if raw in (None, "", [], {}) or raw in _VISUAL_DNA_PLACEHOLDERS:
+                continue
+            merged.setdefault(key, raw)
+    return merged
 
 
 @dataclass(frozen=True)
@@ -84,11 +116,16 @@ def _active_candidates(matches: list[StoryEntity]) -> tuple[list[StoryEntity], b
         and ((item.extra_data or {}).get("normalized_merge") or {}).get("status") == "merged_superseded"
     )]
     allowed_sources = {"system", "deterministic"}
+    allowed_approval_reasons = {
+        "entity_extraction_v2:auto_approve",
+        "rule_based_explicit_dialogue_v1",
+        "rule_based_explicit_dialogue_native_audio_v1",
+    }
     unsafe_lifecycle = any(
         item.source not in allowed_sources or get_entity_review_status(item) == REJECTED
         or (get_entity_review_status(item) == APPROVED
-            and ((item.extra_data or {}).get("explicit_dialogue_rule") or {}).get("rule")
-            != "rule_based_explicit_dialogue_v1")
+            and str(((item.attributes or {}).get("approval_record") or {}).get("reason") or "")
+            not in allowed_approval_reasons)
         for item in active
     )
     for item in active:
@@ -126,6 +163,11 @@ def _identity_conflicts(
     for key in keys:
         values = [(item.attributes or {}).get(key) for item in active
                   if (item.attributes or {}).get(key) not in (None, "", [], {})]
+        if key == "visual_dna":
+            visual_values, visual_fields = _visual_dna_facts(values)
+            conflict_values.extend(visual_values)
+            fields.extend(visual_fields)
+            continue
         if key == "role":
             fingerprints = {_taxonomy_value(value, _ROLE_TAGS) for value in values}
         elif key == "species":
@@ -303,7 +345,8 @@ def _apply_identity_projection(
         sources = [item for item in active if (item.attributes or {}).get(key) not in (None, "", [], {})]
         if sources:
             raw = (sources[0].attributes or {})[key]
-            attrs[key] = (_taxonomy_value(raw, _ROLE_TAGS) if key == "role" else
+            attrs[key] = (_merged_visual_dna(active) if key == "visual_dna" else
+                          _taxonomy_value(raw, _ROLE_TAGS) if key == "role" else
                           _taxonomy_value(raw, _SPECIES_TAGS) if key == "species" else raw)
             provenance[key] = list(dict.fromkeys(
                 str(item.chapter_id or item.first_seen_chapter_id or "") for item in sources

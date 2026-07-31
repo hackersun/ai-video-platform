@@ -45,6 +45,32 @@ def test_full_recommendation_covers_all_episodes_and_dimensions():
     }
 
 
+def test_representative_recommendation_uses_first_middle_and_last_episode():
+    shots = [_shot(f"shot-{episode}", episode, dialogue="主角：守住道心") for episode in range(1, 6)]
+
+    result = recommend_anchor_shots(shots, mode="representative")
+
+    assert len(result) == 3
+    assert [item["episode_number"] for item in result] == [1, 3, 5]
+    assert anchor_coverage_blocker(result, mode="representative") is None
+
+
+def test_representative_selection_does_not_require_post_generation_quality_dimensions():
+    shots = [_shot(f"shot-{episode}", episode) for episode in range(1, 6)]
+    for shot in shots:
+        shot.camera_angle = None
+        shot.video_url = None
+        shot.video_status = "pending"
+        shot.dialogue = ""
+        shot.prompt = "主角进入场景"
+        shot.visual_description = "固定服装"
+        shot.extra_data = {"episode_number": shot.extra_data["episode_number"]}
+
+    result = recommend_anchor_shots(shots, mode="representative")
+
+    assert anchor_coverage_blocker(result, mode="representative") is None
+
+
 def test_selection_rejects_shot_outside_run():
     with pytest.raises(ValueError, match="outside series run"):
         validate_anchor_selection(["shot-1", "foreign"], {"shot-1", "shot-2"})

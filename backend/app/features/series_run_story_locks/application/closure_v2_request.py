@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Chapter, Novel, Shot, StoryEntity, Storyboard, Workflow
 from app.models.series_production_run import SeriesProductionRun
+from app.services.owned_shot_entity_refs import resolve_owned_shot_entity_context
 from app.services.story_entity_lifecycle import get_entity_review_status
 from .visual_style import resolve_novel_visual_style
 
@@ -17,12 +18,40 @@ from ..domain.scoped_reference import canonical_json_sha256, resolve_scoped_refe
 from .production_scoped_inputs import ProductionScopedRefCommand, build_production_scoped_refs
 
 
+ENTITY_EXTRACTION_CONTRACT_VERSION = "entity-extraction-v3"
+
+
 def _episode(run: SeriesProductionRun, shot_id: str) -> dict[str, Any]:
     matches = [item for item in (run.episodes or [])
                if shot_id in ((item.get("canonical_ids") or {}).get("shot_ids") or [])]
     if len(matches) != 1:
         raise ValueError("selected shot is outside or ambiguous in run episodes")
     return matches[0]
+
+
+async def _without_terminal_entity_refs(
+    db: AsyncSession, refs: dict[str, Any], *, user_id: str, novel_id: str,
+) -> dict[str, list[dict[str, Any]]]:
+    filtered: dict[str, list[dict[str, Any]]] = {}
+    for key, values in refs.items():
+        kept: list[dict[str, Any]] = []
+        for reference in values or []:
+            entity_id = str(
+                reference.get("canonical_entity_id")
+                or reference.get("entity_id")
+                or reference.get("source_entity_id")
+                or ""
+            )
+            entity = await db.get(StoryEntity, entity_id) if entity_id else None
+            if (
+                entity is not None
+                and entity.user_id == user_id
+                and entity.novel_id == novel_id
+                and get_entity_review_status(entity) not in {"rejected", "archived"}
+            ):
+                kept.append(dict(reference))
+        filtered[key] = kept
+    return filtered
 
 
 async def _scoped_for_shot(
@@ -49,6 +78,18 @@ async def _scoped_for_shot(
         raise ValueError("selected shot owner chain is incomplete")
     source_text = "\n\n".join(str(chapter.content or "") for chapter in chapters)
     shot_text = " ".join(value for value in (shot.prompt, shot.dialogue, shot.visual_description) if value)
+    entity_refs = (shot.extra_data or {}).get("entity_refs") or {}
+    if refresh:
+        discovered = await resolve_owned_shot_entity_context(
+            db, user_id=run.user_id, novel_id=run.novel_id,
+            chapter_ids=list(chapter_ids), as_of_chapter_id=chapter_id,
+            source_text=source_text, shot_text=shot_text,
+        )
+        entity_refs = discovered["entity_refs"] if any(discovered["entity_refs"].values()) else (
+            await _without_terminal_entity_refs(
+                db, entity_refs, user_id=run.user_id, novel_id=run.novel_id,
+            )
+        )
     command = ProductionScopedRefCommand(
         run_id=run.id,user_id=run.user_id,novel_id=run.novel_id,workflow_id=workflow.id,
         storyboard_id=board.id,shot_id=shot.id,episode_number=int(episode["episode_number"]),
@@ -56,7 +97,7 @@ async def _scoped_for_shot(
         chapter_id=chapter_id,script_id=str(workflow.script_id or ""),prompt=shot.prompt or "",
         dialogue=shot.dialogue or "",visual_description=shot.visual_description or "",
         source_text=source_text,shot_text=shot_text,
-        entity_refs=(shot.extra_data or {}).get("entity_refs") or {},
+        entity_refs=entity_refs,
     )
     rebuilt = await build_production_scoped_refs(db, command)
     if rebuilt.entity_refs != (shot.extra_data or {}).get("entity_refs"):
@@ -69,7 +110,7 @@ async def _scoped_for_shot(
 async def refresh_scoped_for_shot(
     db: AsyncSession, run: SeriesProductionRun, shot: Shot,
 ):
-    """Re-sign a selected shot after an explicit media retry changes its input text."""
+    """Re-sign a selected shot after an approved source or media-retry change."""
     return await _scoped_for_shot(db, run, shot, refresh=True)
 
 
@@ -120,6 +161,12 @@ async def build_closure_v2_request(
                         for kind in ("character", "scene", "prop", "event")}
     ordered_subjects = [subjects[key] for key in sorted(subjects)]
     required_ids = {item["canonical_entity_id"] for item in ordered_subjects}
+    required_entities = [entity for entity in candidates if entity.id in required_ids]
+    if len(required_entities) != len(required_ids) or any(
+        get_entity_review_status(entity) in {"rejected", "archived"}
+        for entity in required_entities
+    ):
+        raise ValueError("required entity has a terminal review status")
     novel = await db.scalar(select(Novel).where(
         Novel.id == run.novel_id, Novel.user_id == run.user_id).with_for_update())
     if novel is None:
@@ -130,11 +177,17 @@ async def build_closure_v2_request(
                                             for entity in candidates if entity.id in required_ids),
         "required_entity_lifecycle": sorted((entity.id, get_entity_review_status(entity))
                                              for entity in candidates if entity.id in required_ids)}
-    source_hash = canonical_json_sha256({"run_id":run.id,"shots":[shot.id for shot in selected_shots],
-                                         "scoped_inputs":scoped_inputs})
+    source_hash = canonical_json_sha256({
+        "entity_extraction_contract_version": ENTITY_EXTRACTION_CONTRACT_VERSION,
+        "run_id": run.id,
+        "shots": [shot.id for shot in selected_shots],
+        "scoped_inputs": scoped_inputs,
+    })
     closure_hash = canonical_json_sha256({"subjects":ordered_subjects,"edges":evidence_edges,
                                           "candidate_counts":candidate_counts})
-    return {"closure_contract_version":"required_entity_closure_v2","source_hash":source_hash,
+    return {"closure_contract_version":"required_entity_closure_v2",
+        "entity_extraction_contract_version": ENTITY_EXTRACTION_CONTRACT_VERSION,
+        "source_hash":source_hash,
         "closure_hash":closure_hash,"snapshot_hash":canonical_json_sha256({
             "source_hash":source_hash,"closure_hash":closure_hash}),"subjects":ordered_subjects,
         "evidence_edges":evidence_edges,"scoped_inputs":scoped_inputs,

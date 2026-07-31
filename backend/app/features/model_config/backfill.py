@@ -12,6 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.credential_encryption import validate_fernet_ciphertext
+from app.features.model_config.catalog import (
+    is_product_visible_model,
+    is_product_visible_provider,
+)
 from app.features.model_config.domain import normalize_capabilities
 from app.features.model_config.prompt_recovery import (
     PromptRecoveryConflict,
@@ -157,14 +161,25 @@ def _plan(report: BackfillReport, field: str, *, apply: bool) -> None:
 async def _legacy_rows(
     db: AsyncSession, user_id: str | None
 ) -> tuple[list[LLMProvider], list[LLMModel], list[LLMConfig], list[PromptSkill]]:
-    providers = list((await db.scalars(select(LLMProvider))).all())
-    models = list((await db.scalars(select(LLMModel))).all())
+    providers = [
+        provider for provider in (await db.scalars(select(LLMProvider))).all()
+        if is_product_visible_provider(provider)
+    ]
+    provider_ids = {provider.id for provider in providers}
+    models = [
+        model for model in (await db.scalars(select(LLMModel))).all()
+        if model.provider_id in provider_ids and is_product_visible_model(model)
+    ]
+    model_ids = {model.id for model in models}
     config_statement = select(LLMConfig)
     prompt_statement = select(PromptSkill)
     if user_id:
         config_statement = config_statement.where(LLMConfig.user_id == user_id)
         prompt_statement = prompt_statement.where(PromptSkill.user_id == user_id)
-    configs = list((await db.scalars(config_statement)).all())
+    configs = [
+        config for config in (await db.scalars(config_statement)).all()
+        if config.model_id in model_ids
+    ]
     prompts = list((await db.scalars(prompt_statement)).all())
     return providers, models, configs, prompts
 

@@ -31,6 +31,8 @@ from app.models.external_api import ExternalAPIConfig, ExternalAPIProvider
 from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
+from app.services.media_delivery import refresh_existing_qiniu_media_url
+from app.services.media_persistence import local_static_path_for_url
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 
 router = APIRouter(tags=["统一媒体生成"])
@@ -597,6 +599,38 @@ async def get_media_job(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体任务不存在")
     return _job_response(job)
+
+
+@router.get("/jobs/{job_id}/playback-url")
+async def get_media_playback_url(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    result = await db.execute(
+        select(MediaGenerationJob).where(MediaGenerationJob.id == job_id, MediaGenerationJob.user_id == user_id)
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体任务不存在")
+    local_path = local_static_path_for_url(job.output_video_url)
+    if local_path is not None and local_path.is_file():
+        return {
+            "job_id": job.id,
+            "url": job.output_video_url,
+            "delivery_method": "local_static",
+        }
+    extra = job.extra_data if isinstance(job.extra_data, dict) else {}
+    delivery = extra.get("subtitle_delivery") if isinstance(extra.get("subtitle_delivery"), dict) else {}
+    refreshed = await refresh_existing_qiniu_media_url(
+        db, user_id, job.output_video_url,
+        storage_config_id=delivery.get("storage_config_id"),
+    )
+    return {
+        "job_id": job.id,
+        "url": refreshed.get("provider_url") or job.output_video_url,
+        "delivery_method": refreshed.get("delivery_method") or "local_static",
+    }
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=MediaJobResponse)

@@ -26,12 +26,30 @@ class CreateSeriesRunRequest(BaseModel):
 
 
 class ValidateLiveBindingsRequest(BaseModel):
-    text: str; image: str; tts: str; video: str
+    image: str | None = None
+    video: str
+    text: str | None = None
+    tts: str | None = None
+    native_audio: bool = False
+
+    @model_validator(mode="after")
+    def validate_audio_binding(self):
+        if not self.native_audio and not self.tts:
+            raise ValueError("tts binding is required when native audio is disabled")
+        return self
+
+    def required_bindings(self) -> dict[str, str]:
+        bindings = {"video": self.video}
+        if self.image:
+            bindings["image"] = self.image
+        if not self.native_audio and self.tts:
+            bindings["tts"] = self.tts
+        return bindings
 
 
 class AnchorSelectionRequest(BaseModel):
     shot_ids: list[str] = Field(min_length=1, max_length=20)
-    mode: str = Field(pattern="^(smoke|full)$")
+    mode: str = Field(pattern="^(smoke|representative|full)$")
 
 
 class GenerateSelectedRequest(AnchorSelectionRequest):
