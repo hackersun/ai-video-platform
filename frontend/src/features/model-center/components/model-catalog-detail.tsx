@@ -8,6 +8,7 @@ import { modelCenterApi } from '../api';
 import { capabilityLabels, certificationLabel, driverLabel } from '../model-center-labels';
 import { modelCenterHref, type ModelCenterLocation } from '../navigation';
 import type { ModelCatalogView } from '../types';
+import { VideoContractSummary } from './video-contract-summary';
 
 export function ModelCatalogDetail({
   model, location, onClose,
@@ -42,6 +43,7 @@ export function ModelCatalogDetail({
     <section className="mx-auto max-w-2xl rounded-xl border border-white/15 bg-slate-900 p-5 shadow-2xl">
       <header className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-semibold text-white">{model.model_name}</h2><p className="mt-1 text-sm text-slate-400">{model.provider_name} · {model.api_model_id}</p></div><button type="button" aria-label="关闭模型详情" onClick={onClose} className="model-center-quiet"><X className="h-4 w-4" /></button></header>
       <dl className="mt-5 grid gap-3 rounded-lg border border-white/10 bg-black/15 p-4 text-sm sm:grid-cols-2"><div><dt>配置版本</dt><dd className="mt-1 text-white">{model.profile_version ? `v${model.profile_version}` : '旧版兼容配置'}</dd></div><div><dt>接口适配器</dt><dd className="mt-1 text-white">{model.driver_key ? driverLabel(model.driver_key) : '旧版适配'}</dd></div><div><dt>验证状态</dt><dd className="mt-1 text-white">{certificationLabel(model.certification_status)}</dd></div><div><dt>模型用途</dt><dd className="mt-1 text-white">{model.capabilities.map((item) => capabilityLabels[item] || item).join('、')}</dd></div></dl>
+      <VideoContractSummary model={model} />
       <div className="mt-4 rounded-lg border border-white/10 px-3 py-2 text-xs leading-5 text-slate-400"><p className="font-medium text-slate-200">要变更什么？</p><p>换 API Key：进入“供应商账号”；切换生产使用模型：进入“默认模型”；更换 Model ID 或接口适配器：新增模型配置，验证通过后再切换默认，已发布版本不会被直接覆盖。</p></div>
       {!canValidate && <p className="mt-4 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-100">这是旧版兼容目录项，需先用“新增模型”建立版本化配置后才能运行检查。</p>}
       <div className="mt-5 grid gap-2 sm:grid-cols-2">

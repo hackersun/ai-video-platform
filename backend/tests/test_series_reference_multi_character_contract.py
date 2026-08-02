@@ -135,3 +135,28 @@ def test_superseded_series_reference_rebinds_shot_lock_without_dropping_other_as
     assert context["canonical_reference_id"] == "new-reference"
     assert context["canonical_reference_version"] == 2
     assert context["reference_rebind"]["superseded_asset_id"] == "old-reference"
+
+
+def test_first_series_reference_is_bound_to_existing_run_shot() -> None:
+    shot = SimpleNamespace(extra_data={"production_context": {
+        "asset_version_locks": [
+            {"asset_id": "scene-asset", "asset_version": 3, "locked": True},
+        ],
+    }})
+
+    changed = series_run_reference_preparation.rebind_shot_reference_context(
+        shot,
+        superseded_asset_id="",
+        replacement_asset_id="series-reference",
+        replacement_asset_version=1,
+        rebound_at="2026-08-01T00:00:00",
+    )
+
+    assert changed is True
+    context = shot.extra_data["production_context"]
+    assert context["asset_version_locks"] == [
+        {"asset_id": "scene-asset", "asset_version": 3, "locked": True},
+        {"asset_id": "series-reference", "asset_version": 1, "locked": True},
+    ]
+    assert context["canonical_reference_id"] == "series-reference"
+    assert context["canonical_reference_version"] == 1

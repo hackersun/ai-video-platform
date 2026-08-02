@@ -101,6 +101,11 @@ export interface ModelProfileVersionView {
   contract_version: string;
   status: ConfigurationState;
   revision: number;
+  input_contract?: Record<string, unknown>;
+  output_contract?: Record<string, unknown>;
+  parameter_schema?: Record<string, unknown>;
+  default_params?: Record<string, unknown>;
+  limits?: Record<string, unknown>;
 }
 
 export interface ModelProfileView {
@@ -151,6 +156,9 @@ export interface ModelCatalogView {
   legacy_config_id: string | null;
   certification_status: string;
   capabilities: ModelCapability[];
+  input_contract?: Record<string, unknown>;
+  parameter_schema?: Record<string, unknown>;
+  limits?: Record<string, unknown>;
 }
 
 export interface ModelCatalogFilters {

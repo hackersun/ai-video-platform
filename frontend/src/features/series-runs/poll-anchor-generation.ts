@@ -31,7 +31,7 @@ export async function pollAnchorGeneration({
   onStatus?.(current.status);
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (current.status === 'completed' || current.status === 'failed') return current;
-    await Promise.all(pendingVideoIds(current).map((jobId) => client.refreshVideoJob(jobId)));
+    await Promise.allSettled(pendingVideoIds(current).map((jobId) => client.refreshVideoJob(jobId)));
     current = await client.reconcileSelectedSeriesRunAnchors(runId);
     onStatus?.(current.status);
     if (current.status === 'completed' || current.status === 'failed') return current;

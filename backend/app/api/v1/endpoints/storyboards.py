@@ -20,7 +20,7 @@ from sqlalchemy import select, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config, get_user_volcano_api_key
+from app.core.api_key_utils import create_text_generation_service, get_user_text_generation_service, get_user_text_model_config, get_user_volcano_api_key
 from app.core.dev_generation import dev_synthesis_url, is_dev_mode
 from app.core.security import get_current_user_id
 from app.models import Asset, Storyboard, Shot, Novel, Chapter, Script, SynthesisJob
@@ -218,18 +218,20 @@ class StoryboardMergeVersionResponse(BaseModel):
 
 # ============== LLM API Key 辅助函数 ==============
 
-async def get_user_qwen_api_key(
+async def get_storyboard_text_service(
     db: AsyncSession,
     user_id: str,
     model_config_id: Optional[str] = None,
-) -> tuple[str, str, str, Optional[str]]:
+) -> tuple[Any, str, str, Optional[str]]:
     """获取用户默认文本模型配置。"""
+    if not model_config_id:
+        return await get_user_text_generation_service(db, user_id)
     api_key, provider_name, model_id, base_url = await get_user_text_model_config(
         db,
         user_id,
         config_id=model_config_id,
     )
-    return api_key or "", provider_name or "", model_id or "", base_url
+    return create_text_generation_service(api_key or "", provider_name or "", base_url), provider_name or "", model_id or "", base_url
 
 
 def _compact_prompt_context_value(value: Optional[str], limit: int = 2400) -> str:
@@ -2056,7 +2058,7 @@ async def generate_storyboard(
 
     # 获取用户的API密钥
     try:
-        api_key, provider_name, model_id, base_url = await get_user_qwen_api_key(
+        service, provider_name, model_id, base_url = await get_storyboard_text_service(
             db,
             user_id,
             request.model_config_id,
@@ -2071,8 +2073,6 @@ async def generate_storyboard(
             db=db,
             user_id=user_id,
         )
-
-    service = create_text_generation_service(api_key, provider_name, base_url)
 
     templates = await load_user_storyboard_templates(db, user_id)
     template_match = match_storyboard_template(
@@ -2216,7 +2216,6 @@ async def generate_storyboard(
         content = response["choices"][0]["message"]["content"]
 
         # 解析JSON
-        import json
         json_str = content.strip()
         if json_str.startswith("```json"):
             json_str = json_str[7:]

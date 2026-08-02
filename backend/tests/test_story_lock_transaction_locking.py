@@ -98,19 +98,25 @@ class _LockSpyDb:
         self.events.append("run_lock")
         return self.run
 
+    async def flush(self):
+        return None
+
 
 @pytest.mark.asyncio
 async def test_transaction_locks_fresh_run_before_dialogue_normalization(monkeypatch):
     events = []
-    run = SimpleNamespace(id="run-1", user_id="user-1", novel_id="novel-1",
+    run = SimpleNamespace(id="run-1", user_id="user-1", novel_id="novel-1", version=1,
                           episodes=[], run_metadata={})
     db = _LockSpyDb(run, events)
 
     async def chapters(*_args):
         return []
 
-    async def prepare(*_args):
+    async def prepare(*_args, **_kwargs):
         events.append("normalize")
+
+    async def backfill(*_args):
+        return None
 
     async def load(*_args):
         return SimpleNamespace(required_entities=[])
@@ -122,6 +128,7 @@ async def test_transaction_locks_fresh_run_before_dialogue_normalization(monkeyp
         return {"status": "locked"}
 
     monkeypatch.setattr(story_transaction, "_ordered_run_chapters", chapters)
+    monkeypatch.setattr(story_transaction, "_backfill_verified_auto_approval_records", backfill)
     monkeypatch.setattr(story_transaction, "_prepare_explicit_dialogue_facts", prepare)
     monkeypatch.setattr(story_transaction, "load_required_context", load)
     monkeypatch.setattr(story_transaction, "build_closure_v2_request", build)
@@ -224,7 +231,15 @@ async def test_new_shot_uses_second_chapter_dialogue_for_chapter_and_as_of(monke
         calls.append(kwargs["as_of_chapter_id"])
         return {"entity_refs": {"characters": [], "scenes": [], "props": [], "events": []}}
 
+    async def bind(*_args, **_kwargs):
+        return SimpleNamespace(rendered_prompt="镜头提示词", evidence={})
+
+    async def execute(*_args, **kwargs):
+        return SimpleNamespace(value=kwargs["fallback"](), evidence={"execution_mode": "fallback"})
+
     monkeypatch.setattr(episode_shot_stage, "resolve_owned_shot_entity_context", resolve)
+    monkeypatch.setattr(episode_shot_stage, "bind_series_stage_skill", bind)
+    monkeypatch.setattr(episode_shot_stage, "execute_skill_model_or_fallback", execute)
     episode = {"episode_number": 1, "input_hash": "input-1",
                "chapter_ids": ["chapter-1", "chapter-2"]}
     context = ShotStageContext(
@@ -236,11 +251,22 @@ async def test_new_shot_uses_second_chapter_dialogue_for_chapter_and_as_of(monke
             "speaker": "沈砚", "spoken_text": "到了", "dialogue": "沈砚：到了",
             "source_span": [0, 8], "chapter_id": "chapter-2",
         }]}),
-        storyboard=SimpleNamespace(id="board-1"),
+        storyboard=SimpleNamespace(
+            id="board-1", title="第二章场景",
+            content={"scene_index": 1, "scene_count": 1, "continuity": {}},
+        ),
         source_text="第一章。\n\n沈砚说：“到了”",
     )
 
-    shot = await episode_shot_stage._new_shot(context)
+    shot = await episode_shot_stage._new_shot(
+        context,
+        shot_number=1,
+        episode_shot_number=1,
+        shot_plan={"prompt": "沈砚抵达", "visual_description": "沈砚走入殿中", "dialogue": "幻觉角色：并不存在"},
+        dialogue_index=0,
+    )
 
     assert shot.extra_data["chapter_id"] == "chapter-2"
+    assert shot.dialogue == "沈砚：到了"
+    assert shot.extra_data["dialogue_spoken_text"] == "到了"
     assert calls == ["chapter-2"]

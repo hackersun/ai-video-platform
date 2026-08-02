@@ -69,7 +69,7 @@ test('continue the frontend-created five-chapter run through reference, first fr
       .filter((job: any) => completedShotIds.includes(job.shot_id));
     expect(refreshedMedia.every((job: any) => job.subtitle_track_id)).toBe(true);
     expect(refreshedMedia.every((job: any) => job.extra_data?.subtitle_burned === true)).toBe(true);
-    expect(refreshedMedia.every((job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v6')).toBe(true);
+    expect(refreshedMedia.every((job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v7')).toBe(true);
     await writeFile(testInfo.outputPath('live-evidence.json'), JSON.stringify({
       novel_id: novelId, run_id: runId, selected_shot_ids: completedShotIds,
       style: 'xianxia-3d', native_audio: true, spent_rmb: completedRun.cost_summary?.spent_rmb,
@@ -160,7 +160,7 @@ test('continue the frontend-created five-chapter run through reference, first fr
   };
   expect(jobs.every((job: any) => job.subtitle_track_id)).toBe(true);
   expect(jobs.every((job: any) => job.extra_data?.subtitle_burned === true)).toBe(true);
-  expect(jobs.every((job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v6')).toBe(true);
+  expect(jobs.every((job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v7')).toBe(true);
   await writeFile(testInfo.outputPath('live-evidence.json'), JSON.stringify(evidence, null, 2));
   await page.screenshot({ path: testInfo.outputPath('02-three-videos-completed.png'), fullPage: true });
 });

@@ -1178,7 +1178,7 @@ class ApiClient {
     });
   }
 
-  async generateShotImage(shotId: string, params: { style?: string; model_config_id?: string } = {}) {
+  async generateShotImage(shotId: string, params: { style?: string; model_config_id?: string; continuity_reference_shot_id?: string } = {}) {
     return this.request<any>(`/shots/${shotId}/generate-image`, {
       method: 'POST',
       body: JSON.stringify({

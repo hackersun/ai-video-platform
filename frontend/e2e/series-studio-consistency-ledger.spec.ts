@@ -20,7 +20,7 @@ test.beforeEach(async ({ page }) => {
   }, { authToken: token, authUserId: userId });
 });
 
-test('consistency ledger shows score and repair actions', async ({ page }) => {
+test('consistency ledger shows unevaluated truth and repair actions', async ({ page }) => {
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const path = url.pathname.replace(/\/+/g, '/').replace(/\/$/, '');
@@ -71,16 +71,11 @@ test('consistency ledger shows score and repair actions', async ({ page }) => {
             required_checks: ['characters'],
           },
           consistency_ledger: {
-            overall_score: 70,
-            dimensions: {
-              style: 100,
-              character_visual: 0,
-              scene: 100,
-              prop_state: 100,
-              voice: 100,
-              event_continuity: 100,
-              subtitle_timing: 100,
-            },
+            evaluation_status: 'not_evaluated',
+            preflight_status: 'blocked',
+            overall_score: null,
+            dimensions: {},
+            evaluated_dimensions: [],
             findings: [{
               code: 'shot_character_unbound',
               severity: 'blocking',
@@ -120,7 +115,7 @@ test('consistency ledger shows score and repair actions', async ({ page }) => {
 
   const panel = page.getByTestId('consistency-ledger-panel');
   await expect(panel.getByText('一致性评分')).toBeVisible();
-  await expect(panel.getByText('人物形象')).toBeVisible();
+  await expect(panel.getByText('尚未执行六维一致性评估')).toBeVisible();
   await expect(panel.getByText('镜头没有绑定角色参考，人物一致性不可控')).toBeVisible();
   await expect(panel.getByRole('button', { name: '绑定角色参考' })).toBeVisible();
 

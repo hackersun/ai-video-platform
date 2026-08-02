@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import apiClient from '@/lib/api-client';
+import { toMediaUrl } from '@/lib/media-url';
 import type { StudioSnapshot, StudioWorkflowOption } from '@/lib/studio-types';
 
 type ExpertLink = { href: string; label: string };
@@ -29,6 +30,14 @@ function relatedWorkflows(snapshot: StudioSnapshot, workflows: StudioWorkflowOpt
       const existing = byWorkflowId.get(id);
       if (id && (!existing || (!existing.chapter_id && workflow.chapter_id))) byWorkflowId.set(id, workflow);
     });
+  const currentWorkflow: StudioWorkflowOption = {
+    ...snapshot.workflow,
+    workflow_id: snapshot.workflow?.id,
+    chapter_id: snapshot.workflow?.chapter_id || snapshot.story_context?.chapter?.id,
+  };
+  if (currentWorkflow.workflow_id && !byWorkflowId.has(currentWorkflow.workflow_id)) {
+    byWorkflowId.set(currentWorkflow.workflow_id, currentWorkflow);
+  }
   const seenChapterIds = new Set<string>();
   return Array.from(byWorkflowId.values())
     .filter((workflow) => {
@@ -129,7 +138,7 @@ export function StudioWorkspaceHeader({
       <Card className="overflow-hidden border-white/10 bg-white/[0.045]" data-testid="studio-series-summary">
         <CardContent className="grid gap-4 p-4 md:grid-cols-[190px_minmax(0,1fr)_190px] md:items-center">
           {novel.cover_url ? (
-            <img src={novel.cover_url} alt={`${novelTitle} 系列封面`} className="h-24 w-[190px] rounded-lg border border-white/10 object-cover" />
+            <img src={toMediaUrl(novel.cover_url)} alt={`${novelTitle} 系列封面`} className="h-24 w-[190px] rounded-lg border border-white/10 object-cover" />
           ) : (
             <div className="flex h-24 w-[190px] flex-col items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/20 text-center text-[11px] text-white/40">
               <BookOpen aria-hidden className="mb-1 h-5 w-5" />尚未设置系列封面

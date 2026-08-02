@@ -176,18 +176,20 @@ async def _clear_derived_shot_references(db: AsyncSession, run: SeriesProduction
         extra.pop("environment_context", None)
         chapter = chapters.get(str(extra.get("chapter_id") or ""))
         spoken = str(shot.dialogue or "").split("：", 1)[-1].strip()
-        if spoken and chapter and not (extra.get("dialogue_speaker") or extra.get("parsed_speaker")):
+        if spoken and chapter:
             matches = [
                 line for line in extract_explicit_dialogue(str(chapter.content or ""))
                 if str(line.get("spoken_text") or "").strip() == spoken
             ]
-            if len(matches) == 1:
+            current_speaker = str(extra.get("dialogue_speaker") or extra.get("parsed_speaker") or "").strip()
+            if len(matches) == 1 and current_speaker != str(matches[0]["speaker"]):
                 line = matches[0]
                 extra.update({
                     "dialogue_speaker": line["speaker"], "parsed_speaker": line["speaker"],
                     "dialogue_spoken_text": line["spoken_text"],
                     "dialogue_source": {"chapter_id": chapter.id, "source_span": line["source_span"]},
                 })
+                shot.dialogue = line["dialogue"]
                 repaired_dialogue_count += 1
         shot.extra_data = extra
         shot.character_refs = []

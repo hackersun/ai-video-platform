@@ -260,9 +260,7 @@ async def update_prompt_skill(db: AsyncSession, user_id: str, skill_id: str, dat
                 setattr(skill, key, data[key])
         skill.version = draft.version
     try:
-        if keep_published_state:
-            draft = await _activate_prompt_skill_state(db, user_id, skill)
-        elif was_active and data.get("is_active") is False:
+        if was_active and data.get("is_active") is False:
             draft = await disable_legacy_prompt_profile(db, skill)
         elif not was_active and data.get("is_active") is True:
             draft = await _activate_prompt_skill_state(db, user_id, skill)

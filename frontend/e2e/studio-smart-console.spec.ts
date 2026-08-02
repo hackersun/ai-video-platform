@@ -127,6 +127,58 @@ test.beforeEach(async ({ page }) => {
   }, { authToken: token, authUserId: userId });
 });
 
+test('studio resolves a generated relative novel cover through the backend media origin', async ({ page }) => {
+  let requestedCoverUrl = '';
+  await page.route('**/static/generated/images/novel-cover-test.jpg', async (route) => {
+    requestedCoverUrl = route.request().url();
+    await route.fulfill({
+      status: 200,
+      contentType: 'image/png',
+      body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64'),
+    });
+  });
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/\/+/g, '/').replace(/\/$/, '');
+    if (path === '/api/v1/workflow') {
+      await route.fulfill({ json: [{
+        workflow_id: 'wf-smart-console',
+        id: 'wf-smart-console',
+        novel_id: 'novel-smart-console',
+        chapter_id: 'chapter-smart-console',
+        title: '星港追光 第一集',
+        status: 'active',
+      }] });
+      return;
+    }
+    if (path === '/api/v1/studio/workflows/wf-smart-console/snapshot') {
+      await route.fulfill({ json: smartSnapshot });
+      return;
+    }
+    if (path === '/api/v1/novels/novel-smart-console') {
+      await route.fulfill({ json: { ...smartNovel, cover_url: '/static/generated/images/novel-cover-test.jpg' } });
+      return;
+    }
+    if (path === '/api/v1/chapters/novel/novel-smart-console') {
+      await route.fulfill({ json: [{
+        id: 'chapter-smart-console',
+        title: '第一章 星港起飞',
+        chapter_number: 1,
+      }] });
+      return;
+    }
+    await route.fulfill({ json: [] });
+  });
+
+  await page.goto('/studio?workflow_id=wf-smart-console');
+
+  const cover = page.getByRole('img', { name: '星港追光 系列封面' });
+  await expect(cover).toBeVisible();
+  await expect.poll(() => requestedCoverUrl).toMatch(
+    /^http:\/\/(?:localhost|127\.0\.0\.1):8000\/static\/generated\/images\/novel-cover-test\.jpg$/,
+  );
+  await expect.poll(() => cover.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+});
+
 test('novels production entry opens studio command flow and confirms production actions', async ({ page }) => {
   await page.setViewportSize({ width: 1487, height: 1058 });
   let actionPayload: any = null;

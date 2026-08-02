@@ -3,6 +3,7 @@
 import { useState } from 'react';
 
 import { apiClient } from '@/lib/api-client';
+import { previousSelectedShotId } from './first-frame-continuity';
 
 type FirstFrameFailure = { shotId: string; message: string };
 
@@ -53,7 +54,16 @@ export function useSelectedFirstFrames({
       try {
         const current = await apiClient.getShot(shotId);
         if (!isRealFirstFrame(current.image_url) || current.image_status !== 'succeeded') {
-          const result = await apiClient.generateShotImage(shotId, { style, model_config_id: imageConfigId });
+          const previousId = previousSelectedShotId(selected, shotId);
+          const previous = previousId ? await apiClient.getShot(previousId) : null;
+          const continuityId = previous?.image_status === 'succeeded' && isRealFirstFrame(previous.image_url)
+            ? previous.id
+            : undefined;
+          const result = await apiClient.generateShotImage(shotId, {
+            style,
+            model_config_id: imageConfigId,
+            continuity_reference_shot_id: continuityId,
+          });
           if (result.status !== 'succeeded' || !isRealFirstFrame(result.image_url)) await waitForShotImage(shotId);
         }
         succeeded += 1;
@@ -76,9 +86,13 @@ export function useSelectedFirstFrames({
     setFailures((items) => items.filter((item) => item.shotId !== shotId));
     setMessage('正在仅重做当前镜头参考；系列角色三视图不会被替换…');
     try {
+      const previousId = previousSelectedShotId(selected, shotId);
+      const identityReference = previousId ? await apiClient.getShot(previousId) : null;
       const result = await apiClient.generateShotImage(shotId, {
         style,
         model_config_id: imageConfigId,
+        continuity_reference_shot_id: identityReference?.image_status === 'succeeded'
+          && isRealFirstFrame(identityReference.image_url) ? identityReference.id : undefined,
       });
       if (result.status !== 'succeeded' || !isRealFirstFrame(result.image_url)) {
         await waitForShotImage(shotId);

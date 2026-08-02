@@ -58,7 +58,7 @@ const settingsMenu = [
     path: '/settings/appearance',
     icon: Palette,
     desc: '调整主题强调色、紧凑布局和动效',
-    status: '本机保存',
+    status: '按账户保存',
   },
 ];
 
@@ -139,6 +139,9 @@ export default function SettingsPage() {
                 <Badge variant="outline" className="border-white/20 text-white/65">
                   强调色 {accentLabel(appearance.accentColor)}
                 </Badge>
+                <Badge variant="outline" className="border-violet-300/30 text-violet-200">
+                  主题 {themeLabel(appearance.theme)}
+                </Badge>
                 {appearance.compactMode && (
                   <Badge variant="outline" className="border-emerald-300/30 text-emerald-200">紧凑布局</Badge>
                 )}
@@ -217,7 +220,7 @@ export default function SettingsPage() {
             <div>
               <p className="font-medium text-emerald-100">设置保存策略</p>
               <p className="mt-1 text-sm text-white/55">
-                个人资料和密码会同步到后端；通知和外观属于本机操作偏好，保存到浏览器 localStorage，不影响生成链路。
+                个人资料和密码会同步到后端；外观偏好按登录账户保存在当前浏览器，不影响生成链路。
               </p>
             </div>
           </CardContent>
@@ -271,4 +274,12 @@ function accentLabel(value: AppearancePreferences['accentColor']) {
     amber: '橙',
   };
   return labels[value];
+}
+
+function themeLabel(value: AppearancePreferences['theme']) {
+  return {
+    dark: '深色',
+    light: '浅色',
+    system: '跟随系统',
+  }[value];
 }

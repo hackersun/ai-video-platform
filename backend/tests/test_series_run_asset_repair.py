@@ -195,3 +195,44 @@ async def test_repair_restores_narrated_dialogue_speaker_on_existing_shot(db_ses
     assert shot.extra_data["dialogue_speaker"] == "沈岚"
     assert shot.extra_data["parsed_speaker"] == "沈岚"
     assert shot.extra_data["dialogue_spoken_text"] == "它不是灾祸，封印正在崩裂。"
+
+
+@pytest.mark.asyncio
+async def test_repair_replaces_pronoun_speaker_with_unique_chapter_speaker(db_session: AsyncSession) -> None:
+    from app.features.series_run_story_locks.application.asset_repair import repair_story_assets
+
+    await ensure_standard_prompt_skills(db_session, commit=False)
+    user_id, novel_id, chapter_id = str(uuid4()), str(uuid4()), str(uuid4())
+    content = '沈砚停顿一息，琥珀色眼睛映出赤火，却仍把白玉指环贴向门锁。他回答：“所以我要亲自确认。”'
+    chapter = Chapter(
+        id=chapter_id, user_id=user_id, novel_id=novel_id, chapter_number=1,
+        title="星髓地宫", content=content,
+    )
+    script = Script(id=str(uuid4()), user_id=user_id, novel_id=novel_id, title="剧本", content=content)
+    storyboard = Storyboard(
+        id=str(uuid4()), user_id=user_id, novel_id=novel_id, script_id=script.id,
+        title="分镜", content={}, shot_count=1,
+    )
+    shot = Shot(
+        id=str(uuid4()), user_id=user_id, storyboard_id=storyboard.id, shot_number=1,
+        dialogue="他回：所以我要亲自确认。",
+        extra_data={"chapter_id": chapter_id, "dialogue_speaker": "他回", "parsed_speaker": "他回"},
+    )
+    run = SeriesProductionRun(
+        id=str(uuid4()), user_id=user_id, novel_id=novel_id, series_plan_version="1",
+        idempotency_key=str(uuid4()), status="shots_ready",
+        episodes=[{"episode_number": 1, "chapter_ids": [chapter_id],
+                   "canonical_ids": {"shot_ids": [shot.id]}}],
+        run_metadata={},
+    )
+    db_session.add_all([Novel(id=novel_id, user_id=user_id, title="玄幻"), chapter, script, storyboard, shot, run])
+    await db_session.commit()
+
+    result = await repair_story_assets(db_session, run)
+
+    await db_session.refresh(shot)
+    assert result["repaired_dialogue_count"] == 1
+    assert shot.extra_data["dialogue_speaker"] == "沈砚"
+    assert shot.extra_data["parsed_speaker"] == "沈砚"
+    assert shot.extra_data["dialogue_spoken_text"] == "所以我要亲自确认。"
+    assert shot.dialogue == "沈砚：所以我要亲自确认。"

@@ -10,6 +10,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.management import ManagementOperationError
+from app.features.model_config.video_contract import validate_video_capability_contract
 from app.features.model_drivers.public import DriverUnavailableError, build_builtin_driver_registry
 from app.models.model_center import (
     ModelConfigAuditEvent,
@@ -57,6 +58,11 @@ def profile_version_item(row: ModelProfileVersion) -> dict:
         "id": row.id, "model_id": row.model_id, "version": row.version,
         "api_model_id": row.api_model_id, "driver_key": row.driver_key,
         "capabilities": list(row.capabilities or []), "contract_version": row.contract_version,
+        "input_contract": dict(row.input_contract or {}),
+        "output_contract": dict(row.output_contract or {}),
+        "parameter_schema": dict(row.parameter_schema or {}),
+        "default_params": dict(row.default_params or {}),
+        "limits": dict(row.limits or {}),
         "status": row.status, "revision": row.version,
     }
 
@@ -150,15 +156,25 @@ async def validate_profile_contract(db: AsyncSession, *, user_id: str, version_i
     if version is None:
         raise ManagementOperationError("resource_not_found", "模型版本不存在。", "refresh", 404)
     _require_driver(version.driver_key, list(version.capabilities or []))
+    errors = validate_video_capability_contract(
+        list(version.capabilities or []),
+        dict(version.input_contract or {}),
+        dict(version.limits or {}),
+    )
     audit = _audit(
         user_id=user_id, resource_type="model_profile_version", resource_id=version.id,
-        action="validate_contract", reason="local driver contract validation",
+        action="validate_contract" if not errors else "validate_contract_failed",
+        reason="local driver contract validation",
         to_version_id=version.id,
-        summary={"driver_key": version.driver_key, "contract_version": version.contract_version},
+        summary={
+            "driver_key": version.driver_key,
+            "contract_version": version.contract_version,
+            "error_codes": [item["code"] for item in errors],
+        },
     )
     db.add(audit)
     await db.flush()
-    return {"valid": True, "errors": [], "audit_event_id": audit.id}
+    return {"valid": not errors, "errors": errors, "audit_event_id": audit.id}
 
 
 async def publish_profile_version(db: AsyncSession, *, user_id: str, version_id: str, request) -> dict:

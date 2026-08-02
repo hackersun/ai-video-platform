@@ -194,13 +194,15 @@ async def resolve_video_model_config(
     user_id: str,
     requested_model: Optional[str],
     config_id: Optional[str] = None,
+    profile_version_id: Optional[str] = None,
 ) -> dict[str, Any]:
     try:
         context = await resolve_generation_context(
             db, user_id=user_id, stage="video", explicit_config_id=config_id,
+            explicit_profile_version_id=profile_version_id,
         )
     except ModelBindingError as error:
-        if str(error) in _CATALOG_FALLBACK_ERRORS and not config_id:
+        if str(error) in _CATALOG_FALLBACK_ERRORS and not config_id and not profile_version_id:
             return await _legacy_video_model_config(db, user_id, requested_model, config_id)
         if str(error) == "legacy_config_not_verified" and config_id:
             return _preflight_only_video_payload(requested_model, config_id, str(error))

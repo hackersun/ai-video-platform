@@ -23,6 +23,7 @@ from app.services.deterministic_provider_fake import deterministic_provider_fake
 from app.services.live_canary_bindings import BindingValidationError, validate_persisted_model_bindings
 from app.services.series_run_live_preflight import build_live_preflight_plan
 from app.services.series_run_orchestrator import InvalidRunTransition, SeriesRunOrchestrator, SeriesRunPreflightBlocked
+from app.services.shot_input_fingerprint import shot_input_fingerprint
 
 from .deterministic_quality import evaluate_deterministic_anchors
 from .errors import SeriesAnchorError
@@ -142,15 +143,7 @@ async def _quality_contexts(
 
 
 def _shot_input_fingerprint(shot: Shot) -> str:
-    extra = shot.extra_data if isinstance(shot.extra_data, dict) else {}
-    value = {
-        "shot_id": shot.id,
-        "prompt": shot.prompt,
-        "visual_description": shot.visual_description,
-        "dialogue": shot.dialogue,
-        "subtitle_text": extra.get("subtitle_text"),
-    }
-    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    return shot_input_fingerprint(shot)
 
 
 def _generation_key(

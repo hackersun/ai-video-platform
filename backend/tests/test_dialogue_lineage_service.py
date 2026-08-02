@@ -32,6 +32,16 @@ def test_resolves_subject_before_object_and_quoted_answer() -> None:
     ]
 
 
+def test_extracts_named_reminder_as_dialogue() -> None:
+    source = '沈砚低声提醒：“记住彼此的气息与装束，幻境无法改变约定。”'
+
+    result = extract_explicit_dialogue(source)
+
+    assert [(item['speaker'], item['spoken_text']) for item in result] == [
+        ('沈砚', '记住彼此的气息与装束，幻境无法改变约定。'),
+    ]
+
+
 def test_does_not_treat_pronouns_common_words_or_titles_as_speakers():
     source = '他说：“快走。”\n大家问：“为什么？”\n老师说：“安静。”\n母亲答：“知道了。”'
     assert extract_explicit_dialogue(source) == []

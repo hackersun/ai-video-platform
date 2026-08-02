@@ -29,6 +29,11 @@ type ReferencePackageDrop = {
 
 type ReferencePackageItem = {
   type?: string;
+  role_tag?: string;
+  entity_name?: string;
+  view_key?: string;
+  source_shot_id?: string;
+  canonical_asset_id?: string;
 };
 
 type ReferencePackageEvidence = {
@@ -43,6 +48,23 @@ type ReferencePackageEvidence = {
 interface HistoryReferencePackageEvidenceProps {
   referencePackage?: ReferencePackageEvidence | null;
   testId?: string;
+}
+
+const VIEW_LABELS: Record<string, string> = {
+  front: '正面', side: '侧面', back: '背面', establishing: '全景', main: '主视图',
+};
+
+function referenceItemText(item: ReferencePackageItem) {
+  if (item.type === 'video' && item.role_tag === 'previous_shot') {
+    return `继承前序镜头 ${item.source_shot_id || '已绑定'}`;
+  }
+  if (item.type === 'image') {
+    const role = item.role_tag === 'protagonist' ? '角色' : item.role_tag === 'scene' ? '场景' : item.role_tag === 'prop' ? '道具' : '参考图';
+    const name = item.entity_name || item.canonical_asset_id || '已绑定';
+    const view = item.view_key ? ` · ${VIEW_LABELS[item.view_key] || item.view_key}` : '';
+    return `${role} ${name}${view}`;
+  }
+  return item.type === 'audio' ? '已绑定参考声音' : '已绑定参考素材';
 }
 
 export function getPreflightSummaryText(preflight?: GenerationPreflight | null) {
@@ -129,6 +151,7 @@ export function HistoryReferencePackageEvidence({ referencePackage, testId }: Hi
 
   const imageCount = packageCount(referencePackage, 'image_count', 'image');
   const videoCount = packageCount(referencePackage, 'video_count', 'video');
+  const items = Array.isArray(referencePackage.items) ? referencePackage.items : [];
   const dropped = Array.isArray(referencePackage.dropped) ? referencePackage.dropped : [];
   if (imageCount === 0 && videoCount === 0 && dropped.length === 0) return null;
 
@@ -148,6 +171,16 @@ export function HistoryReferencePackageEvidence({ referencePackage, testId }: Hi
           </span>
         )}
       </div>
+      {items.length > 0 && (
+        <div className="mt-1 space-y-0.5 text-sky-100/80">
+          {items.slice(0, 4).map((item, index) => (
+            <div key={`${item.type || 'reference'}-${item.source_shot_id || item.canonical_asset_id || index}`} className="truncate">
+              {referenceItemText(item)}
+            </div>
+          ))}
+          {items.length > 4 && <div>还有 {items.length - 4} 项参考</div>}
+        </div>
+      )}
       {dropped.length > 0 && (
         <div className="mt-1 space-y-0.5 text-sky-100/75">
           {dropped.slice(0, 2).map((item, index) => (

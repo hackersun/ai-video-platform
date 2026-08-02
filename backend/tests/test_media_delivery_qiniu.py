@@ -261,6 +261,43 @@ def test_refresh_existing_private_qiniu_media_signs_without_reupload(monkeypatch
     assert result["delivery_method"] == "qiniu_signed_refresh"
 
 
+def test_refresh_existing_private_qiniu_media_replaces_expired_signature(monkeypatch):
+    from urllib.parse import parse_qs, urlparse
+
+    from app.services import media_delivery
+
+    monkeypatch.setattr(media_delivery.time, "time", lambda: 1_700_000_000)
+
+    async def fake_storage_config(db, user_id, storage_config_id=None):
+        config = SimpleNamespace(
+            id="storage-qiniu-private",
+            custom_base_url="https://private-bucket.example.com",
+            extra_config={
+                "storage_provider": "qiniu",
+                "public_base_url": "https://private-bucket.example.com",
+                "local_static_prefix": "/static/",
+                "public_static_prefix": "/static/",
+                "private_download": True,
+            },
+            get_api_key_decrypted=lambda: "ak-test",
+            get_api_secret_decrypted=lambda: "sk-test",
+        )
+        return config, SimpleNamespace(base_url="https://private-bucket.example.com")
+
+    monkeypatch.setattr(media_delivery, "_get_default_storage_config", fake_storage_config)
+    result = asyncio.run(media_delivery.refresh_existing_qiniu_media_url(
+        db=None,
+        user_id="user-1",
+        media_url="https://private-bucket.example.com/static/generated/final.mp4?e=1600000000&token=expired",
+    ))
+
+    query = parse_qs(urlparse(result["provider_url"]).query)
+    assert query["e"] == ["1700000300"]
+    assert len(query["e"]) == 1
+    assert len(query["token"]) == 1
+    assert query["token"][0].startswith("ak-test:")
+
+
 def test_object_storage_config_requires_qiniu_upload_fields_for_qiniu_provider():
     import asyncio
 

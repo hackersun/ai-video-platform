@@ -5,9 +5,9 @@ from __future__ import annotations
 import re
 
 
-_SPEECH_VERB = r"(?:低声说|轻声说|大声说|高声说|沉声说|冷声说|说道|喊道|回答|说|问|喊|答)"
+_SPEECH_VERB = r"(?:低声提醒|轻声提醒|沉声提醒|低声说|轻声说|大声说|高声说|沉声说|冷声说|提醒|说道|喊道|回答|说|问|喊|答)"
 _NAME = r"[\u4e00-\u9fff]{2,4}"
-_PREFIX = rf"(?P<speaker>{_NAME}){_SPEECH_VERB}\s*[：:]?\s*|(?P<colon_speaker>{_NAME})\s*[：:]\s*"
+_PREFIX = rf"(?P<speaker>[\u4e00-\u9fff]{{2,4}}?){_SPEECH_VERB}\s*[：:]?\s*|(?P<colon_speaker>{_NAME})\s*[：:]\s*"
 _DIALOGUE = re.compile(
     rf"(?<![\u4e00-\u9fff])(?:{_PREFIX})(?:"
     r"“(?P<curly>[^\n“”]{1,500})”"
@@ -37,15 +37,18 @@ _COMPOUND_SURNAMES = frozenset({
 _NON_NAMES = frozenset({
     "他们", "她们", "它们", "我们", "你们", "咱们", "自己", "对方",
     "有人", "众人", "大家", "所有人", "旁人", "别人",
+    "却仍",
     "老师", "先生", "女士", "医生", "护士", "警察", "同学", "同事",
     "父亲", "母亲", "爸爸", "妈妈", "哥哥", "姐姐", "弟弟", "妹妹",
     "爷爷", "奶奶", "老板", "经理", "队长", "主任", "院长", "首领",
 })
 _SPEECH_VERB_SUFFIXES = (
+    "低声提醒", "轻声提醒", "沉声提醒", "提醒",
     "低声说", "轻声说", "大声说", "高声说", "沉声说", "冷声说",
     "说道", "喊道", "回答", "说", "问", "喊", "答",
 )
 _MODIFIED_PRONOUN = re.compile(r"^[他她它](?:低声|轻声|大声|高声|沉声|冷声)$")
+_PRONOUN_SPEECH_FRAGMENT = re.compile(r"^[他她它](?:回|说|问|答|喊)$")
 _NARRATED_SPEAKER = re.compile(
     r"^(?:"
     r"[他她它](?:低声|轻声|大声|高声|沉声|冷声|睁眼|抬头|回头|转身|平静|坚定|冷静)?"
@@ -56,7 +59,8 @@ _CLEAR_SUBJECT = re.compile(
     rf"(?<![\u4e00-\u9fff])(?P<name>{_NAME})(?="
     r"把|将|接回|举起|拿起|握紧|指向|扳下|跃上|冲进|走进|进入|"
     r"抬起|拔出|对着|沿|抬头|挥动|侧身|闭上|发现|故意|松开|"
-    r"睁眼|认出|仰望|带着|抵达|独自抵达|"
+    r"睁眼|认出|仰望|带着|抵达|独自抵达|停顿|"
+    r"低声提醒|轻声提醒|沉声提醒|提醒|"
     r"低声说|轻声说|大声说|高声说|沉声说|冷声说|说道|喊道|回答|说|问|喊|答)"
 )
 _SPEECH_ONLY = re.compile(rf"^(?:{_SPEECH_VERB})$")
@@ -88,6 +92,7 @@ def normalize_dialogue_speaker_label(
     if (
         _SPEECH_ONLY.fullmatch(speaker)
         or _MODIFIED_PRONOUN.fullmatch(speaker)
+        or _PRONOUN_SPEECH_FRAGMENT.fullmatch(speaker)
         or _NARRATED_SPEAKER.fullmatch(speaker)
     ):
         return _previous_clear_subject(source, position) or ""

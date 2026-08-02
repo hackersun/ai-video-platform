@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from app.services.studio_guidance import QUALITY_DIMENSIONS
+
 
 def _json_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -25,6 +27,7 @@ def build_consistency_ledger(
     shots: List[Dict[str, Any]],
     episode_contract: Dict[str, Any],
     jobs: List[Dict[str, Any]],
+    quality_evaluation: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     findings: List[Dict[str, Any]] = []
     locked_characters = [
@@ -50,17 +53,22 @@ def build_consistency_ledger(
             )
 
     blocking_count = len([item for item in findings if item.get("severity") == "blocking"])
-    score = max(0, 100 - blocking_count * 25 - len(findings) * 5)
+    evaluation = _json_dict(quality_evaluation)
+    evaluated_dimensions = [str(item) for item in _json_list(evaluation.get("dimensions"))]
+    evaluation_ids = _json_list(evaluation.get("evaluation_ids"))
+    has_partial_evaluation = evaluation.get("score") is not None or bool(evaluated_dimensions)
+    has_complete_evaluation = (
+        set(evaluated_dimensions) == QUALITY_DIMENSIONS
+        and len(evaluation_ids) == len(QUALITY_DIMENSIONS)
+        and evaluation.get("score") is not None
+        and bool(evaluation.get("artifact_id"))
+    )
+    evaluation_status = "evaluated" if has_complete_evaluation else "partial" if has_partial_evaluation else "not_evaluated"
     return {
-        "overall_score": score,
-        "dimensions": {
-            "style": 100,
-            "character_visual": 0 if blocking_count else 100,
-            "scene": 100,
-            "prop_state": 100,
-            "voice": 100,
-            "event_continuity": 100,
-            "subtitle_timing": 100,
-        },
+        "evaluation_status": evaluation_status,
+        "preflight_status": "blocked" if blocking_count else "ready",
+        "overall_score": float(evaluation["score"]) if has_complete_evaluation else None,
+        "dimensions": {},
+        "evaluated_dimensions": evaluated_dimensions,
         "findings": findings,
     }

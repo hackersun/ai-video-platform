@@ -188,6 +188,48 @@ async def test_generation_context_explicit_config_overrides_scoped_binding(
 
 
 @pytest.mark.asyncio
+async def test_generation_context_explicit_profile_selects_canonical_video_model(
+    db_session: AsyncSession,
+) -> None:
+    profile, connection = await _seed_profile(db_session, "explicit-profile")
+    connection.set_api_key_encrypted("explicit-profile-key")
+    await db_session.commit()
+
+    context = await resolve_generation_context(
+        db_session,
+        user_id="user-1",
+        stage="video",
+        explicit_profile_version_id=profile.id,
+    )
+
+    assert context.binding.source_scope == "request"
+    assert context.profile.profile_version_id == profile.id
+    assert context.driver_context.api_key == "explicit-profile-key"
+
+
+@pytest.mark.asyncio
+async def test_video_model_config_forwards_explicit_profile_selection(
+    db_session: AsyncSession,
+) -> None:
+    from app.features.video_generation.application.model_config import resolve_video_model_config
+
+    profile, connection = await _seed_profile(db_session, "video-profile-selection")
+    connection.set_api_key_encrypted("selected-profile-key")
+    await db_session.commit()
+
+    resolved = await resolve_video_model_config(
+        db_session,
+        "user-1",
+        profile.api_model_id,
+        profile_version_id=profile.id,
+    )
+
+    assert resolved["config_model_id"] == profile.id
+    assert resolved["api_model_id"] == profile.api_model_id
+    assert resolved["api_key"] == "selected-profile-key"
+
+
+@pytest.mark.asyncio
 async def test_generation_context_uses_binding_driver_and_route_policy(
     db_session: AsyncSession,
 ) -> None:

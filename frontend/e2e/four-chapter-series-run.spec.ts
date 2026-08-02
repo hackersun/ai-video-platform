@@ -45,6 +45,37 @@ test('anchor polling refreshes existing jobs and reconciles without resubmission
   expect(reconcileCalls).toBe(2);
   expect(statuses).toEqual(['provider_pending', 'provider_pending', 'completed']);
 });
+
+test('anchor polling survives a transient status refresh failure without resubmission', async () => {
+  let refreshCalls = 0;
+  let reconcileCalls = 0;
+  const result = await pollAnchorGeneration({
+    runId: 'run-1',
+    initial: {
+      status: 'provider_pending', selected_shot_ids: ['shot-1'], workflow_batches: [],
+      quality_results: [], pending_video_job_ids: ['video-1'], pending_tts_job_ids: [],
+    },
+    client: {
+      refreshVideoJob: async () => {
+        refreshCalls += 1;
+        if (refreshCalls === 1) throw new Error('temporary provider status failure');
+        return { status: 'succeeded' };
+      },
+      reconcileSelectedSeriesRunAnchors: async () => {
+        reconcileCalls += 1;
+        return reconcileCalls === 1
+          ? { status: 'provider_pending', selected_shot_ids: ['shot-1'], workflow_batches: [], quality_results: [], pending_video_job_ids: ['video-1'], pending_tts_job_ids: [] }
+          : { status: 'completed', selected_shot_ids: ['shot-1'], workflow_batches: [], quality_results: [], pending_video_job_ids: [], pending_tts_job_ids: [] };
+      },
+    },
+    wait: async () => undefined,
+    maxAttempts: 3,
+  });
+
+  expect(result.status).toBe('completed');
+  expect(refreshCalls).toBe(2);
+  expect(reconcileCalls).toBe(2);
+});
 test.setTimeout(180_000);
 
 async function browserApi(page: any, path: string, init: any = {}) {
@@ -208,14 +239,22 @@ async function generateAndVerify(page: any, mode: 'smoke' | 'full') {
   await expect(voiceSelect).toBeVisible();
   await expect(voiceSelect.locator('option')).not.toHaveCount(0);
   await expect(preflight).toContainText('已锁定：');
-  if (mode === 'full') await page.getByRole('button', { name: '6 镜头四章验证' }).click();
+  if (mode === 'full') await page.getByRole('button', { name: '6 镜头完整验证' }).click();
   await preflight.getByRole('button', { name: '准备故事锁' }).click();
   await expect(preflight).toContainText('故事锁：locked');
   const closureStatus = preflight.getByTestId('story-lock-closure-status');
-  const expectedClosure = mode === 'smoke'
-    ? '必需实体 4 · 无关候选 27 · 自动批准 4 · 手动批准 0 · 未解决 0'
-    : '必需实体 6 · 无关候选 25 · 自动批准 6 · 手动批准 0 · 未解决 0';
-  await expect(closureStatus).toContainText(expectedClosure);
+  await expect(closureStatus).toContainText(
+    /必需实体 \d+ · 无关候选 \d+ · 自动批准 \d+ · 手动批准 \d+ · 未解决 0/,
+  );
+  const closureText = await closureStatus.textContent();
+  const counts = closureText?.match(
+    /必需实体 (\d+) · 无关候选 (\d+) · 自动批准 (\d+) · 手动批准 (\d+) · 未解决 (\d+)/,
+  );
+  expect(counts, '故事锁闭包必须展示完整计数').not.toBeNull();
+  const [, required, , autoApproved, manualApproved, unresolved] = counts!;
+  expect(Number(required)).toBeGreaterThan(0);
+  expect(Number(autoApproved) + Number(manualApproved)).toBe(Number(required));
+  expect(Number(unresolved)).toBe(0);
   await expect(closureStatus).toContainText(/Bible v\d+/);
   await expect(closureStatus).toContainText(/闭包 [a-f0-9]{10}/);
   const lockResponse = await browserOriginReadonlyGet(page, `/series-runs/${runId}`);

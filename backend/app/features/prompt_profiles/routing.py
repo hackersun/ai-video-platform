@@ -171,6 +171,15 @@ async def resolve_prompt_entries(
     query: PromptRouteQuery,
 ) -> tuple[PromptSelection, ...]:
     """Resolve prompt content through the canonical routing owner."""
+    legacy_skills = list((await db.scalars(
+        select(PromptSkill).where(
+            PromptSkill.task == query.task,
+            PromptSkill.is_active == True,
+            or_(PromptSkill.user_id == query.user_id, PromptSkill.is_builtin == True),
+        )
+    )).all())
+    for skill in legacy_skills:
+        await ensure_legacy_prompt_profile(db, skill)
     selection = await select_prompt_profile(db, query=query)
     if selection is None:
         statement = select(PromptSkill).where(

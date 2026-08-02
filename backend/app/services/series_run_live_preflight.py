@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.time_utils import utc_now
-from app.models import Asset, LLMConfig, LLMModel, ProviderAssetBinding, Shot, StoryBible, Workflow
+from app.models import Asset, Chapter, LLMConfig, LLMModel, MediaGenerationJob, ProviderAssetBinding, Shot, StoryBible, Workflow
 from app.models.series_production_run import SeriesProductionRun
 from app.services.live_canary_budget import (
     BindingValidationError,
@@ -25,6 +25,9 @@ from app.features.series_run_media_preflight.public import evaluate_media_prefli
 from app.services.shot_quality_service import extract_dialogue_speaker
 from app.services.shot_image_delivery import is_live_ready_shot_image
 from app.services.anchor_shot_service import ANCHOR_MODE_CONTRACTS
+from app.services.dialogue_lineage_service import extract_explicit_dialogue
+from app.services.media_job_selection import latest_non_superseded_by_shot
+from app.services.shot_input_fingerprint import shot_input_fingerprint
 from app.features.series_run_story_locks.public import (
     StoryLockPreparationBlocked,
     inspect_story_lock_freshness,
@@ -198,6 +201,24 @@ async def _anchor_preflight(
     return dialogue_contracts, dialogue_count, voice_selection_required, blockers
 
 
+async def _pending_video_count(db: AsyncSession, run: SeriesProductionRun, anchors: list[tuple[int, Shot]]) -> int:
+    shot_ids = [shot.id for _, shot in anchors]
+    if not shot_ids:
+        return 0
+    jobs = list((await db.scalars(select(MediaGenerationJob).where(
+        MediaGenerationJob.user_id == run.user_id,
+        MediaGenerationJob.shot_id.in_(shot_ids),
+        MediaGenerationJob.is_active.is_(True),
+        MediaGenerationJob.status.in_(("succeeded", "completed")),
+    ))).all())
+    latest = latest_non_superseded_by_shot(jobs)
+    return sum(
+        not (job := latest.get(shot.id))
+        or str((job.extra_data or {}).get("shot_input_fingerprint") or "") != shot_input_fingerprint(shot)
+        for _, shot in anchors
+    )
+
+
 def _budget_preflight(
     run: SeriesProductionRun, *, anchor_count: int, dialogue_count: int,
     missing_first_frame_count: int = 0,
@@ -324,21 +345,35 @@ async def build_live_preflight_plan(
     contracts, dialogue_count, voice_required, anchor_blockers = await _anchor_preflight(
         db, run, native_audio=native_audio,
     )
+    anchors = await _selected_anchor_shots(db, run)
     cost_breakdown, budget, budget_blockers = _budget_preflight(
         run,
-        anchor_count=len(contracts),
+        anchor_count=await _pending_video_count(db, run, anchors),
         dialogue_count=dialogue_count,
         missing_first_frame_count=sum(not item["first_frame_ready"] for item in contracts),
         native_audio=native_audio,
     )
     reference = (run.run_metadata or {}).get("reference_preparation") or {}
+    chapter_ids = list(dict.fromkeys(
+        str(chapter_id)
+        for episode in (run.episodes or [])
+        for chapter_id in (episode.get("chapter_ids") or [])
+    ))
+    source_chapters = list((await db.scalars(select(Chapter).where(
+        Chapter.id.in_(chapter_ids),
+        Chapter.user_id == run.user_id,
+        Chapter.novel_id == run.novel_id,
+    ))).all()) if chapter_ids else []
+    has_source_dialogue = any(
+        extract_explicit_dialogue(str(chapter.content or "")) for chapter in source_chapters
+    )
     required_capabilities = {"video"}
     if (
         not (reference.get("asset_id") and reference.get("asset_version"))
         or any(not item["first_frame_ready"] for item in contracts)
     ):
         required_capabilities.add("image")
-    if dialogue_count and not native_audio:
+    if (dialogue_count or has_source_dialogue) and not native_audio:
         required_capabilities.add("tts")
     voice_options, binding_blockers = await _binding_preflight(
         db, run, required_capabilities=required_capabilities,

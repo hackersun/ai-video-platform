@@ -407,7 +407,7 @@ export default function StoryBiblesPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-950 p-6">
+      <div className="min-h-screen bg-background p-6 text-foreground">
         <div className="max-w-7xl mx-auto space-y-6">
           <Skeleton className="h-12 w-64" />
           <div className="grid grid-cols-4 gap-4">
@@ -419,7 +419,7 @@ export default function StoryBiblesPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="max-w-7xl mx-auto p-4 space-y-6 sm:p-6">
         <ExpertToolBanner />
         {/* Header */}

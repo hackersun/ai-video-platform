@@ -35,6 +35,10 @@ from app.services.production_graph_service import project_story_state
 from app.services.consistency_ledger_service import build_consistency_ledger
 from app.services.series_production import resolve_production_graph_artifact_impact
 from app.services.series_studio_flags import series_studio_contract
+from app.services.studio_episode_shots import (
+    load_studio_episode_shots,
+    load_studio_episode_storyboards,
+)
 
 
 SHOT_LIMIT = 80
@@ -127,7 +131,7 @@ def _job_strategy_summary(job: Any) -> Dict[str, Any]:
 def _safe_reference_item(item: Any) -> Dict[str, Any]:
     if not isinstance(item, dict):
         return {}
-    keys = ("id", "asset_id", "type", "role", "name", "source", "reason")
+    keys = "id asset_id type role name source reason role_tag entity_name view_key source_shot_id canonical_asset_id".split()
     return {key: item[key] for key in keys if item.get(key) is not None}
 
 
@@ -380,7 +384,11 @@ def _shot_payload(shot: Shot) -> Dict[str, Any]:
     quality_report = build_shot_quality_report(shot)
     return {
         "id": shot.id,
+        "storyboard_id": shot.storyboard_id,
         "shot_number": shot.shot_number,
+        "episode_shot_number": extra.get("episode_shot_number"),
+        "scene_index": extra.get("scene_index"),
+        "scene_title": extra.get("scene_title"),
         "duration": shot.duration,
         "prompt": shot.prompt,
         "dialogue": shot.dialogue,
@@ -397,18 +405,6 @@ def _shot_payload(shot: Shot) -> Dict[str, Any]:
         "quality_report": quality_report,
         "updated_at": _dt(shot.updated_at),
     }
-
-
-async def _load_shots(db: AsyncSession, user_id: str, storyboard_id: Optional[str]) -> List[Shot]:
-    if not storyboard_id:
-        return []
-    result = await db.execute(
-        select(Shot)
-        .where(Shot.user_id == user_id, Shot.storyboard_id == storyboard_id)
-        .order_by(Shot.shot_number)
-        .limit(SHOT_LIMIT)
-    )
-    return list(result.scalars().all())
 
 
 async def _load_assets(
@@ -686,6 +682,9 @@ async def build_studio_snapshot(
     chapter = await _get_or_none(db, Chapter, workflow.chapter_id, user_id)
     script = await _get_or_none(db, Script, workflow.script_id, user_id)
     storyboard = await _get_or_none(db, Storyboard, workflow.storyboard_id, user_id)
+    storyboards = await load_studio_episode_storyboards(
+        db, user_id=user_id, workflow=workflow, primary=storyboard,
+    )
     story_bible = await _load_latest_story_bible(
         db,
         user_id,
@@ -696,7 +695,9 @@ async def build_studio_snapshot(
     if story_bible is not None:
         state_machine = await get_story_state_machine(db, user_id, story_bible_id=story_bible.id)
 
-    shots = [_shot_payload(shot) for shot in await _load_shots(db, user_id, workflow.storyboard_id)]
+    shots = [_shot_payload(shot) for shot in await load_studio_episode_shots(
+        db, user_id=user_id, storyboards=storyboards, limit=SHOT_LIMIT,
+    )]
     assets = await _load_assets(db, user_id, project_id=workflow.project_id, novel_id=workflow.novel_id)
     jobs = await _load_jobs(db, user_id, workflow)
     quality_evaluation = await _load_quality_evaluation(db, user_id, workflow.id)
@@ -719,7 +720,7 @@ async def build_studio_snapshot(
     consistency_ledger = build_consistency_ledger(
         shots,
         episode_contract or {},
-        [*_json_list(jobs.get("video_jobs")), *_json_list(jobs.get("media_jobs"))],
+        [*_json_list(jobs.get("video_jobs")), *_json_list(jobs.get("media_jobs"))], quality_evaluation,
     )
     raw_issues = _build_issues(workflow=workflow, story_bible=story_bible, shots=shots, jobs=jobs)
     if quality_evaluation and quality_evaluation.get("blocking"):
@@ -757,7 +758,13 @@ async def build_studio_snapshot(
             "novel": {"id": novel.id, "title": novel.title, "genre": novel.genre} if novel else None,
             "chapter": {"id": chapter.id, "title": chapter.title, "chapter_number": chapter.chapter_number} if chapter else None,
             "script": {"id": script.id, "title": script.title, "status": script.status} if script else None,
-            "storyboard": {"id": storyboard.id, "title": storyboard.title, "shot_count": storyboard.shot_count} if storyboard else None,
+            "storyboard": {
+                "id": storyboard.id,
+                "title": storyboard.title,
+                "shot_count": len(shots),
+                "scene_count": len(storyboards),
+                "storyboard_ids": [board.id for board in storyboards],
+            } if storyboard else None,
         },
         "story_bible": _story_bible_payload(story_bible),
         "production_bible_summary": production_bible_summary,

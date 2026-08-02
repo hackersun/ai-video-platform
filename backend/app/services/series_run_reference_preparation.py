@@ -224,13 +224,12 @@ async def _finalize_candidate(
         }
         run.run_metadata = metadata
         flag_modified(run, "run_metadata")
-        if superseded_asset_id:
-            await _rebind_run_shots_reference(
-                db, run,
-                superseded_asset_id=superseded_asset_id,
-                replacement_asset=asset,
-                rebound_at=now.isoformat(),
-            )
+        await _rebind_run_shots_reference(
+            db, run,
+            superseded_asset_id=superseded_asset_id or "",
+            replacement_asset=asset,
+            rebound_at=now.isoformat(),
+        )
         await db.commit()
     except Exception:
         await db.rollback()
@@ -391,7 +390,7 @@ async def prepare_series_reference(
             raise ReferencePreparationBlocked("server image budget estimate is missing")
         plan = await build_live_preflight_plan(db, run, native_audio=native_audio)
         repair = (run.run_metadata or {}).get("repair_budget_extension") or {}
-        scoped_repair = (
+        scoped_repair = Decimal(str(estimate)) if superseded_artifact else (
             Decimal(str(estimate))
             if repair.get("status") == "approved" and repair.get("artifact_ids")
             else None

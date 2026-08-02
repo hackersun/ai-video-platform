@@ -73,7 +73,8 @@ def test_native_subtitle_finalize_is_idempotent_for_same_track_and_dialogue() ->
             "subtitle_burned": True,
             "subtitle_track_id": "track-1",
             "expected_dialogue_sha256": digest,
-            "subtitle_timing_contract_version": "native_audio_activity_v7",
+            "subtitle_timing_contract_version": "native_audio_activity_v9",
+            "provider_label_removed": True,
         },
     })()
     track = type("Track", (), {
@@ -339,6 +340,11 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
                 "output_mean_db": -20.1, "output_max_db": -3.6,
                 "normalized": True, "gain_db": 12.2,
             },
+            "provider_label_removed": True,
+            "provider_label_cleanup": {
+                "method": "bottom_safe_crop_and_scale", "x": 36, "y": 0,
+                "width": 648, "height": 1152, "output_width": 720, "output_height": 1280,
+            },
         }
 
     async def fake_delivery(*args, **kwargs):
@@ -375,7 +381,9 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
     assert track.export_urls["public_video"] == "https://cdn.example/native-subtitled.mp4"
     assert video.extra_data["subtitle_audio_preserved"] is True
     assert video.extra_data["native_audio_loudness"]["normalized"] is True
-    assert video.extra_data["subtitle_timing_contract_version"] == "native_audio_activity_v7"
+    assert video.extra_data["subtitle_timing_contract_version"] == "native_audio_activity_v9"
+    assert video.extra_data["provider_label_removed"] is True
+    assert aggregate.extra_data["provider_label_removed"] is True
     assert video.extra_data["subtitle_sync_status"] == "script_aligned_pending_audio_verification"
     assert video.extra_data["audio_verification_required"] is True
     assert len(video.extra_data["expected_dialogue_sha256"]) == 64
@@ -443,6 +451,37 @@ async def test_reconcile_combines_reused_and_new_selected_artifacts() -> None:
     assert reused_job_id in result["media_job_ids"]
     assert len(result["media_job_ids"]) == 2
     assert {item["shot_id"] for item in result["quality_results"]} == {ids["shot"], reused_shot_id}
+
+
+@pytest.mark.asyncio
+async def test_reconcile_uses_video_submission_snapshot_when_shot_context_changes() -> None:
+    ids = await _seed_source_jobs(video_status="succeeded")
+    async with AsyncSessionLocal() as db:
+        video = await db.get(VideoJob, ids["video"])
+        video.extra_data = {
+            **(video.extra_data or {}),
+            "production_context_snapshot": {
+                "episode_number": 1,
+                "episode_contract_version": "episode-v1",
+                "canonical_reference_id": "reference-asset",
+                "canonical_reference_version": 1,
+                "as_of_chapter_id": "chapter-1",
+                "as_of_chapter_hash": "chapter-hash",
+                "shot_input_fingerprint": "submitted-shot-input-v1",
+            },
+        }
+        shot = await db.get(Shot, ids["shot"])
+        shot.extra_data = {"production_context": {}}
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        await reconcile_selected_media(db, run_id=ids["run"], user_id=ids["user"])
+        aggregate = await db.scalar(select(MediaGenerationJob).where(
+            MediaGenerationJob.workflow_id == ids["workflow"],
+        ))
+
+    assert aggregate.extra_data["shot_input_fingerprint"] == "submitted-shot-input-v1"
+    assert aggregate.extra_data["canonical_reference_id"] == "reference-asset"
 
 
 @pytest.mark.asyncio

@@ -226,8 +226,11 @@ export type ProductionGraph = {
 
 export type ConsistencyLedger = {
   workflow_id?: string;
-  overall_score?: number;
-  dimensions?: Record<string, number>;
+  evaluation_status?: 'not_evaluated' | 'partial' | 'evaluated' | string;
+  preflight_status?: 'ready' | 'blocked' | string;
+  overall_score?: number | null;
+  dimensions?: Record<string, number | null>;
+  evaluated_dimensions?: string[];
   findings?: Array<{
     code?: string;
     severity?: 'blocking' | 'warning' | 'info' | string;
@@ -308,6 +311,10 @@ export type StudioSnapshot = {
   shots?: Array<{
     id: string;
     shot_number?: number;
+    episode_shot_number?: number | null;
+    scene_index?: number | null;
+    scene_title?: string | null;
+    storyboard_id?: string;
     duration?: number;
     prompt?: string;
     dialogue?: string;

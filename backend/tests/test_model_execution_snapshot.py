@@ -113,6 +113,7 @@ async def test_driver_evidence_never_keeps_raw_provider_exception_text() -> None
     assert error.value.sanitized_evidence == {
         "operation": "generation",
         "provider_error_class": "RuntimeError",
+        "provider_error_type": "RuntimeError",
         "provider_error_summary": "provider_generation_failed",
     }
 

@@ -62,6 +62,7 @@ from app.services.reference_package_builder import bind_reference_package, build
 from app.services.repair_planner import plan_minimal_repair
 from app.services.shot_quality_service import estimate_quality_repair_cost_risk
 from app.services.shot_review_projection import shot_reference_review_fields
+from app.services.workflow_shot_scope import workflow_shots
 from app.services.deterministic_provider_fake import deterministic_media_provider_artifacts, deterministic_provider_fake_enabled
 from app.services.dialogue_parser import parse_dialogue
 from app.services.video_reference_adapter import (
@@ -243,14 +244,9 @@ async def _workflow_shots_for_request(
     user_id: str,
     shot_ids: Optional[List[str]] = None,
 ) -> List[Shot]:
-    query = select(Shot).where(Shot.user_id == user_id)
-    if not workflow.storyboard_id:
-        return []
-    query = query.where(Shot.storyboard_id == workflow.storyboard_id)
-    if shot_ids:
-        query = query.where(Shot.id.in_(shot_ids))
-    result = await db.execute(query.order_by(Shot.shot_number))
-    return list(result.scalars().all())
+    return await workflow_shots(
+        db, workflow=workflow, user_id=user_id, shot_ids=shot_ids,
+    )
 
 
 async def _video_jobs_for_workflow_shots(

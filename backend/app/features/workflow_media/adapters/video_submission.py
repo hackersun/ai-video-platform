@@ -161,6 +161,8 @@ async def _build_submission_data(command: VideoSubmissionCommand) -> dict[str, A
 
 def _build_extra_data(command: VideoSubmissionCommand, prompt_parameters: dict) -> dict:
     context, request, prepared = command.context, command.request, command.prepared
+    production = _extra(command.shot).get("production_context")
+    production = dict(production) if isinstance(production, dict) else {}
     extra = video_kernel.build_video_extra_data(prepared.video_request, prepared.lineage)
     extra.update(video_kernel.build_video_context_metadata(
         prepared.lineage, prepared.consistency_package["metadata"], prepared.video_seed,
@@ -172,6 +174,7 @@ def _build_extra_data(command: VideoSubmissionCommand, prompt_parameters: dict) 
     ))
     extra.update({
         "prompt_parameters": prompt_parameters, "source_prompt": prepared.video_request.prompt,
+        "production_context_snapshot": production,
         "generation_strategy": request.strategy,
         "strategy_routing": context.strategy_video_routing["routing"],
         "strategy_matched_api_model_id": context.strategy_video_routing["matched_api_model_id"],
@@ -306,8 +309,11 @@ def _driver_video_command(
     }
     if command.prepared.video_seed is not None:
         params["seed"] = command.prepared.video_seed
+    reference_package = getattr(command.prepared, "reference_package", None) or {}
+    reference_prompt = str(reference_package.get("at_reference_text") or "")
+    effective_prompt = prompt or command.prepared.final_video_prompt
     return VideoCommand(
-        prompt=prompt or command.prepared.final_video_prompt,
+        prompt=f"{reference_prompt}\n{effective_prompt}" if reference_prompt else effective_prompt,
         reference_images=tuple(references["image_url"]),
         reference_videos=tuple(references["video_url"]),
         reference_audios=tuple(references["audio_url"]),
@@ -535,7 +541,7 @@ def _build_job(
         model_name=(f"{runtime.selected_model.get('model_name')} (DEV_MODE)"
                     if runtime.use_dev_video else runtime.selected_model.get("model_name")),
         duration=prepared.video_request.duration, resolution=command.request.resolution,
-        image_url=data.get("provider_image_url"),
+        image_url=prepared.effective_image_url,
         status="succeeded" if runtime.use_dev_video else "pending",
         progress=100 if runtime.use_dev_video else 10, video_url=video_url,
         cover_url=None, extra_data=data["extra_data"],

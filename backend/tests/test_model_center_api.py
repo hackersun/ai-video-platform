@@ -296,7 +296,23 @@ async def test_catalog_filters_before_pagination_and_returns_readable_labels(cli
         "legacy_config_id": None,
         "certification_status": "unverified",
         "capabilities": ["video_generation"],
+        "input_contract": {},
+        "parameter_schema": {},
+        "limits": {},
     }
+
+
+@pytest.mark.asyncio
+async def test_video_workbench_lists_bound_canonical_video_profile(client):
+    response = await client.get("/api/v1/video/models")
+
+    assert response.status_code == 200, response.text
+    model = next(item for item in response.json()["models"] if item["api_model_id"] == "api-video")
+    assert model["profile_version_id"] == "profile-video-v1"
+    assert model["model_profile_version_id"] == "profile-video-v1"
+    assert model["config_id"] is None
+    assert model["is_configured"] is True
+    assert model["limits"] == {}
 
 
 @pytest.mark.asyncio
@@ -650,13 +666,24 @@ async def test_operator_creates_validates_and_publishes_installed_model_profile(
     version = await client.post(
         f"/api/v1/model-center/profiles/{profile.json()['id']}/versions",
         json={
-            "expected_revision": 1, "api_model_id": "doubao-seedance-task7",
+            "expected_revision": 1, "api_model_id": "doubao-seedance-2-0-260128",
             "driver_key": "volcano_ark_video_v3", "capabilities": ["video_generation"],
+            "input_contract": {
+                "family": "seedance_2_0", "mode": "multimodal_reference",
+                "verification_status": "verified",
+            },
+            "limits": {
+                "duration_min": 4, "duration_max": 15,
+                "reference_images": 9, "reference_videos": 3, "reference_audios": 3,
+                "native_audio": True,
+            },
             "contract_version": "driver-v1",
         },
     )
-    assert version.status_code == 200
+    assert version.status_code == 200, version.text
     assert version.json()["status"] == "draft"
+    assert version.json()["input_contract"]["family"] == "seedance_2_0"
+    assert version.json()["limits"]["duration_max"] == 15
 
     blocked = await client.post(
         f"/api/v1/model-center/profile-versions/{version.json()['id']}/publish",
@@ -676,6 +703,14 @@ async def test_operator_creates_validates_and_publishes_installed_model_profile(
     )
     assert published.status_code == 200
     assert published.json()["published_version_id"] == version.json()["id"]
+
+    catalog = await client.get(
+        "/api/v1/model-center/catalog",
+        params={"capability": "video_generation", "q": "doubao-seedance-2-0-260128"},
+    )
+    assert catalog.status_code == 200
+    assert catalog.json()["items"][0]["input_contract"]["family"] == "seedance_2_0"
+    assert catalog.json()["items"][0]["limits"]["reference_images"] == 9
 
 
 @pytest.mark.asyncio
@@ -698,6 +733,44 @@ async def test_uninstalled_profile_driver_has_actionable_error(client):
 
     assert response.status_code == 422
     assert response.json()["detail"]["action_code"] == "install_or_select_driver"
+
+
+@pytest.mark.asyncio
+async def test_video_profile_contract_validation_rejects_invalid_dynamic_limits(client):
+    profile = await client.post(
+        "/api/v1/model-center/profiles",
+        json={
+            "provider_id": "provider-1", "profile_key": "invalid-seedance-25",
+            "display_name": "Invalid Seedance 2.5", "enabled": True,
+        },
+    )
+    version = await client.post(
+        f"/api/v1/model-center/profiles/{profile.json()['id']}/versions",
+        json={
+            "expected_revision": 1, "api_model_id": "configured-seedance-2-5",
+            "driver_key": "volcano_ark_video_v3", "capabilities": ["video_generation"],
+            "input_contract": {
+                "family": "seedance_2_5", "verification_status": "experimental",
+                "modes": ["multimodal_reference"],
+            },
+            "limits": {
+                "duration_min": 30, "duration_max": 4,
+                "reference_images": -1,
+            },
+            "contract_version": "seedance-2.5-configurable-v1",
+        },
+    )
+    assert version.status_code == 200, version.text
+
+    validated = await client.post(
+        f"/api/v1/model-center/profile-versions/{version.json()['id']}/validate",
+    )
+
+    assert validated.status_code == 200
+    assert validated.json()["valid"] is False
+    assert {item["code"] for item in validated.json()["errors"]} == {
+        "duration_range_invalid", "reference_limit_invalid", "model_family_not_available",
+    }
 
 
 @pytest.mark.asyncio

@@ -118,9 +118,12 @@ def _runtime_execution_binding(binding: ResolvedModelBinding) -> ResolvedModelBi
 
 def _legacy_execution_profile(profile, driver_key: str):
     capability = next(iter(profile.capabilities), "")
+    from app.core.model_registry import get_model_reference_limits
+    video_refs = get_model_reference_limits(profile.api_model_id)
     contracts = {
         "video_generation": (
-            {"max_prompt_chars": 12000, "max_reference_images": 8, "max_reference_videos": 2, "max_reference_audios": 2},
+            {"max_prompt_chars": 12000, "max_reference_images": video_refs["images"],
+             "max_reference_videos": video_refs["videos"], "max_reference_audios": video_refs["audios"]},
             {"duration": {"type": "integer"}, "resolution": {"type": "string"}, "camera_fixed": {"type": "boolean"}, "watermark": {"type": "boolean"}, "seed": {"type": "integer"}},
         ),
         "image_generation": (
@@ -159,6 +162,7 @@ async def resolve_generation_context(
     user_id: str,
     stage: str,
     explicit_config_id: str | None = None,
+    explicit_profile_version_id: str | None = None,
     project_id: str | None = None,
     series_id: str | None = None,
     recipe_spec: Mapping[str, Any] | None = None,
@@ -172,7 +176,7 @@ async def resolve_generation_context(
     recipe_binding_id = _recipe_binding_id(recipe_spec, stage)
     if recipe_spec is not None and not recipe_binding_id:
         raise ModelBindingError(f"{stage}_binding_required")
-    if recipe_binding_id and explicit_config_id:
+    if recipe_binding_id and (explicit_config_id or explicit_profile_version_id):
         raise ModelBindingError("conflicting_explicit_overrides")
     binding = (
         await _resolve_recipe_binding(
@@ -182,7 +186,9 @@ async def resolve_generation_context(
         if recipe_binding_id else
         await resolve_model_binding(
             db, user_id=user_id, task=task, capability=capability,
-            explicit_config_id=explicit_config_id, project_id=project_id, series_id=series_id,
+            explicit_config_id=explicit_config_id,
+            explicit_profile_version_id=explicit_profile_version_id,
+            project_id=project_id, series_id=series_id,
             prefer_canonical_binding=prefer_canonical_binding,
         )
     )

@@ -13,6 +13,8 @@ from app.models import Asset, Novel, Shot, StoryEntity
 from app.services.entity_ref_normalizer import normalize_entity_refs
 from app.services.story_entity_lifecycle import is_entity_production_visible
 from app.services.media_delivery import is_cloud_accessible_http_url
+from app.services.reference_predecessor import find_previous_successful_video, find_previous_successful_video_cover
+from app.services.single_reference_anchor import find_locked_composite_anchor
 from app.services.provider_asset_binding_service import (
     ProviderBindingChecksumMismatchError,
     ProviderBindingModelIncompatibleError,
@@ -385,6 +387,13 @@ async def _image_candidates(
     if style_anchor:
         candidates.append(style_anchor)
 
+    previous_frame = await find_previous_successful_video_cover(db, user_id=user_id, shot=shot)
+    if previous_frame:
+        previous_shot, cover_url = previous_frame
+        candidates.append(ReferenceCandidate(
+            source_url=cover_url, role_tag="previous_shot_frame", entity_type="frame", entity_id=previous_shot.id, view_key="last_frame", source="previous_shot_frame",
+        ))
+
     return candidates
 
 
@@ -570,26 +579,7 @@ async def _previous_video_candidates(
     *,
     shot: Shot,
 ) -> List[ReferenceCandidate]:
-    storyboard_id = getattr(shot, "storyboard_id", None)
-    shot_number = getattr(shot, "shot_number", None)
-    if not storyboard_id or shot_number is None:
-        return []
-
-    result = await db.execute(
-        select(Shot)
-        .where(
-            and_(
-                Shot.user_id == user_id,
-                Shot.storyboard_id == storyboard_id,
-                Shot.shot_number < shot_number,
-                Shot.video_status == "succeeded",
-                Shot.video_url.is_not(None),
-            )
-        )
-        .order_by(desc(Shot.shot_number), desc(Shot.updated_at), Shot.id)
-        .limit(1)
-    )
-    previous_shot = result.scalar_one_or_none()
+    previous_shot = await find_previous_successful_video(db, user_id=user_id, shot=shot)
     if not previous_shot:
         return []
     return [
@@ -673,8 +663,18 @@ async def _build_single_image_package(
             source="shot_image",
         )
     else:
-        candidates = await _image_candidates(db, user_id, shot=shot, lineage=lineage)
-        candidate = candidates[0] if candidates else None
+        composite = await find_locked_composite_anchor(db, user_id=user_id, shot=shot)
+        if composite:
+            candidate = ReferenceCandidate(
+                source_url=composite.url or composite.thumbnail_url, role_tag="composite_anchor",
+                entity_type="character", entity_id=composite.entity_id, entity_name=composite.name,
+                view_key="layout", source="locked_composite_asset", canonical_asset_id=composite.id,
+                canonical_asset_version=composite.version or 1,
+                canonical_checksum=_asset_checksum(composite),
+            )
+        else:
+            candidates = await _image_candidates(db, user_id, shot=shot, lineage=lineage)
+            candidate = candidates[0] if candidates else None
 
     images: List[Dict[str, Any]] = []
     reference_image = None

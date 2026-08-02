@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Asset, StoryEntity
+from app.models import Asset, Shot, StoryEntity, Storyboard
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.series_run_reference_preparation import reference_visual_contract_hash
 
@@ -79,8 +79,10 @@ def _is_style_only(asset: Asset) -> bool:
     return "global_style_board" in roles and not _asset_character_ids(asset)
 
 
-def _assets_for_shot(shot: object, assets: list[Asset]) -> list[Asset]:
-    shot_ids = set(_character_entity_ids(shot))
+def _assets_for_shot(
+    shot: object, assets: list[Asset], *, character_entity_ids: list[str] | None = None,
+) -> list[Asset]:
+    shot_ids = set(character_entity_ids or _character_entity_ids(shot))
     if not shot_ids:
         return assets
     individual = [
@@ -108,6 +110,35 @@ def _assets_for_shot(shot: object, assets: list[Asset]) -> list[Asset]:
         elif not bound or bound.intersection(shot_ids):
             selected.append(asset)
     return selected
+
+
+async def _explicit_composite_character_ids(
+    db: AsyncSession, shot: object, assets: list[Asset], shot_ids: list[str],
+) -> list[str]:
+    bound_ids = {
+        entity_id
+        for asset in assets
+        if (asset.generation_params or {}).get("composite_reference_rule") == "single_artifact_dual_role_v1"
+        for entity_id in _asset_character_ids(asset)
+    }
+    current = set(shot_ids)
+    missing = bound_ids - current
+    if not missing:
+        return shot_ids
+    text = "\n".join(str(getattr(shot, field, "") or "") for field in (
+        "character_prompt", "prompt", "visual_description",
+    ))
+    if not text.strip():
+        return shot_ids
+    entities = list((await db.scalars(select(StoryEntity).where(StoryEntity.id.in_(missing)))).all())
+    for entity in entities:
+        names = {
+            str(getattr(entity, "name", "") or "").strip(),
+            str(getattr(entity, "canonical_name", "") or "").strip(),
+        }
+        if any(len(name) >= 2 and name in text for name in names):
+            current.add(str(entity.id))
+    return [*shot_ids, *sorted(current - set(shot_ids))]
 
 
 async def _verify_visual_contract(db: AsyncSession, shot: object, assets: list[Asset]) -> None:
@@ -147,6 +178,7 @@ async def _verify_visual_contract(db: AsyncSession, shot: object, assets: list[A
 async def resolve_shot_reference_images(
     db: AsyncSession, user_id: str, shot: object, *, required: bool = False,
     fallback_asset_ids: list[str] | None = None,
+    continuity_reference_shot_id: str | None = None,
 ) -> list[str]:
     asset_ids = locked_asset_ids(shot) or list(dict.fromkeys(fallback_asset_ids or []))
     if not asset_ids:
@@ -159,7 +191,14 @@ async def resolve_shot_reference_images(
     by_id = {str(asset.id): asset for asset in assets}
     if set(by_id) != set(asset_ids):
         raise _unavailable(shot, "镜头锁定的参考资产已失效或不属于当前用户，请刷新参考资产后重试。")
-    selected_assets = _assets_for_shot(shot, [by_id[asset_id] for asset_id in asset_ids])
+    ordered_assets = [by_id[asset_id] for asset_id in asset_ids]
+    shot_character_ids = _character_entity_ids(shot)
+    shot_character_ids = await _explicit_composite_character_ids(
+        db, shot, ordered_assets, shot_character_ids,
+    )
+    selected_assets = _assets_for_shot(
+        shot, ordered_assets, character_entity_ids=shot_character_ids,
+    )
     if required and not selected_assets:
         raise _unavailable(shot, "当前镜头没有可复用的角色三视图，请先在资产工作台生成并锁定角色资产。")
     await _verify_visual_contract(db, shot, selected_assets)
@@ -172,7 +211,37 @@ async def resolve_shot_reference_images(
             raise _unavailable(shot, "统一角色参考资产无法生成供应商可访问地址，请检查七牛映射后重试。")
         if url not in urls:
             urls.append(url)
+    if continuity_reference_shot_id:
+        candidates = list((await db.scalars(select(Shot).where(
+            Shot.id == continuity_reference_shot_id,
+            Shot.user_id == user_id,
+        ))).all())
+        candidate = candidates[0] if candidates else None
+        if (
+            candidate is None
+            or candidate.image_status != "succeeded"
+            or not candidate.image_url
+            or not await _same_novel(db, user_id, shot, candidate)
+        ):
+            raise _unavailable(shot, "选作人物延续参考的镜头不可用或不属于当前小说，请重新选择后重试。")
+        delivery = await resolve_provider_media_url(db, user_id, candidate.image_url, media_type="图")
+        continuity_url = str(delivery.get("provider_url") or "").strip()
+        if not continuity_url:
+            raise _unavailable(shot, "人物延续参考图无法生成供应商可访问地址，请检查七牛映射后重试。")
+        if continuity_url not in urls:
+            urls.insert(0, continuity_url)
     return urls
+
+
+async def _same_novel(db: AsyncSession, user_id: str, shot: object, candidate: Shot) -> bool:
+    board_ids = [str(getattr(item, "storyboard_id", "") or "") for item in (shot, candidate)]
+    if not all(board_ids):
+        return False
+    boards = list((await db.scalars(select(Storyboard).where(
+        Storyboard.id.in_(board_ids), Storyboard.user_id == user_id,
+    ))).all())
+    novel_ids = {str(board.novel_id or "") for board in boards}
+    return len(boards) == 2 and len(novel_ids) == 1 and "" not in novel_ids
 
 
 __all__ = ["ShotReferenceInputError", "locked_asset_ids", "resolve_shot_reference_images"]

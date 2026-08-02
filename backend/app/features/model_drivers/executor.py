@@ -205,14 +205,15 @@ async def _execute_driver_operation(
     try:
         return await call()
     except Exception as error:
-        evidence = _sanitize_evidence(
-            {
-                "operation": operation,
-                "provider_error_class": type(error).__name__,
-                "provider_error_summary": f"provider_{operation}_failed",
-            },
-            context.secrets,
-        )
+        raw_evidence = {
+            "operation": operation,
+            "provider_error_class": type(error).__name__,
+            "provider_error_type": type(error).__name__,
+            "provider_error_summary": f"provider_{operation}_failed",
+        }
+        if getattr(error, "evidence", None):
+            raw_evidence["provider_evidence"] = error.evidence
+        evidence = _sanitize_evidence(raw_evidence, context.secrets)
         wrapped_error = DriverExecutionError(operation, evidence, cause=error)
     raise wrapped_error from None
 

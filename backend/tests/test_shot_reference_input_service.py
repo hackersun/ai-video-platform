@@ -77,6 +77,45 @@ async def test_live_run_reference_is_used_before_shot_media_context_is_activated
 
 
 @pytest.mark.asyncio
+async def test_manual_repair_can_add_same_novel_shot_identity_reference(monkeypatch) -> None:
+    shot = SimpleNamespace(id="shot-1", user_id="user-1", image_url=None, extra_data={})
+    reference_shot = SimpleNamespace(
+        id="shot-2", user_id="user-1", image_status="succeeded",
+        image_url="/static/generated/shot-2.jpg", extra_data={},
+    )
+    asset = SimpleNamespace(
+        id="series-reference-1", url="/static/generated/reference.jpg", thumbnail_url=None,
+        generation_params={},
+    )
+
+    class Result:
+        def __init__(self, rows): self.rows = rows
+        def all(self): return self.rows
+
+    class DB:
+        calls = 0
+        async def scalars(self, _query):
+            self.calls += 1
+            return Result([asset] if self.calls == 1 else [reference_shot])
+
+    async def resolve(_db, _user_id, source, **_kwargs):
+        return {"provider_url": f"https://cdn.example.test/{source.rsplit('/', 1)[-1]}"}
+
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    async def same_novel(*_args, **_kwargs): return True
+    monkeypatch.setattr("app.services.shot_reference_input_service._same_novel", same_novel)
+    result = await resolve_shot_reference_images(
+        DB(), "user-1", shot, required=True,
+        fallback_asset_ids=["series-reference-1"],
+        continuity_reference_shot_id="shot-2",
+    )
+    assert result == [
+        "https://cdn.example.test/shot-2.jpg",
+        "https://cdn.example.test/reference.jpg",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_locked_reference_delivery_fails_closed(monkeypatch) -> None:
     shot = SimpleNamespace(extra_data={"production_context": {"asset_version_locks": [
         {"asset_id": "asset-1", "locked": True},
@@ -216,3 +255,51 @@ async def test_multi_character_composite_is_ambiguous_for_single_character_shot(
 
     assert error.value.detail["code"] == "shot_reference_character_ambiguous"
     assert error.value.detail["repair_action"] == "generate_and_lock_character_multiview"
+
+
+@pytest.mark.asyncio
+async def test_multi_character_composite_is_allowed_when_shot_contract_names_every_bound_character(monkeypatch) -> None:
+    character_one = SimpleNamespace(
+        id="character-one", name="沈砚", canonical_name="沈砚",
+        appearance="黑发蓝袍", attributes={"visual_dna": {"costume": "蓝袍"}},
+    )
+    character_two = SimpleNamespace(
+        id="character-two", name="洛青璃", canonical_name="洛青璃",
+        appearance="银蓝发白袍", attributes={"visual_dna": {"costume": "白袍"}},
+    )
+    asset = SimpleNamespace(
+        id="asset-1", entity_id="character-one", entity_type="character", category="style",
+        url="https://cdn.example.test/reference.jpg", thumbnail_url=None,
+        generation_params={
+            "composite_reference_rule": "single_artifact_dual_role_v1",
+            "role_bindings": [
+                {"role": "character_canonical", "entity_id": "character-one"},
+                {"role": "character_canonical", "entity_id": "character-two"},
+            ],
+            "evidence": {"visual_contract_hash": reference_visual_contract_hash([character_one, character_two])},
+        },
+    )
+    shot = SimpleNamespace(
+        id="shot-1",
+        character_refs=[{"canonical_entity_id": "character-one"}],
+        character_prompt="沈砚与洛青璃并肩迎敌；两人的发色、服装和武器保持锁定设定。",
+        prompt="", visual_description="",
+        extra_data={"production_context": {"asset_version_locks": [{"asset_id": "asset-1", "locked": True}]}},
+    )
+
+    class Result:
+        def __init__(self, rows): self.rows = rows
+        def all(self): return self.rows
+
+    class DB:
+        calls = 0
+        async def scalars(self, _query):
+            self.calls += 1
+            return Result([asset] if self.calls == 1 else [character_one, character_two])
+
+    async def resolve(*_args, **_kwargs): return {"provider_url": asset.url}
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+
+    result = await resolve_shot_reference_images(DB(), "user-1", shot, required=True)
+
+    assert result == [asset.url]

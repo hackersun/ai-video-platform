@@ -81,7 +81,7 @@ export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: Stud
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Metric icon={Film} label="镜头" value={production.shot_count || 0} detail="当前分镜镜头数" />
+            <Metric icon={Film} label="镜头" value={production.shot_count || 0} detail="当前本集全部场景镜头" />
             <Metric icon={Lock} label="资产锁" value={percent(production.asset_lock_coverage)} detail="角色/场景/道具锁覆盖" />
             <Metric icon={CheckCircle2} label="实体引用" value={percent(production.entity_ref_coverage)} detail="镜头上下文覆盖" />
             <Metric icon={Video} label="媒体任务" value={(jobs.video_count || 0) + (jobs.media_count || 0)} detail="视频与直生音视频" />
@@ -95,9 +95,12 @@ export function StudioProductionBoard({ snapshot, workflowId }: { snapshot: Stud
               <div>资产锁</div>
             </div>
             {shots.length ? (
-              shots.slice(0, 12).map((shot) => (
+              shots.slice(0, 20).map((shot) => (
                 <div key={shot.id} className="grid grid-cols-[72px_1fr_96px_96px] border-t border-white/10 px-3 py-2 text-sm">
-                  <div className="text-white/70">#{shot.shot_number || '-'}</div>
+                  <div className="text-white/70">
+                    #{shot.episode_shot_number || shot.shot_number || '-'}
+                    {shot.scene_index ? <span className="ml-1 text-[10px] text-white/40">场{shot.scene_index}</span> : null}
+                  </div>
                   <div className="min-w-0 truncate text-white">{shot.prompt || shot.dialogue || '未填写镜头描述'}</div>
                   <div>
                     <Badge variant="outline" className="border-white/20 text-white/70">{shot.entity_ref_count || 0}</Badge>

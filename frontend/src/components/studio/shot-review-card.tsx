@@ -12,6 +12,10 @@ import type { WorkflowShotReviewItem } from '@/lib/api-client';
 import type { QualityGateSummary } from '@/lib/studio-types';
 
 type ShotReferenceReviewItem = WorkflowShotReviewItem & {
+  episode_shot_number?: number | null;
+  scene_index?: number | null;
+  scene_count?: number | null;
+  scene_title?: string | null;
   reference_image_url?: string | null;
   reference_image_status?: string | null;
   reference_asset_id?: string | null;
@@ -138,7 +142,17 @@ export function ShotReviewCard({ shot, referenceImageUrl, videoUrl, assetHref, s
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
             <Checkbox checked={selected} onCheckedChange={(value) => onSelectedChange(value === true)} aria-label={`选择镜头 ${shot.shot_number}`} />
-            <div><CardTitle className="text-lg">镜头 {shot.shot_number}</CardTitle><p className="mt-1 text-xs text-white/45">{shot.duration || 0} 秒 · 重生 {shot.regeneration_count || 0} 次</p></div>
+            <div>
+              <CardTitle className="text-lg">镜头 {shot.shot_number}</CardTitle>
+              {(shot.scene_index || shot.episode_shot_number) ? (
+                <p data-testid={`shot-sequence-${shot.shot_id}`} className="mt-1 text-xs text-cyan-200/80">
+                  {shot.scene_index ? `场景 ${shot.scene_index}${shot.scene_count ? `/${shot.scene_count}` : ''}${shot.scene_title ? ` · ${shot.scene_title}` : ''}` : ''}
+                  {shot.scene_index && shot.episode_shot_number ? ' · ' : ''}
+                  {shot.episode_shot_number ? `本集镜头 ${shot.episode_shot_number}` : ''}
+                </p>
+              ) : null}
+              <p className="mt-1 text-xs text-white/45">{shot.duration || 0} 秒 · 重生 {shot.regeneration_count || 0} 次</p>
+            </div>
           </div>
           <Badge variant={shot.status === 'failed' ? 'danger' : 'secondary'}>{statusLabel(shot.status)}</Badge>
         </div>

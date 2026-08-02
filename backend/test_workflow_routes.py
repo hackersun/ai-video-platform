@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
-from app.models import Asset, Novel, Project, Script, StoryEntity
+from app.models import Asset, Novel, Project, Script, StoryEntity, Storyboard
 from app.models.series_production_run import SeriesProductionRun
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models.media_generation_job import MediaGenerationJob
@@ -103,6 +103,7 @@ def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
             await db.commit()
 
     asyncio.run(_seed())
+    _seed_shot_reference_assets(user_id, shot_id)
 
     async def _config(*args, **kwargs):
         return "opaque", "synthetic", "api-image", None
@@ -607,7 +608,7 @@ def test_studio_snapshot_exposes_series_plan_and_episode_contract(client: TestCl
                     status="running",
                     novel_id=novel_id,
                     chapter_id=chapter_1_id,
-                    metadata_={"episode_contract": contract},
+                    metadata_={"episode_contract": contract, "episode_number": 1},
                 )
             )
             await session.commit()
@@ -633,6 +634,7 @@ def test_studio_snapshot_exposes_consistency_ledger(client: TestClient) -> None:
     novel_id = _create_novel(client, user_id)
     workflow_id = f"workflow-{uuid4()}"
     storyboard_id = f"storyboard-{uuid4()}"
+    script_id = f"script-{uuid4()}"
     contract = {
         "contract_id": "contract-ledger",
         "workflow_id": workflow_id,
@@ -644,6 +646,8 @@ def test_studio_snapshot_exposes_consistency_ledger(client: TestClient) -> None:
 
     async def _insert_workflow_and_shot() -> None:
         async with AsyncSessionLocal() as session:
+            session.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="Ledger script", content=""))
+            session.add(Storyboard(id=storyboard_id, script_id=script_id, user_id=user_id, novel_id=novel_id, title="Ledger board", content={}))
             session.add(
                 Workflow(
                     id=workflow_id,
@@ -651,8 +655,9 @@ def test_studio_snapshot_exposes_consistency_ledger(client: TestClient) -> None:
                     title="Consistency ledger workflow",
                     status="running",
                     novel_id=novel_id,
+                    script_id=script_id,
                     storyboard_id=storyboard_id,
-                    metadata_={"episode_contract": contract},
+                    metadata_={"episode_contract": contract, "episode_number": 1},
                 )
             )
             session.add(
@@ -662,7 +667,7 @@ def test_studio_snapshot_exposes_consistency_ledger(client: TestClient) -> None:
                     storyboard_id=storyboard_id,
                     shot_number=1,
                     prompt="角色尚未绑定参考",
-                    extra_data={"entity_refs": {"character": []}},
+                    extra_data={"episode_number": 1, "entity_refs": {"character": []}},
                 )
             )
             await session.commit()
@@ -676,7 +681,9 @@ def test_studio_snapshot_exposes_consistency_ledger(client: TestClient) -> None:
 
     assert snapshot_resp.status_code == 200, snapshot_resp.text
     ledger = snapshot_resp.json()["consistency_ledger"]
-    assert ledger["overall_score"] < 80
+    assert ledger["evaluation_status"] == "not_evaluated"
+    assert ledger["overall_score"] is None
+    assert ledger["preflight_status"] == "blocked"
     assert ledger["findings"][0]["code"] == "shot_character_unbound"
 
 
@@ -685,6 +692,7 @@ def test_studio_snapshot_consistency_ledger_uses_shot_character_refs(client: Tes
     novel_id = _create_novel(client, user_id)
     workflow_id = f"workflow-{uuid4()}"
     storyboard_id = f"storyboard-{uuid4()}"
+    script_id = f"script-{uuid4()}"
     contract = {
         "contract_id": "contract-ledger-bound",
         "workflow_id": workflow_id,
@@ -696,6 +704,8 @@ def test_studio_snapshot_consistency_ledger_uses_shot_character_refs(client: Tes
 
     async def _insert_workflow_and_bound_shot() -> None:
         async with AsyncSessionLocal() as session:
+            session.add(Script(id=script_id, user_id=user_id, novel_id=novel_id, title="Bound ledger script", content=""))
+            session.add(Storyboard(id=storyboard_id, script_id=script_id, user_id=user_id, novel_id=novel_id, title="Bound ledger board", content={}))
             session.add(
                 Workflow(
                     id=workflow_id,
@@ -703,8 +713,9 @@ def test_studio_snapshot_consistency_ledger_uses_shot_character_refs(client: Tes
                     title="Consistency ledger bound workflow",
                     status="running",
                     novel_id=novel_id,
+                    script_id=script_id,
                     storyboard_id=storyboard_id,
-                    metadata_={"episode_contract": contract},
+                    metadata_={"episode_contract": contract, "episode_number": 1},
                 )
             )
             session.add(
@@ -715,7 +726,7 @@ def test_studio_snapshot_consistency_ledger_uses_shot_character_refs(client: Tes
                     shot_number=1,
                     prompt="角色已绑定参考",
                     character_refs=[{"character_id": "char-1"}],
-                    extra_data={"entity_refs": {"character": []}},
+                    extra_data={"episode_number": 1, "entity_refs": {"character": []}},
                 )
             )
             await session.commit()
@@ -729,7 +740,9 @@ def test_studio_snapshot_consistency_ledger_uses_shot_character_refs(client: Tes
 
     assert snapshot_resp.status_code == 200, snapshot_resp.text
     ledger = snapshot_resp.json()["consistency_ledger"]
-    assert ledger["overall_score"] == 100
+    assert ledger["evaluation_status"] == "not_evaluated"
+    assert ledger["overall_score"] is None
+    assert ledger["preflight_status"] == "ready"
     assert ledger["findings"] == []
 
 
@@ -902,10 +915,6 @@ def _seed_shot_reference_assets(user_id: str, shot_id: str, views: tuple[str, ..
             shot = await session.get(Shot, shot_id)
             assert shot is not None
             shot.character_refs = [{"entity_id": entity_id, "name": "孙剑"}]
-            shot.extra_data = {
-                **(shot.extra_data or {}),
-                "entity_refs": {"characters": [{"entity_id": entity_id, "name": "孙剑"}]},
-            }
             session.add(
                 StoryEntity(
                     id=entity_id,
@@ -916,11 +925,13 @@ def _seed_shot_reference_assets(user_id: str, shot_id: str, views: tuple[str, ..
                 )
             )
             view_labels = {"front": "正面", "side": "侧面", "back": "背面"}
+            asset_locks = []
             for view_key in views:
                 label = view_labels.get(view_key, view_key)
+                asset_id = f"asset-{entity_id}-{view_key}-{uuid4()}"
                 session.add(
                     Asset(
-                        id=f"asset-{entity_id}-{view_key}-{uuid4()}",
+                        id=asset_id,
                         user_id=user_id,
                         category="character",
                         asset_type="image",
@@ -935,6 +946,12 @@ def _seed_shot_reference_assets(user_id: str, shot_id: str, views: tuple[str, ..
                         generation_params={"view_key": view_key},
                     )
                 )
+                asset_locks.append({"asset_id": asset_id, "locked": True})
+            shot.extra_data = {
+                **(shot.extra_data or {}),
+                "entity_refs": {"characters": [{"entity_id": entity_id, "name": "孙剑"}]},
+                "production_context": {"asset_version_locks": asset_locks},
+            }
             await session.commit()
 
     asyncio.run(_seed())
@@ -1093,13 +1110,14 @@ def test_video_generation_passes_seed_and_sdk_parameters(
 
     monkeypatch.setattr("app.api.v1.endpoints.video.create_ark_client", lambda *_: _FakeArkClient())
 
-    user_id = "video-seed-user"
+    user_id = f"video-seed-{uuid4().hex}"
     shot_id, storyboard_id, script_id = _create_shot(client, user_id)
 
     create_resp = client.post(
         "/api/v1/video/generate",
         json={
             "prompt": "Seeded shot video",
+            "model": "doubao-seedance-1-5-pro-251215",
             "api_key": "test-key",
             "shot_id": shot_id,
             "storyboard_id": storyboard_id,
@@ -1111,7 +1129,7 @@ def test_video_generation_passes_seed_and_sdk_parameters(
         headers=_auth_headers(user_id),
     )
 
-    assert create_resp.status_code == 200
+    assert create_resp.status_code == 200, create_resp.text
     assert captured["duration"] == 8
     assert captured["resolution"] == "1080p"
     assert captured["seed"] == 4242
@@ -5148,7 +5166,7 @@ def test_final_quality_separate_video_tts_uses_provider_default_voice_lock(
         assert api_key == "sk-volcano"
         return _FakeArkClient()
 
-    async def _fake_volcano_tts(self, *args, **kwargs):
+    async def _fake_volcano_tts(**kwargs):
         captured_tts.append(kwargs)
         return {
             "task_id": "tts-task-final-default-voice",
@@ -5158,7 +5176,7 @@ def test_final_quality_separate_video_tts_uses_provider_default_voice_lock(
         }
 
     monkeypatch.setattr("app.features.video_generation.public.create_ark_client", _fake_create_ark_client)
-    monkeypatch.setattr("app.services.volcano_service.VolcanoService.text_to_speech", _fake_volcano_tts)
+    monkeypatch.setattr("app.services.volcano_speech_tts.synthesize_volcano_speech_v3", _fake_volcano_tts)
 
     user_id = f"final-provider-voice-{uuid4().hex[:15]}"
     video_config_id = _insert_model_config(

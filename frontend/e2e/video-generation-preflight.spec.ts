@@ -29,9 +29,12 @@ const verifiedVideoCatalog = {
     capabilities: ['video'],
     desc: '火山引擎 · recommended',
     limits: {
-      durations: [4, 5, 8, 10],
+      duration_min: 4,
+      duration_max: 30,
       resolutions: ['480p', '720p', '1080p'],
       reference_images: 1,
+      reference_videos: 1,
+      reference_audios: 1,
     },
     protocol: { input_mode: 'image_text' },
     lane: 'recommended',
@@ -244,6 +247,10 @@ test('video generation shows consistency preflight blockers before submitting', 
   });
 
   await page.goto('/video-generation?novel_id=novel-001&chapter_id=chapter-001&script_id=script-001&storyboard_id=storyboard-001&shot_id=shot-001');
+  await expect(page.getByRole('button', { name: '30s' })).toBeVisible();
+  await page.getByText('多模态参考（可选）').click();
+  await expect(page.getByText(/^参考视频/)).toBeVisible();
+  await expect(page.getByText(/^参考音频/)).toBeVisible();
 
   await expect(page.getByRole('button', { name: '开始生成' })).toBeEnabled({ timeout: 10_000 });
   await page.getByRole('button', { name: '开始生成' }).click();

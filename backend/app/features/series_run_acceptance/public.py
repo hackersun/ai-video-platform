@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -69,7 +70,7 @@ async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_id
         StoryEntity.entity_type == "character"))).all())
     approval_at = utc_now().isoformat()
     for character in rows:
-        if character.id != protagonist.id and character.name != "主角":
+        if character.id != protagonist.id:
             protagonist.aliases = list(dict.fromkeys([*(protagonist.aliases or []), str(character.name or "")]))
             merge = {"status": "merged_superseded", "canonical_entity_id": protagonist.id, "merged_at": approval_at}
             character.extra_data = {**(character.extra_data or {}), "deterministic_merge": merge, "normalized_merge": dict(merge)}
@@ -133,12 +134,17 @@ def _decorate_shot(shot: Shot, protagonist: StoryEntity, episode: dict, refs: di
         "scene_refs": ["连续场景"], "continuity_prop": "连续性道具", "event_refs": ["道具被发现"],
         "event_turning_point": True, "style_evidence": True, "delivery_evidence": True,
         "final_consequence": True, **voice}
+    first_frame_url = str(os.getenv("DETERMINISTIC_REFERENCE_URL") or "").strip()
+    if first_frame_url:
+        shot.image_url, shot.image_status = first_frame_url, "succeeded"
 
 
 def _dialogue_anchor(user_id: str, storyboard_id: str, protagonist: StoryEntity, episode: dict, refs: dict, number: int) -> Shot:
+    first_frame_url = str(os.getenv("DETERMINISTIC_REFERENCE_URL") or "").strip()
     return Shot(id=str(uuid4()), user_id=user_id, storyboard_id=storyboard_id, shot_number=number,
         duration=4, prompt="主角携带连续性道具进入新场景，事件转折并形成最终后果",
         visual_description="统一动漫风格、角色外观、场景和关键道具", dialogue="主角：继续推进。",
+        image_url=first_frame_url or None, image_status="succeeded" if first_frame_url else None,
         character_refs=[{"character_id": protagonist.id, "entity_id": protagonist.id, "name": "主角"}],
         camera_angle="close_up", camera_movement="dolly", lighting="cinematic", color_grading="consistent-anime",
         extra_data={"series_run_id": episode["series_run_id"], "episode_number": episode["episode_number"],

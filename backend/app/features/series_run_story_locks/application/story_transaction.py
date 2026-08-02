@@ -56,6 +56,18 @@ async def _reset_selected_refs_to_signed_sources(
                     raise ValueError("persisted scoped reference is stale forged or legacy")
                 rebuild = complete and reference.get("evidence_ref_id") in trusted_reference_ids \
                     and source_id == canonical_id
+                if complete and source_id == canonical_id and not rebuild:
+                    candidates = list((await db.scalars(select(StoryEntity).where(
+                        StoryEntity.user_id == run.user_id, StoryEntity.novel_id == run.novel_id,
+                        StoryEntity.chapter_id == (
+                            extra.get("chapter_id") or (episode.get("chapter_ids") or [None])[0]
+                        ),
+                        StoryEntity.entity_type == reference.get("entity_type"),
+                    ))).all())
+                    signed_sources = [candidate for candidate in candidates
+                                      if _is_signed_merged_competitor(candidate, str(canonical_id))]
+                    if signed_sources:
+                        raise ValueError("persisted scoped reference bypasses chapter-local source")
                 if rebuild or not complete:
                     entity_type = reference.get("entity_type")
                     if not entity_type and canonical_id:

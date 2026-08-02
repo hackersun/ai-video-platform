@@ -41,6 +41,10 @@ test('studio shot review renders evidence and regenerates failed shots before co
       {
         shot_id: 'shot-1',
         shot_number: 1,
+        episode_shot_number: 4,
+        scene_index: 2,
+        scene_count: 3,
+        scene_title: '断云桥',
         video_url: '/static/review/shot-1.mp4',
         reference_image_url: '/static/review/shot-1-reference.jpg',
         reference_image_status: 'succeeded',
@@ -61,6 +65,10 @@ test('studio shot review renders evidence and regenerates failed shots before co
             mode: 'multimodal',
             image_count: 3,
             video_count: 1,
+            items: [
+              { type: 'image', role_tag: 'protagonist', entity_name: '孙剑', view_key: 'front' },
+              { type: 'video', role_tag: 'previous_shot', source_shot_id: 'shot-previous' },
+            ],
             dropped: [],
           },
           generation_preflight: '预检通过',
@@ -179,6 +187,8 @@ test('studio shot review renders evidence and regenerates failed shots before co
 
   await expect(page.getByRole('heading', { name: '镜头审阅' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '镜头 1', exact: true })).toBeVisible();
+  await expect(page.getByTestId('shot-sequence-shot-1')).toContainText('场景 2/3 · 断云桥');
+  await expect(page.getByTestId('shot-sequence-shot-1')).toContainText('本集镜头 4');
   await expect(page.getByText('孙剑推开云上列车的舱门。')).toBeVisible();
   await expect(page.getByRole('img', { name: '镜头 1 生成使用的参考图' })).toHaveAttribute('src', /shot-1-reference\.jpg$/);
   await expect(page.getByTestId('shot-reference-entities-shot-1')).toContainText('角色：孙剑');
@@ -190,6 +200,8 @@ test('studio shot review renders evidence and regenerates failed shots before co
   await expect(page.getByText('角色参考包')).toBeVisible();
   await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('3图');
   await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('1视频');
+  await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('角色 孙剑 · 正面');
+  await expect(page.getByTestId('shot-review-reference-package-shot-1')).toContainText('继承前序镜头 shot-previous');
   await expect(page.getByText('预检通过')).toBeVisible();
   await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('74 分');
   await expect(page.getByTestId('shot-review-visual-consistency-shot-1')).toContainText('待人工确认');

@@ -8,10 +8,10 @@ from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.chapter import Chapter
 from app.models.script import Script
-from app.models.storyboard import Storyboard
 from app.models.workflow import Workflow
 from app.services.dialogue_lineage_service import extract_explicit_dialogue
 from app.services.entity_review_service import run_candidate_entity_extraction
@@ -19,7 +19,7 @@ from app.features.series_skill_execution.public import (
     bind_series_stage_skill,
     execute_skill_model_or_fallback,
 )
-from app.features.series_skill_execution.stage_contracts import validate_script, validate_storyboard
+from app.features.series_skill_execution.stage_contracts import validate_script
 
 
 def _same_tag(value: Any, run_id: str, episode_number: int) -> bool:
@@ -116,12 +116,12 @@ async def create_or_resolve_script_stage(db: AsyncSession, *, run, episode: dict
     workflow = await _canonical_workflow(db, run, episode)
     rows = (await db.scalars(select(Script).where(Script.user_id == run.user_id, Script.novel_id == run.novel_id))).all()
     script = _resolve_single(list(rows), "extra_data", run, episode, "script")
+    dialogue_lines = [
+        {**line, "chapter_id": chapter.id}
+        for chapter in chapters
+        for line in extract_explicit_dialogue(str(chapter.content or ""))
+    ]
     if script is None:
-        dialogue_lines = [
-            {**line, "chapter_id": chapter.id}
-            for chapter in chapters
-            for line in extract_explicit_dialogue(str(chapter.content or ""))
-        ]
         entity_runs = []
         for chapter in chapters:
             extraction = await run_candidate_entity_extraction(
@@ -175,6 +175,15 @@ async def create_or_resolve_script_stage(db: AsyncSession, *, run, episode: dict
                         "generated_structure": generated,
                         "prompt_skill": prompt_evidence}, record_id=script_id,
         )
+    elif dialogue_lines and not list((script.extra_data or {}).get("dialogue_lines") or []):
+        generated = dict((script.extra_data or {}).get("generated_structure") or {})
+        generated["dialogue_lines"] = dialogue_lines
+        script.extra_data = {
+            **(script.extra_data or {}),
+            "dialogue_lines": dialogue_lines,
+            "generated_structure": generated,
+        }
+        flag_modified(script, "extra_data")
     if workflow.script_id is not None and workflow.script_id != script.id:
         raise ValueError("workflow script link conflict")
     workflow.script_id = script.id
@@ -206,59 +215,14 @@ async def create_or_resolve_script_stage(db: AsyncSession, *, run, episode: dict
 
 
 async def create_or_resolve_storyboard_stage(db: AsyncSession, *, run, episode: dict[str, Any]) -> dict[str, Any]:
-    number = int(episode["episode_number"])
-    canonical = episode.get("canonical_ids") or {}
+    from app.services.episode_storyboard_stage import create_or_resolve_episode_storyboards
+
     workflow = await _canonical_workflow(db, run, episode)
     script = await _canonical_script(db, run, episode)
-    rows = (await db.scalars(select(Storyboard).where(Storyboard.user_id == run.user_id, Storyboard.novel_id == run.novel_id))).all()
-    storyboard = _resolve_single(list(rows), "content", run, episode, "storyboard")
-    if storyboard is not None and storyboard.script_id != script.id:
-        raise ValueError("storyboard script lineage mismatch")
-    if storyboard is None:
-        storyboard_id = str(uuid4())
-        skill_binding = await bind_series_stage_skill(
-            db, user_id=run.user_id, task="storyboard_generation", stage="content",
-            context={"title": f"第 {number} 集分镜草稿", "source_content": script.content or "",
-                     "episode_number": number, "shot_count": 1},
-            internal_prompt=script.content or "", artifact_type="storyboard",
-            artifact_id=storyboard_id,
-        )
-        dialogue_lines = list((script.extra_data or {}).get("dialogue_lines") or [])
-        required_dialogue = str((dialogue_lines[0] if dialogue_lines else {}).get("dialogue") or "")
-        fallback_board = {"shots": [{"visual_description": script.content or "",
-                                      "dialogue": required_dialogue or None}]}
-        model_result = await execute_skill_model_or_fallback(
-            db, user_id=run.user_id,
-            rendered_prompt=skill_binding.rendered_prompt + "\n仅输出 JSON，格式为 {\"shots\":[...]}。",
-            output_contract="json_object",
-            validator=lambda value: validate_storyboard(value, required_dialogue=required_dialogue or None),
-            fallback=lambda: fallback_board, series_id=run.novel_id,
-        )
-        prompt_evidence = {**skill_binding.evidence, "model_execution": model_result.evidence,
-                           "execution_mode": model_result.evidence["execution_mode"]}
-        storyboard = Storyboard(
-            id=storyboard_id, user_id=run.user_id, novel_id=run.novel_id,
-            script_id=canonical["script_id"], title=f"第 {number} 集分镜草稿",
-            content={"series_run_id": run.id, "episode_number": number, "input_hash": episode["input_hash"],
-                     **model_result.value, "prompt_skill": prompt_evidence},
-            shot_count=0, status="draft",
-        )
-        db.add(storyboard)
-        await db.flush()
-    if workflow.storyboard_id is not None and workflow.storyboard_id != storyboard.id:
-        raise ValueError("workflow storyboard link conflict")
-    workflow.storyboard_id = storyboard.id
-    prompt_skill = dict((storyboard.content or {}).get("prompt_skill") or {})
-    if prompt_skill:
-        metadata = dict(run.run_metadata or {})
-        skill_evidence = dict(metadata.get("skill_evidence") or {})
-        stage_evidence = dict(skill_evidence.get("storyboard_generation") or {})
-        stage_evidence[str(number)] = prompt_skill
-        skill_evidence["storyboard_generation"] = stage_evidence
-        metadata["skill_evidence"] = skill_evidence
-        run.run_metadata = metadata
-    await db.flush()
-    return {"storyboard_id": storyboard.id}
+    _, source_text = await _source(db, run.user_id, run.novel_id, list(episode["chapter_ids"]))
+    return await create_or_resolve_episode_storyboards(
+        db, run=run, episode=episode, workflow=workflow, script=script, source_text=source_text,
+    )
 
 
 async def create_or_resolve_shots_stage(db: AsyncSession, *, run, episode: dict[str, Any]) -> dict[str, Any]:

@@ -246,11 +246,10 @@ def test_storyboard_generation_uses_active_prompt_skill_template_without_consist
                 ]
             }
 
-    monkeypatch.setattr("app.api.v1.endpoints.storyboards.get_user_qwen_api_key", _fake_text_config)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.storyboards.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    async def _fake_text_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
+
+    monkeypatch.setattr("app.api.v1.endpoints.storyboards.get_storyboard_text_service", _fake_text_service)
 
     skill_resp = client.post(
         "/api/v1/prompt-skills",
