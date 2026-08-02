@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from hashlib import sha256
+import asyncio
 import json
+import os
 import re
 from typing import Any, Callable, Generic, TypeVar
 
@@ -19,6 +21,16 @@ from app.features.model_drivers.public import (
 
 
 T = TypeVar("T")
+
+
+def _model_execution_timeout_seconds() -> float:
+    try:
+        return max(1.0, min(float(os.getenv("SERIES_STAGE_MODEL_TIMEOUT_SECONDS", "30")), 120.0))
+    except ValueError:
+        return 30.0
+
+
+MODEL_EXECUTION_TIMEOUT_SECONDS = _model_execution_timeout_seconds()
 
 
 @dataclass(frozen=True)
@@ -104,15 +116,22 @@ async def execute_skill_model_or_fallback(
 
     binding = _binding_evidence(context)
     try:
-        submission = await execute_generation(
-            build_builtin_driver_registry(),
-            TextCommand(prompt=rendered_prompt, output_contract=output_contract),
-            context.driver_context,
+        submission = await asyncio.wait_for(
+            execute_generation(
+                build_builtin_driver_registry(),
+                TextCommand(prompt=rendered_prompt, output_contract=output_contract),
+                context.driver_context,
+            ),
+            timeout=MODEL_EXECUTION_TIMEOUT_SECONDS,
         )
         raw = submission.output.get("text")
         if not isinstance(raw, str) or not raw.strip():
             raise ValueError("model_output_invalid")
         parsed = _parse_json(raw)
+    except TimeoutError:
+        return _fallback_result(
+            fallback, input_hash=input_hash, reason="model_execution_timeout", binding=binding,
+        )
     except ValueError:
         return _fallback_result(
             fallback, input_hash=input_hash, reason="model_output_invalid", binding=binding,

@@ -265,7 +265,7 @@ function ShotReviewContent() {
   };
 
   return (
-    <div className="min-h-screen bg-[#10131a] text-white">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         <header className="flex flex-col gap-4 border-b border-white/10 pb-5 xl:flex-row xl:items-end xl:justify-between">
           <div>

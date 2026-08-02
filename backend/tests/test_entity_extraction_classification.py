@@ -12,6 +12,23 @@ def test_character_costume_is_extracted_from_explicit_wearing_phrase():
     assert character["attributes"]["visual_dna"]["costume"] == "深蓝旧呢大衣"
 
 
+def test_explicit_locked_appearance_populates_character_visual_dna() -> None:
+    entities = extract_story_entities(
+        "顾清霜独自抵达坠星古墟。她的外形必须始终固定：清瘦女性面容，冷白肤色，"
+        "黑发束成银环高马尾，身穿靛青色窄袖长袍，肩口与衣摆绣银色星轨纹，"
+        "腰系暗红束带，左腕佩青铜星盘，背负霜衡银剑。顾清霜说：“封印被改动了。”",
+        {"character"},
+    )
+
+    character = next(item for item in entities if item["name"] == "顾清霜")
+    dna = character["attributes"]["visual_dna"]
+
+    assert dna["gender"] == "女性"
+    assert dna["hair"] == "黑发束成银环高马尾"
+    assert dna["costume"] == "靛青色窄袖长袍"
+    assert "腰系暗红束带" in dna["appearance"]
+
+
 def test_chapter_owned_extraction_emits_stable_story_lock_evidence_contract():
     content = "沈砚抵达雾港，拿起铜铃。"
     entities = extract_story_entities(

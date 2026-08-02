@@ -32,7 +32,8 @@ from app.models.media_generation_job import MediaGenerationJob
 from app.models.subtitle import SubtitleSegment, SubtitleTrack
 from app.services.consistency_preflight import build_generation_context_package, preflight_failure_detail
 from app.services.media_delivery import refresh_existing_qiniu_media_url
-from app.services.media_persistence import local_static_path_for_url
+from app.services.media_playback_delivery import dev_local_static_delivery_url
+from app.services.media_persistence import is_local_static_url, local_static_path_for_url
 from app.services.story_prompt_context import build_video_continuity_constraints, load_story_prompt_context
 
 router = APIRouter(tags=["统一媒体生成"])
@@ -613,15 +614,26 @@ async def get_media_playback_url(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="媒体任务不存在")
-    local_path = local_static_path_for_url(job.output_video_url)
-    if local_path is not None and local_path.is_file():
-        return {
-            "job_id": job.id,
-            "url": job.output_video_url,
-            "delivery_method": "local_static",
-        }
     extra = job.extra_data if isinstance(job.extra_data, dict) else {}
     delivery = extra.get("subtitle_delivery") if isinstance(extra.get("subtitle_delivery"), dict) else {}
+    delivery_method = str(delivery.get("method") or delivery.get("delivery_method") or "")
+    if delivery.get("storage_config_id") or delivery_method.startswith("qiniu"):
+        refreshed = await refresh_existing_qiniu_media_url(
+            db, user_id, job.output_video_url,
+            storage_config_id=delivery.get("storage_config_id"),
+        )
+        if refreshed.get("provider_url"):
+            return {
+                "job_id": job.id,
+                "url": refreshed["provider_url"],
+                "delivery_method": refreshed.get("delivery_method") or "qiniu_signed_refresh",
+            }
+    local_path = local_static_path_for_url(job.output_video_url)
+    fallback_url = dev_local_static_delivery_url(job.output_video_url, local_path, enabled=is_dev_mode())
+    if fallback_url and not is_local_static_url(job.output_video_url):
+        return {"job_id": job.id, "url": fallback_url, "delivery_method": "local_static_fallback"}
+    if is_local_static_url(job.output_video_url) and local_path is not None and local_path.is_file():
+        return {"job_id": job.id, "url": job.output_video_url, "delivery_method": "local_static"}
     refreshed = await refresh_existing_qiniu_media_url(
         db, user_id, job.output_video_url,
         storage_config_id=delivery.get("storage_config_id"),

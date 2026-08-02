@@ -34,6 +34,7 @@ from app.services.consistency_preflight import (
     preflight_failure_detail,
 )
 from app.services.dialogue_parser import parse_dialogue
+from app.services.dialogue_lineage_service import extract_explicit_dialogue
 from app.services.reference_package_builder import bind_reference_package, build_reference_package
 from app.services.video_reference_adapter import apply_seedance_contract_limits
 from app.services.volcano_speech_tts import configure_volcano_speech_endpoint
@@ -274,6 +275,29 @@ def _validate_dialogue(shot: Shot, subtitle: str, contract: Optional[dict]) -> N
     })
 
 
+def _validate_native_audio_source_dialogue(
+    shot: Shot, *, subtitle: str, native_audio: bool,
+) -> None:
+    if not native_audio or subtitle:
+        return
+    source = "\n".join(filter(None, [
+        str(getattr(shot, "visual_description", "") or ""),
+        str(getattr(shot, "prompt", "") or ""),
+    ]))
+    if not extract_explicit_dialogue(source):
+        return
+    raise WorkflowMediaError(422, {
+        "code": "native_audio_dialogue_not_structured",
+        "message": (
+            "镜头文本包含明确台词，但尚未绑定说话人和字幕。请返回剧本与分镜重新提取对白，"
+            "再重试当前镜头；系统不会让视频模型自行猜词。"
+        ),
+        "shot_id": str(getattr(shot, "id", "") or ""),
+        "shot_number": getattr(shot, "shot_number", None),
+        "retry_stage": "script_storyboard",
+    })
+
+
 async def _model_inputs(command: PrepareSeparateMediaCommand) -> dict:
     context, request = command.context, command.request
     try:
@@ -342,7 +366,7 @@ async def _runtime_flags(command: PrepareSeparateMediaCommand, values: dict) -> 
 async def _reference_for_shot(command: PrepareSeparateMediaCommand, values: dict, shot: Shot, lineage: dict) -> Optional[dict]:
     if not supports_reference_package(values["limits"]) and not command.request.require_provider_reference_image:
         return None
-    shot_first_frame = bool(command.request.native_audio and shot.image_url)
+    shot_first_frame = bool(getattr(command.request, "native_audio", False) and getattr(shot, "image_url", None))
     package = None if shot_first_frame else values["quality_references"].get(shot.id)
     if package is None:
         package = await build_reference_package(
@@ -359,6 +383,10 @@ async def _reference_for_shot(command: PrepareSeparateMediaCommand, values: dict
     return package
 
 
+def _shot_storyboard_id(context: Any, shot: Shot) -> Optional[str]:
+    return getattr(shot, "storyboard_id", None) or getattr(context.workflow, "storyboard_id", None)
+
+
 async def _preflights(command: PrepareSeparateMediaCommand, values: dict) -> tuple[Optional[dict], Optional[dict]]:
     if is_dev_mode():
         return None, None
@@ -366,7 +394,7 @@ async def _preflights(command: PrepareSeparateMediaCommand, values: dict) -> tup
     common = {
         "novel_id": context.workflow.novel_id, "chapter_id": context.workflow.chapter_id,
         "script_id": context.workflow.script_id,
-        "storyboard_id": context.workflow.storyboard_id or shot.storyboard_id, "shot_id": shot.id,
+        "storyboard_id": _shot_storyboard_id(context, shot), "shot_id": shot.id,
     }
     video = await build_generation_context_package(
         context.db, context.user_id, task_type="shot_video",
@@ -395,7 +423,7 @@ async def _prepare_shot(command: PrepareSeparateMediaCommand, shared: dict, shot
         model_config_id=context.effective_video_config_id, duration=max(4, min(10, int(round(duration)))),
         resolution=request.resolution, workflow_id=context.workflow.id, novel_id=context.workflow.novel_id,
         chapter_id=context.workflow.chapter_id, script_id=context.workflow.script_id,
-        storyboard_id=context.workflow.storyboard_id or shot.storyboard_id, shot_id=shot.id,
+        storyboard_id=_shot_storyboard_id(context, shot), shot_id=shot.id,
         image_url=shot.image_url, use_consistency_context=True, native_audio=request.native_audio,
     )
     try:
@@ -409,6 +437,9 @@ async def _prepare_shot(command: PrepareSeparateMediaCommand, shared: dict, shot
     reference = await _reference_for_shot(command, local, shot, lineage)
     image_url = (reference or {}).get("reference_image") or package["reference_image"]
     subtitle = shot_subtitle_text(shot)
+    _validate_native_audio_source_dialogue(
+        shot, subtitle=subtitle, native_audio=request.native_audio,
+    )
     audio_route = (
         {"route": "video_native_audio", "reason": "temporary_seedance_native_audio"}
         if request.native_audio else

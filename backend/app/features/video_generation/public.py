@@ -10,6 +10,10 @@ from app.features.video_generation.application.consistency_package import (
     json_dict,
     lookup_character_by_name,
 )
+from app.features.video_generation.application.capability_validation import (
+    reference_limits_from_contract,
+    validate_video_generation_parameters,
+)
 from app.features.video_generation.application.job_sync import VideoJobSyncCommand, sync_video_job_and_shot
 from app.features.video_generation.application.driver_submission import (
     create_bound_video_execution_snapshot,
@@ -17,10 +21,16 @@ from app.features.video_generation.application.driver_submission import (
     submit_bound_video_task,
 )
 from app.features.video_generation.application.lineage import resolve_video_lineage
+from app.features.video_generation.application.catalog_projection import list_canonical_video_models, prefer_canonical_video_models
 from app.features.video_generation.application.model_config import (
     get_video_model_name,
     resolve_video_job_client_config,
     resolve_video_model_config,
+)
+from app.features.video_generation.application.manual_references import (
+    build_manual_reference_package,
+    merge_request_references,
+    merge_reference_packages,
 )
 from app.features.video_generation.adapters.ark import (
     build_ark_video_create_kwargs,
@@ -58,6 +68,11 @@ __all__ = [
     "extract_shot_generation_context",
     "json_dict",
     "lookup_character_by_name",
+    "list_canonical_video_models",
+    "prefer_canonical_video_models",
+    "build_manual_reference_package",
+    "merge_reference_packages",
+    "merge_request_references",
     "get_video_model_name",
     "MAX_PROVIDER_SEED",
     "PROVIDER_VIDEO_WATERMARK_ARG",
@@ -85,4 +100,6 @@ __all__ = [
     "submit_bound_video_task",
     "video_model_metadata",
     "video_prompt_parameters",
+    "validate_video_generation_parameters",
+    "reference_limits_from_contract",
 ]

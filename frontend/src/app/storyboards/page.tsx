@@ -1,5 +1,4 @@
 'use client';
-
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -17,6 +16,7 @@ import {
 import { ReferenceImagePreview } from '@/components/media/reference-image-preview';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
+import { formatSafeApiErrorDetail } from '@/lib/safe-api-error.mjs';
 import { useToast } from '@/components/ui/toast';
 import {
   getDefaultConfigForCapability,
@@ -463,7 +463,7 @@ export default function StoryboardsPage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(data.detail || data.message || '参考图生成失败，请检查图像模型配置。');
+        throw new Error(formatSafeApiErrorDetail(data.detail, data.message || '参考图生成失败，请检查图像模型配置。'));
       }
 
       if (data.status === 'succeeded' && data.image_url) {

@@ -41,6 +41,7 @@ _BUILTIN_LLM_DRIVERS = {
     ("minimax", "speech"): "minimax_speech_v2",
     ("volcano", "image"): "volcano_ark_image_v3",
     ("volcano", "video"): "volcano_ark_video_v3",
+    ("volcano_agent_plan", "video"): "volcano_ark_video_v3",
     ("volcano", "speech"): "volcano_openspeech_v3",
     ("alibaba", "video"): "dashscope_video_v1",
     ("dashscope", "video"): "dashscope_video_v1",

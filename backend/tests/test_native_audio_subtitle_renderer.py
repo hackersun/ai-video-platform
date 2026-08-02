@@ -73,6 +73,16 @@ def test_burn_native_audio_subtitles_preserves_audio_stream(tmp_path: Path) -> N
     assert {stream["codec_type"] for stream in streams} == {"video", "audio"}
     assert result["subtitle_count"] == 1
     assert result["audio_preserved"] is True
+    assert result["provider_label_removed"] is True
+    assert result["provider_label_cleanup"] == {
+        "method": "bottom_safe_crop_and_scale",
+        "x": 32,
+        "y": 0,
+        "width": 576,
+        "height": 576,
+        "output_width": 640,
+        "output_height": 640,
+    }
 
 
 @pytest.mark.skipif(not FFMPEG or not FFPROBE, reason="FFmpeg is required")

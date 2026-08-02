@@ -63,6 +63,10 @@ def shot_reference_review_fields(
         or video_extra.get("reference_image")
     )
     return {
+        "episode_shot_number": shot_extra.get("episode_shot_number"),
+        "scene_index": shot_extra.get("scene_index"),
+        "scene_count": shot_extra.get("scene_count"),
+        "scene_title": shot_extra.get("scene_title"),
         "character_names": [item["name"] for item in characters],
         "reference_image_url": reference_image_url,
         "reference_image_status": getattr(shot, "image_status", None),

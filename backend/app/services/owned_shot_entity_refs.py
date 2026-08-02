@@ -72,8 +72,9 @@ async def resolve_owned_shot_entity_context(
 ) -> dict[str, Any]:
     """Resolve only unique identities owned by the episode's source chapters."""
     refs = {key: [] for key in REF_KEYS.values()}
+    resolution = {"strategy": "exact_match_with_unique_source_fallback", "fallback_types": []}
     if not chapter_ids:
-        return {"entity_refs": refs, "environment_context": None}
+        return {"entity_refs": refs, "environment_context": None, "entity_reference_resolution": resolution}
     rows = list((await db.scalars(select(StoryEntity).where(
         StoryEntity.user_id == user_id,
         StoryEntity.novel_id == novel_id,
@@ -104,14 +105,27 @@ async def resolve_owned_shot_entity_context(
         identity = _canonical_identity(entity)
         if entity.entity_type in REF_KEYS and identity:
             grouped[(entity.entity_type, identity)].append(entity)
+    source_candidates: dict[str, list[StoryEntity]] = defaultdict(list)
     for (entity_type, identity), entities in sorted(grouped.items()):
         entity = _preferred_chapter_source(entities)
         if entity is None:
             continue
-        if _exact_identity_match(source_text, identity) and _exact_identity_match(shot_text, identity):
+        if not _exact_identity_match(source_text, identity):
+            continue
+        source_candidates[entity_type].append(entity)
+        if _exact_identity_match(shot_text, identity):
             refs[REF_KEYS[entity_type]].append(_ref(entity))
+    for entity_type, key in REF_KEYS.items():
+        candidates = source_candidates.get(entity_type) or []
+        if not refs[key] and len(candidates) == 1:
+            refs[key].append(_ref(candidates[0]))
+            resolution["fallback_types"].append(entity_type)
     context = "；".join(
         f"{key}:{','.join(str(item['name']) for item in values)}"
         for key, values in refs.items() if values
     )
-    return {"entity_refs": refs, "environment_context": context or None}
+    return {
+        "entity_refs": refs,
+        "environment_context": context or None,
+        "entity_reference_resolution": resolution,
+    }

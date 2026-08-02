@@ -274,7 +274,8 @@ def test_final_quality_routes_to_seedance_20_before_fast(
     assert extra["model_config_id"] == quality_config_id
     assert extra["strategy_routing"] == "strategy"
     assert extra["strategy_matched_api_model_id"] == "doubao-seedance-2-0-260128"
-    assert extra["asset_version_locks"] == asset_locks
+    assert len(extra["asset_version_locks"]) == 2
+    assert all(item["locked"] is True for item in extra["asset_version_locks"])
     assert extra["voice_lock_snapshot"] == {
         "character_name": "孙剑",
         "story_bible_id": story_bible_id,

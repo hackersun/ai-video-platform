@@ -13,6 +13,7 @@ _INTERNAL_PREFIXES = ("contract-", "preflight-", "test-", "placeholder-")
 _INTERNAL_PROVIDER_PREFIXES = ("preflight-", "test-provider-", "placeholder-provider-", "contract-")
 _INTERNAL_PROVIDER_IDS = frozenset({"deterministic-acceptance"})
 _INTERNAL_PROVIDER_LABELS = frozenset({"预检供应商", "测试供应商", "占位供应商", "TTS开通供应商"})
+_INTERNAL_MODEL_IDENTIFIER_MARKERS = ("contract-video-api-", "live-video-")
 _EXTERNAL_PRODUCT_TYPES = frozenset({"audio_video", "workflow", "render", "lip_sync", "storage", "video"})
 _EXTERNAL_PROVIDER_ORDER = (
     "openai", "google", "comfyui", "ffmpeg_cloud", "local_ffmpeg",
@@ -58,6 +59,7 @@ def is_product_visible_model(model) -> bool:
     text = f"{identifier_text} {display_text}".strip()
     return bool(text) and not (
         any(marker in text for marker in ("test-video-", "test-audio-", "test-image-", "test-text-"))
+        or any(marker in identifier_text for marker in _INTERNAL_MODEL_IDENTIFIER_MARKERS)
         or any(part.startswith(_INTERNAL_PREFIXES) for part in display_text.split())
         or text.startswith("test-")
         or identifier_text.startswith("tts-model-")
@@ -184,6 +186,9 @@ class ProductCatalogItem:
     legacy_config_id: str | None
     certification_status: str
     capabilities: frozenset[ModelCapability]
+    input_contract: dict
+    parameter_schema: dict
+    limits: dict
 
 
 @dataclass(frozen=True)

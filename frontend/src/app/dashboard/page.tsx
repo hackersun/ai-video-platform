@@ -492,7 +492,7 @@ export default function DashboardPage() {
                   从连续动漫向导开始，AI会帮您把小说整理成设定本、分镜和首集草片
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                  <Button asChild className="bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
+                  <Button asChild className="theme-always-dark bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
                     <Link href="/quick-start">
                       <Sparkles className="w-4 h-4 mr-2" />
                       开始向导

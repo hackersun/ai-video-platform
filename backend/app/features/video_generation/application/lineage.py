@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.features.video_generation.errors import VideoGenerationError
 from app.features.video_generation.schemas import VideoGenerateRequest
 from app.models import Chapter, Novel, Script, Shot, Storyboard, Workflow
+from app.services.workflow_shot_scope import workflow_owns_storyboard
 
 
 @dataclass
@@ -42,9 +43,16 @@ async def _workflow_stage(
         ("novel_id", "workflow_id 与 novel_id 不匹配"),
         ("chapter_id", "workflow_id 与 chapter_id 不匹配"),
         ("script_id", "workflow_id 与 script_id 不匹配"),
-        ("storyboard_id", "workflow_id 与 storyboard_id 不匹配"),
     ):
         state.values[key] = _match(state.values.get(key), getattr(workflow, key), detail)
+    requested_storyboard_id = state.values.get("storyboard_id")
+    if requested_storyboard_id:
+        if not await workflow_owns_storyboard(
+            db, workflow=workflow, user_id=user_id, storyboard_id=requested_storyboard_id,
+        ):
+            raise VideoGenerationError(422, "workflow_id 与 storyboard_id 不匹配")
+    else:
+        state.values["storyboard_id"] = workflow.storyboard_id
 
 
 async def _shot_storyboard_stage(
@@ -105,7 +113,8 @@ def _result(state: _LineageState) -> dict[str, Any]:
     workflow = objects.get("workflow")
     if workflow:
         for key in ("novel_id", "chapter_id", "script_id", "storyboard_id"):
-            setattr(workflow, key, state.values.get(key) or getattr(workflow, key))
+            if not getattr(workflow, key):
+                setattr(workflow, key, state.values.get(key))
     novel, chapter = objects.get("novel"), objects.get("chapter")
     script, storyboard, shot = objects.get("script"), objects.get("storyboard"), objects.get("shot")
     return {

@@ -110,11 +110,34 @@ def _episode(run: SeriesProductionRun, command: ProductionScopedRefCommand) -> d
         raise ValueError("production episode missing or ambiguous")
     episode = matches[0]
     canonical = episode.get("canonical_ids") or {}
+    storyboard_ids = {
+        str(value) for value in (canonical.get("storyboard_ids") or []) if value
+    }
+    if canonical.get("storyboard_id"):
+        storyboard_ids.add(str(canonical["storyboard_id"]))
     if (tuple(str(value) for value in episode.get("chapter_ids") or []) != command.chapter_ids
             or canonical.get("workflow_id") not in {None, command.workflow_id}
-            or canonical.get("storyboard_id") not in {None, command.storyboard_id}):
+            or (storyboard_ids and command.storyboard_id not in storyboard_ids)):
         raise ValueError("production episode owner chain is stale")
     return episode
+
+
+def _workflow_storyboard_matches_episode(
+    workflow: Workflow, episode: Mapping[str, Any], requested_storyboard_id: str,
+) -> bool:
+    canonical = episode.get("canonical_ids") or {}
+    storyboard_ids = {
+        str(value) for value in (canonical.get("storyboard_ids") or []) if value
+    }
+    primary_id = str(canonical.get("storyboard_id") or "")
+    if primary_id:
+        storyboard_ids.add(primary_id)
+    if not storyboard_ids:
+        return str(workflow.storyboard_id or "") == requested_storyboard_id
+    return (
+        str(workflow.storyboard_id or "") == primary_id
+        and requested_storyboard_id in storyboard_ids
+    )
 
 
 async def _authority(
@@ -126,11 +149,11 @@ async def _authority(
     ).with_for_update())
     if run is None:
         raise ValueError("production run missing or cross-owner")
-    _episode(run, command)
+    episode = _episode(run, command)
     workflow = await db.scalar(select(Workflow).where(
         Workflow.id == command.workflow_id, Workflow.user_id == command.user_id,
         Workflow.novel_id == command.novel_id, Workflow.chapter_id == command.chapter_id,
-        Workflow.script_id == command.script_id, Workflow.storyboard_id == command.storyboard_id,
+        Workflow.script_id == command.script_id,
     ).with_for_update())
     board = await db.scalar(select(Storyboard).where(
         Storyboard.id == command.storyboard_id, Storyboard.user_id == command.user_id,
@@ -140,7 +163,8 @@ async def _authority(
         Chapter.id == command.chapter_id, Chapter.id.in_(command.chapter_ids),
         Chapter.user_id == command.user_id, Chapter.novel_id == command.novel_id,
     ).with_for_update())
-    if workflow is None or board is None or chapter is None:
+    if (workflow is None or board is None or chapter is None
+            or not _workflow_storyboard_matches_episode(workflow, episode, command.storyboard_id)):
         raise ValueError("workflow storyboard chapter owner chain is invalid")
     tag = workflow.metadata_ or {}
     if (tag.get("series_run_id") != command.run_id

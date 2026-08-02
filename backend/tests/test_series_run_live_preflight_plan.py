@@ -273,22 +273,23 @@ async def _refresh_fixture_production_contracts(db: AsyncSession, run: SeriesPro
             shot = await db.get(Shot, shot_id)
             if shot and shot.id in selected: shot.extra_data = {**(shot.extra_data or {}), **tag, "chapter_id": episode["chapter_ids"][0]}
     await db.flush()
-    from app.services.episode_production_service import create_or_resolve_shots_stage
+    from app.features.series_run_story_locks.application.closure_v2_request import refresh_scoped_for_shot
     for episode in run.episodes or []:
         shot_ids = selected.intersection((episode["canonical_ids"].get("shot_ids") or []))
         if not shot_ids:
             continue
-        shot = await db.get(Shot, next(iter(shot_ids)))
-        refs = [ref for values in ((shot.extra_data or {}).get("entity_refs") or {}).values() for ref in values]
-        entities = [await db.get(StoryEntity, ref.get("entity_id")) for ref in refs]
-        complete = refs and all(entity is not None and ((entity.attributes or {}).get("evidence_contract") or {}).get("source_excerpt") is not None for entity in entities)
-        candidates = list((await db.scalars(select(StoryEntity).where(StoryEntity.novel_id == run.novel_id))).all())
-        ambiguous = any(sum(candidate.entity_type == entity.entity_type and candidate.chapter_id == entity.chapter_id
-            and (candidate.canonical_name == entity.canonical_name or candidate.attributes == entity.attributes)
-            for candidate in candidates) > 1
-            for entity in entities if entity is not None)
-        if complete and not ambiguous:
-            await create_or_resolve_shots_stage(db, run=run, episode=episode)
+        for shot_id in shot_ids:
+            shot = await db.get(Shot, shot_id)
+            refs = [ref for values in ((shot.extra_data or {}).get("entity_refs") or {}).values() for ref in values]
+            entities = [await db.get(StoryEntity, ref.get("entity_id")) for ref in refs]
+            complete = refs and all(entity is not None and ((entity.attributes or {}).get("evidence_contract") or {}).get("source_excerpt") is not None for entity in entities)
+            if complete:
+                try:
+                    await refresh_scoped_for_shot(db, run, shot)
+                except ValueError:
+                    # Invalid/ambiguous fixtures are intentionally preserved so the
+                    # Story Lock call under test can prove its fail-closed behavior.
+                    continue
     await db.commit()
 async def _fresh_bindings(db: AsyncSession, run: SeriesProductionRun, *, voice_id: str = DEFAULT_MINIMAX_TTS_VOICE) -> dict[str, str]:
     now = utc_now()
@@ -1681,6 +1682,7 @@ async def test_deterministic_setup_persists_candidates_without_direct_approval(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    monkeypatch.setenv("DETERMINISTIC_REFERENCE_URL", "https://fixtures.example/first-frame.png")
     run = await _fixture(db_session)
 
     await setup_deterministic_acceptance(
@@ -1698,6 +1700,10 @@ async def test_deterministic_setup_persists_candidates_without_direct_approval(
         (entity.name, get_entity_review_status(entity)) for entity in fixtures
     ]
     assert all((entity.attributes or {}).get("evidence_contract", {}).get("status") == "verified" for entity in fixtures)
+    shots = list((await db_session.scalars(select(Shot).where(Shot.user_id == run.user_id))).all())
+    assert shots
+    assert all(shot.image_url == "https://fixtures.example/first-frame.png" for shot in shots)
+    assert all(shot.image_status == "succeeded" for shot in shots)
 
 @pytest.mark.asyncio
 async def test_anchor_selection_put_is_idempotent_and_only_real_change_increments_revision(
@@ -1852,6 +1858,10 @@ async def test_deterministic_setup_seeds_normal_approved_facts_then_real_story_l
         **(run.run_metadata or {}), "selected_anchor_shot_ids": generation_selected,
         "selected_anchor_mode": anchor_mode, "anchor_selection_revision": 2,
     }
+    for shot_id in generation_selected:
+        selected_shot = await db_session.get(Shot, shot_id)
+        selected_shot.image_url = f"{reference_http_server}/valid.png"
+        selected_shot.image_status = "succeeded"
     await _refresh_fixture_production_contracts(db_session, run)
     await post_series_run_prepare_story_locks(run.id, db_session, run.user_id)
     reference = await post_series_run_prepare_reference(run.id, db_session, run.user_id)

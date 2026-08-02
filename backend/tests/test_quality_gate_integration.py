@@ -17,7 +17,7 @@ from app.api.v1.endpoints.workflow import (
     repair_workflow_quality,
 )
 from app.core.database import Base
-from app.models import QualityEvaluation, Shot, SubtitleTrack, TTSJob, VideoJob, Workflow
+from app.models import QualityEvaluation, Shot, Storyboard, SubtitleTrack, TTSJob, VideoJob, Workflow
 
 
 DB_PATH = Path("/tmp/production-os-task6-integration.db")
@@ -138,7 +138,21 @@ def test_workflow_quality_gate_persists_blocks_and_repairs_only_affected_job() -
                     SubtitleTrack(id="subtitle-1", user_id=workflow.user_id, workflow_id=workflow.id, storyboard_id=workflow.storyboard_id, shot_id=shot_1.id, status="ready", is_active=True),
                     SubtitleTrack(id="subtitle-2", user_id=workflow.user_id, workflow_id=workflow.id, storyboard_id=workflow.storyboard_id, shot_id=shot_2.id, status="ready", is_active=True),
                 ]
-                db.add_all([workflow, shot_1, shot_2, foreign_shot, *jobs, *subtitle_tracks])
+                db.add_all([
+                    Storyboard(
+                        id="storyboard-quality",
+                        script_id="script-quality",
+                        user_id="user-quality",
+                        title="质量门禁分镜",
+                        content={},
+                    ),
+                    workflow,
+                    shot_1,
+                    shot_2,
+                    foreign_shot,
+                    *jobs,
+                    *subtitle_tracks,
+                ])
                 await db.commit()
 
                 with pytest.raises(HTTPException) as lineage_error:

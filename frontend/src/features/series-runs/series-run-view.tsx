@@ -58,6 +58,7 @@ export function SeriesRunView({ state, actions }: { state: any; actions: any }) 
         <div><h3 className="font-semibold text-white">整书自动制作</h3><p className="text-sm text-white/50">一次推进全部章节到镜头就绪，再选择跨章关键镜头验证一致性。</p></div>
         {!run ? <Button onClick={() => start()} disabled={busy || chapters.length < 2} className="bg-violet-600 hover:bg-violet-700">{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}整书自动制作</Button> : (
           <div className="flex gap-2">
+            {run.budget_policy?.live_canary === true && Number(run.cost_summary?.spent_rmb || 0) > 0 && <Button size="sm" onClick={restart} disabled={preflightBusy}>开始新一轮实模</Button>}
             {(run.status === 'failed' || storyLockStale) && <Button size="sm" onClick={restart} disabled={preflightBusy}>{storyLockStale ? '按最新章节重新开始' : '重新开始'}</Button>}
             <Button size="sm" variant="outline" onClick={() => act('execute')} disabled={preflightBusy}><RefreshCw className="mr-2 h-4 w-4" />继续推进</Button>
             {run.status === 'paused' ? <Button size="sm" onClick={() => act('resume')} disabled={busy}><Play className="mr-2 h-4 w-4" />恢复</Button> : <Button size="sm" variant="outline" onClick={() => act('pause')} disabled={busy}><Pause className="mr-2 h-4 w-4" />暂停</Button>}

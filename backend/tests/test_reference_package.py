@@ -263,6 +263,42 @@ async def test_build_package_prioritizes_protagonist_views(db_session: AsyncSess
 
 
 @pytest.mark.asyncio
+async def test_single_image_package_prefers_locked_composite_anchor(db_session: AsyncSession) -> None:
+    builder = _builder_module()
+    user_id = f"user-{uuid4()}"
+    shot = _shot(user_id)
+    composite = Asset(
+        id=f"asset-composite-{uuid4()}", user_id=user_id, novel_id="novel-one",
+        category="character", asset_type="image", name="全角色统一设定板",
+        url="https://cdn.example.com/composite-anchor.png", is_active=True, is_locked=True, is_final=True,
+        version=3, generation_params={
+            "composite_reference_rule": "single_artifact_dual_role_v1",
+            "role_bindings": [
+                {"role": "character_canonical", "entity_id": "char-main"},
+                {"role": "character_canonical", "entity_id": "char-side"},
+            ],
+        },
+    )
+    shot.extra_data = {
+        **(shot.extra_data or {}),
+        "production_context": {"asset_version_locks": [{"asset_id": composite.id, "locked": True}]},
+    }
+    db_session.add(composite)
+    await _seed_reference_assets(db_session, user_id)
+
+    package = await builder.build_reference_package(
+        db_session, user_id, shot=shot, lineage={"novel_id": "novel-one"},
+        model_limits={"images": 1, "videos": 0, "audios": 0, "at_reference": False},
+        resolve_public_url=_public_resolver,
+    )
+
+    assert package["reference_image"] == composite.url
+    assert package["reference_image_source"] == "locked_composite_asset"
+    assert package["images"][0]["role_tag"] == "composite_anchor"
+    assert package["images"][0]["canonical_asset_id"] == composite.id
+
+
+@pytest.mark.asyncio
 async def test_build_package_truncates_and_records_dropped(db_session: AsyncSession) -> None:
     builder = _builder_module()
     build_reference_package = getattr(builder, "build_reference_package", None)

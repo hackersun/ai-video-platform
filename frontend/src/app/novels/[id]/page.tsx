@@ -1274,7 +1274,7 @@ export default function NovelDetailPage() {
                     size="sm"
                     variant="outline"
                     className="shrink-0 border-white/20"
-                    onClick={() => setActiveTab('settings')}
+                    onClick={() => { setActiveTab('settings'); requestAnimationFrame(() => document.getElementById('novel-settings-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }}
                   >
                       <Edit2 className="mr-2 h-4 w-4" />
                       编辑简介
@@ -1523,7 +1523,7 @@ export default function NovelDetailPage() {
                         variant="outline"
                         onClick={() => handleCreateChapterWithAI('polish')}
                         disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
-                        className="border-green-500/50 text-green-200 hover:bg-green-500/10"
+                        className="light-readable-disabled border-green-500/50 text-green-200 hover:bg-green-500/10"
                       >
                         {chapterAiAction === 'polish' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
                         润色后创建
@@ -2180,7 +2180,7 @@ export default function NovelDetailPage() {
           </TabsContent>
 
           {/* 设置 */}
-          <TabsContent value="settings">
+          <TabsContent id="novel-settings-panel" value="settings">
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
                 <CardTitle className="text-white">小说设置</CardTitle>

@@ -211,8 +211,9 @@ async def validate_persisted_model_bindings(
                 required_tested_at_for_run(run), rolling_cutoff,
             )),
         )
+        immutable_keys = tuple(key for key in stable_keys if key != "tested_at")
         changed = has_snapshot and any(
-            str(current.get(key) or "") != str(expected.get(key) or "") for key in stable_keys
+            str(current.get(key) or "") != str(expected.get(key) or "") for key in immutable_keys
         )
         if changed and not persist_missing:
             raise BindingValidationError(f"{capability} persisted binding snapshot has changed")

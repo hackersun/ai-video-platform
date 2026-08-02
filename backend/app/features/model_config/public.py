@@ -27,6 +27,8 @@ from app.features.model_config.legacy_projection import (
 )
 from app.features.model_config.repository import (
     ModelConfigurationError,
+    load_binding_candidates,
+    load_connection,
     list_product_catalog,
     resolve_profile_version,
 )
@@ -36,6 +38,7 @@ from app.features.model_config.bindings import (
     resolve_model_binding,
     resolve_retry_binding,
     route_policy_for,
+    select_binding_candidate,
 )
 from app.features.model_config.legacy_strategy_projection import (
     resolve_legacy_strategy_config_id,
@@ -103,6 +106,8 @@ __all__ = [
     "legacy_model_capability_group",
     "load_execution_snapshot",
     "list_product_catalog",
+    "load_binding_candidates",
+    "load_connection",
     "maybe_log_shadow_catalog_comparison",
     "model_center_read_mode",
     "normalize_capabilities",
@@ -118,6 +123,7 @@ __all__ = [
     "route_policy_for",
     "record_shadow_difference",
     "select_legacy_external_providers",
+    "select_binding_candidate",
     "stable_recipe_checksum",
     "sanitize_snapshot_params",
     "UnsafeSnapshotError",

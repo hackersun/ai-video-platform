@@ -142,7 +142,7 @@ export function TopNavigation() {
         <DropdownMenuContent
           align="end"
           sideOffset={8}
-          className="z-[60] w-56 max-w-[calc(100vw-1rem)] border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
+          className="app-menu-surface z-[60] w-56 max-w-[calc(100vw-1rem)] border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
         >
           <DropdownMenuLabel className="text-xs font-medium text-white/45">
             {accountName}
@@ -184,7 +184,7 @@ export function TopNavigation() {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 h-16 bg-[#0f172a]/95 backdrop-blur-md border-b border-white/10">
+    <header className="app-top-navigation fixed top-0 left-0 right-0 z-50 h-16 bg-[#0f172a]/95 backdrop-blur-md border-b border-white/10">
       <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between gap-3 min-w-0">
         {/* Logo */}
         <Link href="/dashboard" className="flex items-center gap-2 flex-shrink-0">
@@ -236,7 +236,7 @@ export function TopNavigation() {
             <DropdownMenuContent
               align="end"
               sideOffset={8}
-              className="z-[60] w-52 border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
+              className="app-menu-surface z-[60] w-52 border-white/10 bg-[#0f172a]/98 text-white backdrop-blur-md"
             >
               {renderDropdownItems(expertNavItems)}
             </DropdownMenuContent>

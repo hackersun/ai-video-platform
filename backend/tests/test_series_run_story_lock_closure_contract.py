@@ -808,6 +808,36 @@ async def test_unrelated_candidates_remain_candidates_and_do_not_block_lock(
 
 
 @pytest.mark.asyncio
+async def test_story_lock_accepts_selected_shot_from_later_storyboard_in_same_episode(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, shots = await _persisted_owner_chain_fixture(db_session, monkeypatch)
+    _, _, _, prepare_story_locks, _ = _public_api()
+    shot = shots[0]
+    primary = await db_session.get(Storyboard, shot.storyboard_id)
+    later = Storyboard(
+        id=str(uuid4()), user_id=run.user_id, novel_id=run.novel_id,
+        script_id=primary.script_id, title="同集第二场",
+        content={"series_run_id": run.id, "episode_number": 1, "scene_index": 2,
+                 "input_hash": run.episodes[0]["input_hash"]},
+    )
+    db_session.add(later)
+    await db_session.flush()
+    shot.storyboard_id = later.id
+    episodes = [dict(item) for item in run.episodes]
+    canonical = dict(episodes[0]["canonical_ids"])
+    canonical["storyboard_ids"] = [canonical["storyboard_id"], later.id]
+    episodes[0] = {**episodes[0], "canonical_ids": canonical}
+    run.episodes = episodes
+    await db_session.commit()
+
+    result = await prepare_story_locks(db_session, run, native_audio=True)
+
+    assert result["status"] == "locked"
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_required_fact_blocks_with_zero_writes(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

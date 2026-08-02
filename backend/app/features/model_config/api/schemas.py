@@ -67,6 +67,9 @@ class CatalogItem(BaseModel):
     legacy_config_id: str | None
     certification_status: str
     capabilities: list[str]
+    input_contract: dict[str, Any] = Field(default_factory=dict)
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)
+    limits: dict[str, Any] = Field(default_factory=dict)
 
 
 class ProviderCreateRequest(BaseModel):
@@ -98,6 +101,11 @@ class ModelProfileVersionItem(BaseModel):
     api_model_id: str
     driver_key: str
     capabilities: list[str]
+    input_contract: dict[str, Any] = Field(default_factory=dict)
+    output_contract: dict[str, Any] = Field(default_factory=dict)
+    parameter_schema: dict[str, Any] = Field(default_factory=dict)
+    default_params: dict[str, Any] = Field(default_factory=dict)
+    limits: dict[str, Any] = Field(default_factory=dict)
     contract_version: str
     status: str
     revision: int

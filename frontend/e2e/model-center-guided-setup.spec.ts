@@ -88,6 +88,87 @@ test('新增文本模型只展示文本兼容适配器', async ({ page }) => {
   await expect(page.getByText('配置标识会根据 Model ID 自动生成')).toBeVisible();
 });
 
+test('新增 Seedance 2.5 未来兼容草稿可配置动态参考与时长能力', async ({ page }) => {
+  let submittedVersion: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/profiles', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'profile-seedance-25', provider_id: provider.id, profile_key: 'seedance-25',
+        display_name: 'Seedance 2.5 实验', enabled: true, revision: 1,
+      }),
+    });
+  });
+  await page.route('**/api/v1/model-center/profiles/profile-seedance-25/versions', async (route) => {
+    submittedVersion = route.request().postDataJSON();
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'profile-seedance-25-v1', model_id: 'profile-seedance-25', version: 1,
+        api_model_id: 'seedance-2.5-account-model', driver_key: 'dashscope_video_v1',
+        capabilities: ['video_generation'], input_contract: (submittedVersion as any).input_contract,
+        output_contract: {}, parameter_schema: {}, default_params: {},
+        limits: (submittedVersion as any).limits, contract_version: 'seedance-2.5-configurable-v1',
+        status: 'draft', revision: 1,
+      }),
+    });
+  });
+
+  await page.goto('/llm-config?section=catalog&capability=video_generation');
+  await page.getByRole('button', { name: '新增模型' }).click();
+  await page.getByRole('button', { name: '未来 Seedance 2.5 兼容模板' }).click();
+  await expect(page.getByText('当前不能实模验证、发布或设为默认')).toBeVisible();
+
+  await expect(page.getByText('视频模型能力')).toBeVisible();
+  await page.getByLabel('模型显示名称').fill('Seedance 2.5 实验');
+  await page.getByLabel('供应商 Model ID').fill('seedance-2.5-account-model');
+  await page.getByLabel('最小时长（秒）').fill('4');
+  await page.getByLabel('最大时长（秒）').fill('30');
+  await page.getByLabel('参考图片上限').fill('20');
+  await page.getByLabel('参考视频上限').fill('10');
+  await page.getByLabel('参考音频上限').fill('10');
+  await page.getByLabel('输出分辨率').fill('720p,1080p');
+  await page.getByLabel('支持原生音频').check();
+  await page.getByLabel('支持上一段视频参考').check();
+  await page.getByRole('button', { name: '保存模型草稿' }).click();
+  await expect(page.getByText('草稿 v1 已保存')).toBeVisible();
+
+  expect(submittedVersion).toMatchObject({
+    input_contract: {
+      family: 'seedance_2_5', verification_status: 'experimental',
+      modes: expect.arrayContaining(['multimodal_reference', 'video_continuation']),
+    },
+    limits: {
+      duration_min: 4, duration_max: 30, reference_images: 20,
+      reference_videos: 10, reference_audios: 10, native_audio: true,
+      supports_previous_video: true, resolutions: ['720p', '1080p'],
+    },
+    contract_version: 'seedance-2.5-configurable-v1',
+  });
+});
+
+test('视频模型详情展示已保存能力与实验状态', async ({ page }) => {
+  await page.route('**/api/v1/model-center/catalog**', async (route) => {
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({ items: [{
+        ...catalogModel, model_name: 'Seedance 2.5 实验', api_model_id: 'seedance-2.5-account-model',
+        capabilities: ['video_generation'], driver_key: 'dashscope_video_v1',
+        input_contract: { family: 'seedance_2_5', verification_status: 'experimental' },
+        limits: { duration_min: 4, duration_max: 30, reference_images: 20, reference_videos: 10, reference_audios: 10, native_audio: true },
+      }], meta: pageMeta }),
+    });
+  });
+
+  await page.goto('/llm-config?section=catalog&capability=video_generation');
+  await page.getByRole('button', { name: '查看 Seedance 2.5 实验' }).click();
+
+  await expect(page.getByText('实验能力契约')).toBeVisible();
+  await expect(page.getByText('4–30 秒')).toBeVisible();
+  await expect(page.getByText('图片 20 · 视频 10 · 音频 10')).toBeVisible();
+});
+
 test('默认模型页直接说明当前生产选择并可更换', async ({ page }) => {
   await page.goto('/llm-config?section=bindings');
 

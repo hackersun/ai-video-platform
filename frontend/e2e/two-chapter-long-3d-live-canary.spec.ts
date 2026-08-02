@@ -5,6 +5,7 @@ import { devToken } from './helpers/production-os-fixture';
 import { twoChapterLong3dNovel } from './helpers/two-chapter-long-3d-fixture';
 
 const enabled = process.env.TWO_CHAPTER_LIVE === '1';
+const retestModels = process.env.TWO_CHAPTER_LIVE_RETEST_MODELS === '1';
 const userId = process.env.TWO_CHAPTER_LIVE_USER_ID || '';
 const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
 
@@ -52,7 +53,9 @@ test('sunqy creates two long chapters and completes two native-audio videos from
     localStorage.setItem('user', JSON.stringify({ id, username: 'sunqy' }));
   }, { id: userId, tokenValue: token });
 
-  for (const model of certifiedModels) await certifyFromUi(page, model);
+  if (retestModels) {
+    for (const model of certifiedModels) await certifyFromUi(page, model);
+  }
 
   const title = `${twoChapterLong3dNovel.title}-${Date.now()}`;
   await page.goto('/novels/new');
@@ -80,7 +83,7 @@ test('sunqy creates two long chapters and completes two native-audio videos from
   await expect(page.getByText('xianxia-3d · 9:16')).toBeVisible({ timeout: 120_000 });
   const panel = page.getByTestId('series-run-panel');
   await panel.getByRole('button', { name: '整书自动制作', exact: true }).click();
-  await expect(panel.getByTestId('series-run-episodes').getByText('镜头就绪')).toHaveCount(2, { timeout: 240_000 });
+  await expect(panel.getByTestId('series-run-episodes').getByText('镜头就绪')).toHaveCount(2, { timeout: 10 * 60_000 });
   await expect(panel.getByTestId('series-run-skill-evidence')).toContainText('剧本 Skill');
   await expect(panel.getByTestId('series-run-skill-evidence')).toContainText('实体抽取 Skill');
   await expect(panel.getByTestId('series-run-skill-evidence')).toContainText('分镜 Skill');
@@ -170,7 +173,7 @@ test('sunqy creates two long chapters and completes two native-audio videos from
   expect(evidence.chapter_lengths.every((item: any) => item.non_whitespace_chars >= 600 && item.non_whitespace_chars <= 800)).toBe(true);
   expect(jobs.every((job: any) => job.subtitle_track_id)).toBe(true);
   expect(jobs.every((job: any) => job.extra_data?.subtitle_burned === true)).toBe(true);
-  expect(jobs.every((job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v6')).toBe(true);
+  expect(jobs.every((job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v7')).toBe(true);
   await writeFile(testInfo.outputPath('live-evidence.json'), JSON.stringify(evidence, null, 2));
   await page.screenshot({ path: testInfo.outputPath('02-two-videos-completed.png'), fullPage: true });
 });

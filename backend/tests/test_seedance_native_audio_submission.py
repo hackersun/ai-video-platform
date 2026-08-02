@@ -19,6 +19,7 @@ from app.features.workflow_media.application.prepare_separate_media import (
     _append_dialogue_prompt,
     _dialogue_contract,
     _validate_dialogue,
+    _validate_native_audio_source_dialogue,
 )
 from app.features.workflow_media.errors import WorkflowMediaError
 from app.features.workflow_media.schemas import WorkflowMediaBatchRequest
@@ -208,6 +209,28 @@ def test_native_audio_preserves_multi_speaker_dialogue_constraints() -> None:
     assert "沈砚：别回头" in prompt
     assert "林澜：我听见铜铃了" in prompt
     assert "不得串词" in prompt
+
+
+def test_native_audio_blocks_explicit_source_dialogue_without_subtitle_lineage() -> None:
+    shot = SimpleNamespace(
+        id="shot-missing-dialogue",
+        shot_number=3,
+        prompt='沈砚低声提醒：“记住彼此的气息与装束。”',
+        visual_description="众人在赤焰殿前停下。",
+    )
+
+    with pytest.raises(WorkflowMediaError) as caught:
+        _validate_native_audio_source_dialogue(shot, subtitle="", native_audio=True)
+
+    assert caught.value.status_code == 422
+    assert caught.value.detail["code"] == "native_audio_dialogue_not_structured"
+    assert caught.value.detail["retry_stage"] == "script_storyboard"
+
+
+def test_native_audio_allows_silent_source_without_dialogue() -> None:
+    shot = SimpleNamespace(id="shot-silent", shot_number=2, prompt="雪林远景", visual_description="风雪掠过空桥。")
+
+    _validate_native_audio_source_dialogue(shot, subtitle="", native_audio=True)
 
 
 def test_native_audio_safety_rewrite_preserves_canonical_spoken_text() -> None:

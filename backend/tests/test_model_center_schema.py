@@ -32,7 +32,7 @@ MODEL_CENTER_SCHEMA = {
         "id": False, "user_id": False, "provider_id": False, "name": False,
         "api_key": True, "api_secret": True, "endpoint_overrides": False,
         "connection_params": False, "status": False, "tested_at": True,
-        "created_at": False, "updated_at": False,
+        "revision": False, "created_at": False, "updated_at": False,
     },
     "model_profile_versions": {
         "id": False, "model_id": False, "version": False, "api_model_id": False,

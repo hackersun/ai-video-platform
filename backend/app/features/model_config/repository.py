@@ -437,6 +437,9 @@ async def list_product_catalog(
             legacy_config_id=config.id if config is not None else None,
             certification_status=_certification_status(profile.id if profile else None, config, certification_levels),
             capabilities=frozenset(normalize_capabilities(model.model_type, profile.capabilities if profile else model.capabilities or [])),
+            input_contract=dict(profile.input_contract or {}) if profile else {},
+            parameter_schema=dict(profile.parameter_schema or {}) if profile else {},
+            limits=dict(profile.limits or {}) if profile else {},
         )
         items[provider_model_identity(provider.name, item.api_model_id)] = item
     for profile in sorted(profiles_by_model.values(), key=lambda item: (item.model_id, -item.version, item.id)):
@@ -463,6 +466,9 @@ async def list_product_catalog(
             legacy_config_id=None,
             certification_status=_certification_status(profile.id, None, certification_levels),
             capabilities=frozenset(normalize_capabilities(None, profile.capabilities or [])),
+            input_contract=dict(profile.input_contract or {}),
+            parameter_schema=dict(profile.parameter_schema or {}),
+            limits=dict(profile.limits or {}),
         )
     filtered = (
         item for item in items.values()

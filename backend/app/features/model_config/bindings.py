@@ -237,7 +237,7 @@ async def _resolve_explicit_profile(
     connection = await _connection_for_profile(db, user_id=user_id, profile=profile)
     return ResolvedModelBinding(
         task=task, capability=capability, profile=profile, connection_id=connection.id,
-        binding_version=0, source_scope="request",
+        binding_version=1, source_scope="request",
         binding_id=f"request:{profile.profile_version_id}:{connection.id}",
     )
 

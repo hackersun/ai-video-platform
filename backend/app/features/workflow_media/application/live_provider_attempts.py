@@ -74,12 +74,19 @@ async def resolve_live_series_run_for_shot(
             canonical = episode.get("canonical_ids") or {}
             workflow_id = str(canonical.get("workflow_id") or "")
             shot_ids = {str(value) for value in (canonical.get("shot_ids") or [])}
+            storyboard_ids = {
+                str(value) for value in (canonical.get("storyboard_ids") or []) if value
+            }
+            if canonical.get("storyboard_id"):
+                storyboard_ids.add(str(canonical["storyboard_id"]))
             workflow = await db.scalar(select(Workflow).where(
                 Workflow.id == workflow_id,
                 Workflow.user_id == user_id,
                 Workflow.novel_id == run.novel_id,
             )) if workflow_id else None
-            if workflow and workflow.storyboard_id == shot.storyboard_id:
+            if workflow and (
+                shot.storyboard_id == workflow.storyboard_id or shot.storyboard_id in storyboard_ids
+            ):
                 same_novel_live = True
                 if shot.id in shot_ids:
                     matches.append(run)

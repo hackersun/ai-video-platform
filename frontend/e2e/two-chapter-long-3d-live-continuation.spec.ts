@@ -6,6 +6,8 @@ import { devToken } from './helpers/production-os-fixture';
 const userId = process.env.TWO_CHAPTER_LIVE_USER_ID || '';
 const novelId = process.env.TWO_CHAPTER_LIVE_NOVEL_ID || '';
 const runId = process.env.TWO_CHAPTER_LIVE_RUN_ID || '';
+const repairShotId = process.env.TWO_CHAPTER_LIVE_REPAIR_SHOT_ID || '';
+const retestModels = process.env.TWO_CHAPTER_LIVE_RETEST_MODELS === '1';
 const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/v1';
 const mediaModels = [
   {
@@ -35,15 +37,21 @@ test('continue the frontend-created two-chapter run through two native-audio vid
   const headers = { Authorization: `Bearer ${token}` };
   const initialRun = await (await page.request.get(`${apiBase}/series-runs/${runId}`, { headers })).json();
   const referenceAlreadyLocked = Boolean(initialRun.run_metadata?.reference_preparation?.asset_id);
+  const initialShotIds = initialRun.run_metadata?.selected_anchor_shot_ids || [];
+  const initialJobs = (await (await page.request.get(`${apiBase}/media/jobs?novel_id=${novelId}`, { headers })).json())
+    .filter((job: any) => initialShotIds.includes(job.shot_id));
+  const deliveriesAlreadyCompleted = initialShotIds.length === 2 && initialJobs.length === 2
+    && initialJobs.every((job: any) => ['completed', 'succeeded'].includes(job.status));
   await page.addInitScript(({ id, tokenValue, novel, run }) => {
     localStorage.setItem('auth_token', tokenValue);
     localStorage.setItem('user', JSON.stringify({ id, username: 'sunqy' }));
     localStorage.setItem(`series-run:${novel}`, run);
   }, { id: userId, tokenValue: token, novel: novelId, run: runId });
 
-  for (const model of mediaModels.filter(
-    (item) => !referenceAlreadyLocked || item.capability === 'video_generation',
-  )) {
+  for (const model of (retestModels ? mediaModels : []).filter((item) => (
+    (!deliveriesAlreadyCompleted || Boolean(repairShotId))
+      && (!referenceAlreadyLocked || item.capability === 'video_generation')
+  ))) {
     const query = new URLSearchParams({
       section: 'test-lab',
       capability: model.capability,
@@ -133,25 +141,49 @@ test('continue the frontend-created two-chapter run through two native-audio vid
   }
   await expect(firstFramesReady).toBeVisible({ timeout: 30_000 });
   const refreshReferenceDelivery = panel.getByRole('button', { name: '刷新参考图公网地址' });
-  if (await refreshReferenceDelivery.count()) await refreshReferenceDelivery.click();
-  await expect(panel.getByTestId('live-preflight-plan')).toContainText('已就绪', { timeout: 120_000 });
+  if (await refreshReferenceDelivery.count() && await refreshReferenceDelivery.isEnabled()) {
+    await refreshReferenceDelivery.click();
+  }
 
   const runBeforeVideo = await (await page.request.get(`${apiBase}/series-runs/${runId}`, { headers })).json();
   const selectedShotIds = runBeforeVideo.run_metadata?.selected_anchor_shot_ids || [];
   expect(selectedShotIds).toHaveLength(2);
+  if (repairShotId) {
+    expect(selectedShotIds).toContain(repairShotId);
+    const repairShot = await (await page.request.get(`${apiBase}/shots/${repairShotId}`, { headers })).json();
+    if (!repairShot.extra_data?.first_frame_revision) {
+      const episodeNumber = selectedShotIds.indexOf(repairShotId) + 1;
+      const shotCard = panel.getByLabel(`选择第${episodeNumber}章镜头`).locator('..');
+      await shotCard.getByRole('button', { name: '单独重做本镜头参考' }).click();
+      await expect(panel.getByText('当前镜头参考已更新；其他章节继续复用原有角色三视图。')).toBeVisible({ timeout: 10 * 60_000 });
+    }
+  }
   await page.screenshot({ path: testInfo.outputPath('01-reference-and-first-frames-ready.png'), fullPage: true });
 
   let jobs: any[] = (await (await page.request.get(`${apiBase}/media/jobs?novel_id=${novelId}`, { headers })).json())
     .filter((job: any) => selectedShotIds.includes(job.shot_id));
-  const alreadyCompleted = jobs.length === 2
+  const alreadyCompleted = !repairShotId && jobs.length === 2
     && jobs.every((job: any) => ['completed', 'succeeded'].includes(job.status));
   if (!alreadyCompleted) {
+    await expect(panel.getByTestId('live-preflight-plan')).toContainText('已就绪', { timeout: 120_000 });
     const response = page.waitForResponse(
       (item) => item.url().endsWith('/generate-selected') && item.request().method() === 'POST',
     );
     await panel.getByRole('button', { name: '生成所选 2 个关键镜头' }).click();
     const generated = await response;
-    expect(generated.status(), await generated.text()).toBe(200);
+    const generationText = await generated.text();
+    expect(generated.status(), generationText).toBe(200);
+    const generation = JSON.parse(generationText);
+    const pendingVideoJobIds = generation.pending_video_job_ids || [];
+    if (pendingVideoJobIds.length) {
+      await expect.poll(async () => {
+        const refreshed = await Promise.all(pendingVideoJobIds.map(async (jobId: string) => (
+          await (await page.request.post(`${apiBase}/video/jobs/${jobId}/refresh`, { headers })).json()
+        )));
+        await page.request.post(`${apiBase}/series-runs/${runId}/reconcile-selected`, { headers });
+        return refreshed.every((job: any) => ['completed', 'succeeded'].includes(job.status));
+      }, { timeout: 20 * 60_000, intervals: [5_000, 10_000] }).toBe(true);
+    }
   }
 
   await expect.poll(async () => {
@@ -186,6 +218,7 @@ test('continue the frontend-created two-chapter run through two native-audio vid
       subtitle_track_id: job.subtitle_track_id,
       subtitle_burned: job.extra_data?.subtitle_burned,
       subtitle_timing_contract_version: job.extra_data?.subtitle_timing_contract_version,
+      provider_label_removed: job.extra_data?.provider_label_removed,
       native_audio_loudness: job.extra_data?.native_audio_loudness,
     })),
   };
@@ -196,8 +229,9 @@ test('continue the frontend-created two-chapter run through two native-audio vid
   expect(jobs.every((job: any) => job.subtitle_track_id)).toBe(true);
   expect(jobs.every((job: any) => job.extra_data?.subtitle_burned === true)).toBe(true);
   expect(jobs.every(
-    (job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v6',
+    (job: any) => job.extra_data?.subtitle_timing_contract_version === 'native_audio_activity_v9',
   )).toBe(true);
+  expect(jobs.every((job: any) => job.extra_data?.provider_label_removed === true)).toBe(true);
   await writeFile(testInfo.outputPath('live-evidence.json'), JSON.stringify(evidence, null, 2));
   await page.screenshot({ path: testInfo.outputPath('02-two-videos-completed.png'), fullPage: true });
 });

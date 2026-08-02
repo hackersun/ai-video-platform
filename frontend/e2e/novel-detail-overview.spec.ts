@@ -21,7 +21,8 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('作品详情首屏用左侧封面和右侧简介展示作品概览', async ({ page }) => {
-  const novel = {
+  test.setTimeout(60_000);
+  let novel = {
     id: 'novel-overview',
     user_id: 'test-user',
     title: '逆天至尊',
@@ -59,6 +60,11 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
     const method = request.method();
 
     if (method === 'GET' && path === '/novels/novel-overview') {
+      await route.fulfill({ json: novel });
+      return;
+    }
+    if (method === 'PUT' && path === '/novels/novel-overview') {
+      novel = { ...novel, ...request.postDataJSON(), updated_at: '2026-06-02T00:00:00' };
       await route.fulfill({ json: novel });
       return;
     }
@@ -100,14 +106,26 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
   await expect(overview).toBeVisible();
   await expect(overview.getByTestId('novel-cover-panel')).toBeVisible();
   await expect(overview.getByTestId('novel-summary-panel')).toContainText('少年重生归来');
-  await expect(overview.getByText('章节 1')).toBeVisible();
-  await expect(overview.getByText('角色 1')).toBeVisible();
+  await expect(overview.getByText('章节', { exact: true }).locator('..')).toContainText('1');
+  await expect(overview.getByText('角色', { exact: true }).locator('..')).toContainText('1');
   await expect(page.getByText('选择封面画面风格', { exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: '编辑简介' }).click();
+
+  const settingsHeading = page.getByRole('heading', { name: '小说设置' });
+  await expect(settingsHeading).toBeInViewport();
+  const descriptionInput = page.locator('#novel-settings-panel textarea');
+  await descriptionInput.fill('更新后的作品简介，跨章节保持人物、服装和世界观一致。');
+  await page.getByRole('button', { name: '保存修改' }).click();
+  await expect(page.getByText('小说设置已保存')).toBeVisible();
+  await page.reload();
+  await expect(overview).toContainText('更新后的作品简介，跨章节保持人物、服装和世界观一致。');
 
   await page.getByRole('button', { name: '生成封面' }).click();
 
-  await expect(page.getByRole('dialog', { name: '生成封面图片' })).toBeVisible();
+  const coverDialog = page.getByRole('dialog', { name: '生成封面图片' });
+  await expect(coverDialog).toBeVisible();
   await expect(page.getByText('先选择封面画面风格')).toBeVisible();
   await expect(page.getByText('选择封面画面风格', { exact: true })).toBeVisible();
-  await expect(page.getByTestId('image-style-template').first()).toBeVisible();
+  await expect(coverDialog.getByTestId('image-style-template').first()).toBeVisible();
 });

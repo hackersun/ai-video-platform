@@ -27,7 +27,7 @@ os.environ.setdefault("FERNET_KEY", Fernet.generate_key().decode())
 _TEST_DATABASE_PATH = Path(make_url(os.environ["DATABASE_URL"]).database or "").resolve()
 
 from app.core import credential_encryption
-from app.core.database import AsyncSessionLocal, DATABASE_DIAGNOSTIC
+from app.core.database import AsyncSessionLocal, _build_database_diagnostic, _derive_sync_database_url
 from app.models import llm_config
 from app.models.llm_config import LLMConfig
 from init_db import init_db
@@ -57,8 +57,10 @@ def _load_audit_module():
 
 
 def test_security_database_is_intrinsically_isolated() -> None:
-    assert DATABASE_DIAGNOSTIC.isolation_required is True
-    assert DATABASE_DIAGNOSTIC.resolved_sqlite_path == str(_TEST_DATABASE_PATH)
+    configured = os.environ["DATABASE_URL"]
+    diagnostic = _build_database_diagnostic(configured, _derive_sync_database_url(configured), True)
+    assert diagnostic.isolation_required is True
+    assert diagnostic.resolved_sqlite_path == str(_TEST_DATABASE_PATH)
 
 
 def test_llm_api_secret_is_encrypted_and_round_trips(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,12 +85,12 @@ def test_llm_api_secret_empty_value_is_not_persisted(monkeypatch: pytest.MonkeyP
 
 def test_production_requires_a_present_and_valid_fernet_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DEV_MODE", "false")
-    monkeypatch.delenv("FERNET_KEY", raising=False)
+    monkeypatch.setattr(credential_encryption, "_configured_encryption_key", lambda: None)
 
     with pytest.raises(RuntimeError, match="FERNET_KEY"):
         llm_config.require_stable_encryption_key()
 
-    monkeypatch.setenv("FERNET_KEY", "not-a-valid-fernet-key")
+    monkeypatch.setattr(credential_encryption, "_configured_encryption_key", lambda: b"not-a-valid-fernet-key")
     with pytest.raises(RuntimeError, match="FERNET_KEY"):
         llm_config.require_stable_encryption_key()
 

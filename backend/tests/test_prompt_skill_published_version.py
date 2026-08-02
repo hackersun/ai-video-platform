@@ -9,7 +9,7 @@ from tests.model_binding_test_support import db_session as db_session
 
 
 @pytest.mark.asyncio
-async def test_active_skill_edit_publishes_and_routes_the_same_version(db_session):
+async def test_active_skill_edit_creates_draft_without_replacing_published_route(db_session):
     skill = PromptSkill(
         id="active-script-skill", user_id="user-1", name="连续剧本 Skill",
         task="script_generation", stage="content", content="旧版规则",
@@ -32,9 +32,9 @@ async def test_active_skill_edit_publishes_and_routes_the_same_version(db_sessio
     version = await db_session.get(PromptProfileVersion, persisted.prompt_profile_version_id)
 
     assert result["version"] == 2
-    assert persisted.version == 2
-    assert persisted.content == "新版规则：保留对白和资产连续性"
-    assert version.status == "published"
-    assert routed[0].profile_version_id == version.id
-    assert routed[0].version == 2
-    assert routed[0].prompt == "新版规则：保留对白和资产连续性"
+    assert persisted.version == 1
+    assert persisted.content == "旧版规则"
+    assert version.status == "draft"
+    assert routed[0].profile_version_id != version.id
+    assert routed[0].version == 1
+    assert routed[0].prompt == "旧版规则"

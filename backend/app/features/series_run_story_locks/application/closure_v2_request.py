@@ -63,7 +63,7 @@ async def _scoped_for_shot(
     canonical = episode.get("canonical_ids") or {}
     workflow = await db.scalar(select(Workflow).where(
         Workflow.id == canonical.get("workflow_id"), Workflow.user_id == run.user_id,
-        Workflow.novel_id == run.novel_id, Workflow.storyboard_id == shot.storyboard_id,
+        Workflow.novel_id == run.novel_id,
     ).with_for_update())
     board = await db.scalar(select(Storyboard).where(
         Storyboard.id == shot.storyboard_id, Storyboard.user_id == run.user_id,
@@ -74,7 +74,10 @@ async def _scoped_for_shot(
     chapters = list((await db.scalars(select(Chapter).where(
         Chapter.id.in_(chapter_ids), Chapter.user_id == run.user_id, Chapter.novel_id == run.novel_id,
     ).order_by(Chapter.chapter_number).with_for_update())).all())
-    if workflow is None or board is None or not chapter_id or len(chapters) != len(chapter_ids):
+    if (
+        workflow is None or board is None or board.script_id != workflow.script_id
+        or not chapter_id or len(chapters) != len(chapter_ids)
+    ):
         raise ValueError("selected shot owner chain is incomplete")
     source_text = "\n\n".join(str(chapter.content or "") for chapter in chapters)
     shot_text = " ".join(value for value in (shot.prompt, shot.dialogue, shot.visual_description) if value)

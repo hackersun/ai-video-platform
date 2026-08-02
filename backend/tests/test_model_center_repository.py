@@ -263,6 +263,8 @@ def test_product_provider_visibility_covers_all_legacy_fields(provider) -> None:
         SimpleNamespace(id="visible", provider_id="provider", model_id="remote", model_name="audio API Model", model_name_cn="", description=""),
         SimpleNamespace(id="visible", provider_id="provider", model_id="remote", model_name="ok", model_name_cn="模型测试", description=""),
         SimpleNamespace(id="visible", provider_id="provider", model_id="preflight-video-model", model_name="ok", model_name_cn="", description=""),
+        SimpleNamespace(id="visible", provider_id="provider", model_id="contract-video-api-123", model_name="contract video", model_name_cn="", description=""),
+        SimpleNamespace(id="live-video-123", provider_id="provider", model_id="remote", model_name="video api-video live-video-123", model_name_cn="", description=""),
     ],
 )
 def test_product_model_visibility_covers_all_legacy_fields(model) -> None:

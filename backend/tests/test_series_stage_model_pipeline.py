@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import asyncio
 
 import pytest
 
@@ -92,5 +93,66 @@ async def test_stage_pipeline_falls_back_when_binding_or_provider_is_unavailable
     assert "secret provider detail" not in str(result.evidence)
 
 
+@pytest.mark.asyncio
+async def test_stage_pipeline_times_out_to_deterministic_fallback(monkeypatch):
+    from app.features.series_skill_execution import model_pipeline
+
+    context = SimpleNamespace(binding=SimpleNamespace(
+        binding_id="binding-1", connection_id="connection-1",
+        profile=SimpleNamespace(provider_id="volcano", api_model_id="ark-code-latest"),
+    ), driver_context=object())
+
+    async def never_returns(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(model_pipeline, "resolve_generation_context", lambda *a, **k: _async(context))
+    monkeypatch.setattr(model_pipeline, "execute_generation", never_returns)
+    monkeypatch.setattr(model_pipeline, "MODEL_EXECUTION_TIMEOUT_SECONDS", 0.01)
+
+    result = await model_pipeline.execute_skill_model_or_fallback(
+        object(), user_id="user-1", rendered_prompt="prompt",
+        output_contract="json_array", validator=_validate_items,
+        fallback=lambda: [{"name": "fallback"}],
+    )
+
+    assert result.value == [{"name": "fallback"}]
+    assert result.evidence["fallback_reason"] == "model_execution_timeout"
+
+
 async def _async(value):
     return value
+
+
+@pytest.mark.asyncio
+async def test_entity_stage_merges_deterministic_source_facts_into_valid_model_output(monkeypatch):
+    from app.features.series_skill_execution import entity_stage
+    from app.features.series_skill_execution.model_pipeline import SeriesStageModelResult
+
+    async def execute(*args, **kwargs):
+        return SeriesStageModelResult(
+            value=[{
+                "entity_type": "character", "name": "顾清霜",
+                "attributes": {"visual_dna": {"hair": "银发"}},
+            }],
+            evidence={"execution_mode": "provider_model", "validation_status": "passed"},
+        )
+
+    monkeypatch.setattr(entity_stage, "execute_skill_model_or_fallback", execute)
+    items, evidence = await entity_stage.resolve_entity_candidates(
+        object(), user_id="user-1", rendered_prompt="prompt", source_text="source",
+        requested_types={"character", "scene"}, supplied=None, model_config_id=None,
+        fallback=lambda: [
+            {
+                "entity_type": "character", "name": "顾清霜",
+                "attributes": {"visual_dna": {"gender": "女性", "hair": "黑发高马尾"}},
+            },
+            {"entity_type": "scene", "name": "星墟古城", "attributes": {}},
+        ],
+    )
+
+    character = next(item for item in items if item["name"] == "顾清霜")
+    assert character["attributes"]["visual_dna"] == {"gender": "女性", "hair": "黑发高马尾"}
+    assert any(item["name"] == "星墟古城" for item in items)
+    assert evidence["deterministic_enrichment"] == {
+        "merged_entities": 1, "added_entities": 1,
+    }

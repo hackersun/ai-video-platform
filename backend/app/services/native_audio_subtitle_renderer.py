@@ -17,6 +17,7 @@ QUIET_MEAN_DB = -28.0
 TARGET_MEAN_DB = -20.0
 INAUDIBLE_MAX_DB = -45.0
 MAX_GAIN_DB = 24.0
+PROVIDER_LABEL_SAFE_SCALE = 0.9
 
 
 class NativeAudioSubtitleRenderError(RuntimeError):
@@ -134,6 +135,36 @@ def _duration_seconds(source: Path) -> float:
     return max(float(result.stdout.strip()), 0.0)
 
 
+def _video_dimensions(source: Path) -> tuple[int, int]:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise NativeAudioSubtitleRenderError("ffprobe_not_installed", "本机缺少 FFprobe，无法处理供应商标识")
+    result = subprocess.run(
+        [ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "stream=width,height", "-of", "csv=p=0:s=x", str(source)],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    width, height = (int(value) for value in result.stdout.strip().split("x", 1))
+    if width <= 0 or height <= 0:
+        raise NativeAudioSubtitleRenderError("video_dimensions_invalid", "无法识别视频画面尺寸")
+    return width, height
+
+
+def _provider_label_cleanup(source: Path) -> dict[str, Any]:
+    width, height = _video_dimensions(source)
+    crop_width = max(2, int(width * PROVIDER_LABEL_SAFE_SCALE) // 2 * 2)
+    crop_height = max(2, int(height * PROVIDER_LABEL_SAFE_SCALE) // 2 * 2)
+    return {
+        "method": "bottom_safe_crop_and_scale",
+        "x": (width - crop_width) // 2,
+        "y": 0,
+        "width": crop_width,
+        "height": crop_height,
+        "output_width": width,
+        "output_height": height,
+    }
+
+
 def _native_audio_activity_window(source: Path, duration: float) -> tuple[float, float]:
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -219,6 +250,13 @@ def burn_native_audio_subtitles(
             audio_loudness=input_loudness,
         )
     count = _write_ass(subtitle_path, segments)
+    label_cleanup = _provider_label_cleanup(source)
+    video_filter = (
+        f"crop={label_cleanup['width']}:{label_cleanup['height']}:"
+        f"{label_cleanup['x']}:{label_cleanup['y']},"
+        f"scale={label_cleanup['output_width']}:{label_cleanup['output_height']},"
+        f"ass=filename='{_filter_path(subtitle_path)}'"
+    )
     normalized = input_loudness["mean_db"] < QUIET_MEAN_DB
     gain_db = min(MAX_GAIN_DB, max(0.0, TARGET_MEAN_DB - input_loudness["mean_db"]))
     audio_args = (
@@ -227,7 +265,7 @@ def burn_native_audio_subtitles(
     )
     command = [
         ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
-        "-map", "0:v:0", "-map", "0:a?", "-vf", f"ass=filename='{_filter_path(subtitle_path)}'",
+        "-map", "0:v:0", "-map", "0:a?", "-vf", video_filter,
         "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
         *audio_args, "-movflags", "+faststart", str(output_path),
     ]
@@ -245,6 +283,8 @@ def burn_native_audio_subtitles(
     return {
         "video_url": _static_url(output_path), "local_path": str(output_path),
         "subtitle_count": count, "audio_preserved": True,
+        "provider_label_removed": True,
+        "provider_label_cleanup": label_cleanup,
         "audio_loudness": {
             "input_mean_db": input_loudness["mean_db"],
             "input_max_db": input_loudness["max_db"],

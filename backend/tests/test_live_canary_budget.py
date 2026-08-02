@@ -223,7 +223,7 @@ async def test_bindings_require_owned_active_fresh_success_and_matching_capabili
     import app.services.series_run_orchestrator as orchestrator_module
     from app.services.series_run_orchestrator import SeriesRunOrchestrator
 
-    async def ready_preflight(_db, _run):
+    async def ready_preflight(_db, _run, **_kwargs):
         return {"ready": True, "issues": [], "input_snapshot": {}, "snapshot_hash": "synthetic"}
 
     monkeypatch.setattr(orchestrator_module, "evaluate_media_preflight", ready_preflight)

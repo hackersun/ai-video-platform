@@ -50,6 +50,7 @@ from app.services.video_reference_adapter import (
     build_reference_package_metadata,
     build_video_provider_content,
     enrich_prompt_parameters_with_reference_contract,
+    requires_provider_bindings,
 )
 from app.services.asset_lock_service import AssetLockService
 from app.services.live_canary_budget import settle_provider_operation
@@ -75,11 +76,14 @@ from app.features.video_generation.public import (
     extract_shot_generation_context,
     get_video_model_name,
     json_dict,
-    provider_image_url_error_message,
+    list_canonical_video_models, prefer_canonical_video_models,
+    merge_request_references, provider_image_url_error_message,
     resolve_provider_image_delivery,
     resolve_video_job_client_config,
     resolve_video_lineage,
     resolve_video_model_config,
+    reference_limits_from_contract,
+    validate_video_generation_parameters,
     resolve_video_seed,
     sync_video_job_and_shot,
     has_video_generation_driver, submit_bound_video_task,
@@ -195,18 +199,6 @@ class VideoJobUpdateRequest(BaseModel):
     error_message: Optional[str] = Field(None, description="错误信息")
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 def _provider_safe_image_url(image_url: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """Return a cloud-provider-safe image URL and the omission reason if unusable."""
     if not image_url:
@@ -233,13 +225,6 @@ def _provider_safe_image_url(image_url: Optional[str]) -> tuple[Optional[str], O
     if not ip.is_global:
         return None, "参考图地址指向内网、本机或保留 IP，云端视频模型无法访问"
     return candidate, None
-
-
-
-
-
-
-
 
 
 def _extract_video_result(get_result):
@@ -428,6 +413,9 @@ async def list_video_models(
             "key_available": key_available,
         })
 
+    canonical_models = await list_canonical_video_models(db, user_id)
+    models = prefer_canonical_video_models(models, canonical_models)
+
     return {
         "task": catalog["task"],
         "display_name": catalog.get("display_name"),
@@ -459,7 +447,14 @@ async def generate_video(
             "storyboard_id": lineage.get("storyboard_id"),
             "shot_id": lineage.get("shot_id"),
         })
-        video_model_config = await resolve_video_model_config(db, user_id, request.model, request.model_config_id)
+        video_model_config = await resolve_video_model_config(
+            db, user_id, request.model, request.model_config_id, request.model_profile_version_id,
+        )
+        validate_video_generation_parameters(
+            duration=request.duration,
+            resolution=request.resolution,
+            limits=video_model_config.get("limits") or {},
+        )
         selected_video_model_id = (
             video_model_config.get("api_model")
             or video_model_config.get("api_model_id")
@@ -481,12 +476,13 @@ async def generate_video(
                     "视频模型已进入目录和配置体系，但真实提交适配器尚未接入。"
                 ),
             )
+        registry_reference_limits = get_model_reference_limits(
+            video_model_config.get("api_model_id")
+            or video_model_config.get("config_model_id")
+            or request.model
+        )
         video_reference_limits = apply_seedance_contract_limits(
-            get_model_reference_limits(
-                video_model_config.get("api_model_id")
-                or video_model_config.get("config_model_id")
-                or request.model
-            ),
+            reference_limits_from_contract(video_model_config.get("limits") or {}, registry_reference_limits),
             model_id=selected_video_model_id,
             provider=selected_video_provider,
         )
@@ -517,7 +513,7 @@ async def generate_video(
             shot_context = package["context"]
             effective_image_url = package["reference_image"]
             reference_image_source = package["reference_image_source"]
-            if video_reference_limits.get("images", 1) > 1 and lineage.get("shot") is not None:
+            if requires_provider_bindings(video_reference_limits) and lineage.get("shot") is not None:
                 reference_package = await build_reference_package(
                     db,
                     user_id,
@@ -535,6 +531,9 @@ async def generate_video(
                 )
                 effective_image_url = reference_package.get("reference_image") or effective_image_url
                 reference_image_source = reference_package.get("reference_image_source") or reference_image_source
+        reference_package, manual_reference_counts = merge_request_references(
+            reference_package, request, video_reference_limits,
+        )
         if not is_dev_mode():
             preflight_package = await build_generation_context_package(
                 db,
@@ -592,6 +591,7 @@ async def generate_video(
             else "single_provider_image"
         )
         prompt_parameters["supplemental_reference_image_count"] = len(supplemental_refs)
+        prompt_parameters["manual_reference_counts"] = manual_reference_counts
         if provider_prompt["sanitized"]:
             prompt_parameters["provider_prompt_sanitized"] = True
             prompt_parameters["provider_prompt_replacements"] = provider_prompt["replacements"]

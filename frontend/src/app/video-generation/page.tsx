@@ -50,6 +50,8 @@ import {
   getPreflightSummaryText,
   getReferencePackageSummaryText,
 } from '@/components/production/history-preflight-evidence';
+import { buildVideoReferencePayload, supportedVideoDurations, videoApiErrorMessage, videoModelRequestBinding, type VideoGenerateParams, type VideoReferenceDraft } from '@/features/video-generation/video-model-capabilities';
+import { VideoReferenceInputs } from '@/features/video-generation/video-reference-inputs';
 
 // 视频生成状态
 type GenerationStatus = 'idle' | 'submitting' | 'generating' | 'completed' | 'error';
@@ -105,12 +107,15 @@ interface VideoModelOption {
   is_default?: boolean;
   is_configured?: boolean;
   config_id?: string;
+  model_profile_version_id?: string | null;
   test_status?: string | null;
   test_message?: string | null;
   lane?: string;
   adapter_status?: 'available' | 'planned' | string;
   limits?: {
     durations?: number[];
+    duration_min?: number;
+    duration_max?: number;
     resolutions?: string[];
     reference_images?: number;
     reference_videos?: number;
@@ -282,22 +287,6 @@ interface ShotReferencedEntity {
   id: string;
   name: string;
   entity_type: 'character' | 'scene' | 'prop';
-}
-
-// 视频生成参数
-interface VideoGenerateParams {
-  shot_id?: string;
-  storyboard_id?: string;
-  script_id?: string;
-  chapter_id?: string;
-  novel_id?: string;
-  workflow_id?: string;
-  prompt: string;
-  duration: number;
-  resolution: string;
-  image_url?: string;
-  model: string;
-  character_ids?: string[];
 }
 
 const FALLBACK_VIEW_PRESETS: AssetViewPreset[] = [
@@ -540,6 +529,7 @@ function VideoGenerationPageInner() {
   const [duration, setDuration] = useState(5);
   const [resolution, setResolution] = useState('720p');
   const [imageUrl, setImageUrl] = useState('');
+  const [manualReferences, setManualReferences] = useState<VideoReferenceDraft>({ images: '', videos: '', audios: '' });
   const [selectedModel, setSelectedModel] = useState('');
   const [selectedShotId, setSelectedShotId] = useState<string>('');
 
@@ -605,6 +595,7 @@ function VideoGenerationPageInner() {
           model_capabilities: model.model_capabilities || model.capabilities || [],
           is_configured: Boolean(model.is_configured),
           config_id: model.config_id || model.model_config_id,
+          model_profile_version_id: model.model_profile_version_id || model.profile_version_id || null,
           is_default: Boolean(model.is_default),
           test_status: model.test_status,
           test_message: model.test_message,
@@ -1095,6 +1086,8 @@ function VideoGenerationPageInner() {
         duration: duration,
         resolution: resolution,
         model: selectedModel,
+        ...videoModelRequestBinding(selectedVideoModel),
+        ...buildVideoReferencePayload(selectedVideoModel, manualReferences),
       };
 
       if (workflowId) {
@@ -1166,7 +1159,7 @@ function VideoGenerationPageInner() {
 
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.detail || '提交失败');
+        throw new Error(videoApiErrorMessage(errData, '提交失败'));
       }
 
       const data = await response.json();
@@ -1467,9 +1460,7 @@ function VideoGenerationPageInner() {
   });
   const shotEntityRefs = entityRefsFromShot(shot);
   const selectedVideoModel = videoModels.find(m => m.id === selectedModel || m.api_model_id === selectedModel || m.model_id === selectedModel);
-  const supportedDurationValues = selectedVideoModel?.limits?.durations?.length
-    ? selectedVideoModel.limits.durations
-    : [4, 5, 8, 10];
+  const supportedDurationValues = supportedVideoDurations(selectedVideoModel?.limits);
   const supportedResolutionValues = selectedVideoModel?.limits?.resolutions?.length
     ? selectedVideoModel.limits.resolutions
     : ['480p', '720p', '1080p'];
@@ -2294,6 +2285,13 @@ function VideoGenerationPageInner() {
                     </p>
                   )}
                 </div>
+
+                <VideoReferenceInputs
+                  value={manualReferences}
+                  onChange={setManualReferences}
+                  limits={selectedVideoModel?.limits}
+                  disabled={status === 'generating' || status === 'submitting'}
+                />
 
                 {/* 时长 */}
                 <div>

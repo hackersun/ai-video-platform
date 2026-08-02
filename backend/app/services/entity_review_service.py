@@ -423,7 +423,12 @@ async def run_candidate_entity_extraction(
             item=item,
         )
         previous_status = get_entity_review_status(entity)
-        preserve_existing_status = existing is not None and previous_status in {APPROVED, LEGACY_ACTIVE}
+        preserve_existing_status = existing is not None and previous_status in {
+            APPROVED,
+            ARCHIVED,
+            LEGACY_ACTIVE,
+            REJECTED,
+        }
         if not preserve_existing_status:
             _apply_candidate_fields(entity, item)
         evidence_contract = _json_dict(_json_dict(item.get("attributes")).get("evidence_contract"))

@@ -10,7 +10,7 @@ import json
 import mimetypes
 import time
 from typing import Any, Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 import httpx
 from sqlalchemy import and_, desc, select
@@ -139,6 +139,12 @@ def _qiniu_private_download_url(
     return f"{url_with_deadline}&token={access_key}:{encoded_sign}"
 
 
+def _without_qiniu_signature(public_url: str) -> str:
+    parsed = urlparse(public_url)
+    query = urlencode([(key, value) for key, value in parse_qsl(parsed.query) if key not in {"e", "token"}])
+    return urlunparse(parsed._replace(query=query))
+
+
 async def upload_local_static_to_qiniu(
     local_url: str,
     *,
@@ -231,6 +237,7 @@ async def refresh_existing_qiniu_media_url(
         secret_key = config.get_api_secret_decrypted()
         if not access_key or not secret_key:
             return {"provider_url": None, "delivery_method": None}
+        public_url = _without_qiniu_signature(public_url)
         public_url = _qiniu_private_download_url(
             public_url,
             access_key=access_key,

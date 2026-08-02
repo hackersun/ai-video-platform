@@ -434,6 +434,7 @@ export function StudioShell() {
     setError('');
     setSnapshotRetryMessage('正在加载工作台快照…');
     setLoading(true);
+    setWorkflowId(value);
     router.replace(`/studio?workflow_id=${value}`);
   };
 

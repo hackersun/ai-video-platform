@@ -107,9 +107,9 @@ class ShotReorderRequest(BaseModel):
 
 
 class ShotImageGenerateRequest(BaseModel):
-    """镜头参考图生成请求"""
     style: Optional[str] = Field(default="anime", description="画面风格模板")
     model_config_id: Optional[str] = Field(default=None, description="指定图像模型配置ID")
+    continuity_reference_shot_id: Optional[str] = Field(default=None, description="同小说人物延续参考镜头ID")
 
 
 class ShotResponse(BaseModel):
@@ -501,7 +501,7 @@ def _build_shot_reference_image_prompt(base_prompt: str, style_prompt: str) -> s
             "生成类型：镜头参考图，用于后续图生视频保持同一小说镜头画面一致。",
             (
                 "构图目标：生成整镜头构图，不是角色头像，不是单独人物立绘，不是角色三视图，"
-                "不是道具孤立产品图；人物、场景、道具和事件关系都要同时服务当前镜头。"
+                "不是道具孤立产品图，不要只生成局部身体特写；人物、场景、道具和事件关系都要同时服务当前镜头。"
             ),
             base_prompt,
             f"画面风格要求：{style_prompt}" if style_prompt else "",
@@ -1017,8 +1017,8 @@ async def generate_shot_image(
             run_reference = (live_run.run_metadata or {}).get("reference_preparation") if live_run else {}
             reference_images = await resolve_shot_reference_images(
                 db, user_id, shot, required=live_run is not None,
-                fallback_asset_ids=[str(run_reference.get("asset_id"))]
-                if run_reference and run_reference.get("asset_id") else None,
+                fallback_asset_ids=[str(run_reference.get("asset_id"))] if run_reference and run_reference.get("asset_id") else None,
+                continuity_reference_shot_id=request.continuity_reference_shot_id if request else None,
             )
         except ShotReferenceInputError as error:
             raise HTTPException(status_code=422, detail=error.detail) from error
@@ -1116,7 +1116,7 @@ async def generate_shot_image(
 
         successful_extra = dict(shot.extra_data or {})
         successful_extra.pop("image_generation_error", None)
-        shot.extra_data = successful_extra
+        shot.extra_data = {**successful_extra, "first_frame_revision": task_id or image_url}
         shot.image_url = image_url
         shot.image_status = "succeeded"
         shot.updated_at = utc_now()

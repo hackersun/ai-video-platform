@@ -551,6 +551,42 @@ def _infer_character_costume(name: str, context: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def _infer_locked_character_visual_dna(name: str, source_text: str) -> dict[str, str]:
+    """Extract an explicit nearby appearance lock without inventing missing traits."""
+    starts = [match.start() for match in re.finditer(re.escape(name), source_text)]
+    clause = ""
+    for start in starts:
+        window = source_text[start:start + 360]
+        match = re.search(
+            r"(?:外形|外貌|造型)(?:必须|需要)?(?:始终)?(?:保持|固定|锁定)?[：:]"
+            r"([^。！？\n]{6,260})",
+            window,
+        )
+        if match:
+            clause = match.group(1).strip(" ，,；;")
+            break
+        match = re.search(r"仍保持([^。！？\n]{6,220}?)(?:的固定造型)?[。！？]", window)
+        if match:
+            clause = match.group(1).strip(" ，,；;")
+            break
+    if not clause:
+        return {}
+    parts = [item.strip() for item in re.split(r"[，,；;]", clause) if item.strip()]
+    dna = {"appearance": clause}
+    combined = " ".join(parts)
+    if any(marker in combined for marker in ("女性", "女剑修", "女子", "少女")):
+        dna["gender"] = "女性"
+    elif any(marker in combined for marker in ("男性", "男剑修", "男子", "少年")):
+        dna["gender"] = "男性"
+    hair = next((item for item in parts if "发" in item or "马尾" in item or "发髻" in item), "")
+    if hair:
+        dna["hair"] = hair
+    costume = next((item for item in parts if re.search(r"(?:身穿|穿着|仍穿|披着)", item)), "")
+    if costume:
+        dna["costume"] = re.sub(r"^.*?(?:身穿|穿着|仍穿|披着)", "", costume).strip()
+    return dna
+
+
 def _ensure_production_attributes(
     entity_type: str,
     name: str,
@@ -972,12 +1008,16 @@ def extract_story_entities(
     for entity in normalized:
         if entity.get("entity_type") != "character":
             continue
-        costume = _infer_character_costume(str(entity.get("name") or ""), source_text)
-        if not costume:
+        name = str(entity.get("name") or "")
+        costume = _infer_character_costume(name, source_text)
+        locked_visual_dna = _infer_locked_character_visual_dna(name, source_text)
+        if not costume and not locked_visual_dna:
             continue
         attributes = dict(entity.get("attributes") or {})
         visual_dna = dict(attributes.get("visual_dna") or {})
-        visual_dna["costume"] = costume
+        if costume:
+            visual_dna["costume"] = costume
+        visual_dna.update(locked_visual_dna)
         attributes["visual_dna"] = visual_dna
         entity["attributes"] = attributes
     if source_chapter_id and source_chapter_index:

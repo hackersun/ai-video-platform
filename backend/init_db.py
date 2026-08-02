@@ -42,7 +42,7 @@ def migrate_add_job_lineage_fields():
             if inspector.has_table(table_name)
         }
         expected_columns = {
-            "video_jobs": ("project_id", "workflow_id"),
+            "video_jobs": ("project_id", "workflow_id", "shot_id"),
             "tts_jobs": (
                 "project_id",
                 "workflow_id",
@@ -335,7 +335,7 @@ async def migrate_add_job_lineage_fields_async():
 
         table_columns = await conn.run_sync(_inspect)
         expected_columns = {
-            "video_jobs": ("project_id", "workflow_id"),
+            "video_jobs": ("project_id", "workflow_id", "shot_id"),
             "tts_jobs": (
                 "project_id",
                 "workflow_id",

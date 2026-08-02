@@ -30,7 +30,7 @@ from .quality_status import unevaluated_quality_results
 
 TERMINAL_SUCCESS = {"succeeded", "completed"}
 TERMINAL_FAILURE = {"failed", "cancelled", "archived"}
-NATIVE_SUBTITLE_CONTRACT_VERSION = "native_audio_activity_v7"
+NATIVE_SUBTITLE_CONTRACT_VERSION = "native_audio_activity_v9"
 
 
 @dataclass(frozen=True)
@@ -175,6 +175,7 @@ def _native_subtitle_already_finalized(
         and str(extra.get("subtitle_track_id") or "") == str(track.id)
         and str(extra.get("expected_dialogue_sha256") or "") == expected_dialogue_sha256
         and extra.get("subtitle_timing_contract_version") == NATIVE_SUBTITLE_CONTRACT_VERSION
+        and extra.get("provider_label_removed") is True
         and str(exports.get("burned_video") or "") == str(video.video_url or "")
     )
 
@@ -281,6 +282,8 @@ async def _finalize_native_audio_subtitles(
         "subtitle_timing_contract_version": NATIVE_SUBTITLE_CONTRACT_VERSION,
         "subtitle_audio_activity_window": alignment["activity_window"],
         "native_audio_loudness": result.get("audio_loudness") or {},
+        "provider_label_removed": result.get("provider_label_removed") is True,
+        "provider_label_cleanup": result.get("provider_label_cleanup") or {},
         "audio_verification_required": True,
         "expected_dialogue_sha256": expected_dialogue_sha256,
         "subtitle_public_video_url": public_url,
@@ -301,6 +304,8 @@ async def _finalize_native_audio_subtitles(
         "timing_contract_version": NATIVE_SUBTITLE_CONTRACT_VERSION,
         "audio_activity_window": alignment["activity_window"],
         "native_audio_loudness": result.get("audio_loudness") or {},
+        "provider_label_removed": result.get("provider_label_removed") is True,
+        "provider_label_cleanup": result.get("provider_label_cleanup") or {},
         "audio_verified": False,
         "audio_verification_required": True,
         "expected_dialogue_sha256": expected_dialogue_sha256,
@@ -314,10 +319,16 @@ async def _aggregate_one(
     workflow = await db.get(Workflow, video.workflow_id)
     if workflow is None or workflow.user_id != run.user_id:
         raise SeriesAnchorError(409, {"code": "provider_source_lineage_invalid", "message": "源任务工作流血缘无效"})
-    production = dict((shot.extra_data or {}).get("production_context") or {})
+    video_extra = video.extra_data if isinstance(video.extra_data, dict) else {}
+    submitted_production = video_extra.get("production_context_snapshot")
+    production = dict(
+        submitted_production
+        if isinstance(submitted_production, dict)
+        else (shot.extra_data or {}).get("production_context") or {}
+    )
     calls = await _provider_calls(db, run, video, voice)
     job_id = str(uuid4())
-    extra = video.extra_data if isinstance(video.extra_data, dict) else {}
+    extra = video_extra
     native_audio = bool(extra.get("video_native_audio"))
     finalized_track = await _finalize_native_audio_subtitles(db, run, shot, video) if native_audio else None
     extra = video.extra_data if isinstance(video.extra_data, dict) else {}
@@ -344,6 +355,8 @@ async def _aggregate_one(
                     "subtitle_timing_source": extra.get("subtitle_timing_source"),
                     "subtitle_timing_contract_version": extra.get("subtitle_timing_contract_version"),
                     "native_audio_loudness": extra.get("native_audio_loudness"),
+                    "provider_label_removed": extra.get("provider_label_removed") is True,
+                    "provider_label_cleanup": extra.get("provider_label_cleanup"),
                     "audio_verification_required": bool(extra.get("audio_verification_required")),
                     "expected_dialogue_sha256": extra.get("expected_dialogue_sha256"),
                     "subtitle_public_video_url": extra.get("subtitle_public_video_url"),
@@ -460,6 +473,8 @@ async def _refresh_completed_native_subtitles(
             "subtitle_timing_contract_version": extra.get("subtitle_timing_contract_version"),
             "subtitle_audio_activity_window": extra.get("subtitle_audio_activity_window"),
             "native_audio_loudness": extra.get("native_audio_loudness"),
+            "provider_label_removed": extra.get("provider_label_removed") is True,
+            "provider_label_cleanup": extra.get("provider_label_cleanup"),
             "subtitle_public_video_url": extra.get("subtitle_public_video_url"),
             "subtitle_delivery": extra.get("subtitle_delivery")}
         shot.video_url = video.video_url

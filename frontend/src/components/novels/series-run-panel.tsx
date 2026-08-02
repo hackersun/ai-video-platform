@@ -217,7 +217,9 @@ export function SeriesRunPanel({ novelId, chapters, seriesPlan, modelConfigs, vi
       if (videoOnlyContinuation) delete configIds.image;
       const missing = Object.entries(configIds).filter(([, configId]) => !configId).map(([capability]) => capability);
       if (missing.length) throw new Error(`缺少模型配置：${missing.join('、')}`);
-      let current = await apiClient.enableSeriesRunLiveCanary(run.id);
+      let current = run.budget_policy?.live_canary === true
+        ? run
+        : await apiClient.enableSeriesRunLiveCanary(run.id);
       const validated = await apiClient.validateSeriesRunBindings(current.id, {
         ...(configIds as { image?: string; video: string }), native_audio: nativeAudio,
       });

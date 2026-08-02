@@ -30,9 +30,13 @@ export function ConsistencyLedgerPanel({
   onRepair?: (action: StudioAction) => void;
 }) {
   const ledger = snapshot?.consistency_ledger;
-  const score = ledger?.overall_score ?? 100;
+  const evaluated = ledger?.evaluation_status === 'evaluated' && typeof ledger?.overall_score === 'number';
+  const score = evaluated ? ledger.overall_score : null;
   const dimensions = Object.entries(ledger?.dimensions || {});
   const findings = ledger?.findings || [];
+  const evaluationMessage = ledger?.evaluation_status === 'partial'
+    ? '评估尚未覆盖全部六个维度'
+    : !evaluated ? '尚未执行六维一致性评估' : null;
 
   return (
     <Card data-testid="consistency-ledger-panel" className="border-white/10 bg-white/5">
@@ -45,15 +49,22 @@ export function ConsistencyLedgerPanel({
             </CardTitle>
             <div className="mt-1 text-sm text-white/55">把风格、人物、场景、道具、声音和事件风险合并为可处理清单。</div>
           </div>
-          <div className={`text-3xl font-semibold ${toneClass(score)}`}>{score}</div>
+          <div className={`text-3xl font-semibold ${score == null ? 'text-white/45' : toneClass(score)}`}>
+            {score == null ? '未评分' : score}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {evaluationMessage ? (
+          <div className="rounded-lg border border-amber-300/20 bg-amber-400/[0.06] px-3 py-2 text-sm text-amber-100/80">
+            {evaluationMessage}；下方仅展示生成前预检问题，不代表成片已经通过一致性验证。
+          </div>
+        ) : null}
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
           {dimensions.map(([key, value]) => (
             <div key={key} className="min-w-0 border-t border-white/10 pt-3">
               <div className="text-xs text-white/45">{DIMENSION_LABELS[key] || key}</div>
-              <div className={`mt-1 text-sm font-medium ${toneClass(value)}`}>{value}</div>
+              <div className={`mt-1 text-sm font-medium ${value == null ? 'text-white/45' : toneClass(value)}`}>{value ?? '未评分'}</div>
             </div>
           ))}
         </div>

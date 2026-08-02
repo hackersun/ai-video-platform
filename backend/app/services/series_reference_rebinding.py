@@ -29,6 +29,15 @@ def rebind_shot_reference_context(
         item["asset_version"] = replacement_asset_version
         item["locked"] = True
         changed = True
+    if not superseded_asset_id and not any(
+        str(item.get("asset_id") or "") == replacement_asset_id for item in locks
+    ):
+        locks.append({
+            "asset_id": replacement_asset_id,
+            "asset_version": replacement_asset_version,
+            "locked": True,
+        })
+        changed = True
     if str(production.get("canonical_reference_id") or "") == superseded_asset_id:
         production["canonical_reference_id"] = replacement_asset_id
         production["canonical_reference_version"] = replacement_asset_version
