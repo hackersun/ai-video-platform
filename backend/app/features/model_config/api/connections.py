@@ -11,9 +11,11 @@ from app.features.model_config.api.schemas import (
     ConnectionCreateRequest,
     ConnectionItem,
     ConnectionMetadataUpdateRequest,
+    ConnectionRemovalResponse,
     ConnectionSecretReplacementRequest,
     ConnectionTestIntentResponse,
     PageResponse,
+    PublishRequest,
 )
 
 
@@ -48,6 +50,21 @@ async def update_connection(
     try:
         return await service.update_connection(
             db, user_id=user_id, connection_id=connection_id, request=request,
+        )
+    except service.ManagementOperationError as error:
+        return raise_http(error)
+
+
+@router.delete("/connections/{connection_id}", response_model=ConnectionRemovalResponse)
+async def remove_connection(
+    connection_id: str,
+    request: PublishRequest,
+    db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
+):
+    try:
+        return await service.remove_connection(
+            db, user_id=user_id, connection_id=connection_id,
+            expected_revision=request.expected_revision, reason=request.reason,
         )
     except service.ManagementOperationError as error:
         return raise_http(error)

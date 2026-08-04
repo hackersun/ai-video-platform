@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, Fragment, useEffect, useState } from 'react';
-import { KeyRound, Plus, TestTube } from 'lucide-react';
+import { KeyRound, Plus, TestTube, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 import { useModelConnections } from '../hooks/use-model-connections';
@@ -11,19 +11,22 @@ import { connectionDisplayName } from '../model-center-labels';
 import { ModelCenterEmpty, ModelCenterError, ModelCenterLoading } from './model-center-state';
 import { ModelCenterPagination } from './model-center-pagination';
 import { ProviderModelLabel } from './provider-model-label';
+import { RemoveConnectionDialog } from './remove-connection-dialog';
+import type { ModelConnectionView } from '../types';
 
 const blankForm = { providerId: '', name: '', reason: '', baseUrl: '', apiKey: '' };
 
 export function ModelCenterConnectionsPanel({ location }: { location: ModelCenterLocation }) {
   const router = useRouter();
   const [page, setPage] = useState(1);
-  const { data, error, loading, reload, createConnection, updateConnection } = useModelConnections(page, 20);
+  const { data, error, loading, reload, createConnection, updateConnection, removeConnection } = useModelConnections(page, 20);
   const providers = useModelProviders();
   const [form, setForm] = useState(blankForm);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [secretForm, setSecretForm] = useState({ apiKey: '', reason: '' });
+  const [removing, setRemoving] = useState<ModelConnectionView | null>(null);
   useEffect(() => {
     const firstProvider = providers.data?.items[0];
     if (firstProvider && !form.providerId) setForm((current) => ({ ...current, providerId: firstProvider.id }));
@@ -88,12 +91,16 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
       {message && <p className={`rounded-md px-3 py-2 text-xs ${message.includes('失败') || message.includes('未能') ? 'bg-rose-500/10 text-rose-200' : 'bg-emerald-500/10 text-emerald-200'}`}>{message}</p>}
       {!data?.items.length ? <ModelCenterEmpty title="还没有供应商账号" description="先保存 API 凭证，再测试可用性并选择默认模型。" /> : (
         <div className="overflow-x-auto rounded-lg border border-white/10">
-          <table className="min-w-full text-left text-sm"><thead className="bg-white/[0.035] text-xs text-slate-500"><tr><th>账号名称</th><th>供应商</th><th>凭证</th><th>接口地址</th><th className="text-right">操作</th></tr></thead>
-            <tbody>{data.items.map((connection) => <Fragment key={connection.id}><tr className="border-t border-white/[0.07] text-slate-300"><td><span className="font-medium text-white">{connectionDisplayName(connection.name, connection.provider_name)}</span>{connection.name.startsWith('legacy:') && <span className="mt-0.5 block text-[11px] text-slate-500">历史迁移配置</span>}</td><td><ProviderModelLabel providerName={connection.provider_name} providerCode={connection.provider_code} /></td><td><span className={connection.has_secret ? 'text-emerald-300' : 'text-amber-300'}>{connection.has_secret ? '已保存 · 已脱敏' : '未设置'}</span></td><td className="max-w-44 truncate text-slate-500">{connection.base_url || '供应商默认地址'}</td><td className="text-right"><div className="flex justify-end gap-2"><button type="button" onClick={() => { setEditingId(connection.id); setSecretForm({ apiKey: '', reason: '' }); }} className="model-center-quiet"><KeyRound className="h-3.5 w-3.5" />{connection.has_secret ? '替换凭证' : '补录凭证'}</button><button type="button" disabled={!connection.has_secret} title={connection.has_secret ? '选择兼容模型并向供应商发起连接认证' : '请先保存 API Key'} onClick={() => runTest(connection.id)} className="model-center-quiet"><TestTube className="h-3.5 w-3.5" />测试可用性</button></div></td></tr>{editingId === connection.id && <tr className="border-t border-violet-400/15 bg-violet-500/5"><td colSpan={5}><form onSubmit={(event) => void replaceSecret(event, connection.id, connection.revision)} className="flex flex-wrap items-center gap-2 p-3"><input aria-label={`API Key ${connection.name}`} required type="password" autoComplete="off" value={secretForm.apiKey} onChange={(event) => setSecretForm({ ...secretForm, apiKey: event.target.value })} placeholder="输入新的 API Key" className="model-center-input min-w-64 flex-1" /><input aria-label={`凭证更新原因 ${connection.name}`} required minLength={2} value={secretForm.reason} onChange={(event) => setSecretForm({ ...secretForm, reason: event.target.value })} placeholder="更新原因（至少2字）" className="model-center-input min-w-52" /><button type="submit" disabled={creating} className="model-center-primary">保存凭证</button><button type="button" onClick={() => setEditingId(null)} className="model-center-quiet">取消</button></form></td></tr>}</Fragment>)}</tbody>
+          <table className="w-full min-w-[900px] table-fixed text-left text-sm"><thead className="bg-white/[0.035] text-xs text-slate-500"><tr><th className="w-36">账号名称</th><th className="w-28">供应商</th><th className="w-32">凭证</th><th className="w-32">接口地址</th><th className="w-[22rem] text-right">操作</th></tr></thead>
+            <tbody>{data.items.map((connection) => { const displayName = connectionDisplayName(connection.name, connection.provider_name); return <Fragment key={connection.id}><tr className="border-t border-white/[0.07] text-slate-300"><td><span className="font-medium text-white">{displayName}</span>{connection.name.startsWith('legacy:') && <span className="mt-0.5 block text-[11px] text-slate-500">历史迁移配置</span>}</td><td><ProviderModelLabel providerName={connection.provider_name} providerCode={connection.provider_code} /></td><td><span className={`whitespace-nowrap ${connection.has_secret ? 'text-emerald-300' : 'text-amber-300'}`}>{connection.has_secret ? '已保存 · 已脱敏' : '未设置'}</span></td><td className="max-w-44 truncate whitespace-nowrap text-slate-500">{connection.base_url || '供应商默认地址'}</td><td className="whitespace-nowrap text-right"><div className="flex flex-nowrap justify-end gap-2"><button type="button" onClick={() => { setEditingId(connection.id); setSecretForm({ apiKey: '', reason: '' }); }} className="model-center-quiet whitespace-nowrap"><KeyRound className="h-3.5 w-3.5 shrink-0" />{connection.has_secret ? '替换凭证' : '补录凭证'}</button><button type="button" disabled={!connection.has_secret} title={connection.has_secret ? '选择兼容模型并向供应商发起连接认证' : '请先保存 API Key'} onClick={() => runTest(connection.id)} className="model-center-quiet whitespace-nowrap"><TestTube className="h-3.5 w-3.5 shrink-0" />测试可用性</button><button type="button" aria-label={`移除${displayName}`} onClick={() => setRemoving(connection)} className="model-center-quiet whitespace-nowrap text-rose-200 hover:text-rose-100"><Trash2 className="h-3.5 w-3.5 shrink-0" />移除</button></div></td></tr>{editingId === connection.id && <tr className="border-t border-violet-400/15 bg-violet-500/5"><td colSpan={5}><form onSubmit={(event) => void replaceSecret(event, connection.id, connection.revision)} className="flex flex-wrap items-center gap-2 p-3"><input aria-label={`API Key ${connection.name}`} required type="password" autoComplete="off" value={secretForm.apiKey} onChange={(event) => setSecretForm({ ...secretForm, apiKey: event.target.value })} placeholder="输入新的 API Key" className="model-center-input min-w-64 flex-1" /><input aria-label={`凭证更新原因 ${connection.name}`} required minLength={2} value={secretForm.reason} onChange={(event) => setSecretForm({ ...secretForm, reason: event.target.value })} placeholder="更新原因（至少2字）" className="model-center-input min-w-52" /><button type="submit" disabled={creating} className="model-center-primary whitespace-nowrap">保存凭证</button><button type="button" onClick={() => setEditingId(null)} className="model-center-quiet whitespace-nowrap">取消</button></form></td></tr>}</Fragment>; })}</tbody>
           </table>
         </div>
       )}
       {data && <ModelCenterPagination page={data.meta.page} pageSize={data.meta.page_size} total={data.meta.total} onPageChange={setPage} />}
+      {removing && <RemoveConnectionDialog connection={removing} onClose={() => setRemoving(null)} onConfirm={async (reason) => {
+        await removeConnection(removing.id, { expected_revision: removing.revision, reason });
+        setMessage('账号已移除，密钥已清除；历史测试和任务记录仍保留。');
+      }} />}
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { AlertCircle, RotateCcw, Send, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import type { ProductionRecipeView } from '../types';
+import { PRODUCTION_STRATEGY_COPY, type ProductionStrategy } from '@/lib/production-strategy';
 
 type Validation = { valid: boolean; errors: Array<{ code: string; message: string }> };
 type RecipeDetailProps = {
@@ -16,6 +17,19 @@ type RecipeDetailProps = {
 };
 
 const statusLabel = { draft: '草稿', published: '已发布', disabled: '已停用' } as const;
+const stageLabels: Record<string, string> = {
+  text: '小说理解与分镜', vision: '镜头视觉分析', image: '参考资产', video: '镜头视频',
+  audio: '声音', subtitle: '字幕', render: '合成', storage: '交付存储',
+};
+
+function stageConfiguration(values: Record<string, unknown>) {
+  if (values.binding_id) return '已选择默认模型';
+  if (values.mode === 'video_native_audio') return '视频自带声音';
+  if (values.mode === 'separate_tts') return '单独生成配音';
+  if (values.source === 'video_dialogue_timeline') return '跟随视频声音自动生成';
+  if (values.source === 'tts_timeline') return '跟随独立配音自动生成';
+  return '未配置';
+}
 
 export function RecipeDetail({ recipe, versions, onClose, onValidate, onPublish, onRollback }: RecipeDetailProps) {
   const [action, setAction] = useState<'publish' | 'rollback' | null>(null);
@@ -30,7 +44,10 @@ export function RecipeDetail({ recipe, versions, onClose, onValidate, onPublish,
   );
   const isHead = sameRecipe[0]?.id === recipe.id;
   const rollbackTargets = sameRecipe.filter((item) => item.id !== recipe.id && item.version < recipe.version);
-  const stageRows = Object.entries(recipe.stages || recipe.spec || {}) as Array<[string, Record<string, unknown>]>;
+  const stageRows = Object.entries(recipe.stages || recipe.spec || {}).filter(
+    ([stage, values]) => stage in stageLabels && values && typeof values === 'object',
+  ) as Array<[string, Record<string, unknown>]>;
+  const strategyCopy = PRODUCTION_STRATEGY_COPY[recipe.strategy as ProductionStrategy];
 
   const preparePublish = async () => {
     setPending(true);
@@ -64,8 +81,8 @@ export function RecipeDetail({ recipe, versions, onClose, onValidate, onPublish,
   return <div role="dialog" aria-modal="true" aria-label="生产方案详情" className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4 sm:p-8">
     <section className="mx-auto max-w-3xl rounded-xl border border-white/15 bg-slate-900 p-5 shadow-2xl">
       <header className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-semibold text-white">{recipe.name}</h2><p className="mt-1 text-sm text-slate-400">{recipe.recipe_key} · v{recipe.version} · {statusLabel[recipe.status]}</p></div><button type="button" aria-label="关闭方案详情" onClick={onClose} className="model-center-quiet"><X className="h-4 w-4" /></button></header>
-      <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-lg border border-white/10 p-3"><p className="text-xs text-slate-500">生产策略</p><p className="mt-1 text-sm text-white">{recipe.strategy || '未声明'}</p></div><div className="rounded-lg border border-white/10 p-3"><p className="text-xs text-slate-500">版本状态</p><p className="mt-1 text-sm text-white">{statusLabel[recipe.status]}{isHead && recipe.status === 'published' ? '（当前）' : ''}</p></div><div className="rounded-lg border border-white/10 p-3"><p className="text-xs text-slate-500">绑定阶段</p><p className="mt-1 text-sm text-white">{stageRows.filter(([, value]) => value.binding_id).length} 个</p></div></div>
-      <div className="mt-4 overflow-hidden rounded-lg border border-white/10"><table className="min-w-full text-left text-sm"><thead className="bg-white/[0.035] text-xs text-slate-500"><tr><th>阶段</th><th>绑定/策略</th><th>是否必需</th></tr></thead><tbody>{stageRows.map(([stage, values]) => <tr key={stage} className="border-t border-white/[0.07] text-slate-300"><td>{stage}</td><td>{String(values.binding_id || values.mode || values.source || '未绑定')}</td><td>{values.required === true ? '必需' : '可选'}</td></tr>)}</tbody></table></div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-lg border border-white/10 p-3"><p className="text-xs text-slate-500">生产目标</p><p className="mt-1 text-sm text-white">{strategyCopy?.label || '自定义目标'}</p></div><div className="rounded-lg border border-white/10 p-3"><p className="text-xs text-slate-500">版本状态</p><p className="mt-1 text-sm text-white">{statusLabel[recipe.status]}{isHead && recipe.status === 'published' ? '（当前）' : ''}</p></div><div className="rounded-lg border border-white/10 p-3"><p className="text-xs text-slate-500">已选模型步骤</p><p className="mt-1 text-sm text-white">{stageRows.filter(([, value]) => value.binding_id).length} 个</p></div></div>
+      <div className="mt-4 overflow-hidden rounded-lg border border-white/10"><table className="min-w-full text-left text-sm"><thead className="bg-white/[0.035] text-xs text-slate-500"><tr><th>生产步骤</th><th>当前设置</th><th>是否必需</th></tr></thead><tbody>{stageRows.map(([stage, values]) => <tr key={stage} className="border-t border-white/[0.07] text-slate-300"><td>{stageLabels[stage]}</td><td>{stageConfiguration(values)}</td><td>{values.required === true ? '必需' : '可选'}</td></tr>)}</tbody></table></div>
       {errors.length > 0 && <div className="mt-4 rounded-lg bg-rose-500/10 p-3 text-sm text-rose-100"><p className="flex items-center gap-2 font-medium"><AlertCircle className="h-4 w-4" />发布前校验未通过</p>{errors.map((error) => <p key={`${error.code}-${error.message}`} className="mt-1 text-xs">{error.code}：{error.message}</p>)}</div>}
       {operationError && <p className="mt-4 rounded-lg bg-rose-500/10 p-3 text-sm text-rose-100">{operationError} 可修改配置后再次点击当前操作。</p>}
       {action && <div className="mt-4 rounded-lg border border-violet-400/20 bg-violet-500/[0.06] p-4">{action === 'rollback' && <label className="block text-xs text-slate-300">目标版本<select aria-label="回滚目标版本" value={targetId} onChange={(event) => setTargetId(event.target.value)} className="model-center-input mt-1 w-full"><option value="">请选择历史版本</option>{rollbackTargets.map((item) => <option key={item.id} value={item.id}>v{item.version} · {item.name}</option>)}</select></label>}<label className="mt-3 block text-xs text-slate-300">{action === 'publish' ? '发布原因' : '回滚原因'}<input aria-label={action === 'publish' ? '发布原因' : '回滚原因'} value={reason} onChange={(event) => setReason(event.target.value)} className="model-center-input mt-1 w-full" /></label><div className="mt-3 flex justify-end gap-2"><button type="button" onClick={() => setAction(null)} className="model-center-quiet">取消</button><button type="button" disabled={pending || reason.trim().length < 2 || (action === 'rollback' && !targetId)} onClick={() => void submit()} className="model-center-primary">{action === 'publish' ? '确认发布' : '确认回滚'}</button></div></div>}

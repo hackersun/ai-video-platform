@@ -50,6 +50,7 @@ MODEL_CENTER_ROUTES = {
     ("get", "/api/v1/model-center/connections"),
     ("post", "/api/v1/model-center/connections"),
     ("put", "/api/v1/model-center/connections/{connection_id}"),
+    ("delete", "/api/v1/model-center/connections/{connection_id}"),
     ("post", "/api/v1/model-center/connections/{connection_id}/test"),
     ("get", "/api/v1/model-center/catalog"),
     ("post", "/api/v1/model-center/profiles"),
@@ -375,6 +376,85 @@ async def test_connections_return_readable_provider_labels(client):
     connection = response.json()["items"][0]
     assert connection["provider_name"] == "Provider"
     assert connection["provider_code"] == "provider-1"
+
+
+@pytest.mark.asyncio
+async def test_unused_connection_can_be_safely_removed_and_hidden(client):
+    connection = ModelConnection(
+        id="connection-removable", user_id=USER_ID, provider_id="provider-1",
+        name="可移除账号", status="connection_verified",
+    )
+    connection.set_api_key_encrypted("removable-key")
+    connection.set_api_secret_encrypted("removable-secret")
+    async with AsyncSessionLocal() as db:
+        db.add(connection)
+        await db.commit()
+
+    response = await client.request(
+        "DELETE", "/api/v1/model-center/connections/connection-removable",
+        json={"expected_revision": 1, "reason": "移除已停用的测试账号"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "id": "connection-removable",
+        "status": "disabled",
+        "revision": 2,
+        "credentials_removed": True,
+    }
+    listed = await client.get("/api/v1/model-center/connections")
+    assert "connection-removable" not in {item["id"] for item in listed.json()["items"]}
+    async with AsyncSessionLocal() as db:
+        stored = await db.get(ModelConnection, "connection-removable")
+        audit = await db.scalar(select(ModelConfigAuditEvent).where(
+            ModelConfigAuditEvent.resource_id == "connection-removable",
+            ModelConfigAuditEvent.action == "remove",
+        ))
+        assert stored is not None
+        assert stored.status == "disabled"
+        assert stored.api_key == ""
+        assert stored.api_secret is None
+        assert audit is not None
+        assert audit.reason == "移除已停用的测试账号"
+
+
+@pytest.mark.asyncio
+async def test_active_connection_cannot_be_removed(client):
+    connection = ModelConnection(
+        id="connection-in-use", user_id=USER_ID, provider_id="provider-1",
+        name="正在使用的账号", status="connection_verified",
+    )
+    connection.set_api_key_encrypted("still-needed")
+    binding = ModelBinding(
+        id="binding-in-use-removal", user_id=USER_ID, scope_type="project", scope_id="removal-project",
+        task="shot_video", capability="video_generation",
+        profile_version_id="profile-video-v1", connection_id=connection.id,
+        version=1, is_active=True,
+    )
+    async with AsyncSessionLocal() as db:
+        db.add_all([connection, binding])
+        await db.commit()
+
+    try:
+        response = await client.request(
+            "DELETE", "/api/v1/model-center/connections/connection-in-use",
+            json={"expected_revision": 1, "reason": "尝试移除正在使用的账号"},
+        )
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "resource_in_use"
+        assert response.json()["detail"]["action_code"] == "replace_active_bindings"
+        assert "默认模型" in response.json()["detail"]["message"]
+        async with AsyncSessionLocal() as db:
+            stored = await db.get(ModelConnection, "connection-in-use")
+            assert stored is not None
+            assert stored.status == "connection_verified"
+            assert stored.api_key != ""
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(ModelBinding).where(ModelBinding.id == binding.id))
+            await db.execute(delete(ModelConnection).where(ModelConnection.id == connection.id))
+            await db.commit()
 
 
 @pytest.mark.asyncio

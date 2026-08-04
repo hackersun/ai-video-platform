@@ -104,6 +104,7 @@ def _recipe_view(row: ProductionRecipeVersion) -> dict:
 async def management_overview(db: AsyncSession, user_id: str) -> dict:
     connection_rows = list((await db.scalars(select(ModelConnection).where(
         ModelConnection.user_id == user_id,
+        ModelConnection.status != "disabled",
     ).order_by(ModelConnection.id))).all())
     recipe_rows = list((await db.scalars(select(ProductionRecipeVersion).where(
         ProductionRecipeVersion.user_id == user_id,
@@ -119,7 +120,10 @@ async def management_overview(db: AsyncSession, user_id: str) -> dict:
 
 async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     rows, total = await _paged_rows(
-        db, ModelConnection, (ModelConnection.user_id == user_id,), page, page_size,
+        db, ModelConnection, (
+            ModelConnection.user_id == user_id,
+            ModelConnection.status != "disabled",
+        ), page, page_size,
     )
     provider_labels = await _provider_labels(db, {row.provider_id for row in rows})
     items = [_connection_view(row, provider_labels) for row in rows]

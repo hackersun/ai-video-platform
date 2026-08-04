@@ -20,6 +20,7 @@ const listeners = new Map<ModelCenterQueryKey, Set<Listener>>();
 export const modelCenterMutationInvalidations = {
   connectionCreate: ['overview', 'connections'],
   connectionUpdate: ['overview', 'connections'],
+  connectionRemove: ['overview', 'connections', 'bindings', 'recipes', 'impact'],
   connectionTest: ['overview', 'connections'],
   profilePublish: ['overview', 'catalog', 'bindings', 'recipes', 'impact'],
   bindingCreate: ['overview', 'bindings', 'recipes', 'impact'],

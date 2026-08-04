@@ -54,6 +54,13 @@ class ConnectionItem(BaseModel):
     revision: int
 
 
+class ConnectionRemovalResponse(BaseModel):
+    id: str
+    status: Literal["disabled"]
+    revision: int
+    credentials_removed: bool
+
+
 class CatalogItem(BaseModel):
     provider_id: str
     provider_name: str
