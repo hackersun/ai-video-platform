@@ -93,7 +93,13 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
       return;
     }
     if (method === 'GET' && path === '/llm/configs') {
-      await route.fulfill({ json: [] });
+      await route.fulfill({ json: [{
+        id: '', model_id: 'profile-ark-code', api_model_id: 'ark-code-latest',
+        model_type: 'chat', model_capabilities: ['text_generation'],
+        provider_id: 'connection-ark-code', provider_name: '火山方舟 Agent Plan',
+        model_name: 'Ark Code', name: 'ark-code-latest', is_default: true,
+        test_status: 'success', key_available: true,
+      }] });
       return;
     }
 
@@ -101,6 +107,9 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
   });
 
   await page.goto('/novels/novel-overview');
+
+  await expect(page.getByLabel('文本生成模型配置')).toHaveValue('');
+  await expect(page.getByLabel('文本生成模型配置').locator('option:checked')).toContainText('ark-code-latest');
 
   const overview = page.getByTestId('novel-overview-card');
   await expect(overview).toBeVisible();

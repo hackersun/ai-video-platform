@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.api_key_utils import create_text_generation_service, get_user_text_generation_service
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 
@@ -100,12 +100,9 @@ async def resolve_text_service(
 ) -> tuple[object, str]:
     if request_api_key:
         return create_text_generation_service(request_api_key, "qianlian", None), request_model or "qwen3.5-plus"
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-        db,
-        user_id,
-        config_id=model_config_id,
+    service, _provider_name, model_id, _base_url = await get_user_text_generation_service(
+        db, user_id, config_id=model_config_id,
     )
-    service = create_text_generation_service(api_key or "", provider_name or "", base_url)
     return service, request_model or model_id or "qwen-plus"
 
 @router.post("/generate", response_model=CodingPlanResponse)

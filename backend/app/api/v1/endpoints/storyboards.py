@@ -20,7 +20,7 @@ from sqlalchemy import select, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.api_key_utils import create_text_generation_service, get_user_text_generation_service, get_user_text_model_config, get_user_volcano_api_key
+from app.core.api_key_utils import get_user_text_generation_service, get_user_volcano_api_key
 from app.core.dev_generation import dev_synthesis_url, is_dev_mode
 from app.core.security import get_current_user_id
 from app.models import Asset, Storyboard, Shot, Novel, Chapter, Script, SynthesisJob
@@ -226,12 +226,9 @@ async def get_storyboard_text_service(
     """获取用户默认文本模型配置。"""
     if not model_config_id:
         return await get_user_text_generation_service(db, user_id)
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-        db,
-        user_id,
-        config_id=model_config_id,
+    return await get_user_text_generation_service(
+        db, user_id, config_id=model_config_id,
     )
-    return create_text_generation_service(api_key or "", provider_name or "", base_url), provider_name or "", model_id or "", base_url
 
 
 def _compact_prompt_context_value(value: Optional[str], limit: int = 2400) -> str:
@@ -667,13 +664,9 @@ async def refine_template_shots_with_ai(
     draft_shots: list[dict],
     effective_chapter_id: Optional[str] = None,
 ) -> list[dict]:
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-        db,
-        user_id,
-        raise_if_missing=True,
-        config_id=request.model_config_id,
+    service, provider_name, model_id, _base_url = await get_storyboard_text_service(
+        db, user_id, request.model_config_id,
     )
-    service = create_text_generation_service(api_key or "", provider_name or "", base_url)
     consistency_prompt = ""
     story_prompt_context = await load_story_prompt_context(
         db,

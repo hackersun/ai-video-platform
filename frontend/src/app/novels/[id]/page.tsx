@@ -536,9 +536,9 @@ export default function NovelDetailPage() {
 
   const loadModelConfigs = async () => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/llm/configs`);
-      if (!res.ok) return;
-      const configs = await res.json();
+      const configsRes = await fetchWithAuth(`${API_BASE}/llm/configs?include_model_center_defaults=true`);
+      if (!configsRes.ok) return;
+      const configs = await configsRes.json();
       const list = Array.isArray(configs) ? configs : [];
       setModelConfigs(list);
       const textDefault = getDefaultConfigForCapability(list, 'text');

@@ -153,6 +153,9 @@ def parse_api_error(error: Exception, raw_response: str = "") -> str:
     error_str = str(error)
     error_lower = error_str.lower()
 
+    if isinstance(error, TimeoutError):
+        return "AI服务响应超时，请稍后重试。"
+
     # 上下文窗口超限
     if "context window exceeds" in error_lower or "context_length" in error_lower:
         return "输入内容过长，已超出模型上下文窗口限制。请减少章节数量或缩短文本长度。"
@@ -184,7 +187,7 @@ def parse_api_error(error: Exception, raw_response: str = "") -> str:
 
     # 超时
     if "timeout" in error_lower or "timed out" in error_lower:
-        return "AI服务响应超时，请检查网络后重试。"
+        return "AI服务响应超时，请稍后重试。"
 
     # 尝试从原始响应中提取错误信息
     if raw_response:

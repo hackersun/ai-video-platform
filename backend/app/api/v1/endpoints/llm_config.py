@@ -10,7 +10,7 @@ from uuid import uuid4
 import httpx  # Compatibility alias for legacy tests; provider logic lives in model_drivers.
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, and_, desc
 from pydantic import BaseModel, Field
@@ -31,6 +31,7 @@ from app.features.model_config.credential_persistence import (
     apply_config_update,
     apply_create_or_upsert_config,
 )
+from app.features.model_config.management_repository import binding_page
 from app.features.model_config.public import (
     is_product_visible_model,
     is_product_visible_provider,
@@ -228,6 +229,32 @@ def build_llm_config_response(config: LLMConfig, model: LLMModel, provider: Opti
         "usage_count": config.usage_count,
         "created_at": config.created_at,
         "updated_at": config.updated_at,
+    }
+
+
+def canonical_text_default_config(user_id: str, bindings: list[dict]) -> dict | None:
+    candidates = [item for item in bindings if (
+        item.get("is_active")
+        and item.get("scope_type") == "user"
+        and item.get("scope_id") == user_id
+        and item.get("task") == "script_generation"
+        and item.get("capability") == "text_generation"
+    )]
+    if not candidates:
+        return None
+    binding = max(candidates, key=lambda item: (item.get("version", 0), item.get("priority", 0)))
+    verified = binding.get("certification_status") == "success"
+    now = utc_now()
+    return {
+        "id": "", "user_id": user_id, "model_id": binding["profile_version_id"],
+        "config_model_id": None, "api_model_id": binding["api_model_id"],
+        "model_type": "chat", "model_capabilities": ["text_generation"],
+        "provider_id": binding["connection_id"], "model_name": binding["profile_name"],
+        "provider_name": binding["provider_name"], "name": binding["api_model_id"],
+        "temperature": 0.7, "top_p": 0.9, "max_tokens": None,
+        "is_active": True, "is_default": True, "test_status": binding["certification_status"],
+        "test_message": None, "key_available": verified, "usage_count": 0,
+        "created_at": now, "updated_at": now,
     }
 
 
@@ -1196,6 +1223,7 @@ async def list_models(
 
 @router.get("/configs", response_model=List[LLMConfigResponse])
 async def list_configs(
+    include_model_center_defaults: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id)
 ):
@@ -1227,6 +1255,11 @@ async def list_configs(
         
         configs.append(build_llm_config_response(config, model, provider))
     
+    if include_model_center_defaults:
+        bindings = await binding_page(db, user_id, 1, 100)
+        canonical_default = canonical_text_default_config(user_id, bindings["items"])
+        if canonical_default is not None:
+            configs.insert(0, canonical_default)
     return configs
 
 

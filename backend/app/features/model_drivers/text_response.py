@@ -117,7 +117,7 @@ def extract_chat_content(response: Any) -> str:
 def sanitize_chat_response(response: dict) -> dict:
     """Strip reasoning markers and normalize common native text responses."""
     try:
-        for choice in response.get("choices", []):
+        for choice in response.get("choices") or []:
             message = choice.get("message") or {}
             content = message.get("content")
             if isinstance(content, str):

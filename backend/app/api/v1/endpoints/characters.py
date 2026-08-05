@@ -16,9 +16,8 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.api_key_utils import (
     create_image_generation_service,
-    create_text_generation_service,
     get_user_image_model_config,
-    get_user_text_model_config,
+    get_user_text_generation_service,
 )
 from app.core.dev_generation import dev_image_url, is_dev_mode
 from app.core.security import get_current_user_id
@@ -130,22 +129,6 @@ class CharacterAvatarGenerateResponse(BaseModel):
     job_id: str
     status: str
     message: str
-
-
-# ============== LLM API Key 辅助函数 ==============
-
-async def get_user_qwen_api_key(
-    db: AsyncSession,
-    user_id: str,
-    model_config_id: Optional[str] = None,
-) -> tuple[str, str, str, Optional[str]]:
-    """获取用户默认文本模型配置。"""
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-        db,
-        user_id,
-        config_id=model_config_id,
-    )
-    return api_key or "", provider_name or "", model_id or "", base_url
 
 
 # ============== API端点 ==============
@@ -939,13 +922,9 @@ async def extract_characters(
         raise HTTPException(status_code=400, detail="文本内容太少，无法提取角色，请先生成章节内容")
 
     # 获取用户的API密钥
-    api_key, provider_name, model_id, base_url = await get_user_qwen_api_key(
-        db,
-        user_id,
-        request.model_config_id,
+    service, provider_name, model_id, _base_url = await get_user_text_generation_service(
+        db, user_id, config_id=request.model_config_id,
     )
-
-    service = create_text_generation_service(api_key, provider_name, base_url)
 
     # 构建提取提示词
     system_prompt = f"""你是一个专业的小说角色分析专家。你需要从给定的小说文本中识别和提取所有重要角色。

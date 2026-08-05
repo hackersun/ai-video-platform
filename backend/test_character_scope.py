@@ -237,14 +237,10 @@ def test_extract_characters_dedupes_within_same_novel_scope(
         async def safe_chat_completion(self, *args, **kwargs):
             return await _fake_completion(self, *args, **kwargs)
 
-    async def _fake_key(*args, **kwargs):
-        return "test-key", "qwen", "qwen-plus", None
+    async def _fake_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
 
-    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_qwen_api_key", _fake_key)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.characters.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_text_generation_service", _fake_service)
 
     payload = {"chapter_id": chapter_id, "character_count": 5, "auto_generate_avatar": False}
     first_resp = client.post("/api/v1/characters/extract", json=payload, headers=auth_headers(user_id))
@@ -292,14 +288,10 @@ def test_extract_characters_can_auto_generate_avatar_without_async_lazy_load(
                 ]
             }
 
-    async def _fake_key(*args, **kwargs):
-        return "test-key", "qwen", "qwen-plus", None
+    async def _fake_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
 
-    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_qwen_api_key", _fake_key)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.characters.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_text_generation_service", _fake_service)
 
     response = client.post(
         "/api/v1/characters/extract",
@@ -344,8 +336,8 @@ def test_extract_characters_continues_after_one_avatar_generation_failure(
                 ]
             }
 
-    async def _fake_key(*args, **kwargs):
-        return "test-key", "qwen", "qwen-plus", None
+    async def _fake_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
 
     calls: list[str] = []
 
@@ -359,11 +351,7 @@ def test_extract_characters_continues_after_one_avatar_generation_failure(
         db.add(character)
         return f"job-{character.name}", character.avatar, "ok"
 
-    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_qwen_api_key", _fake_key)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.characters.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    monkeypatch.setattr("app.api.v1.endpoints.characters.get_user_text_generation_service", _fake_service)
     monkeypatch.setattr("app.api.v1.endpoints.characters._generate_avatar_for_character", _flaky_avatar)
 
     response = client.post(

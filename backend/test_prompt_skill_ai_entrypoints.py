@@ -32,19 +32,15 @@ def test_novel_intro_uses_active_prompt_skill_template(
     user_id = f"novel-intro-skill-user-{uuid4()}"
     calls: list[dict] = []
 
-    async def _fake_text_api_key(*args, **kwargs):
-        return "fake-key", "qwen", "qwen-plus", None
-
     class _FakeTextService:
         async def safe_chat_completion(self, **kwargs) -> dict:
             calls.append(kwargs)
             return {"choices": [{"message": {"content": "这是测试简介正文。"}}]}
 
-    monkeypatch.setattr("app.api.v1.endpoints.novels.get_user_text_api_key", _fake_text_api_key)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.novels.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    async def _fake_text_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
+
+    monkeypatch.setattr("app.api.v1.endpoints.novels.get_user_text_generation_service", _fake_text_service)
 
     skill_resp = client.post(
         "/api/v1/prompt-skills",
@@ -80,9 +76,6 @@ def test_novel_generation_uses_active_prompt_skill_template(
     user_id = f"novel-generate-skill-user-{uuid4()}"
     calls: list[dict] = []
 
-    async def _fake_text_api_key(*args, **kwargs):
-        return "fake-key", "qwen", "qwen-plus", None
-
     class _FakeTextService:
         async def chat_completion(self, **kwargs) -> dict:
             calls.append(kwargs)
@@ -103,11 +96,10 @@ def test_novel_generation_uses_active_prompt_skill_template(
                 ]
             }
 
-    monkeypatch.setattr("app.api.v1.endpoints.novels.get_user_text_api_key", _fake_text_api_key)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.novels.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    async def _fake_text_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
+
+    monkeypatch.setattr("app.api.v1.endpoints.novels.get_user_text_generation_service", _fake_text_service)
 
     skill_resp = client.post(
         "/api/v1/prompt-skills",
@@ -143,9 +135,6 @@ def test_script_ai_assist_uses_active_prompt_skill_template(
     user_id = f"script-assist-skill-user-{uuid4()}"
     calls: list[dict] = []
 
-    async def _fake_text_config(*args, **kwargs):
-        return "fake-key", "qwen", "qwen-plus", None
-
     class _FakeTextService:
         async def safe_chat_completion(self, **kwargs) -> dict:
             calls.append(kwargs)
@@ -167,11 +156,10 @@ def test_script_ai_assist_uses_active_prompt_skill_template(
                 ]
             }
 
-    monkeypatch.setattr("app.api.v1.endpoints.scripts.get_user_text_model_config", _fake_text_config)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.scripts.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    async def _fake_text_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
+
+    monkeypatch.setattr("app.api.v1.endpoints.scripts.get_user_text_generation_service", _fake_text_service)
 
     skill_resp = client.post(
         "/api/v1/prompt-skills",
@@ -339,11 +327,10 @@ def test_entity_extraction_uses_active_prompt_skill_template(
                 ]
             }
 
-    monkeypatch.setattr("app.api.v1.endpoints.story_bible.get_user_text_model_config", _fake_text_config)
-    monkeypatch.setattr(
-        "app.api.v1.endpoints.story_bible.create_text_generation_service",
-        lambda *args, **kwargs: _FakeTextService(),
-    )
+    async def _fake_text_service(*args, **kwargs):
+        return _FakeTextService(), "qwen", "qwen-plus", None
+
+    monkeypatch.setattr("app.api.v1.endpoints.story_bible.get_user_text_generation_service", _fake_text_service)
 
     skill_resp = client.post(
         "/api/v1/prompt-skills",

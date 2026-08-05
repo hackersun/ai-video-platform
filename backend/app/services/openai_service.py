@@ -35,6 +35,7 @@ class OpenAIService:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        request_timeout: float = 300,
         **kwargs
     ) -> Dict:
         """
@@ -66,7 +67,7 @@ class OpenAIService:
                 url,
                 headers=self.headers,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=120)
+                timeout=aiohttp.ClientTimeout(total=request_timeout)
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()

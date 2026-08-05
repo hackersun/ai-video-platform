@@ -15,7 +15,7 @@ from sqlalchemy import and_, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.api_key_utils import get_user_text_generation_service
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
 from app.models import Script, Novel, Chapter, StoryEntity
@@ -183,24 +183,6 @@ class ScriptGenerateRequest(BaseModel):
     style: str = Field(default="anime", description="剧本风格（anime/anime_cartoon/realistic等）")
     genre: Optional[str] = Field(None, description="剧本类型（可选）")
     model_config_id: Optional[str] = Field(None, description="已保存的文本模型配置ID")
-
-
-# ============== LLM API Key 辅助函数 ==============
-
-async def get_user_qwen_api_key(
-    db: AsyncSession,
-    user_id: str,
-    model_config_id: Optional[str] = None,
-) -> tuple[str, str, str, Optional[str]]:
-    """获取用户默认文本模型配置。"""
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-        db,
-        user_id,
-        config_id=model_config_id,
-    )
-    return api_key or "", provider_name or "", model_id or "", base_url
-
-
 
 
 async def get_novel_for_user(db: AsyncSession, novel_id: str, user_id: str):
@@ -1237,12 +1219,9 @@ async def ai_assist_script_edit(
     user_prompt = prompt_result["prompt"]
 
     try:
-        api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-            db,
-            user_id,
-            config_id=request.model_config_id,
+        service, provider_name, model_id, _base_url = await get_user_text_generation_service(
+            db, user_id, config_id=request.model_config_id,
         )
-        service = create_text_generation_service(api_key or "", provider_name or "", base_url)
         response = await service.safe_chat_completion(
             model=model_id,
             messages=[
@@ -1606,13 +1585,9 @@ async def generate_script(
     model_id = generation_context["consistency_metadata"].get("default_model_id") or ""
     ai_refined = False
     try:
-        api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-            db,
-            user_id,
-            raise_if_missing=True,
-            config_id=request.model_config_id,
+        service, provider_name, model_id, _base_url = await get_user_text_generation_service(
+            db, user_id, config_id=request.model_config_id,
         )
-        service = create_text_generation_service(api_key or "", provider_name or "", base_url)
         response = await service.safe_chat_completion(
             model=model_id,
             messages=[

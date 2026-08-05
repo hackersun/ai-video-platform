@@ -66,6 +66,7 @@ class VolcanoService:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        request_timeout: float = 300,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -86,7 +87,7 @@ class VolcanoService:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url, headers=self.headers, json=payload,
-                timeout=aiohttp.ClientTimeout(total=120)
+                timeout=aiohttp.ClientTimeout(total=request_timeout)
             ) as resp:
                 if resp.status != 200:
                     text = await resp.text()

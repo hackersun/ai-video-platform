@@ -621,7 +621,7 @@ class ApiClient {
   }
   
   async getLLMConfigs() {
-    return this.request<any[]>('/llm/configs');
+    return this.request<any[]>('/llm/configs?include_model_center_defaults=true');
   }
   
   async createLLMConfig(config: any) {

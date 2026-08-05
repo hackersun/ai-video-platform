@@ -1641,15 +1641,10 @@ def test_generate_intro_uses_default_text_service_without_creating_novel(
         async def safe_chat_completion(self, *args, **kwargs):
             return {"choices": [{"message": {"content": "少年在失落城邦醒来，发现自己掌握着改写命运的古老符印。"}}]}
 
-    async def _fake_config(*args, **kwargs):
-        return "sk-test", "minimax", "MiniMax-M2.7", "https://api.minimaxi.com/v1"
+    async def _fake_service(*args, **kwargs):
+        return _FakeTextService(), "minimax", "MiniMax-M2.7", "https://api.minimaxi.com/v1"
 
-    def _fake_factory(api_key: str, provider_name: str, base_url: str | None):
-        assert provider_name == "minimax"
-        return _FakeTextService()
-
-    monkeypatch.setattr("app.api.v1.endpoints.novels.get_user_text_model_config", _fake_config)
-    monkeypatch.setattr("app.api.v1.endpoints.novels.create_text_generation_service", _fake_factory)
+    monkeypatch.setattr("app.api.v1.endpoints.novels.get_user_text_generation_service", _fake_service)
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer intro-test-user"}

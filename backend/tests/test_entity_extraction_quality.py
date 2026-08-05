@@ -128,14 +128,13 @@ def test_mock_ai_metadata_and_custom_event_shape_survive_real_extraction_persist
         async def safe_chat_completion(self, **kwargs):
             return {"choices": [{"message": {"content": json.dumps([ai_item], ensure_ascii=False)}}]}
 
-    async def fake_config(*args, **kwargs):
-        return "key", "provider-x", "model-x", None
-
     async def fake_prompt(*args, **kwargs):
         return {"prompt": "mock"}
 
-    monkeypatch.setattr(story_bible, "get_user_text_model_config", fake_config)
-    monkeypatch.setattr(story_bible, "create_text_generation_service", lambda *args: FakeService())
+    async def fake_service(*args, **kwargs):
+        return FakeService(), "provider-x", "model-x", None
+
+    monkeypatch.setattr(story_bible, "get_user_text_generation_service", fake_service)
     monkeypatch.setattr(story_bible, "select_prompt_skill_for_model", fake_prompt)
 
     async def scenario():
