@@ -148,3 +148,113 @@ def test_bulk_review_keeps_successes_and_reports_unsafe_or_out_of_scope_rows(cli
     )
     assert rejected.status_code == 200
     assert {item["review_status"] for item in rejected.json()["updated"]} == {"rejected"}
+
+
+def test_reanalysis_requires_provider_preview_before_apply(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = f"review-reanalyze-{uuid4().hex[:20]}"
+    novel_id = str(uuid4())
+    _seed_entities(user_id, novel_id, 1, name_prefix="误识别角色")
+
+    async def entity_id() -> str:
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as db:
+            return (await db.execute(select(StoryEntity.id).where(StoryEntity.user_id == user_id))).scalar_one()
+
+    target_id = asyncio.run(entity_id())
+
+    async def provider_preview(*_args, **_kwargs):
+        return ([{
+            "entity_type": "character", "name": "林辰", "canonical_name": "林辰",
+            "aliases": ["辰儿"], "description": "外门弟子", "appearance": "黑发青衣少年",
+            "visual_prompt": "black-haired young cultivator", "evidence": "误识别角色000",
+            "confidence": 92, "source": "provider_model", "attributes": {},
+        }], {"execution_mode": "provider_model", "provider": "test", "model_id": "model-x"})
+
+    monkeypatch.setattr("app.features.entity_review.service._run_model_candidate_preview", provider_preview, raising=False)
+    preview = client.post(
+        f"/api/v1/entity-review/entities/{target_id}/reanalyze",
+        json={"mode": "preview"},
+        headers=_headers(user_id),
+    )
+    assert preview.status_code == 200
+    assert preview.json()["current"]["name"] == "误识别角色000"
+    assert preview.json()["proposed"]["name"] == "林辰"
+
+    unchanged = client.get(
+        f"/api/v1/entity-review/novels/{novel_id}/entities?query=误识别角色000",
+        headers=_headers(user_id),
+    )
+    assert unchanged.json()["total"] == 1
+
+    applied = client.post(
+        f"/api/v1/entity-review/entities/{target_id}/reanalyze",
+        json={"mode": "apply", "preview_run_id": preview.json()["preview_run_id"]},
+        headers=_headers(user_id),
+    )
+    assert applied.status_code == 200
+    assert applied.json()["current"]["name"] == "林辰"
+    assert applied.json()["current"]["review_status"] == "candidate"
+
+
+def test_rebuild_archives_only_review_rows_after_provider_preview(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sqlalchemy import select
+    from app.services.story_entity_lifecycle import get_entity_review_status
+
+    user_id = f"review-rebuild-{uuid4().hex[:20]}"
+    novel_id = str(uuid4())
+
+    async def seed() -> dict[str, str]:
+        async with AsyncSessionLocal() as db:
+            ids = {}
+            for name, status in (("已定稿角色", APPROVED), ("旧候选", CANDIDATE), ("旧拒绝", REJECTED)):
+                row = StoryEntity(id=str(uuid4()), user_id=user_id, novel_id=novel_id, entity_type="character", name=name, evidence=name, source="manual")
+                set_entity_review_status(row, status, changed_by=user_id, reason="fixture")
+                db.add(row)
+                ids[name] = row.id
+            await db.commit()
+            return ids
+
+    ids = asyncio.run(seed())
+
+    async def provider_preview(*_args, **_kwargs):
+        return ([{
+            "entity_type": "character", "name": "新候选", "description": "模型识别",
+            "evidence": "新候选", "confidence": 90, "source": "provider_model", "attributes": {},
+        }], {"execution_mode": "provider_model", "provider": "test", "model_id": "model-x"})
+
+    monkeypatch.setattr("app.features.entity_review.service._run_model_candidate_preview", provider_preview, raising=False)
+    preview = client.post(
+        f"/api/v1/entity-review/novels/{novel_id}/rebuild-candidates",
+        json={"mode": "preview", "source_text": "新候选"}, headers=_headers(user_id),
+    )
+    assert preview.status_code == 200
+    applied = client.post(
+        f"/api/v1/entity-review/novels/{novel_id}/rebuild-candidates",
+        json={"mode": "apply", "preview_run_id": preview.json()["preview_run_id"]},
+        headers=_headers(user_id),
+    )
+    assert applied.status_code == 200
+
+    async def statuses() -> dict[str, str]:
+        async with AsyncSessionLocal() as db:
+            rows = (await db.execute(select(StoryEntity).where(StoryEntity.user_id == user_id))).scalars().all()
+            return {row.name: get_entity_review_status(row) for row in rows}
+
+    result = asyncio.run(statuses())
+    assert result["已定稿角色"] == APPROVED
+    assert result["旧候选"] == "archived"
+    assert result["旧拒绝"] == "archived"
+    assert result["新候选"] == CANDIDATE
+
+    async def fallback_preview(*_args, **_kwargs):
+        return ([{"entity_type": "character", "name": "兜底噪声"}], {"execution_mode": "deterministic_fallback"})
+
+    monkeypatch.setattr("app.features.entity_review.service._run_model_candidate_preview", fallback_preview, raising=False)
+    blocked = client.post(
+        f"/api/v1/entity-review/novels/{novel_id}/rebuild-candidates",
+        json={"mode": "preview", "source_text": "兜底噪声"}, headers=_headers(user_id),
+    )
+    assert blocked.status_code == 409
+    assert asyncio.run(statuses()) == result

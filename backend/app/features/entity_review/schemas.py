@@ -74,3 +74,35 @@ class BulkReviewResponse(BaseModel):
     updated: list[ReviewEntityItem] = Field(default_factory=list)
     skipped: list[BulkSkippedItem] = Field(default_factory=list)
     summary: ReviewSummary
+
+
+class ReanalysisRequest(BaseModel):
+    mode: Literal["preview", "apply"] = "preview"
+    preview_run_id: str | None = None
+    model_config_id: str | None = None
+
+
+class ReanalysisResponse(BaseModel):
+    mode: Literal["preview", "apply"]
+    preview_run_id: str
+    current: ReviewEntityItem
+    proposed: dict[str, Any]
+    differences: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    model_execution: dict[str, Any] = Field(default_factory=dict)
+
+
+class RebuildCandidatesRequest(BaseModel):
+    mode: Literal["preview", "apply"] = "preview"
+    preview_run_id: str | None = None
+    model_config_id: str | None = None
+    source_text: str | None = Field(None, max_length=100_000)
+
+
+class RebuildCandidatesResponse(BaseModel):
+    mode: Literal["preview", "apply"]
+    preview_run_id: str
+    proposed: list[dict[str, Any]] = Field(default_factory=list)
+    archived_count: int = 0
+    created_count: int = 0
+    model_execution: dict[str, Any] = Field(default_factory=dict)
+    summary: ReviewSummary

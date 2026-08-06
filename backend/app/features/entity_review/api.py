@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -12,11 +12,45 @@ from app.features.entity_review.schemas import (
     PagedReviewEntities,
     ReviewSort,
     ReviewStatus,
+    ReanalysisRequest,
+    ReanalysisResponse,
+    RebuildCandidatesRequest,
+    RebuildCandidatesResponse,
 )
-from app.features.entity_review.service import bulk_review_entities
+from app.features.entity_review.service import (
+    ProviderModelRequiredError,
+    bulk_review_entities,
+    reanalyze_entity,
+    rebuild_candidates,
+)
 
 
 router = APIRouter(prefix="/entity-review")
+
+
+async def _run_ai_action(action):
+    try:
+        return await action
+    except ProviderModelRequiredError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/entities/{entity_id}/reanalyze", response_model=ReanalysisResponse)
+async def reanalyze(
+    entity_id: str, payload: ReanalysisRequest, db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ReanalysisResponse:
+    return await _run_ai_action(reanalyze_entity(db, user_id=user_id, entity_id=entity_id, payload=payload))
+
+
+@router.post("/novels/{novel_id}/rebuild-candidates", response_model=RebuildCandidatesResponse)
+async def rebuild(
+    novel_id: str, payload: RebuildCandidatesRequest, db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> RebuildCandidatesResponse:
+    return await _run_ai_action(rebuild_candidates(db, user_id=user_id, novel_id=novel_id, payload=payload))
 
 
 @router.post("/bulk-review", response_model=BulkReviewResponse)
