@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.features.entity_review.schemas import PagedReviewEntities, ReviewEntityItem, ReviewSummary
 from app.models import StoryEntity
 from app.services.entity_review_service import get_entity_review_summary
+from app.services.entity_quality_service import REJECT_NOISE, score_entity_candidate
 from app.services.story_entity_lifecycle import get_entity_review_status
 
 
@@ -20,6 +21,24 @@ def _status_expression():
 
 
 def to_review_item(entity: StoryEntity) -> ReviewEntityItem:
+    extra_data = dict(entity.extra_data or {})
+    if entity.source != "manual":
+        previous = extra_data.get("quality") if isinstance(extra_data.get("quality"), dict) else {}
+        event = (entity.attributes or {}).get("event") if isinstance((entity.attributes or {}).get("event"), dict) else {}
+        try:
+            current = score_entity_candidate({
+                "entity_type": entity.entity_type, "name": entity.name,
+                "canonical_name": entity.canonical_name, "aliases": entity.aliases or [],
+                "description": entity.description, "appearance": entity.appearance,
+                "visual_prompt": entity.visual_prompt, "attributes": entity.attributes or {},
+                "evidence": entity.evidence, "confidence": entity.confidence or 0,
+                "source": entity.source or "deterministic", **event,
+            }).model_dump()
+        except ValueError:
+            current = {"score": 0, "auto_decision": REJECT_NOISE, "flags": ["noise:invalid_entity_shape"], "reasons": ["invalid entity shape"], "components": {}}
+        current["previous_score"] = previous.get("score")
+        current["previous_auto_decision"] = previous.get("auto_decision")
+        extra_data["quality"] = current
     return ReviewEntityItem(
         id=entity.id,
         novel_id=entity.novel_id,
@@ -39,7 +58,7 @@ def to_review_item(entity: StoryEntity) -> ReviewEntityItem:
         is_approved=bool(entity.is_approved),
         attributes=entity.attributes or {},
         relations=entity.relations or [],
-        extra_data=entity.extra_data or {},
+        extra_data=extra_data,
         created_at=entity.created_at,
         updated_at=entity.updated_at,
     )

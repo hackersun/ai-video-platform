@@ -54,6 +54,9 @@ async def _review_one(
     entity = await db.get(StoryEntity, entity_id)
     if entity is None or entity.user_id != user_id or entity.novel_id != payload.novel_id:
         return None, BulkSkippedItem(id=entity_id, reason="实体不存在或不属于当前小说")
+    current_quality = to_review_item(entity).extra_data.get("quality", {})
+    if payload.action == "approve" and current_quality.get("auto_decision") == "reject_noise":
+        return None, BulkSkippedItem(id=entity_id, reason="当前候选被质量门判定为噪声", repair_action="修改实体或使用 AI 重新分析")
     if payload.action == "approve" and await entity_has_duplicate_risk(db, user_id=user_id, entity=entity):
         return None, BulkSkippedItem(id=entity_id, reason="存在高重复风险，不能批量定稿", repair_action="先合并重复实体")
     try:

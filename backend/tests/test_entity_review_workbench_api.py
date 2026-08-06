@@ -103,6 +103,33 @@ def test_entity_review_filters_search_and_summary_are_server_side(client: TestCl
     assert [item["name"] for item in alias_match.json()["items"]] == ["分页角色035"]
 
 
+def test_entity_review_rechecks_stale_quality_metadata_for_live_candidates(client: TestClient) -> None:
+    user_id = f"review-stale-quality-{uuid4().hex[:20]}"
+    novel_id = str(uuid4())
+
+    async def seed() -> None:
+        async with AsyncSessionLocal() as db:
+            entity = StoryEntity(
+                id=str(uuid4()), user_id=user_id, novel_id=novel_id, entity_type="character",
+                name="赵家", evidence="赵家在青玄宗颇有势力。", source="deterministic", confidence=100,
+                extra_data={"quality": {"score": 100, "auto_decision": "auto_approve"}},
+            )
+            set_entity_review_status(entity, CANDIDATE, changed_by=user_id, reason="fixture")
+            db.add(entity)
+            await db.commit()
+
+    asyncio.run(seed())
+    response = client.get(
+        f"/api/v1/entity-review/novels/{novel_id}/entities?page=1&page_size=20",
+        headers=_headers(user_id),
+    )
+
+    quality = response.json()["items"][0]["extra_data"]["quality"]
+    assert quality["auto_decision"] == "reject_noise"
+    assert quality["score"] <= 35
+    assert quality["previous_score"] == 100
+
+
 def test_bulk_review_keeps_successes_and_reports_unsafe_or_out_of_scope_rows(client: TestClient) -> None:
     user_id = f"review-bulk-{uuid4().hex[:20]}"
     other_user = f"review-bulk-other-{uuid4().hex[:20]}"
