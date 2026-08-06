@@ -55,3 +55,22 @@ class PagedReviewEntities(BaseModel):
 
 ReviewStatus = Literal["candidate", "approved", "rejected", "legacy_active", "archived"]
 ReviewSort = Literal["updated_desc", "updated_asc", "name_asc", "quality_desc"]
+
+
+class BulkReviewRequest(BaseModel):
+    novel_id: str = Field(min_length=1)
+    entity_ids: list[str] = Field(min_length=1, max_length=100)
+    action: Literal["approve", "reject"]
+    reason: str | None = Field(None, max_length=500)
+
+
+class BulkSkippedItem(BaseModel):
+    id: str
+    reason: str
+    repair_action: str | None = None
+
+
+class BulkReviewResponse(BaseModel):
+    updated: list[ReviewEntityItem] = Field(default_factory=list)
+    skipped: list[BulkSkippedItem] = Field(default_factory=list)
+    summary: ReviewSummary

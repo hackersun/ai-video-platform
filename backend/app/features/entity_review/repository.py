@@ -19,7 +19,7 @@ def _status_expression():
     )
 
 
-def _to_item(entity: StoryEntity) -> ReviewEntityItem:
+def to_review_item(entity: StoryEntity) -> ReviewEntityItem:
     return ReviewEntityItem(
         id=entity.id,
         novel_id=entity.novel_id,
@@ -88,7 +88,7 @@ async def list_review_entities(
     raw_summary = await get_entity_review_summary(db, user_id=user_id, novel_id=novel_id)
     summary = ReviewSummary(total=sum(raw_summary.get("counts", {}).values()), **raw_summary)
     return PagedReviewEntities(
-        items=[_to_item(entity) for entity in entities],
+        items=[to_review_item(entity) for entity in entities],
         page=page,
         page_size=page_size,
         total=total,

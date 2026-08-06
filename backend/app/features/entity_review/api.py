@@ -6,10 +6,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.features.entity_review.repository import list_review_entities
-from app.features.entity_review.schemas import PagedReviewEntities, ReviewSort, ReviewStatus
+from app.features.entity_review.schemas import (
+    BulkReviewRequest,
+    BulkReviewResponse,
+    PagedReviewEntities,
+    ReviewSort,
+    ReviewStatus,
+)
+from app.features.entity_review.service import bulk_review_entities
 
 
 router = APIRouter(prefix="/entity-review")
+
+
+@router.post("/bulk-review", response_model=BulkReviewResponse)
+async def bulk_review(
+    payload: BulkReviewRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> BulkReviewResponse:
+    return await bulk_review_entities(db, user_id=user_id, payload=payload)
 
 
 @router.get("/novels/{novel_id}/entities", response_model=PagedReviewEntities)

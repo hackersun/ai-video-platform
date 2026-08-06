@@ -101,3 +101,50 @@ def test_entity_review_filters_search_and_summary_are_server_side(client: TestCl
     assert filtered.json()["summary"]["total"] == 36
     assert alias_match.status_code == 200
     assert [item["name"] for item in alias_match.json()["items"]] == ["分页角色035"]
+
+
+def test_bulk_review_keeps_successes_and_reports_unsafe_or_out_of_scope_rows(client: TestClient) -> None:
+    user_id = f"review-bulk-{uuid4().hex[:20]}"
+    other_user = f"review-bulk-other-{uuid4().hex[:20]}"
+    novel_id = str(uuid4())
+    other_novel_id = str(uuid4())
+
+    async def seed() -> tuple[str, str, str, str]:
+        async with AsyncSessionLocal() as db:
+            rows = [
+                StoryEntity(id=str(uuid4()), user_id=user_id, novel_id=novel_id, entity_type="prop", name="人工安全道具", source="manual"),
+                StoryEntity(id=str(uuid4()), user_id=user_id, novel_id=novel_id, entity_type="scene", name="无证据场景", source="deterministic"),
+                StoryEntity(id=str(uuid4()), user_id=user_id, novel_id=other_novel_id, entity_type="character", name="其他小说角色", source="manual"),
+                StoryEntity(id=str(uuid4()), user_id=other_user, novel_id=novel_id, entity_type="character", name="其他用户角色", source="manual"),
+            ]
+            for row in rows:
+                set_entity_review_status(row, CANDIDATE, changed_by=row.user_id, reason="fixture")
+                db.add(row)
+            await db.commit()
+            return tuple(row.id for row in rows)
+
+    safe_id, missing_id, other_novel_id_entity, other_user_id_entity = asyncio.run(seed())
+    response = client.post(
+        "/api/v1/entity-review/bulk-review",
+        json={
+            "novel_id": novel_id,
+            "entity_ids": [safe_id, missing_id, other_novel_id_entity, other_user_id_entity],
+            "action": "approve",
+        },
+        headers=_headers(user_id),
+    )
+
+    assert response.status_code == 200
+    assert [item["id"] for item in response.json()["updated"]] == [safe_id]
+    assert {item["id"] for item in response.json()["skipped"]} == {
+        missing_id, other_novel_id_entity, other_user_id_entity,
+    }
+    assert response.json()["summary"]["approved_count"] == 1
+
+    rejected = client.post(
+        "/api/v1/entity-review/bulk-review",
+        json={"novel_id": novel_id, "entity_ids": [safe_id, missing_id], "action": "reject"},
+        headers=_headers(user_id),
+    )
+    assert rejected.status_code == 200
+    assert {item["review_status"] for item in rejected.json()["updated"]} == {"rejected"}
