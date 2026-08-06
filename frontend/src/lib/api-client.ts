@@ -2546,6 +2546,28 @@ class ApiClient {
     return this.request<any>(`/story-bibles/entities/review-summary${qs ? `?${qs}` : ''}`);
   }
 
+  async getEntityReviewPage(novelId: string, params: {
+    page: number; pageSize: number; type?: string; status?: string; query?: string;
+  }) {
+    const search = new URLSearchParams({ page: String(params.page), page_size: String(params.pageSize) });
+    if (params.type) search.set('entity_type', params.type);
+    if (params.status) search.set('review_status', params.status);
+    if (params.query) search.set('query', params.query);
+    return this.request<any>(`/entity-review/novels/${novelId}/entities?${search.toString()}`);
+  }
+
+  async bulkReviewEntities(data: { novel_id: string; entity_ids: string[]; action: 'approve' | 'reject' }) {
+    return this.request<any>('/entity-review/bulk-review', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async reanalyzeReviewEntity(entityId: string, data: { mode: 'preview' | 'apply'; preview_run_id?: string }) {
+    return this.request<any>(`/entity-review/entities/${entityId}/reanalyze`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async rebuildReviewCandidates(novelId: string, data: { mode: 'preview' | 'apply'; preview_run_id?: string }) {
+    return this.request<any>(`/entity-review/novels/${novelId}/rebuild-candidates`, { method: 'POST', body: JSON.stringify(data) });
+  }
+
   async promoteStoryEntityCandidate(entityId: string, reason?: string) {
     return this.request<any>(`/story-bibles/entities/${entityId}/promote`, {
       method: 'POST',
