@@ -133,8 +133,8 @@ def _preview_run(
         source_type=source_type, source_id=source_id,
         text_hash=hashlib.sha256(source_text.encode("utf-8")).hexdigest(),
         entity_types=sorted({str(item.get("entity_type")) for item in items}),
-        model_config_id=model_config_id, provider=evidence.get("provider"),
-        model_id=evidence.get("model_id"), status="completed", completed_at=utc_now(),
+        model_config_id=model_config_id, provider=evidence.get("provider") or evidence.get("provider_id"),
+        model_id=evidence.get("model_id") or evidence.get("api_model_id"), status="completed", completed_at=utc_now(),
         stats={"proposed": len(items)}, quality_summary={},
         extra_data={"proposed_candidates": items, "model_execution": evidence},
     )
@@ -177,6 +177,9 @@ async def reanalyze_entity(
             proposed=proposed, differences=_diff(entity, proposed), model_execution=evidence)
     run = await db.get(EntityExtractionRun, payload.preview_run_id) if payload.preview_run_id else None
     proposed = _require_preview(run, user_id=user_id, source_type="entity_reanalysis_preview", source_id=entity.id)[0]
+    current_text = str(entity.evidence or entity.description or entity.name)
+    if run.text_hash != hashlib.sha256(current_text.encode("utf-8")).hexdigest():
+        raise ValueError("实体已在预览后修改，请重新分析")
     before = to_review_item(entity)
     for field in ("entity_type", "name", "canonical_name", "aliases", "description", "appearance", "visual_prompt", "evidence", "attributes", "relations"):
         if field in proposed:
