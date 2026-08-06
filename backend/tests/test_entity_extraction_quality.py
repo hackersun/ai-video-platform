@@ -221,6 +221,98 @@ def test_quality_service_rejects_known_noise_candidates(entity_type: str, name: 
 
 
 @pytest.mark.parametrize(
+    ("entity_type", "name", "evidence", "event_shape"),
+    [
+        ("character", "赵家", "天霸，内门弟子，炼气大圆满修为，赵家在青玄宗颇有势力。", {}),
+        ("character", "林辰深", "林辰深以为然。", {}),
+        ("character", "林辰正", "这日，林辰正在庭院中修炼。", {}),
+        ("character", "孙三可", "孙三可是炼气七层修为。", {}),
+        ("character", "朱颜果", "玉盒之中放着一枚朱颜果。", {}),
+        (
+            "event",
+            "这日中午",
+            "这日中午，林辰来到外门执事堂。",
+            {"actor": "林辰", "action": "来到", "object": "外门执事堂", "outcome": "抵达执事堂"},
+        ),
+        (
+            "event",
+            "气血翻涌",
+            "林辰被震得气血翻涌，后退三步。",
+            {"actor": "林辰", "action": "气血翻涌", "object": "自身", "outcome": "后退三步"},
+        ),
+        (
+            "event",
+            "眼中闪过一丝厉色",
+            "王虎眼中闪过一丝厉色，拔剑冲来。",
+            {"actor": "王虎", "action": "闪过", "object": "一丝厉色", "outcome": "拔剑冲来"},
+        ),
+    ],
+)
+def test_quality_rejects_live_false_positives(
+    entity_type: str,
+    name: str,
+    evidence: str,
+    event_shape: dict[str, str],
+) -> None:
+    """Catches predicate fragments, type leakage and non-event phrases scoring as assets."""
+    from app.services.entity_extraction_schema import CanonicalEntityCandidate
+    from app.services.entity_quality_service import REJECT_NOISE, score_entity_candidate
+
+    result = score_entity_candidate(
+        CanonicalEntityCandidate(
+            entity_type=entity_type,
+            name=name,
+            evidence=evidence,
+            confidence=100,
+            source="deterministic",
+            **event_shape,
+        )
+    )
+
+    assert result.auto_decision == REJECT_NOISE
+    assert result.score <= 35
+
+
+def test_quality_never_auto_approves_unlabelled_deterministic_candidate() -> None:
+    """Catches deterministic fallback output bypassing human review because its shape scores highly."""
+    from app.services.entity_extraction_schema import CanonicalEntityCandidate
+    from app.services.entity_quality_service import AUTO_APPROVE, score_entity_candidate
+
+    result = score_entity_candidate(
+        CanonicalEntityCandidate(
+            entity_type="character",
+            name="林辰",
+            evidence="林辰站在外门庭院中，握紧长剑。",
+            confidence=100,
+            source="deterministic",
+        )
+    )
+
+    assert result.auto_decision != AUTO_APPROVE
+    assert "deterministic_requires_review" in result.flags
+
+
+def test_quality_keeps_explicit_deterministic_label_reviewable() -> None:
+    """Catches the stricter source gate accidentally discarding explicit author labels."""
+    from app.services.entity_extraction_schema import CanonicalEntityCandidate
+    from app.services.entity_quality_service import REJECT_NOISE, score_entity_candidate
+
+    result = score_entity_candidate(
+        CanonicalEntityCandidate(
+            entity_type="character",
+            name="林辰",
+            description="文本标注角色",
+            evidence="角色：林辰。",
+            confidence=100,
+            source="deterministic_label",
+        )
+    )
+
+    assert result.auto_decision != REJECT_NOISE
+    assert result.score >= 55
+
+
+@pytest.mark.parametrize(
     ("entity_type", "name", "evidence"),
     [
         ("character", "林澈", "林澈站在旧邮局门口，握紧铜铃。"),
