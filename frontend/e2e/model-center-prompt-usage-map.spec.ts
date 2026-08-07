@@ -111,3 +111,54 @@ test('opens the prompt usage map before the template library', async ({ page }) 
   await page.getByRole('button', { name: '模板库', exact: true }).click();
   await expect(page.getByText('提示词版本工作台')).toBeVisible();
 });
+
+test('creates a model-specific draft before production can change', async ({ page }) => {
+  const assignmentRequests: unknown[] = [];
+  await installRoutes(page);
+  await page.route('**/api/v1/model-center/prompt-profiles**', async (route) => {
+    const url = route.request().url();
+    const head = {
+      id: 'draft-version-1', version: 1, status: 'draft', stage: null,
+      content: '镜头模板', system_contract: '保持角色一致。', task_template: '生成连续镜头。',
+      input_mapping: {}, output_schema: {}, negative_constraints: [],
+      model_family_overrides: {}, validation_fixtures: [], release_notes: '模型专用草稿',
+      checksum: 'a'.repeat(64), created_at: null, published_at: null,
+    };
+    const body = url.includes('?')
+      ? { items: [{
+        id: 'draft-profile-1', key: 'usage.shot_video', name: '镜头连续性 · 生产默认模型',
+        task: 'shot_video', head_version_id: head.id, head_version: 1, status: 'draft',
+      }], meta: { page: 1, page_size: 20, total: 1 } }
+      : { id: 'draft-profile-1', key: 'usage.shot_video', name: '镜头连续性 · 生产默认模型', task: 'shot_video', head, versions: [head], legacy_skill: null };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await page.route('**/prompt-usage-map/stages/shot_video/candidates', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify({ items: [{
+      id: 'prompt-video-generic-v2', profile_id: 'video-generic', name: '镜头连续性',
+      task: 'shot_video', version: 2, status: 'published',
+    }] }),
+  }));
+  await page.route('**/prompt-usage-map/stages/shot_video/assignment-drafts', async (route) => {
+    assignmentRequests.push(route.request().postDataJSON());
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      profile_id: 'draft-profile-1', version_id: 'draft-version-1',
+      name: '镜头连续性 · 生产默认模型', task: 'shot_video', version: 1, status: 'draft',
+      routing: { provider_filter: ['volcengine'], model_filter: ['shot-video-model'] },
+    }) });
+  });
+  await page.goto('/llm-config?section=prompts');
+
+  await page.getByText('镜头视频', { exact: true }).click();
+  await page.getByRole('button', { name: '更换模板' }).click();
+  await expect(page.getByRole('dialog', { name: '更换镜头视频模板' })).toContainText('生产任务不会改变');
+  await page.getByLabel('选择已发布模板').selectOption('prompt-video-generic-v2');
+  await page.getByRole('button', { name: '创建模型专用草稿' }).click();
+
+  await expect.poll(() => assignmentRequests.length).toBe(1);
+  expect(assignmentRequests[0]).toEqual({
+    prompt_version_id: 'prompt-video-generic-v2',
+    reason: '用于当前默认镜头视频模型',
+  });
+  await expect(page.getByText('提示词版本工作台')).toBeVisible();
+  await expect(page.getByRole('button', { name: '发布此版本' })).toBeVisible();
+});

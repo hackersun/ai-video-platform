@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpen, Cpu, ExternalLink, Route } from 'lucide-react';
+import { BookOpen, Cpu, ExternalLink, RefreshCw, Route } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { modelCenterApi } from '../api';
@@ -10,9 +10,11 @@ import type { PromptProfileDetail } from '../types';
 export function PromptUsageDetail({
   stage,
   onOpenLibrary,
+  onChangeTemplate,
 }: {
   stage: PromptUsageStage;
   onOpenLibrary: (profileId?: string) => void;
+  onChangeTemplate: () => void;
 }) {
   const [detail, setDetail] = useState<PromptProfileDetail | null>(null);
   useEffect(() => {
@@ -56,6 +58,7 @@ export function PromptUsageDetail({
       </div>
     </details>}
     <div className="mt-5 flex flex-wrap gap-2">
+      {stage.uses_prompt && <button type="button" onClick={onChangeTemplate} className="model-center-primary"><RefreshCw className="h-4 w-4" />更换模板</button>}
       <button type="button" onClick={() => onOpenLibrary(stage.template?.id)} className="model-center-quiet"><ExternalLink className="h-4 w-4" />{stage.template ? '在模板库编辑' : '打开模板库'}</button>
     </div>
   </article>;

@@ -41,7 +41,7 @@ function CreatePromptDialog({ onClose, onSave }: { onClose: () => void; onSave: 
   return <div role="dialog" aria-modal="true" aria-label="新建提示词模板" className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/80 p-4 sm:p-8"><form onSubmit={submit} className="mx-auto max-w-4xl rounded-xl border border-white/15 bg-slate-900 p-5 shadow-2xl"><header className="flex items-start justify-between gap-4"><div><h2 className="text-xl font-semibold text-white">新建提示词模板</h2><p className="mt-1 text-sm text-slate-400">创建不可变草稿版本；结构化字段会随版本持久化。</p></div><button type="button" aria-label="关闭提示词编辑器" onClick={onClose} className="model-center-quiet"><X className="h-4 w-4" /></button></header><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">模板键<input aria-label="模板键" required value={key} onChange={(event) => setKey(event.target.value)} className="model-center-input mt-1 w-full" /></label><label className="text-xs text-slate-400">模板名称<input aria-label="模板名称" required value={name} onChange={(event) => setName(event.target.value)} className="model-center-input mt-1 w-full" /></label><label className="text-xs text-slate-400">任务类型<input aria-label="任务类型" required value={task} onChange={(event) => setTask(event.target.value)} className="model-center-input mt-1 w-full" placeholder="例如 shot_video" /></label><label className="text-xs text-slate-400">阶段（可选）<input aria-label="阶段" value={stage} onChange={(event) => setStage(event.target.value)} className="model-center-input mt-1 w-full" /></label></div><PromptFields draft={draft} onChange={update} /><footer className="mt-5 flex justify-end gap-2"><button type="button" onClick={onClose} className="model-center-quiet">取消</button><button type="submit" disabled={pending || !key.trim() || !name.trim() || !task.trim()} className="model-center-primary">{pending ? '保存中' : '保存提示词草稿'}</button></footer>{error && <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{error}</p>}</form></div>;
 }
 
-export function PromptProfileList({ location, initialSelectedId = null }: { location: ModelCenterLocation; initialSelectedId?: string | null }) {
+export function PromptProfileList({ location, initialSelectedId = null, onPublished }: { location: ModelCenterLocation; initialSelectedId?: string | null; onPublished?: () => void }) {
   const query = usePromptProfiles();
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
   const [search, setSearch] = useState('');
@@ -78,6 +78,7 @@ export function PromptProfileList({ location, initialSelectedId = null }: { loca
       else await query.rollbackPromptProfile(action.profile.id, { expected_revision: action.profile.head_version, target_version_id: action.profile.head_version_id, reason });
       setAction(null);
       setMessage(action.kind === 'publish' ? '发布请求已提交。' : '已创建新的回滚草稿版本。');
+      if (action.kind === 'publish') onPublished?.();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '提示词版本操作失败');
     } finally {

@@ -24,6 +24,17 @@ const promptDetail = {
   legacy_skill: { id: 'skill-001', is_active: true, is_builtin: false },
 };
 
+const promptUsageMap = {
+  summary: { total: 1, counts: { effective: 1 } },
+  groups: [{ id: 'visual_production', name: '视觉生产', stages: [{
+    id: 'shot_video', name: '镜头视频', uses_prompt: true, status: 'effective',
+    message: '当前模型使用此环节的通用模板。',
+    model: { profile_version_id: 'model-v1', provider_code: 'volcengine', provider_name: '火山方舟', api_model_id: 'video-model', name: '视频模型', capabilities: ['video_generation'] },
+    template: { id: 'prompt-profile-1', profile_version_id: 'prompt-version-3', name: '角色对白', version: 3 },
+    routing: { source_label: '环节通用模板' },
+  }] }],
+};
+
 function devToken(userId: string) {
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url');
   return `dev.${payload}.sig`;
@@ -44,7 +55,8 @@ test.beforeEach(async ({ page }) => {
   }));
   await page.route('**/api/v1/model-center/**', async (route) => {
     const url = route.request().url();
-    const body = url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
+    const body = url.endsWith('/prompt-usage-map') ? promptUsageMap
+      : url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
       : url.includes('/prompt-profiles?') ? promptProfiles
       : url.includes('/impact') ? impact
         : { blocking_issues: [], connections: [], recipes: [] };
@@ -52,10 +64,15 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+async function openPromptLibrary(page: import('@playwright/test').Page, url = '/llm-config?section=prompts') {
+  await page.goto(url);
+  await page.getByRole('button', { name: '模板库', exact: true }).click();
+}
+
 const impact = { affected_bindings: 2, affected_profiles: 2, affected_recipes: 1, affected_prompts: 1 };
 
 test('loads saved prompt body and keeps the legacy entry actionable', async ({ page }) => {
-  await page.goto('/prompt-skills?returnTo=%2Fstudio');
+  await openPromptLibrary(page, '/prompt-skills?returnTo=%2Fstudio');
   await expect(page).toHaveURL(/section=prompts/);
   await expect(page.getByLabel('任务模板')).toHaveValue('保持角色 {{name}} 的对白节奏。');
   await expect(page.getByRole('button', { name: 'AI 优化' })).toBeVisible();
@@ -74,7 +91,7 @@ test('explicit local optimization never selects a configured provider model', as
       optimized_content: '本地规则优化结果', suggestions: [], warnings: [],
     }) });
   });
-  await page.goto('/llm-config?section=prompts');
+  await openPromptLibrary(page);
   await page.getByLabel('优化模型').selectOption('__local_rules__');
   await page.getByRole('button', { name: 'AI 优化' }).click();
 
@@ -85,7 +102,7 @@ test('explicit local optimization never selects a configured provider model', as
 });
 
 test('publishing a prompt profile displays affected model versions and recipes', async ({ page }) => {
-  await page.goto('/llm-config?section=prompts');
+  await openPromptLibrary(page);
   await page.getByRole('button', { name: '发布此版本' }).click();
   await expect(page.getByRole('dialog', { name: '发布影响确认' })).toContainText('2 个模型版本');
   await expect(page.getByRole('dialog', { name: '发布影响确认' })).toContainText('1 个生产方案');
@@ -93,7 +110,7 @@ test('publishing a prompt profile displays affected model versions and recipes',
 });
 
 test('rollback intent republishes a historical version instead of mutating it', async ({ page }) => {
-  await page.goto('/llm-config?section=prompts');
+  await openPromptLibrary(page);
   await page.getByRole('button', { name: '回滚为新版本' }).click();
   await expect(page.getByRole('dialog', { name: '回滚影响确认' })).toContainText('将创建新的头版本');
 });
@@ -103,7 +120,8 @@ test('structured prompt drafts, publish impact, and rollback use the versioned A
   await page.route('**/api/v1/model-center/**', async (route) => {
     const url = route.request().url();
     if (route.request().method() === 'POST') requests.push({ url, body: route.request().postDataJSON() });
-    const body = url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
+    const body = url.endsWith('/prompt-usage-map') ? promptUsageMap
+      : url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
       : url.includes('/prompt-profiles?') ? promptProfiles
       : url.includes('/impact?') ? impact
         : url.endsWith('/versions') ? { id: 'prompt-profile-1', key: 'anime.dialogue', name: '角色对白', task: 'shot_video', head_version_id: 'prompt-version-4', head_version: 4, status: 'draft' }
@@ -111,7 +129,7 @@ test('structured prompt drafts, publish impact, and rollback use the versioned A
             : { id: 'prompt-profile-2', key: 'anime.motion', name: '镜头运动', task: 'shot_video', head_version_id: 'prompt-version-1', head_version: 1, status: 'draft' };
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
-  await page.goto('/llm-config?section=prompts');
+  await openPromptLibrary(page);
   await page.getByRole('button', { name: '新建提示词模板' }).click();
   const createDialog = page.getByRole('dialog', { name: '新建提示词模板' });
   await createDialog.getByLabel('模板键').fill('anime.motion');
