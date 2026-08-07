@@ -1,11 +1,8 @@
 'use client';
 
-import { BookOpen, Cpu, ExternalLink, RefreshCw, Route } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { BookOpen, Code2, Cpu, ExternalLink, RefreshCw, Route } from 'lucide-react';
 
-import { modelCenterApi } from '../api';
 import type { PromptUsageStage } from '../prompt-usage-types';
-import type { PromptProfileDetail } from '../types';
 
 export function PromptUsageDetail({
   stage,
@@ -16,18 +13,6 @@ export function PromptUsageDetail({
   onOpenLibrary: (profileId?: string) => void;
   onChangeTemplate: () => void;
 }) {
-  const [detail, setDetail] = useState<PromptProfileDetail | null>(null);
-  useEffect(() => {
-    let active = true;
-    setDetail(null);
-    if (stage.template?.id) {
-      void modelCenterApi.getPromptProfile(stage.template.id)
-        .then((value) => { if (active) setDetail(value); })
-        .catch(() => undefined);
-    }
-    return () => { active = false; };
-  }, [stage.template?.id]);
-
   return <article className="min-w-0 border-l border-white/10 p-5">
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-5">
       <div><p className="text-xs text-slate-500">当前生产环节</p><h2 className="mt-1 text-xl font-semibold text-white">{stage.name}</h2></div>
@@ -53,8 +38,9 @@ export function PromptUsageDetail({
     {stage.template && <details className="mt-4 rounded-xl border border-white/10 bg-slate-950/20 p-4">
       <summary className="cursor-pointer text-sm font-medium text-white">高级设置</summary>
       <div className="mt-4 space-y-3 text-xs text-slate-400">
-        <div><p className="mb-1 text-slate-500">系统约束</p><p className="whitespace-pre-wrap leading-5">{detail?.head?.system_contract || '展开后正在读取模板正文…'}</p></div>
-        <div><p className="mb-1 text-slate-500">任务模板</p><p className="whitespace-pre-wrap leading-5">{detail?.head?.task_template || '—'}</p></div>
+        <div className="flex items-start gap-2"><Code2 className="mt-0.5 h-4 w-4 shrink-0" /><div><p className="text-slate-500">模板版本标识</p><p className="mt-1 break-all">{stage.template.profile_version_id}</p></div></div>
+        <div><p className="text-slate-500">模型版本标识</p><p className="mt-1 break-all">{stage.model?.profile_version_id || '—'}</p></div>
+        <p className="leading-5">模板正文、输入映射和历史版本请在模板库中查看和维护。</p>
       </div>
     </details>}
     <div className="mt-5 flex flex-wrap gap-2">

@@ -72,22 +72,27 @@ export const promptUsageMap = {
 };
 
 async function installRoutes(page: Page) {
+  let promptProfileRequests = 0;
   const userId = `prompt-map-${Date.now()}`;
   await page.addInitScript(({ token, id }) => {
     localStorage.setItem('auth_token', token);
     localStorage.setItem('user', JSON.stringify({ id, username: id }));
   }, { token: devToken(userId), id: userId });
-  await page.route('**/api/v1/model-center/**', (route) => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ items: [], meta: { page: 1, page_size: 20, total: 0 } }),
-  }));
+  await page.route('**/api/v1/model-center/**', (route) => {
+    if (route.request().url().includes('/prompt-profiles')) promptProfileRequests += 1;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ items: [], meta: { page: 1, page_size: 20, total: 0 } }),
+    });
+  });
   await page.route('**/api/v1/model-center/prompt-usage-map', (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify(promptUsageMap),
   }));
+  return { promptProfileRequests: () => promptProfileRequests };
 }
 
 test('opens the prompt usage map before the template library', async ({ page }) => {
-  await installRoutes(page);
+  const requests = await installRoutes(page);
   await page.goto('/llm-config?section=prompts');
 
   await expect(page.getByRole('heading', { name: '提示词使用地图' })).toBeVisible();
@@ -107,6 +112,7 @@ test('opens the prompt usage map before the template library', async ({ page }) 
   await expect(page.getByText('当前使用的模板')).toBeVisible();
   await expect(page.getByText('生产默认模型')).toBeVisible();
   await expect(page.getByText('高级设置')).toBeVisible();
+  expect(requests.promptProfileRequests()).toBe(0);
 
   await page.getByRole('button', { name: '模板库', exact: true }).click();
   await expect(page.getByText('提示词版本工作台')).toBeVisible();
