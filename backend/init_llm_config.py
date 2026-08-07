@@ -579,6 +579,26 @@ def init_llm_providers_and_models():
             "is_active": True,
             "description": "MiniMax 高质量图像生成，支持文生图/图生图，生成快速"
         },
+        # MiniMax - H3 视频生成模型
+        {
+            "id": "minimax-h3",
+            "provider_id": "minimax",
+            "model_id": "MiniMax-H3",
+            "model_name": "MiniMax-H3",
+            "model_name_cn": "MiniMax H3",
+            "model_type": "video",
+            "capabilities": ["video_generation", "text-to-video", "image-to-video", "reference-to-video"],
+            "context_window": 0,
+            "max_tokens": 0,
+            "input_cost_per_1k": 0,
+            "output_cost_per_1k": 0,
+            "supports_streaming": False,
+            "supports_function_calling": False,
+            "supports_vision": True,
+            "is_recommended": False,
+            "is_active": True,
+            "description": "MiniMax H3 多模态视频生成，支持 768P/2K 与 4–15 秒输出"
+        },
         # MiniMax - TTS语音合成模型
         {
             "id": "minimax-speech-2-6-hd",

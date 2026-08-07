@@ -39,6 +39,7 @@ _BUILTIN_LLM_DRIVERS = {
     ("minimax", "text"): "minimax_text_v2",
     ("minimax", "image"): "minimax_image_v1",
     ("minimax", "speech"): "minimax_speech_v2",
+    ("minimax", "video"): "minimax_h3_video_v2",
     ("volcano", "image"): "volcano_ark_image_v3",
     ("volcano", "video"): "volcano_ark_video_v3",
     ("volcano_agent_plan", "video"): "volcano_ark_video_v3",
