@@ -7,7 +7,7 @@ import { useModelBindings } from '../hooks/use-model-bindings';
 import { capabilityLabels, certificationLabel, connectionDisplayName, taskLabel } from '../model-center-labels';
 import type { ModelBindingView, ModelCenterSection } from '../types';
 import type { ModelCenterLocation } from '../navigation';
-import { PromptProfileList } from './prompt-profile-list';
+import { PromptUsageMap } from './prompt-usage-map';
 import { RecipeList } from './recipe-list';
 import { ModelCenterEmpty, ModelCenterError, ModelCenterLoading } from './model-center-state';
 import { TestLab } from './test-lab';
@@ -47,6 +47,6 @@ function BindingsPanel() {
 export function ModelCenterManagementPanel({ section, location }: { section: Exclude<ModelCenterSection, 'overview' | 'connections' | 'catalog'>; location: ModelCenterLocation }) {
   if (section === 'bindings') return <BindingsPanel />;
   if (section === 'recipes') return <RecipeList />;
-  if (section === 'prompts') return <PromptProfileList location={location} />;
+  if (section === 'prompts') return <PromptUsageMap location={location} />;
   return <TestLab runId={location.runId} location={location} />;
 }

@@ -77,12 +77,12 @@ async function installRoutes(page: Page) {
     localStorage.setItem('auth_token', token);
     localStorage.setItem('user', JSON.stringify({ id, username: id }));
   }, { token: devToken(userId), id: userId });
-  await page.route('**/api/v1/model-center/prompt-usage-map', (route) => route.fulfill({
-    contentType: 'application/json', body: JSON.stringify(promptUsageMap),
-  }));
   await page.route('**/api/v1/model-center/**', (route) => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ items: [], meta: { page: 1, page_size: 20, total: 0 } }),
+  }));
+  await page.route('**/api/v1/model-center/prompt-usage-map', (route) => route.fulfill({
+    contentType: 'application/json', body: JSON.stringify(promptUsageMap),
   }));
 }
 
@@ -94,6 +94,20 @@ test('opens the prompt usage map before the template library', async ({ page }) 
   await expect(page.getByText('分镜生成')).toBeVisible();
   await expect(page.getByText('标准分镜创建 · v3')).toBeVisible();
   await expect(page.getByText('模型专用覆盖')).toBeVisible();
-  await expect(page.getByText('此环节不使用提示词模板。')).toBeVisible();
+  await expect(page.getByText('此环节不使用提示词模板。', { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId('prompt-usage-summary')).toContainText('12 个环节');
   await expect(page.getByLabel('输入映射 JSON')).toHaveCount(0);
+
+  await page.getByRole('button', { name: '只看问题环节' }).click();
+  await expect(page.getByText('场景/道具提取')).toBeVisible();
+  await expect(page.getByText('剧本生成')).toHaveCount(0);
+  await page.getByRole('button', { name: '查看全部环节' }).click();
+
+  await page.getByText('分镜生成').click();
+  await expect(page.getByText('当前使用的模板')).toBeVisible();
+  await expect(page.getByText('生产默认模型')).toBeVisible();
+  await expect(page.getByText('高级设置')).toBeVisible();
+
+  await page.getByRole('button', { name: '模板库', exact: true }).click();
+  await expect(page.getByText('提示词版本工作台')).toBeVisible();
 });
