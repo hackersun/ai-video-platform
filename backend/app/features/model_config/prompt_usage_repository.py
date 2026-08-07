@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,7 +93,10 @@ async def create_model_prompt_draft(
     model: PromptUsageModelIdentity,
     reason: str,
 ) -> tuple[PromptProfile, PromptProfileVersion]:
-    key = f"usage.{source_profile.task}.{model.provider_code}.{model.api_model_id}.{source_version.id[:8]}"
+    route_digest = sha256(
+        f"{model.provider_code}:{model.api_model_id}:{source_version.id}".encode()
+    ).hexdigest()[:20]
+    key = f"usage.{source_profile.task[:70]}.{route_digest}"
     routing = {
         **dict(source_version.routing or {}),
         "provider_filter": [model.provider_code],

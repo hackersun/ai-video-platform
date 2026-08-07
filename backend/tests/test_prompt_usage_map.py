@@ -33,12 +33,14 @@ async def prompt_db():
     await engine.dispose()
 
 
-def _prompt_version(profile_id: str, version_id: str, *, status: str = "published"):
+def _prompt_version(
+    profile_id: str, version_id: str, *, status: str = "published", stage: str | None = None,
+):
     row = PromptProfileVersion(
         id=version_id,
         profile_id=profile_id,
         version=1,
-        stage=None,
+        stage=stage,
         content="保持角色外观一致并生成镜头。",
         variables={"style": "3D修仙"},
         routing={},
@@ -278,6 +280,56 @@ async def test_assignment_rejects_a_template_from_another_prompt_task(
         )
 
     assert error.value.message == "所选模板不属于这个生产环节。"
+
+
+@pytest.mark.asyncio
+async def test_assignment_rejects_a_template_from_another_substage(
+    prompt_db, routed_dependencies,
+):
+    prompt_db.add_all([
+        PromptProfile(id="entity-profile", user_id=USER_ID, key="entity", name="实体模板", task="entity_extraction"),
+        _prompt_version("entity-profile", "scene-published", stage="scene_prop"),
+    ])
+    await prompt_db.commit()
+
+    with pytest.raises(prompt_usage.PromptUsageError) as error:
+        await prompt_usage.create_prompt_usage_assignment_draft(
+            prompt_db, user_id=USER_ID, stage_id="character_extraction",
+            prompt_version_id="scene-published", reason="错误子阶段",
+        )
+
+    assert error.value.message == "所选模板不属于这个生产环节。"
+
+
+@pytest.mark.asyncio
+async def test_assignment_key_stays_within_the_persisted_column_limit(
+    prompt_db, monkeypatch, routed_dependencies,
+):
+    prompt_db.add_all([
+        PromptProfile(id="video-profile", user_id=USER_ID, key="video", name="镜头模板", task="shot_video"),
+        _prompt_version("video-profile", "video-published"),
+    ])
+    await prompt_db.commit()
+
+    async def long_model_identity(_db, binding):
+        return PromptUsageModelIdentity(
+            profile_version_id=binding.profile.profile_version_id,
+            provider_code="provider-" + "x" * 80,
+            provider_name="超长供应商",
+            api_model_id="model-" + "y" * 200,
+            model_name="超长模型",
+            capabilities=("video_generation",),
+            prompt_profile_key=None,
+        )
+
+    monkeypatch.setattr(prompt_usage, "load_prompt_usage_model_identity", long_model_identity)
+    result = await prompt_usage.create_prompt_usage_assignment_draft(
+        prompt_db, user_id=USER_ID, stage_id="shot_video",
+        prompt_version_id="video-published", reason="长模型标识测试",
+    )
+
+    profile = await prompt_db.get(PromptProfile, result["profile_id"])
+    assert len(profile.key) <= 120
 
 
 @pytest.mark.asyncio

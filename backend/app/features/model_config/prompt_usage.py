@@ -210,7 +210,10 @@ async def create_prompt_usage_assignment_draft(
     if source is None:
         raise PromptUsageError("template_not_found", "所选已发布模板不存在或不可用。")
     source_profile, source_version = source
-    if source_profile.task != stage.prompt_task:
+    wrong_stage = bool(
+        stage.prompt_stage and source_version.stage not in {None, stage.prompt_stage}
+    )
+    if source_profile.task != stage.prompt_task or wrong_stage:
         raise PromptUsageError("template_task_mismatch", "所选模板不属于这个生产环节。")
     try:
         binding = await resolve_model_binding(
