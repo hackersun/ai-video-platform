@@ -141,7 +141,7 @@ test('creates a model-specific draft before production can change', async ({ pag
   await page.route('**/prompt-usage-map/stages/shot_video/candidates', (route) => route.fulfill({
     contentType: 'application/json', body: JSON.stringify({ items: [{
       id: 'prompt-video-generic-v2', profile_id: 'video-generic', name: '镜头连续性',
-      task: 'shot_video', version: 2, status: 'published',
+      task: 'shot_video', version: 2, status: 'published', source_label: '当前账号',
     }] }),
   }));
   await page.route('**/prompt-usage-map/stages/shot_video/assignment-drafts', async (route) => {
@@ -157,6 +157,7 @@ test('creates a model-specific draft before production can change', async ({ pag
   await page.getByText('镜头视频', { exact: true }).click();
   await page.getByRole('button', { name: '更换模板' }).click();
   await expect(page.getByRole('dialog', { name: '更换镜头视频模板' })).toContainText('生产任务不会改变');
+  await expect(page.getByLabel('选择已发布模板')).toContainText('镜头连续性 · v2 · 当前账号');
   await page.getByLabel('选择已发布模板').selectOption('prompt-video-generic-v2');
   await page.getByRole('button', { name: '创建模型专用草稿' }).click();
 

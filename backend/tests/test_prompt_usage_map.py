@@ -221,8 +221,8 @@ async def test_candidates_only_include_published_templates_for_the_same_prompt_t
         prompt_db, user_id=USER_ID, stage_id="shot_video",
     )
 
-    assert [(item["id"], item["task"], item["status"]) for item in result["items"]] == [
-        ("video-published", "shot_video", "published")
+    assert [(item["id"], item["task"], item["status"], item["source_label"]) for item in result["items"]] == [
+        ("video-published", "shot_video", "published", "当前账号")
     ]
 
 

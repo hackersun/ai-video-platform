@@ -181,6 +181,7 @@ async def list_prompt_usage_candidates(
     items = [{
         "id": version.id, "profile_id": profile.id, "name": profile.name,
         "task": profile.task, "version": version.version, "status": version.status,
+        "source_label": "当前账号" if profile.user_id == user_id else "系统内置",
     } for profile, version in rows]
     return {"stage_id": stage.id, "items": sorted(items, key=lambda item: (item["name"], item["id"]))}
 

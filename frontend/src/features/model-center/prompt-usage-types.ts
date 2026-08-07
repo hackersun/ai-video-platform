@@ -50,6 +50,7 @@ export interface PromptUsageCandidate {
   task: string;
   version: number;
   status: 'published';
+  source_label: string;
 }
 
 export interface PromptUsageAssignmentResult {
@@ -143,6 +144,7 @@ export function parsePromptUsageCandidates(value: unknown): PromptUsageCandidate
     return {
       id: text(candidate.id), profile_id: text(candidate.profile_id), name: text(candidate.name),
       task: text(candidate.task), version: numberValue(candidate.version), status: 'published',
+      source_label: text(candidate.source_label),
     };
   });
 }
