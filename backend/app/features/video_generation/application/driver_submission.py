@@ -9,6 +9,7 @@ from app.features.model_drivers.public import (
     DriverError,
     DriverUnavailableError,
     VideoCommand,
+    VideoReference,
     build_builtin_driver_registry,
     execute_generation,
 )
@@ -22,15 +23,36 @@ class SubmittedVideoTask:
     id: str
 
 
-def _references(content: list[dict[str, Any]]) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
-    values = {"image_url": [], "video_url": [], "audio_url": []}
+def _references(content: list[dict[str, Any]]) -> tuple[VideoReference, ...]:
+    references: list[VideoReference] = []
+    media_types = {"image_url": "image", "video_url": "video", "audio_url": "audio"}
     for item in content:
         item_type = item.get("type") if isinstance(item, dict) else None
-        value = item.get(item_type) if item_type in values else None
+        value = item.get(item_type) if item_type in media_types else None
         url = value.get("url") if isinstance(value, dict) else None
         if isinstance(url, str) and url:
-            values[item_type].append(url)
-    return tuple(values["image_url"]), tuple(values["video_url"]), tuple(values["audio_url"])
+            media_type = media_types[item_type]
+            references.append(VideoReference(
+                media_type,
+                url,
+                str(item.get("role") or f"reference_{media_type}"),
+            ))
+    return tuple(references)
+
+
+def build_video_command(
+    *, prompt: str, content: list[dict[str, Any]], params: dict[str, Any], native_audio: bool = False,
+) -> VideoCommand:
+    references = _references(content)
+    return VideoCommand(
+        prompt=prompt,
+        reference_images=tuple(item.url for item in references if item.media_type == "image"),
+        reference_videos=tuple(item.url for item in references if item.media_type == "video"),
+        reference_audios=tuple(item.url for item in references if item.media_type == "audio"),
+        references=references,
+        native_audio=native_audio,
+        params=params,
+    )
 
 
 def has_video_generation_driver(generation_context: Any) -> bool:
@@ -49,17 +71,18 @@ async def submit_bound_video_task(
 ) -> Any:
     if generation_context is None:
         return submit_ark_video_task(create_kwargs=create_kwargs, client=client)
-    images, videos, audios = _references(create_kwargs.get("content") or [])
     params = {
         **dict(generation_context.profile.default_params),
-        **{key: create_kwargs[key] for key in ("duration", "resolution", "camera_fixed", "watermark", "seed") if key in create_kwargs},
+        **{key: create_kwargs[key] for key in ("duration", "resolution", "ratio", "camera_fixed", "watermark", "seed") if key in create_kwargs},
     }
     try:
         submission = await execute_generation(
             build_builtin_driver_registry(),
-            VideoCommand(
-                prompt=prompt, reference_images=images, reference_videos=videos, reference_audios=audios,
-                native_audio=bool(create_kwargs.get("generate_audio")), params=params,
+            build_video_command(
+                prompt=prompt,
+                content=create_kwargs.get("content") or [],
+                params=params,
+                native_audio=bool(create_kwargs.get("generate_audio")),
             ),
             replace(generation_context.driver_context, execution_snapshot_id=execution_snapshot_id)
             if execution_snapshot_id else generation_context.driver_context,
@@ -77,7 +100,10 @@ async def create_bound_video_execution_snapshot(
 ) -> str | None:
     if generation_context is None:
         return None
-    images, videos, audios = _references(create_kwargs.get("content") or [])
+    references = _references(create_kwargs.get("content") or [])
+    images = [item for item in references if item.media_type == "image"]
+    videos = [item for item in references if item.media_type == "video"]
+    audios = [item for item in references if item.media_type == "audio"]
     snapshot = await create_execution_snapshot(
         db,
         ExecutionSnapshotCommand(
@@ -102,6 +128,6 @@ async def create_bound_video_execution_snapshot(
 
 
 __all__ = [
-    "SubmittedVideoTask", "create_bound_video_execution_snapshot",
+    "SubmittedVideoTask", "build_video_command", "create_bound_video_execution_snapshot",
     "has_video_generation_driver", "submit_bound_video_task",
 ]

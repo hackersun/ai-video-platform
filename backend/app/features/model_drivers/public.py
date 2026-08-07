@@ -23,6 +23,7 @@ from app.features.model_drivers.domain import (
     SpeechCommand,
     TextCommand,
     VideoCommand,
+    VideoReference,
 )
 from app.features.model_drivers.executor import execute_connection_test, execute_generation, execute_poll
 from app.features.model_drivers.registry import (
@@ -51,7 +52,7 @@ __all__ = [
     "DriverLimitError", "DriverParameterError", "DriverProfile", "DriverRegistrationError", "DriverRegistry",
     "DriverResultError", "DriverSchemaError", "DriverSubmission", "DriverTestResult",
     "DriverUnavailableError", "ImageCommand", "MediaRenderCommand", "ObjectStorageCommand",
-    "SpeechCommand", "TextCommand", "VideoCommand",
+    "SpeechCommand", "TextCommand", "VideoCommand", "VideoReference",
     "build_builtin_driver_registry", "describe_installed_drivers", "execute_connection_test", "execute_external_connection_test",
     "execute_generation", "execute_llm_connection_test", "execute_poll",
     "normalize_provider_base_url",
