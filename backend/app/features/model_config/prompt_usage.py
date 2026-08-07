@@ -178,11 +178,24 @@ async def list_prompt_usage_candidates(
     rows = await load_prompt_usage_candidates(
         db, user_id=user_id, task=stage.prompt_task or "", stage=stage.prompt_stage,
     )
+    ordered_rows = sorted(
+        rows,
+        key=lambda row: (
+            -(row[1].published_at.timestamp() if row[1].published_at else 0),
+            -row[1].version,
+            row[0].key,
+            row[1].id,
+        ),
+    )
+    unique_rows = {}
+    for profile, version in ordered_rows:
+        recovery_key = (profile.user_id, profile.key.replace(":", "."))
+        unique_rows.setdefault(recovery_key, (profile, version))
     items = [{
         "id": version.id, "profile_id": profile.id, "name": profile.name,
         "task": profile.task, "version": version.version, "status": version.status,
         "source_label": "当前账号" if profile.user_id == user_id else "系统内置",
-    } for profile, version in rows]
+    } for profile, version in unique_rows.values()]
     return {"stage_id": stage.id, "items": sorted(items, key=lambda item: (item["name"], item["id"]))}
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 import httpx
 import pytest
@@ -207,9 +208,16 @@ async def test_unknown_prompt_usage_stage_returns_a_chinese_404(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_candidates_only_include_published_templates_for_the_same_prompt_task(prompt_db):
+    older_builtin = _prompt_version("system-old", "system-old-v1")
+    newer_builtin = _prompt_version("system-current", "system-current-v1")
+    newer_builtin.published_at = datetime(2026, 8, 4, 5, 47, 23)
     prompt_db.add_all([
         PromptProfile(id="video-profile", user_id=USER_ID, key="video", name="镜头模板", task="shot_video"),
         _prompt_version("video-profile", "video-published"),
+        PromptProfile(id="system-old", user_id="system", key="legacy:builtin-shot-video", name="系统镜头模板", task="shot_video"),
+        older_builtin,
+        PromptProfile(id="system-current", user_id="system", key="legacy.builtin-shot-video", name="系统镜头模板", task="shot_video"),
+        newer_builtin,
         PromptProfile(id="script-profile", user_id=USER_ID, key="script", name="剧本模板", task="script_generation"),
         _prompt_version("script-profile", "script-published"),
         PromptProfile(id="draft-profile", user_id=USER_ID, key="draft", name="未发布模板", task="shot_video"),
@@ -222,7 +230,8 @@ async def test_candidates_only_include_published_templates_for_the_same_prompt_t
     )
 
     assert [(item["id"], item["task"], item["status"], item["source_label"]) for item in result["items"]] == [
-        ("video-published", "shot_video", "published", "当前账号")
+        ("system-current-v1", "shot_video", "published", "系统内置"),
+        ("video-published", "shot_video", "published", "当前账号"),
     ]
 
 
