@@ -4,17 +4,51 @@ import json
 
 import httpx
 import pytest
+import pytest_asyncio
 from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.core.database import Base
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.features.model_config.domain import ModelProfileContract, ResolvedModelBinding
 from app.features.model_config.api import prompt_usage as prompt_usage_api
 from app.features.model_config import prompt_usage
 from app.features.model_config.prompt_usage_repository import PromptUsageModelIdentity
+from app.features.prompt_profiles.versioning import canonical_prompt_version_checksum
+from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 
 
 USER_ID = "prompt-map-user"
+
+
+@pytest_asyncio.fixture()
+async def prompt_db():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with session_factory() as session:
+        yield session
+    await engine.dispose()
+
+
+def _prompt_version(profile_id: str, version_id: str, *, status: str = "published"):
+    row = PromptProfileVersion(
+        id=version_id,
+        profile_id=profile_id,
+        version=1,
+        stage=None,
+        content="保持角色外观一致并生成镜头。",
+        variables={"style": "3D修仙"},
+        routing={},
+        output_contract=None,
+        evaluation={"quality_gate": "commercial"},
+        status=status,
+        checksum="pending",
+    )
+    row.checksum = canonical_prompt_version_checksum(row)
+    return row
 
 
 def _binding(task: str, capability: str, profile_version_id: str = "model-version-1"):
@@ -167,3 +201,118 @@ async def test_unknown_prompt_usage_stage_returns_a_chinese_404(monkeypatch):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "未找到这个生产环节。"
+
+
+@pytest.mark.asyncio
+async def test_candidates_only_include_published_templates_for_the_same_prompt_task(prompt_db):
+    prompt_db.add_all([
+        PromptProfile(id="video-profile", user_id=USER_ID, key="video", name="镜头模板", task="shot_video"),
+        _prompt_version("video-profile", "video-published"),
+        PromptProfile(id="script-profile", user_id=USER_ID, key="script", name="剧本模板", task="script_generation"),
+        _prompt_version("script-profile", "script-published"),
+        PromptProfile(id="draft-profile", user_id=USER_ID, key="draft", name="未发布模板", task="shot_video"),
+        _prompt_version("draft-profile", "video-draft", status="draft"),
+    ])
+    await prompt_db.commit()
+
+    result = await prompt_usage.list_prompt_usage_candidates(
+        prompt_db, user_id=USER_ID, stage_id="shot_video",
+    )
+
+    assert [(item["id"], item["task"], item["status"]) for item in result["items"]] == [
+        ("video-published", "shot_video", "published")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_assignment_creates_current_model_draft_without_mutating_the_source(
+    prompt_db, monkeypatch, routed_dependencies,
+):
+    source = _prompt_version("video-profile", "video-published")
+    prompt_db.add_all([
+        PromptProfile(id="video-profile", user_id=USER_ID, key="video", name="镜头模板", task="shot_video"),
+        source,
+    ])
+    await prompt_db.commit()
+
+    result = await prompt_usage.create_prompt_usage_assignment_draft(
+        prompt_db,
+        user_id=USER_ID,
+        stage_id="shot_video",
+        prompt_version_id=source.id,
+        reason="用于当前默认镜头视频模型",
+    )
+
+    assert result["status"] == "draft"
+    assert result["routing"] == {
+        "provider_filter": ["volcengine"],
+        "model_filter": ["shot_video-model"],
+    }
+    created = await prompt_db.get(PromptProfileVersion, result["version_id"])
+    assert created.profile_id != source.profile_id
+    assert created.content == source.content
+    assert created.variables == source.variables
+    assert created.evaluation["quality_gate"] == "commercial"
+    assert created.evaluation["release_notes"] == "用于当前默认镜头视频模型"
+    assert source.status == "published"
+    assert source.routing == {}
+
+
+@pytest.mark.asyncio
+async def test_assignment_rejects_a_template_from_another_prompt_task(
+    prompt_db, routed_dependencies,
+):
+    prompt_db.add_all([
+        PromptProfile(id="script-profile", user_id=USER_ID, key="script", name="剧本模板", task="script_generation"),
+        _prompt_version("script-profile", "script-published"),
+    ])
+    await prompt_db.commit()
+
+    with pytest.raises(prompt_usage.PromptUsageError) as error:
+        await prompt_usage.create_prompt_usage_assignment_draft(
+            prompt_db,
+            user_id=USER_ID,
+            stage_id="shot_video",
+            prompt_version_id="script-published",
+            reason="错误任务",
+        )
+
+    assert error.value.message == "所选模板不属于这个生产环节。"
+
+
+@pytest.mark.asyncio
+async def test_candidate_and_assignment_http_routes_are_operator_safe(
+    prompt_db, routed_dependencies,
+):
+    prompt_db.add_all([
+        PromptProfile(id="video-profile", user_id=USER_ID, key="video", name="镜头模板", task="shot_video"),
+        _prompt_version("video-profile", "video-published"),
+    ])
+    await prompt_db.commit()
+
+    async def override_db():
+        yield prompt_db
+
+    app = FastAPI()
+    app.include_router(prompt_usage_api.router, prefix="/model-center")
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user_id] = lambda: USER_ID
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        candidates = await client.get(
+            "/model-center/prompt-usage-map/stages/shot_video/candidates"
+        )
+        assignment = await client.post(
+            "/model-center/prompt-usage-map/stages/shot_video/assignment-drafts",
+            json={
+                "prompt_version_id": "video-published",
+                "reason": "用于当前默认镜头视频模型",
+            },
+        )
+
+    assert candidates.status_code == 200
+    assert candidates.json()["items"][0]["name"] == "镜头模板"
+    assert assignment.status_code == 200
+    assert assignment.json()["status"] == "draft"
+    assert "model_filter" in assignment.json()["routing"]

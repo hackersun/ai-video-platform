@@ -16,7 +16,10 @@ from app.features.model_config.prompt_usage_contract import (
 )
 from app.features.model_config.prompt_usage_repository import (
     PromptUsageModelIdentity,
+    create_model_prompt_draft,
+    load_prompt_usage_candidates,
     load_prompt_usage_model_identity,
+    load_prompt_usage_source,
 )
 from app.services.prompt_template_router import select_prompt_skill_for_model
 
@@ -168,6 +171,67 @@ async def get_prompt_usage_map(db: AsyncSession, *, user_id: str) -> dict[str, A
     }
 
 
+async def list_prompt_usage_candidates(
+    db: AsyncSession, *, user_id: str, stage_id: str,
+) -> dict[str, Any]:
+    stage = _require_routed_stage(stage_id)
+    rows = await load_prompt_usage_candidates(
+        db, user_id=user_id, task=stage.prompt_task or "", stage=stage.prompt_stage,
+    )
+    items = [{
+        "id": version.id, "profile_id": profile.id, "name": profile.name,
+        "task": profile.task, "version": version.version, "status": version.status,
+    } for profile, version in rows]
+    return {"stage_id": stage.id, "items": sorted(items, key=lambda item: (item["name"], item["id"]))}
+
+
+def _require_routed_stage(stage_id: str) -> PromptUsageStage:
+    try:
+        stage = prompt_usage_stage(stage_id)
+    except KeyError as error:
+        raise PromptUsageError("stage_not_found", "未找到这个生产环节。") from error
+    if not stage.uses_prompt:
+        raise PromptUsageError("prompt_not_applicable", "这个生产环节不使用提示词模板。")
+    return stage
+
+
+async def create_prompt_usage_assignment_draft(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    stage_id: str,
+    prompt_version_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    stage = _require_routed_stage(stage_id)
+    source = await load_prompt_usage_source(
+        db, user_id=user_id, version_id=prompt_version_id,
+    )
+    if source is None:
+        raise PromptUsageError("template_not_found", "所选已发布模板不存在或不可用。")
+    source_profile, source_version = source
+    if source_profile.task != stage.prompt_task:
+        raise PromptUsageError("template_task_mismatch", "所选模板不属于这个生产环节。")
+    try:
+        binding = await resolve_model_binding(
+            db, user_id=user_id, task=stage.model_task or "", capability=stage.capability,
+        )
+    except ModelBindingError as error:
+        raise PromptUsageError("model_not_available", "当前环节没有可用的默认模型。") from error
+    model = await load_prompt_usage_model_identity(db, binding)
+    profile, draft = await create_model_prompt_draft(
+        db, user_id=user_id, source_profile=source_profile, source_version=source_version,
+        model=model, reason=reason,
+    )
+    await db.commit()
+    return {
+        "profile_id": profile.id, "version_id": draft.id,
+        "name": profile.name, "task": profile.task, "version": draft.version,
+        "status": draft.status, "routing": dict(draft.routing or {}),
+    }
+
+
 __all__ = [
-    "PromptUsageError", "get_prompt_usage_map", "resolve_prompt_usage_stage",
+    "PromptUsageError", "create_prompt_usage_assignment_draft",
+    "get_prompt_usage_map", "list_prompt_usage_candidates", "resolve_prompt_usage_stage",
 ]
