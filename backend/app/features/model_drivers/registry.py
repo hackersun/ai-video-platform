@@ -47,6 +47,7 @@ def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver]
     from app.features.model_drivers.adapters.legacy_text import LegacyTextDriver
     from app.features.model_drivers.adapters.local_ffmpeg import LocalFFmpegDriver
     from app.features.model_drivers.adapters.minimax_image import MiniMaxImageDriver
+    from app.features.model_drivers.adapters.minimax_h3_video import MiniMaxH3VideoDriver
     from app.features.model_drivers.adapters.minimax_speech import MiniMaxSpeechDriver
     from app.features.model_drivers.adapters.minimax_text import MiniMaxTextDriver
     from app.features.model_drivers.adapters.qiniu_kodo import QiniuKodoDriver
@@ -55,7 +56,7 @@ def build_builtin_driver_registry(additional_drivers: Iterable[CapabilityDriver]
     from app.features.model_drivers.adapters.volcano_openspeech import VolcanoOpenSpeechDriver
 
     return DriverRegistry([
-        MiniMaxTextDriver(), MiniMaxImageDriver(), MiniMaxSpeechDriver(),
+        MiniMaxTextDriver(), MiniMaxImageDriver(), MiniMaxSpeechDriver(), MiniMaxH3VideoDriver(),
         VolcanoArkImageDriver(), VolcanoArkVideoDriver(), VolcanoOpenSpeechDriver(),
         DashScopeVideoDriver(), LocalFFmpegDriver(), QiniuKodoDriver(),
         LegacyTextDriver(), ExternalAdapterDriver(),
