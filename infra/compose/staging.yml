@@ -1,0 +1,11 @@
+# Apply after production.yml:
+# docker compose -f production.yml -f staging.yml --env-file staging.env up -d
+services:
+  migrate:
+    environment:
+      APP_ENV: staging
+  api:
+    environment:
+      APP_ENV: staging
+
+# Base contract: production.yml

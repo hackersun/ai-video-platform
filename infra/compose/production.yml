@@ -1,0 +1,105 @@
+name: ai-video-platform
+
+x-backend-environment: &backend-environment
+  APP_ENV: production
+  DEV_MODE: "false"
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+  REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+  FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
+
+services:
+  postgres:
+    image: postgres:15.13-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_video_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_video}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [data]
+
+  redis:
+    image: redis:7.4.5-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    restart: unless-stopped
+    networks: [data]
+
+  migrate:
+    image: ${BACKEND_IMAGE:-ai-video-backend}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build:
+      context: ../../backend
+    command: ["python", "scripts/upgrade_database.py"]
+    environment: *backend-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+    networks: [data]
+
+  api:
+    image: ${BACKEND_IMAGE:-ai-video-backend}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build:
+      context: ../../backend
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - generated_media:/app/static/generated
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [data, edge]
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ai-video-frontend}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build:
+      context: ../../frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+    environment:
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    networks: [edge]
+
+networks:
+  data:
+    internal: true
+  edge:
+
+volumes:
+  postgres_data:
+  redis_data:
+  generated_media:

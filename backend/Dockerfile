@@ -10,9 +10,9 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY requirements.txt ./
+COPY requirements.txt requirements.lock ./
 RUN python -m pip install --upgrade pip \
-    && pip install -r requirements.txt
+    && pip install --require-hashes -r requirements.lock
 
 COPY . ./
 RUN useradd --create-home --uid 10001 appuser \

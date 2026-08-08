@@ -3,7 +3,9 @@
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
 __pycache__/
+*.py[cod]
 .pytest_cache/
 .coverage
 coverage.xml
