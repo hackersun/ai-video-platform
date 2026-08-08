@@ -41,8 +41,8 @@ function isFunctionLike(node) {
 }
 
 
-function violation(code, relative, line, actual, allowed, message) {
-  return {code, path: relative, line, actual, allowed, message};
+function violation(code, relative, line, actual, allowed, message, subject = '') {
+  return {code, path: relative, line, actual, allowed, message, subject};
 }
 
 
@@ -60,6 +60,7 @@ function scanFile(filePath) {
     violations.push(violation(
       'react_page_too_long', relative, 1, fileLines, policy.limits.react_page_lines,
       `${relative} has ${fileLines} effective lines`,
+      relative,
     ));
   }
   for (const diagnostic of source.parseDiagnostics) {
@@ -68,6 +69,7 @@ function scanFile(filePath) {
       'typescript_syntax_error', relative, line,
       ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'), 'valid TypeScript syntax',
       `${relative} cannot be parsed`,
+      relative,
     ));
   }
   function visit(node) {
@@ -86,6 +88,7 @@ function scanFile(filePath) {
         violations.push(violation(
           component ? 'react_component_too_long' : 'function_too_long',
           relative, start, count, limit, `${name} has ${count} effective lines`,
+          name,
         ));
       }
     }

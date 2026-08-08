@@ -30,6 +30,7 @@ def _violation(raw: dict) -> Violation:
         actual=raw["actual"],
         allowed=raw["allowed"],
         message=str(raw["message"]),
+        subject=str(raw.get("subject") or ""),
     )
 
 

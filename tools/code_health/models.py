@@ -22,6 +22,7 @@ class Violation:
     actual: int | str
     allowed: int | str
     message: str
+    subject: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,4 +36,10 @@ class FileMetrics:
     violations: tuple[Violation, ...]
 
 
-__all__ = ["FileMetrics", "FunctionMetrics", "Violation"]
+@dataclass(frozen=True)
+class ScanReport:
+    files: tuple[FileMetrics, ...]
+    new_file_lines: int
+
+
+__all__ = ["FileMetrics", "FunctionMetrics", "ScanReport", "Violation"]

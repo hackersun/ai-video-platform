@@ -66,6 +66,7 @@ def _boundary_violations(path: str, imports: tuple[str, ...], policy: Policy) ->
                     actual=imported,
                     allowed=f"not {rule.forbidden_module_prefix}",
                     message=f"{path} imports forbidden module {imported}",
+                    subject=imported,
                 ))
     return violations
 
@@ -100,6 +101,7 @@ def scan_python_file(path: Path, repo_root: Path, policy: Policy) -> FileMetrics
             actual=error.msg,
             allowed="valid Python syntax",
             message=f"{relative} cannot be parsed: {error.msg}",
+            subject=relative,
         )
         return FileMetrics(relative, "python", _effective_line_count(lines), (), 0, (), (violation,))
     functions = _function_metrics(tree, lines)
@@ -115,6 +117,7 @@ def scan_python_file(path: Path, repo_root: Path, policy: Policy) -> FileMetrics
                 actual=function.effective_lines,
                 allowed=limit,
                 message=f"{function.name} has {function.effective_lines} effective lines; limit is {limit}",
+                subject=function.name,
             ))
     route_count = sum(function.is_route for function in functions)
     if route_count > policy.limits.endpoint_routes:
@@ -122,6 +125,7 @@ def scan_python_file(path: Path, repo_root: Path, policy: Policy) -> FileMetrics
             code="endpoint_has_too_many_routes", path=relative, line=1,
             actual=route_count, allowed=policy.limits.endpoint_routes,
             message=f"{relative} defines {route_count} routes; limit is {policy.limits.endpoint_routes}",
+            subject=relative,
         ))
     return FileMetrics(
         relative, "python", _effective_line_count(lines), functions,
