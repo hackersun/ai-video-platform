@@ -42,7 +42,7 @@ def test_existing_users_are_verified_and_session_schema_is_added(tmp_path) -> No
         text=True,
     )
 
-    assert "20260809_0003" in result.stdout
+    assert "20260809_0004" in result.stdout
     assert inspect(engine).has_table("user_sessions")
     user_columns = {column["name"] for column in inspect(engine).get_columns("users")}
     assert {"account_status", "email_verified_at", "email_verification_token_hash"} <= user_columns
@@ -119,7 +119,7 @@ def test_existing_projects_receive_a_personal_workspace(tmp_path) -> None:
         text=True,
     )
 
-    assert "20260809_0003" in result.stdout
+    assert "20260809_0004" in result.stdout
     inspector = inspect(engine)
     assert {"organizations", "organization_members", "workspaces", "workspace_members", "audit_events"} <= set(
         inspector.get_table_names()

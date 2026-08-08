@@ -38,3 +38,10 @@ def test_staging_reuses_the_production_contract() -> None:
 
     assert "production.yml" in content
     assert "APP_ENV: staging" in content
+
+
+def test_production_compose_uses_durable_task_worker() -> None:
+    content = PRODUCTION_COMPOSE.read_text(encoding="utf-8")
+
+    assert "task-worker:" in content
+    assert '"python", "scripts/run_task_worker.py"' in content

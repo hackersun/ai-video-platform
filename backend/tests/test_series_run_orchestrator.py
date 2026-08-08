@@ -108,11 +108,7 @@ def test_create_is_idempotent_user_isolated_and_validates_episode_sources(client
     assert client.post("/api/v1/series-runs", json=wrong_chapter, headers=_headers(owner)).status_code == 422
 
 
-def test_execute_async_returns_immediately_and_queues_owned_run(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import app.api.v1.endpoints.series_runs as series_endpoint
-
+def test_execute_async_returns_persistent_idempotent_execution(client: TestClient) -> None:
     user_id = f"series-run-async-{uuid4()}"
     novel_id, chapter_ids = _series_source(client, user_id)
     created = client.post(
@@ -120,21 +116,21 @@ def test_execute_async_returns_immediately_and_queues_owned_run(
         json=_run_payload(novel_id, chapter_ids, "async-execute"),
         headers=_headers(user_id),
     )
-    queued: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        series_endpoint,
-        "start_series_run_execution",
-        lambda run_id, owner: queued.append((run_id, owner)) or True,
+    first = client.post(
+        f"/api/v1/series-runs/{created.json()['id']}/execute-async",
+        headers=_headers(user_id),
     )
-
-    response = client.post(
+    second = client.post(
         f"/api/v1/series-runs/{created.json()['id']}/execute-async",
         headers=_headers(user_id),
     )
 
-    assert response.status_code == 202
-    assert response.json()["execution_status"] == "queued"
-    assert queued == [(created.json()["id"], user_id)]
+    assert first.status_code == 202
+    assert first.json()["execution_status"] == "queued"
+    assert first.json()["execution_id"]
+    assert second.status_code == 202
+    assert second.json()["execution_status"] == "already_running"
+    assert second.json()["execution_id"] == first.json()["execution_id"]
 
 
 def test_live_canary_policy_is_derived_only_from_server_environment(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
