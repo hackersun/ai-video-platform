@@ -11,7 +11,7 @@ import os
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 from app.core.database import sync_engine
 from app.db_migrations.script_chapter_lineage import add_script_chapter_lineage
@@ -70,3 +70,14 @@ def test_postgresql_schema_and_json_lineage_backfill() -> None:
             {"id": script_id},
         ).scalar_one()
     assert stored_chapter_id == chapter_id
+
+
+def test_postgresql_auth_session_and_notification_schema() -> None:
+    inspector = inspect(sync_engine)
+    assert {"users", "user_sessions", "auth_notification_outbox"}.issubset(inspector.get_table_names())
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    assert {"account_status", "email_verified_at", "email_verification_token_hash"}.issubset(user_columns)
+    session_indexes = {index["name"] for index in inspector.get_indexes("user_sessions")}
+    assert "ix_user_sessions_user_active" in session_indexes
+    outbox_indexes = {index["name"] for index in inspector.get_indexes("auth_notification_outbox")}
+    assert "ix_auth_notification_outbox_delivery" in outbox_indexes

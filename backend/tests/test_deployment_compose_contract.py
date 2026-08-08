@@ -11,6 +11,8 @@ def test_production_compose_is_secret_driven_and_private() -> None:
 
     assert "${POSTGRES_PASSWORD:?" in content
     assert "${FERNET_KEY:?" in content
+    assert "${JWT_SECRET_KEY:?" in content
+    assert "${OBJECT_STORAGE_PROVIDER:?" in content
     assert "postgres:password" not in content
     assert "minioadmin" not in content
     assert '"5432:5432"' not in content
@@ -27,6 +29,8 @@ def test_api_waits_for_successful_one_shot_migration() -> None:
     assert '"python", "scripts/upgrade_database.py"' in content
     assert "condition: service_completed_successfully" in content
     assert "condition: service_healthy" in content
+    assert "auth-notifications:" in content
+    assert '"python", "scripts/run_auth_notification_worker.py"' in content
 
 
 def test_staging_reuses_the_production_contract() -> None:

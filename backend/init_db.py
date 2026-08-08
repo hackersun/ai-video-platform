@@ -210,10 +210,21 @@ def migrate_add_user_account_fields():
             "avatar": "VARCHAR(500)",
             "reset_token_hash": "VARCHAR(128)",
             "reset_token_expires_at": "DATETIME",
+            "account_status": "VARCHAR(32) DEFAULT 'active'",
+            "email_verified_at": "DATETIME",
+            "email_verification_token_hash": "VARCHAR(64)",
+            "email_verification_token_expires_at": "DATETIME",
         }
         for col, sql_type in specs.items():
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {sql_type}"))
+        conn.execute(text("UPDATE users SET account_status = 'active' WHERE account_status IS NULL"))
+        conn.execute(
+            text(
+                "UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at, CURRENT_TIMESTAMP) "
+                "WHERE is_active IS TRUE"
+            )
+        )
         conn.commit()
         print("✅ User account fields migration completed.")
     finally:
@@ -463,6 +474,10 @@ async def migrate_add_user_account_fields_async():
         "avatar": "VARCHAR(500)",
         "reset_token_hash": "VARCHAR(128)",
         "reset_token_expires_at": "DATETIME",
+        "account_status": "VARCHAR(32) DEFAULT 'active'",
+        "email_verified_at": "DATETIME",
+        "email_verification_token_hash": "VARCHAR(64)",
+        "email_verification_token_expires_at": "DATETIME",
     }
 
     async with engine.begin() as conn:
@@ -476,6 +491,13 @@ async def migrate_add_user_account_fields_async():
         for col, sql_type in specs.items():
             if col not in existing:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {sql_type}"))
+        await conn.execute(text("UPDATE users SET account_status = 'active' WHERE account_status IS NULL"))
+        await conn.execute(
+            text(
+                "UPDATE users SET email_verified_at = COALESCE(email_verified_at, created_at, CURRENT_TIMESTAMP) "
+                "WHERE is_active IS TRUE"
+            )
+        )
         print("✅ User account fields migration completed (async).")
 
 

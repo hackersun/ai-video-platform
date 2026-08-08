@@ -45,8 +45,8 @@ export default function RegisterPage() {
       return;
     }
 
-    if (password.length < 6) {
-      setError('密码至少6个字符');
+    if (password.length < 12) {
+      setError('密码至少需要 12 位，并包含大小写字母、数字和特殊字符');
       return;
     }
 
@@ -61,10 +61,10 @@ export default function RegisterPage() {
       const result = await register(username, email, password);
 
       if (result.success) {
-        setSuccess('注册成功！正在跳转...');
-        setTimeout(() => {
-          router.push('/dashboard');
-        }, 1500);
+        setSuccess(result.message || '注册申请已提交，请验证邮箱后登录');
+        if (result.verification_token) {
+          router.push(`/verify-email?token=${encodeURIComponent(result.verification_token)}`);
+        }
       } else {
         setError(result.detail || result.message || '注册失败');
       }
@@ -137,8 +137,8 @@ export default function RegisterPage() {
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                   <Input
-                    type="password"
-                    placeholder="请输入密码（至少6位）"
+                    type="password" autoComplete="new-password"
+                    placeholder="至少 12 位，包含大小写、数字和特殊字符"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
@@ -152,7 +152,7 @@ export default function RegisterPage() {
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                   <Input
-                    type="password"
+                    type="password" autoComplete="new-password"
                     placeholder="请再次输入密码"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}

@@ -6,6 +6,8 @@ from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.models.external_api import ExternalAPIConfig
 from app.models.ai_model import ModelConfig
 from app.models.user import User
+from app.models.user_session import UserSession
+from app.models.auth_notification import AuthNotificationOutbox
 from app.models.character import Character
 from app.models.novel import Novel
 from app.models.chapter import Chapter
@@ -55,13 +57,9 @@ from app.models.model_center import (
 )
 
 __all__ = [
-    "LLMProvider",
-    "LLMModel",
-    "LLMConfig",
-    "LLMUsageLog",
-    "ExternalAPIConfig",
-    "ModelConfig",
-    "User",
+    "LLMProvider", "LLMModel", "LLMConfig", "LLMUsageLog",
+    "ExternalAPIConfig", "ModelConfig", "User",
+    "UserSession", "AuthNotificationOutbox",
     "Character",
     "Novel",
     "Chapter",

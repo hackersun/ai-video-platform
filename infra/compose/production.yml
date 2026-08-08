@@ -6,6 +6,15 @@ x-backend-environment: &backend-environment
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
   REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
   FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+  OBJECT_STORAGE_PROVIDER: ${OBJECT_STORAGE_PROVIDER:?OBJECT_STORAGE_PROVIDER is required}
+  AUTH_EMAIL_PROVIDER: ${AUTH_EMAIL_PROVIDER:?AUTH_EMAIL_PROVIDER is required}
+  SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required}
+  SMTP_PORT: ${SMTP_PORT:-465}
+  SMTP_USERNAME: ${SMTP_USERNAME:?SMTP_USERNAME is required}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
+  AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM:?AUTH_EMAIL_FROM is required}
+  PUBLIC_APP_URL: ${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}
 
 services:
   postgres:
@@ -70,6 +79,18 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+    restart: unless-stopped
+    networks: [data, edge]
+
+  auth-notifications:
+    image: ${BACKEND_IMAGE:-ai-video-backend}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build:
+      context: ../../backend
+    command: ["python", "scripts/run_auth_notification_worker.py"]
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks: [data, edge]
 
