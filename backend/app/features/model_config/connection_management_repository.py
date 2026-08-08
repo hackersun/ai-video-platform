@@ -6,12 +6,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.credential_encryption import encrypt_key
 from app.core.time_utils import utc_now
-from app.models.model_center import ModelConfigAuditEvent, ModelConnection, ModelProvider
+from app.models.model_center import ModelBinding, ModelConfigAuditEvent, ModelConnection, ModelProvider
 
 
 @dataclass(frozen=True)
@@ -25,6 +25,13 @@ class ConnectionRow:
     has_secret: bool
     secret_updated_at: object | None
     revision: int
+
+
+@dataclass(frozen=True)
+class ConnectionRemovalResult:
+    state: str
+    revision: int | None = None
+    active_bindings: int = 0
 
 
 def as_connection_row(row: ModelConnection) -> ConnectionRow:
@@ -112,6 +119,49 @@ async def queue_connection_test_intent(
     db.add(audit)
     await db.flush()
     return as_connection_row(queued), audit.id
+
+
+async def remove_connection_if_unused(
+    db: AsyncSession, *, connection_id: str, user_id: str,
+    expected_revision: int, reason: str,
+) -> ConnectionRemovalResult:
+    row = await db.scalar(select(ModelConnection).where(
+        ModelConnection.id == connection_id,
+        ModelConnection.user_id == user_id,
+        ModelConnection.status != "disabled",
+    ))
+    if row is None:
+        return ConnectionRemovalResult(state="not_found")
+    if row.revision != expected_revision:
+        return ConnectionRemovalResult(state="revision_conflict", revision=row.revision)
+
+    active_bindings = int(await db.scalar(select(func.count()).select_from(ModelBinding).where(
+        ModelBinding.user_id == user_id,
+        ModelBinding.connection_id == connection_id,
+        ModelBinding.is_active.is_(True),
+    )) or 0)
+    if active_bindings:
+        return ConnectionRemovalResult(state="in_use", active_bindings=active_bindings)
+
+    result = await db.execute(update(ModelConnection).where(
+        ModelConnection.id == connection_id,
+        ModelConnection.user_id == user_id,
+        ModelConnection.revision == expected_revision,
+        ModelConnection.status != "disabled",
+    ).values(
+        status="disabled", api_key="", api_secret=None,
+        revision=ModelConnection.revision + 1, updated_at=utc_now(),
+    ).returning(ModelConnection.id))
+    if result.scalar_one_or_none() is None:
+        return ConnectionRemovalResult(state="revision_conflict")
+
+    removed = await db.get(ModelConnection, connection_id)
+    db.add(_audit(
+        removed, action="remove", reason=reason,
+        summary={"credentials_removed": True, "history_preserved": True},
+    ))
+    await db.flush()
+    return ConnectionRemovalResult(state="removed", revision=removed.revision)
 
 
 def _audit(row: ModelConnection, *, action: str, reason: str, summary: dict) -> ModelConfigAuditEvent:

@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 
 import { modelCenterApi } from '../api';
-import type { ModelConnectionInput, ModelConnectionUpdateInput } from '../types';
+import type { ModelConnectionInput, ModelConnectionUpdateInput, PublishInput } from '../types';
 import { modelCenterMutationInvalidations } from './model-center-query-store';
 import { runModelCenterMutation } from './run-model-center-mutation';
 import { useModelCenterQuery } from './use-model-center-query';
@@ -27,6 +27,12 @@ export function useModelConnections(page = 1, pageSize = 20) {
       modelCenterMutationInvalidations.connectionTest,
     );
   }, []);
+  const removeConnection = useCallback(async (connectionId: string, input: PublishInput) => {
+    return runModelCenterMutation(
+      () => modelCenterApi.removeConnection(connectionId, input),
+      modelCenterMutationInvalidations.connectionRemove,
+    );
+  }, []);
 
-  return { ...query, createConnection, updateConnection, testConnection };
+  return { ...query, createConnection, updateConnection, testConnection, removeConnection };
 }

@@ -16,9 +16,8 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.api_key_utils import (
     create_image_generation_service,
-    create_text_generation_service,
     get_user_image_model_config,
-    get_user_text_model_config,
+    get_user_text_generation_service,
 )
 from app.core.security import get_current_user_id
 from app.models import Character, Novel, Chapter, NovelImportJob, StoryEntity
@@ -203,28 +202,6 @@ class NovelImportJobUpdateRequest(BaseModel):
     title: Optional[str] = Field(None, max_length=200)
     description: Optional[str] = None
     error_message: Optional[str] = None
-
-
-# ============== LLM API Key 辅助函数 ==============
-
-async def get_user_qwen_api_key(db: AsyncSession, user_id: str) -> tuple[str, str, str, Optional[str]]:
-    """获取用户默认文本模型配置。"""
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(db, user_id)
-    return api_key or "", provider_name or "", model_id or "", base_url
-
-
-async def get_user_text_api_key(
-    db: AsyncSession,
-    user_id: str,
-    model_config_id: Optional[str] = None,
-) -> tuple[str, str, str, Optional[str]]:
-    """获取默认或用户指定的文本模型配置。"""
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-        db,
-        user_id,
-        config_id=model_config_id,
-    )
-    return api_key or "", provider_name or "", model_id or "", base_url
 
 
 def build_novel_response(
@@ -1010,12 +987,9 @@ async def generate_novel_intro(
     user_id: str = Depends(get_current_user_id),
 ):
     """AI生成小说简介，不创建小说或章节记录。"""
-    api_key, provider_name, model_id, base_url = await get_user_text_api_key(
-        db,
-        user_id,
-        request.model_config_id,
+    service, provider_name, model_id, _base_url = await get_user_text_generation_service(
+        db, user_id, config_id=request.model_config_id,
     )
-    service = create_text_generation_service(api_key, provider_name, base_url)
 
     style_hint = f"风格：{request.style}。" if request.style else ""
     description_hint = f"\n创作说明：{request.description}" if request.description else ""
@@ -1074,13 +1048,9 @@ async def generate_novel(
 ):
     """AI生成小说 - 根据主题和类型生成完整小说结构及章节内容"""
     # 获取用户的API密钥
-    api_key, provider_name, model_id, base_url = await get_user_text_api_key(
-        db,
-        user_id,
-        request.model_config_id,
+    service, provider_name, model_id, _base_url = await get_user_text_generation_service(
+        db, user_id, config_id=request.model_config_id,
     )
-
-    service = create_text_generation_service(api_key, provider_name, base_url)
 
     # 构建创作提示词
     style_hint = f"写作风格：{request.style}。" if request.style else ""

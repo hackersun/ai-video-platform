@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "roots": ["backend/app", "frontend/src"],
+  "exclude": [
+    "**/__pycache__/**",
+    "**/.next*/**",
+    "**/node_modules/**",
+    "**/static/**"
+  ],
+  "limits": {
+    "new_file_lines": 500,
+    "function_lines": 80,
+    "route_lines": 60,
+    "react_page_lines": 300,
+    "react_component_lines": 200,
+    "endpoint_routes": 10
+  },
+  "boundaries": [
+    {
+      "source_glob": "backend/app/api/v1/endpoints/**/*.py",
+      "forbidden_module_prefix": "app.api.v1.endpoints",
+      "code": "endpoint_imports_endpoint"
+    },
+    {
+      "source_glob": "backend/app/services/**/*.py",
+      "forbidden_module_prefix": "app.api.v1.endpoints",
+      "code": "service_imports_endpoint"
+    }
+  ],
+  "exceptions": []
+}

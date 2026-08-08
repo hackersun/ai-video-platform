@@ -86,6 +86,7 @@ class QianlianService(AIServiceBase):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        request_timeout: float = 300,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -138,7 +139,7 @@ class QianlianService(AIServiceBase):
                 url,
                 headers=self.headers,
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=120)
+                timeout=aiohttp.ClientTimeout(total=request_timeout)
             ) as response:
                 error_text = ""
                 if response.status != 200:

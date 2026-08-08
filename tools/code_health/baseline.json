@@ -1,0 +1,5389 @@
+{
+  "version": 1,
+  "commit": "0b8eec46763740725da92c6fd7dc74d25109275d",
+  "generated_at": "2026-08-08T11:16:09.131438+00:00",
+  "limits": {
+    "new_file_lines": 500
+  },
+  "files": {
+    "backend/app/__init__.py": {
+      "effective_lines": 0,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/api/__init__.py": {
+      "effective_lines": 0,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/api/v1/__init__.py": {
+      "effective_lines": 0,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints",
+          "actual": "app.api.v1.endpoints"
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/assets.py": {
+      "effective_lines": 1778,
+      "max_function_lines": 160,
+      "route_count": 31,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/assets.py",
+          "actual": 31
+        },
+        {
+          "code": "route_too_long",
+          "subject": "bulk_action_assets",
+          "actual": 97
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_entity_view_assets",
+          "actual": 64
+        },
+        {
+          "code": "route_too_long",
+          "subject": "get_asset_binding_health",
+          "actual": 61
+        },
+        {
+          "code": "route_too_long",
+          "subject": "list_assets",
+          "actual": 84
+        },
+        {
+          "code": "route_too_long",
+          "subject": "reextract_assets",
+          "actual": 160
+        },
+        {
+          "code": "route_too_long",
+          "subject": "regenerate_asset",
+          "actual": 67
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/auth.py": {
+      "effective_lines": 403,
+      "max_function_lines": 47,
+      "route_count": 9,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/batch.py": {
+      "effective_lines": 784,
+      "max_function_lines": 91,
+      "route_count": 12,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/batch.py",
+          "actual": 12
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.tts",
+          "actual": "app.api.v1.endpoints.tts"
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.video",
+          "actual": "app.api.v1.endpoints.video"
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_execute_tts_batch_item",
+          "actual": 91
+        },
+        {
+          "code": "route_too_long",
+          "subject": "update_batch_item",
+          "actual": 83
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/chapters.py": {
+      "effective_lines": 1028,
+      "max_function_lines": 142,
+      "route_count": 12,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/chapters.py",
+          "actual": 12
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.dashboard",
+          "actual": "app.api.v1.endpoints.dashboard"
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.scripts",
+          "actual": "app.api.v1.endpoints.scripts"
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.storyboards",
+          "actual": "app.api.v1.endpoints.storyboards"
+        },
+        {
+          "code": "function_too_long",
+          "subject": "generate_chapter_text",
+          "actual": 142
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_chapter",
+          "actual": 76
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_chapter_all",
+          "actual": 92
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/characters.py": {
+      "effective_lines": 898,
+      "max_function_lines": 165,
+      "route_count": 8,
+      "known_violations": [
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.dashboard",
+          "actual": "app.api.v1.endpoints.dashboard"
+        },
+        {
+          "code": "route_too_long",
+          "subject": "extract_characters",
+          "actual": 165
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/coding_plan.py": {
+      "effective_lines": 255,
+      "max_function_lines": 60,
+      "route_count": 4,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/consistency.py": {
+      "effective_lines": 351,
+      "max_function_lines": 56,
+      "route_count": 6,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/costs.py": {
+      "effective_lines": 476,
+      "max_function_lines": 107,
+      "route_count": 8,
+      "known_violations": [
+        {
+          "code": "route_too_long",
+          "subject": "estimate_resource_cost",
+          "actual": 87
+        },
+        {
+          "code": "route_too_long",
+          "subject": "get_cost_breakdown",
+          "actual": 92
+        },
+        {
+          "code": "route_too_long",
+          "subject": "get_cost_usage",
+          "actual": 107
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/dashboard.py": {
+      "effective_lines": 645,
+      "max_function_lines": 122,
+      "route_count": 4,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_get_production_metrics",
+          "actual": 122
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/external_api.py": {
+      "effective_lines": 571,
+      "max_function_lines": 89,
+      "route_count": 9,
+      "known_violations": [
+        {
+          "code": "route_too_long",
+          "subject": "test_config_media_delivery",
+          "actual": 89
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/graph.py": {
+      "effective_lines": 446,
+      "max_function_lines": 54,
+      "route_count": 11,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/graph.py",
+          "actual": 11
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/images.py": {
+      "effective_lines": 536,
+      "max_function_lines": 259,
+      "route_count": 6,
+      "known_violations": [
+        {
+          "code": "route_too_long",
+          "subject": "generate_image",
+          "actual": 259
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/llm_config.py": {
+      "effective_lines": 1438,
+      "max_function_lines": 67,
+      "route_count": 13,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/llm_config.py",
+          "actual": 13
+        },
+        {
+          "code": "route_too_long",
+          "subject": "test_config",
+          "actual": 67
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/media.py": {
+      "effective_lines": 671,
+      "max_function_lines": 229,
+      "route_count": 7,
+      "known_violations": [
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints",
+          "actual": "app.api.v1.endpoints"
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_media",
+          "actual": 229
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/novels.py": {
+      "effective_lines": 1049,
+      "max_function_lines": 136,
+      "route_count": 20,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/novels.py",
+          "actual": 20
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.dashboard",
+          "actual": "app.api.v1.endpoints.dashboard"
+        },
+        {
+          "code": "function_too_long",
+          "subject": "generate_cover_image_for_user",
+          "actual": 83
+        },
+        {
+          "code": "route_too_long",
+          "subject": "confirm_import_novel",
+          "actual": 78
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_novel",
+          "actual": 136
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/openai.py": {
+      "effective_lines": 265,
+      "max_function_lines": 46,
+      "route_count": 4,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/production_cards.py": {
+      "effective_lines": 45,
+      "max_function_lines": 14,
+      "route_count": 3,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/production_control.py": {
+      "effective_lines": 260,
+      "max_function_lines": 81,
+      "route_count": 7,
+      "known_violations": [
+        {
+          "code": "route_too_long",
+          "subject": "get_workflow_voice_lock_stats",
+          "actual": 81
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/projects.py": {
+      "effective_lines": 374,
+      "max_function_lines": 45,
+      "route_count": 10,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/prompt_skills.py": {
+      "effective_lines": 135,
+      "max_function_lines": 15,
+      "route_count": 10,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/qwen.py": {
+      "effective_lines": 220,
+      "max_function_lines": 32,
+      "route_count": 7,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/scripts.py": {
+      "effective_lines": 1451,
+      "max_function_lines": 122,
+      "route_count": 12,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/scripts.py",
+          "actual": 12
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.dashboard",
+          "actual": "app.api.v1.endpoints.dashboard"
+        },
+        {
+          "code": "function_too_long",
+          "subject": "build_dev_script_content",
+          "actual": 106
+        },
+        {
+          "code": "route_too_long",
+          "subject": "ai_assist_script_edit",
+          "actual": 79
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_script",
+          "actual": 122
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/series_runs.py": {
+      "effective_lines": 480,
+      "max_function_lines": 37,
+      "route_count": 20,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/series_runs.py",
+          "actual": 20
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/short_video.py": {
+      "effective_lines": 96,
+      "max_function_lines": 17,
+      "route_count": 4,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/shots.py": {
+      "effective_lines": 1350,
+      "max_function_lines": 246,
+      "route_count": 18,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/shots.py",
+          "actual": 18
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.video",
+          "actual": "app.api.v1.endpoints.video"
+        },
+        {
+          "code": "route_too_long",
+          "subject": "batch_rebuild_consistency_prompts",
+          "actual": 62
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_shot_image",
+          "actual": 246
+        },
+        {
+          "code": "route_too_long",
+          "subject": "retry_shot_video",
+          "actual": 73
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/story_bible.py": {
+      "effective_lines": 3040,
+      "max_function_lines": 223,
+      "route_count": 51,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/story_bible.py",
+          "actual": 51
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_build_entity_consistency",
+          "actual": 98
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_extract_story_entities_with_optional_ai",
+          "actual": 88
+        },
+        {
+          "code": "route_too_long",
+          "subject": "bulk_action_story_entities",
+          "actual": 112
+        },
+        {
+          "code": "route_too_long",
+          "subject": "check_story_bible_consistency",
+          "actual": 223
+        },
+        {
+          "code": "route_too_long",
+          "subject": "reextract_story_entities",
+          "actual": 109
+        },
+        {
+          "code": "route_too_long",
+          "subject": "sync_story_bible_from_chapter",
+          "actual": 73
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/storyboard_ai.py": {
+      "effective_lines": 406,
+      "max_function_lines": 104,
+      "route_count": 2,
+      "known_violations": [
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.storyboards",
+          "actual": "app.api.v1.endpoints.storyboards"
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_dialogue",
+          "actual": 104
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_shots",
+          "actual": 101
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/storyboards.py": {
+      "effective_lines": 2357,
+      "max_function_lines": 367,
+      "route_count": 14,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/storyboards.py",
+          "actual": 14
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.shots",
+          "actual": "app.api.v1.endpoints.shots"
+        },
+        {
+          "code": "function_too_long",
+          "subject": "generate_script_storyboard_template_fallback",
+          "actual": 142
+        },
+        {
+          "code": "function_too_long",
+          "subject": "persist_storyboard_with_shots",
+          "actual": 126
+        },
+        {
+          "code": "function_too_long",
+          "subject": "refine_template_shots_with_ai",
+          "actual": 107
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_smart_storyboard",
+          "actual": 194
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_storyboard",
+          "actual": 245
+        },
+        {
+          "code": "route_too_long",
+          "subject": "merge_storyboard_videos",
+          "actual": 367
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/studio.py": {
+      "effective_lines": 154,
+      "max_function_lines": 20,
+      "route_count": 8,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/subtitles.py": {
+      "effective_lines": 520,
+      "max_function_lines": 53,
+      "route_count": 9,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/synthesis.py": {
+      "effective_lines": 1055,
+      "max_function_lines": 120,
+      "route_count": 16,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/synthesis.py",
+          "actual": 16
+        },
+        {
+          "code": "route_too_long",
+          "subject": "execute_synthesis",
+          "actual": 64
+        },
+        {
+          "code": "route_too_long",
+          "subject": "publish_export",
+          "actual": 120
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/templates.py": {
+      "effective_lines": 475,
+      "max_function_lines": 62,
+      "route_count": 10,
+      "known_violations": [
+        {
+          "code": "route_too_long",
+          "subject": "clone_template",
+          "actual": 62
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/timelines.py": {
+      "effective_lines": 742,
+      "max_function_lines": 89,
+      "route_count": 17,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/timelines.py",
+          "actual": 17
+        },
+        {
+          "code": "route_too_long",
+          "subject": "create_timeline",
+          "actual": 63
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_timeline_preview",
+          "actual": 70
+        },
+        {
+          "code": "route_too_long",
+          "subject": "sync_timeline_from_synthesis",
+          "actual": 89
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/tts.py": {
+      "effective_lines": 1291,
+      "max_function_lines": 465,
+      "route_count": 9,
+      "known_violations": [
+        {
+          "code": "route_too_long",
+          "subject": "create_voice_clone_profile",
+          "actual": 111
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_tts",
+          "actual": 465
+        },
+        {
+          "code": "route_too_long",
+          "subject": "preview_tts_voice",
+          "actual": 78
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/usage_stats.py": {
+      "effective_lines": 185,
+      "max_function_lines": 40,
+      "route_count": 4,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/versions.py": {
+      "effective_lines": 287,
+      "max_function_lines": 41,
+      "route_count": 9,
+      "known_violations": []
+    },
+    "backend/app/api/v1/endpoints/video.py": {
+      "effective_lines": 1184,
+      "max_function_lines": 382,
+      "route_count": 11,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/video.py",
+          "actual": 11
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.dashboard",
+          "actual": "app.api.v1.endpoints.dashboard"
+        },
+        {
+          "code": "endpoint_imports_endpoint",
+          "subject": "app.api.v1.endpoints.llm_config",
+          "actual": "app.api.v1.endpoints.llm_config"
+        },
+        {
+          "code": "route_too_long",
+          "subject": "generate_video",
+          "actual": 382
+        },
+        {
+          "code": "route_too_long",
+          "subject": "get_video_status",
+          "actual": 111
+        },
+        {
+          "code": "route_too_long",
+          "subject": "list_video_models",
+          "actual": 81
+        },
+        {
+          "code": "route_too_long",
+          "subject": "refresh_job_status",
+          "actual": 78
+        }
+      ]
+    },
+    "backend/app/api/v1/endpoints/workflow.py": {
+      "effective_lines": 3722,
+      "max_function_lines": 455,
+      "route_count": 18,
+      "known_violations": [
+        {
+          "code": "endpoint_has_too_many_routes",
+          "subject": "backend/app/api/v1/endpoints/workflow.py",
+          "actual": 18
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_build_media_sync_health",
+          "actual": 89
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_build_render_preflight_payload",
+          "actual": 119
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_build_segments_from_timeline",
+          "actual": 96
+        },
+        {
+          "code": "function_too_long",
+          "subject": "_derive_quality_evidence",
+          "actual": 90
+        },
+        {
+          "code": "route_too_long",
+          "subject": "concatenate_videos",
+          "actual": 405
+        },
+        {
+          "code": "route_too_long",
+          "subject": "get_workflow_status",
+          "actual": 222
+        },
+        {
+          "code": "route_too_long",
+          "subject": "regenerate_workflow_shots",
+          "actual": 81
+        },
+        {
+          "code": "route_too_long",
+          "subject": "render_workflow_package",
+          "actual": 455
+        },
+        {
+          "code": "route_too_long",
+          "subject": "repair_workflow_quality",
+          "actual": 208
+        },
+        {
+          "code": "route_too_long",
+          "subject": "sync_workflow_timeline",
+          "actual": 76
+        }
+      ]
+    },
+    "backend/app/api/v1/router.py": {
+      "effective_lines": 64,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/api/v1/workflow_media_transport.py": {
+      "effective_lines": 8,
+      "max_function_lines": 5,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/__init__.py": {
+      "effective_lines": 0,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/api_key_utils.py": {
+      "effective_lines": 398,
+      "max_function_lines": 161,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "get_user_task_model_config",
+          "actual": 161
+        }
+      ]
+    },
+    "backend/app/core/credential_encryption.py": {
+      "effective_lines": 90,
+      "max_function_lines": 21,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/database.py": {
+      "effective_lines": 136,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/dev_generation.py": {
+      "effective_lines": 269,
+      "max_function_lines": 53,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/minimax_config.py": {
+      "effective_lines": 194,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/minimax_voice_contract.py": {
+      "effective_lines": 24,
+      "max_function_lines": 5,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/model_defaults.py": {
+      "effective_lines": 96,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/model_registry.py": {
+      "effective_lines": 819,
+      "max_function_lines": 51,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/openai_config.py": {
+      "effective_lines": 193,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/permissions.py": {
+      "effective_lines": 61,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/qwen_config.py": {
+      "effective_lines": 212,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/security.py": {
+      "effective_lines": 79,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/time_utils.py": {
+      "effective_lines": 5,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/validation_errors.py": {
+      "effective_lines": 34,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/volcano_agent_plan_config.py": {
+      "effective_lines": 271,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/volcano_config.py": {
+      "effective_lines": 217,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/volcano_image_catalog.py": {
+      "effective_lines": 79,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/core/volcano_voice_contract.py": {
+      "effective_lines": 13,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/db_migrations/live_canary_provider_operations.py": {
+      "effective_lines": 81,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/db_migrations/model_center.py": {
+      "effective_lines": 272,
+      "max_function_lines": 42,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/db_migrations/runner.py": {
+      "effective_lines": 59,
+      "max_function_lines": 43,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/assets/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/assets/api.py": {
+      "effective_lines": 51,
+      "max_function_lines": 18,
+      "route_count": 2,
+      "known_violations": []
+    },
+    "backend/app/features/assets/application.py": {
+      "effective_lines": 108,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/assets/schemas.py": {
+      "effective_lines": 23,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/entity_review/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/entity_review/api.py": {
+      "effective_lines": 73,
+      "max_function_lines": 22,
+      "route_count": 4,
+      "known_violations": []
+    },
+    "backend/app/features/entity_review/approval_policy.py": {
+      "effective_lines": 24,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/entity_review/repository.py": {
+      "effective_lines": 107,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/entity_review/schemas.py": {
+      "effective_lines": 84,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/entity_review/service.py": {
+      "effective_lines": 236,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/__init__.py": {
+      "effective_lines": 19,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/__init__.py": {
+      "effective_lines": 18,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/bindings.py": {
+      "effective_lines": 42,
+      "max_function_lines": 11,
+      "route_count": 3,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/catalog.py": {
+      "effective_lines": 56,
+      "max_function_lines": 10,
+      "route_count": 6,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/certifications.py": {
+      "effective_lines": 67,
+      "max_function_lines": 13,
+      "route_count": 5,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/connections.py": {
+      "effective_lines": 67,
+      "max_function_lines": 12,
+      "route_count": 5,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/errors.py": {
+      "effective_lines": 13,
+      "max_function_lines": 5,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/profiles.py": {
+      "effective_lines": 77,
+      "max_function_lines": 11,
+      "route_count": 7,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/prompt_usage.py": {
+      "effective_lines": 67,
+      "max_function_lines": 13,
+      "route_count": 4,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/prompts.py": {
+      "effective_lines": 142,
+      "max_function_lines": 20,
+      "route_count": 10,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/recipes.py": {
+      "effective_lines": 80,
+      "max_function_lines": 11,
+      "route_count": 7,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/schemas.py": {
+      "effective_lines": 347,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/api/service.py": {
+      "effective_lines": 87,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/backfill.py": {
+      "effective_lines": 410,
+      "max_function_lines": 72,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/binding_management.py": {
+      "effective_lines": 156,
+      "max_function_lines": 32,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/binding_resolution_repository.py": {
+      "effective_lines": 131,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/bindings.py": {
+      "effective_lines": 370,
+      "max_function_lines": 60,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/catalog.py": {
+      "effective_lines": 175,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/catalog_management.py": {
+      "effective_lines": 185,
+      "max_function_lines": 32,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/certification_execution.py": {
+      "effective_lines": 127,
+      "max_function_lines": 36,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/certification_repository.py": {
+      "effective_lines": 257,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/connection_lifecycle.py": {
+      "effective_lines": 34,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/connection_management_repository.py": {
+      "effective_lines": 149,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/credential_persistence.py": {
+      "effective_lines": 54,
+      "max_function_lines": 22,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/domain.py": {
+      "effective_lines": 148,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/generation_context.py": {
+      "effective_lines": 215,
+      "max_function_lines": 54,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/generation_context_repository.py": {
+      "effective_lines": 114,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/legacy_projection.py": {
+      "effective_lines": 161,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/legacy_strategy_projection.py": {
+      "effective_lines": 68,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/management.py": {
+      "effective_lines": 430,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/management_repository.py": {
+      "effective_lines": 245,
+      "max_function_lines": 41,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/prompt_assistance.py": {
+      "effective_lines": 109,
+      "max_function_lines": 33,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/prompt_management_repository.py": {
+      "effective_lines": 215,
+      "max_function_lines": 23,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/prompt_recovery.py": {
+      "effective_lines": 300,
+      "max_function_lines": 46,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/prompt_usage.py": {
+      "effective_lines": 226,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/prompt_usage_contract.py": {
+      "effective_lines": 106,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/prompt_usage_repository.py": {
+      "effective_lines": 100,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/public.py": {
+      "effective_lines": 130,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/readiness.py": {
+      "effective_lines": 164,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/recipe_management_repository.py": {
+      "effective_lines": 98,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/recipe_repository.py": {
+      "effective_lines": 168,
+      "max_function_lines": 31,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/recipe_versions.py": {
+      "effective_lines": 107,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/recipes.py": {
+      "effective_lines": 198,
+      "max_function_lines": 71,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/repository.py": {
+      "effective_lines": 451,
+      "max_function_lines": 84,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "list_product_catalog",
+          "actual": 84
+        }
+      ]
+    },
+    "backend/app/features/model_config/schemas.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/settings.py": {
+      "effective_lines": 24,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/shadow_compare.py": {
+      "effective_lines": 71,
+      "max_function_lines": 22,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/snapshots.py": {
+      "effective_lines": 163,
+      "max_function_lines": 28,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_config/video_contract.py": {
+      "effective_lines": 60,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/__init__.py": {
+      "effective_lines": 3,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/_shared.py": {
+      "effective_lines": 69,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/connection_callable.py": {
+      "effective_lines": 31,
+      "max_function_lines": 24,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/dashscope_video.py": {
+      "effective_lines": 13,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/external_adapter.py": {
+      "effective_lines": 21,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/external_connection.py": {
+      "effective_lines": 72,
+      "max_function_lines": 51,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/legacy_minimax_config.py": {
+      "effective_lines": 69,
+      "max_function_lines": 24,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/legacy_text.py": {
+      "effective_lines": 34,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/legacy_volcano_config.py": {
+      "effective_lines": 124,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/local_ffmpeg.py": {
+      "effective_lines": 25,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/minimax_h3_video.py": {
+      "effective_lines": 130,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/minimax_image.py": {
+      "effective_lines": 25,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/minimax_speech.py": {
+      "effective_lines": 21,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/minimax_text.py": {
+      "effective_lines": 21,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/qiniu_kodo.py": {
+      "effective_lines": 47,
+      "max_function_lines": 18,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/volcano_ark_image.py": {
+      "effective_lines": 27,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/volcano_ark_video.py": {
+      "effective_lines": 60,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/adapters/volcano_openspeech.py": {
+      "effective_lines": 24,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/configuration_testing.py": {
+      "effective_lines": 115,
+      "max_function_lines": 16,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/domain.py": {
+      "effective_lines": 140,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/executor.py": {
+      "effective_lines": 241,
+      "max_function_lines": 21,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/public.py": {
+      "effective_lines": 59,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/registry.py": {
+      "effective_lines": 58,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/text_execution.py": {
+      "effective_lines": 354,
+      "max_function_lines": 56,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_drivers/text_response.py": {
+      "effective_lines": 116,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_execution_contract/__init__.py": {
+      "effective_lines": 5,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_execution_contract/domain.py": {
+      "effective_lines": 31,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_execution_contract/public.py": {
+      "effective_lines": 4,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/model_execution_contract/registry.py": {
+      "effective_lines": 63,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/__init__.py": {
+      "effective_lines": 7,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/domain.py": {
+      "effective_lines": 50,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/evaluation.py": {
+      "effective_lines": 72,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/public.py": {
+      "effective_lines": 58,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/repository.py": {
+      "effective_lines": 124,
+      "max_function_lines": 28,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/routing.py": {
+      "effective_lines": 179,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/prompt_profiles/versioning.py": {
+      "effective_lines": 208,
+      "max_function_lines": 33,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/__init__.py": {
+      "effective_lines": 8,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/api.py": {
+      "effective_lines": 19,
+      "max_function_lines": 9,
+      "route_count": 1,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/deterministic_quality.py": {
+      "effective_lines": 131,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/errors.py": {
+      "effective_lines": 9,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/generation.py": {
+      "effective_lines": 319,
+      "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/media_reconciliation.py": {
+      "effective_lines": 501,
+      "max_function_lines": 108,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_finalize_native_audio_subtitles",
+          "actual": 108
+        }
+      ]
+    },
+    "backend/app/features/series_anchor_generation/quality.py": {
+      "effective_lines": 130,
+      "max_function_lines": 41,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/quality_status.py": {
+      "effective_lines": 50,
+      "max_function_lines": 44,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/run_creation.py": {
+      "effective_lines": 72,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/schemas.py": {
+      "effective_lines": 66,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_anchor_generation/skill_evidence.py": {
+      "effective_lines": 47,
+      "max_function_lines": 23,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_reference_skill/__init__.py": {
+      "effective_lines": 3,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_reference_skill/public.py": {
+      "effective_lines": 50,
+      "max_function_lines": 21,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_acceptance/__init__.py": {
+      "effective_lines": 3,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_acceptance/public.py": {
+      "effective_lines": 208,
+      "max_function_lines": 33,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_media_preflight/__init__.py": {
+      "effective_lines": 3,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_media_preflight/public.py": {
+      "effective_lines": 325,
+      "max_function_lines": 64,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_recovery/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_recovery/api.py": {
+      "effective_lines": 37,
+      "max_function_lines": 11,
+      "route_count": 2,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_recovery/application.py": {
+      "effective_lines": 77,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_recovery/domain.py": {
+      "effective_lines": 68,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_recovery/public.py": {
+      "effective_lines": 6,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/api.py": {
+      "effective_lines": 29,
+      "max_function_lines": 18,
+      "route_count": 1,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/__init__.py": {
+      "effective_lines": 2,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/asset_repair.py": {
+      "effective_lines": 225,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/backfill_scoped_refs.py": {
+      "effective_lines": 154,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/closure_v2_request.py": {
+      "effective_lines": 180,
+      "max_function_lines": 78,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/closure_versioning.py": {
+      "effective_lines": 194,
+      "max_function_lines": 44,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/deterministic_acceptance.py": {
+      "effective_lines": 103,
+      "max_function_lines": 63,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/dialogue_identity.py": {
+      "effective_lines": 444,
+      "max_function_lines": 51,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/explicit_dialogue_approval.py": {
+      "effective_lines": 311,
+      "max_function_lines": 48,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/inspect_freshness.py": {
+      "effective_lines": 219,
+      "max_function_lines": 69,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/invalidate_lineage.py": {
+      "effective_lines": 112,
+      "max_function_lines": 28,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/prepare_story_locks.py": {
+      "effective_lines": 76,
+      "max_function_lines": 21,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/production_closure_v2.py": {
+      "effective_lines": 65,
+      "max_function_lines": 54,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/production_scoped_inputs.py": {
+      "effective_lines": 296,
+      "max_function_lines": 75,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/story_transaction.py": {
+      "effective_lines": 306,
+      "max_function_lines": 68,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/visual_style.py": {
+      "effective_lines": 18,
+      "max_function_lines": 10,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/application/voice_contract.py": {
+      "effective_lines": 32,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/domain/__init__.py": {
+      "effective_lines": 10,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/domain/approval_policy.py": {
+      "effective_lines": 282,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/domain/closure_v2.py": {
+      "effective_lines": 119,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/domain/errors.py": {
+      "effective_lines": 19,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/domain/scoped_reference.py": {
+      "effective_lines": 329,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/public.py": {
+      "effective_lines": 124,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/public_errors.py": {
+      "effective_lines": 13,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/repositories/__init__.py": {
+      "effective_lines": 3,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/repositories/closure_versioning_async.py": {
+      "effective_lines": 219,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/repositories/closure_versioning_protocol.py": {
+      "effective_lines": 12,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/repositories/lineage_repository.py": {
+      "effective_lines": 49,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/repositories/scoped_ref_backfill_async.py": {
+      "effective_lines": 270,
+      "max_function_lines": 73,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_run_story_locks/repositories/story_lock_repository.py": {
+      "effective_lines": 203,
+      "max_function_lines": 28,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/application.py": {
+      "effective_lines": 32,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/domain.py": {
+      "effective_lines": 9,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/entity_stage.py": {
+      "effective_lines": 63,
+      "max_function_lines": 33,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/model_pipeline.py": {
+      "effective_lines": 134,
+      "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/public.py": {
+      "effective_lines": 7,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/series_skill_execution/stage_contracts.py": {
+      "effective_lines": 72,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/adapters/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/adapters/ark.py": {
+      "effective_lines": 31,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/adapters/media_delivery.py": {
+      "effective_lines": 13,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/capability_validation.py": {
+      "effective_lines": 33,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/catalog_projection.py": {
+      "effective_lines": 59,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/consistency_package.py": {
+      "effective_lines": 359,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/driver_submission.py": {
+      "effective_lines": 116,
+      "max_function_lines": 31,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/job_sync.py": {
+      "effective_lines": 112,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/lineage.py": {
+      "effective_lines": 121,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/manual_references.py": {
+      "effective_lines": 63,
+      "max_function_lines": 23,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/application/model_config.py": {
+      "effective_lines": 202,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/constants.py": {
+      "effective_lines": 6,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/domain/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/domain/context_metadata.py": {
+      "effective_lines": 65,
+      "max_function_lines": 31,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/domain/provider_contract.py": {
+      "effective_lines": 56,
+      "max_function_lines": 22,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/errors.py": {
+      "effective_lines": 7,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/public.py": {
+      "effective_lines": 103,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/video_generation/schemas.py": {
+      "effective_lines": 35,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/adapters/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/adapters/tts_submission.py": {
+      "effective_lines": 349,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/adapters/video_submission.py": {
+      "effective_lines": 525,
+      "max_function_lines": 57,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/direct_av.py": {
+      "effective_lines": 244,
+      "max_function_lines": 32,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/generate_media.py": {
+      "effective_lines": 22,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/generate_separate_media.py": {
+      "effective_lines": 72,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/live_provider_attempts.py": {
+      "effective_lines": 105,
+      "max_function_lines": 45,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/load_context.py": {
+      "effective_lines": 93,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/persist_separate_media.py": {
+      "effective_lines": 176,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/prepare_separate_media.py": {
+      "effective_lines": 431,
+      "max_function_lines": 49,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/reference_packages.py": {
+      "effective_lines": 129,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/application/voice_locks.py": {
+      "effective_lines": 430,
+      "max_function_lines": 60,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/domain/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/domain/production_strategy.py": {
+      "effective_lines": 51,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/domain/workflow_state.py": {
+      "effective_lines": 8,
+      "max_function_lines": 6,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/errors.py": {
+      "effective_lines": 8,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/public.py": {
+      "effective_lines": 83,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/repositories/__init__.py": {
+      "effective_lines": 1,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/repositories/workflow_media_repository.py": {
+      "effective_lines": 53,
+      "max_function_lines": 18,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/features/workflow_media/schemas.py": {
+      "effective_lines": 40,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/__init__.py": {
+      "effective_lines": 116,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/activity.py": {
+      "effective_lines": 20,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/ai_model.py": {
+      "effective_lines": 52,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/asset.py": {
+      "effective_lines": 89,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/batch_job.py": {
+      "effective_lines": 50,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/chapter.py": {
+      "effective_lines": 20,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/character.py": {
+      "effective_lines": 28,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/entity_extraction_run.py": {
+      "effective_lines": 26,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/entity_feedback.py": {
+      "effective_lines": 17,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/external_api.py": {
+      "effective_lines": 83,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/image_job.py": {
+      "effective_lines": 27,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/live_canary_provider_operation.py": {
+      "effective_lines": 22,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/llm_config.py": {
+      "effective_lines": 114,
+      "max_function_lines": 5,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/media_generation_job.py": {
+      "effective_lines": 53,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/model_center.py": {
+      "effective_lines": 257,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/novel.py": {
+      "effective_lines": 24,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/novel_import.py": {
+      "effective_lines": 25,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/production_state_event.py": {
+      "effective_lines": 62,
+      "max_function_lines": 11,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/project.py": {
+      "effective_lines": 59,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/prompt_profile.py": {
+      "effective_lines": 78,
+      "max_function_lines": 10,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/prompt_skill.py": {
+      "effective_lines": 26,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/provider_asset_binding.py": {
+      "effective_lines": 50,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/publication.py": {
+      "effective_lines": 35,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/quality_evaluation.py": {
+      "effective_lines": 106,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/script.py": {
+      "effective_lines": 25,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/series_anchor_generation_submission.py": {
+      "effective_lines": 18,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/series_production_run.py": {
+      "effective_lines": 36,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/shot.py": {
+      "effective_lines": 48,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/story_bible.py": {
+      "effective_lines": 25,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/story_entity.py": {
+      "effective_lines": 35,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/story_entity_mention.py": {
+      "effective_lines": 24,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/storyboard.py": {
+      "effective_lines": 26,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/studio_review.py": {
+      "effective_lines": 43,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/subtitle.py": {
+      "effective_lines": 58,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/synthesis_job.py": {
+      "effective_lines": 33,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/template.py": {
+      "effective_lines": 292,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/timeline.py": {
+      "effective_lines": 121,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/tts_job.py": {
+      "effective_lines": 40,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/user.py": {
+      "effective_lines": 20,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/version.py": {
+      "effective_lines": 49,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/video_job.py": {
+      "effective_lines": 35,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/models/workflow.py": {
+      "effective_lines": 30,
+      "max_function_lines": 2,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/__init__.py": {
+      "effective_lines": 13,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/ai_generation_feedback.py": {
+      "effective_lines": 58,
+      "max_function_lines": 23,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/ai_service_base.py": {
+      "effective_lines": 227,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/anchor_shot_service.py": {
+      "effective_lines": 170,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/asset_generation_service.py": {
+      "effective_lines": 1654,
+      "max_function_lines": 243,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_generate_asset_image_url",
+          "actual": 93
+        },
+        {
+          "code": "function_too_long",
+          "subject": "generate_character_assets",
+          "actual": 140
+        },
+        {
+          "code": "function_too_long",
+          "subject": "generate_entity_view_assets",
+          "actual": 243
+        }
+      ]
+    },
+    "backend/app/services/asset_lock_service.py": {
+      "effective_lines": 146,
+      "max_function_lines": 51,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/asset_model_capabilities.py": {
+      "effective_lines": 58,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/asset_visual_contract.py": {
+      "effective_lines": 442,
+      "max_function_lines": 78,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/asset_visual_review.py": {
+      "effective_lines": 123,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/audio_route_service.py": {
+      "effective_lines": 44,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/chapter_fact_timeline.py": {
+      "effective_lines": 85,
+      "max_function_lines": 55,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/chapter_naming.py": {
+      "effective_lines": 53,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/chapter_scene_planner.py": {
+      "effective_lines": 102,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/chapter_story_context.py": {
+      "effective_lines": 149,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/character_graph_service.py": {
+      "effective_lines": 363,
+      "max_function_lines": 46,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/consistency_checker.py": {
+      "effective_lines": 281,
+      "max_function_lines": 48,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/consistency_context.py": {
+      "effective_lines": 673,
+      "max_function_lines": 110,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_consistency_prompt",
+          "actual": 110
+        }
+      ]
+    },
+    "backend/app/services/consistency_ledger_service.py": {
+      "effective_lines": 62,
+      "max_function_lines": 47,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/consistency_preflight.py": {
+      "effective_lines": 331,
+      "max_function_lines": 78,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/continuity_review_tasks.py": {
+      "effective_lines": 189,
+      "max_function_lines": 84,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "list_continuity_review_tasks",
+          "actual": 84
+        }
+      ]
+    },
+    "backend/app/services/cost_calculator.py": {
+      "effective_lines": 345,
+      "max_function_lines": 49,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/dashscope_service.py": {
+      "effective_lines": 391,
+      "max_function_lines": 56,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/default_anime_library.py": {
+      "effective_lines": 865,
+      "max_function_lines": 45,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/default_prompt_skills.py": {
+      "effective_lines": 272,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/deterministic_acceptance_lineage.py": {
+      "effective_lines": 48,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/deterministic_provider_fake.py": {
+      "effective_lines": 34,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/dialogue_lineage_service.py": {
+      "effective_lines": 172,
+      "max_function_lines": 68,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/dialogue_parser.py": {
+      "effective_lines": 31,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_chapter_provenance.py": {
+      "effective_lines": 35,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_evidence_contract.py": {
+      "effective_lines": 29,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_evidence_mentions.py": {
+      "effective_lines": 32,
+      "max_function_lines": 17,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_extraction_schema.py": {
+      "effective_lines": 112,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_extraction_service.py": {
+      "effective_lines": 1020,
+      "max_function_lines": 163,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "extract_story_entities",
+          "actual": 163
+        },
+        {
+          "code": "function_too_long",
+          "subject": "normalize_extracted_entities",
+          "actual": 86
+        }
+      ]
+    },
+    "backend/app/services/entity_impact_service.py": {
+      "effective_lines": 298,
+      "max_function_lines": 133,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "analyze_entity_change_impact",
+          "actual": 133
+        }
+      ]
+    },
+    "backend/app/services/entity_quality_service.py": {
+      "effective_lines": 138,
+      "max_function_lines": 42,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_ref_normalizer.py": {
+      "effective_lines": 63,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/entity_review_service.py": {
+      "effective_lines": 740,
+      "max_function_lines": 219,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "run_candidate_entity_extraction",
+          "actual": 219
+        }
+      ]
+    },
+    "backend/app/services/entity_targeted_enrichment_service.py": {
+      "effective_lines": 280,
+      "max_function_lines": 130,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "enrich_target_entity",
+          "actual": 130
+        }
+      ]
+    },
+    "backend/app/services/episode_contract_service.py": {
+      "effective_lines": 197,
+      "max_function_lines": 125,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "lock_episode_contract",
+          "actual": 125
+        }
+      ]
+    },
+    "backend/app/services/episode_production_service.py": {
+      "effective_lines": 203,
+      "max_function_lines": 102,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "create_or_resolve_script_stage",
+          "actual": 102
+        }
+      ]
+    },
+    "backend/app/services/episode_shot_plan.py": {
+      "effective_lines": 46,
+      "max_function_lines": 18,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/episode_shot_stage.py": {
+      "effective_lines": 282,
+      "max_function_lines": 80,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/episode_storyboard_stage.py": {
+      "effective_lines": 167,
+      "max_function_lines": 58,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/ffmpeg_local_renderer.py": {
+      "effective_lines": 580,
+      "max_function_lines": 65,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/generated_artifact_policy.py": {
+      "effective_lines": 58,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/image_execution_trace.py": {
+      "effective_lines": 16,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/image_generation_pipeline.py": {
+      "effective_lines": 239,
+      "max_function_lines": 90,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "call_image_generation_provider",
+          "actual": 90
+        }
+      ]
+    },
+    "backend/app/services/image_poll_service.py": {
+      "effective_lines": 138,
+      "max_function_lines": 81,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "poll_and_update_shot_image",
+          "actual": 81
+        }
+      ]
+    },
+    "backend/app/services/image_prompt_policy.py": {
+      "effective_lines": 147,
+      "max_function_lines": 46,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/image_provider_response_contract.py": {
+      "effective_lines": 70,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/image_result_parser.py": {
+      "effective_lines": 81,
+      "max_function_lines": 44,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/live_canary_bindings.py": {
+      "effective_lines": 216,
+      "max_function_lines": 75,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/live_canary_budget.py": {
+      "effective_lines": 426,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/live_canary_policy.py": {
+      "effective_lines": 65,
+      "max_function_lines": 41,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/live_canary_repair_budget.py": {
+      "effective_lines": 76,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/live_canary_staging_proof.py": {
+      "effective_lines": 57,
+      "max_function_lines": 22,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/media_delivery.py": {
+      "effective_lines": 351,
+      "max_function_lines": 128,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "resolve_provider_media_url",
+          "actual": 128
+        }
+      ]
+    },
+    "backend/app/services/media_job_selection.py": {
+      "effective_lines": 39,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/media_persistence.py": {
+      "effective_lines": 250,
+      "max_function_lines": 59,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/media_playback_delivery.py": {
+      "effective_lines": 13,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/minimax_errors.py": {
+      "effective_lines": 49,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/minimax_h3_video_contract.py": {
+      "effective_lines": 70,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/minimax_service.py": {
+      "effective_lines": 408,
+      "max_function_lines": 120,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "text_to_speech",
+          "actual": 120
+        }
+      ]
+    },
+    "backend/app/services/minimax_tts_request.py": {
+      "effective_lines": 49,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/native_audio_subtitle_renderer.py": {
+      "effective_lines": 266,
+      "max_function_lines": 68,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/novel_continuity.py": {
+      "effective_lines": 343,
+      "max_function_lines": 99,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_novel_continuity_package",
+          "actual": 99
+        }
+      ]
+    },
+    "backend/app/services/novel_import_service.py": {
+      "effective_lines": 128,
+      "max_function_lines": 62,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/novel_production_entry.py": {
+      "effective_lines": 196,
+      "max_function_lines": 54,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/openai_service.py": {
+      "effective_lines": 307,
+      "max_function_lines": 65,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/owned_shot_entity_refs.py": {
+      "effective_lines": 115,
+      "max_function_lines": 69,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/production_bible.py": {
+      "effective_lines": 359,
+      "max_function_lines": 135,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_production_bible_summary",
+          "actual": 135
+        }
+      ]
+    },
+    "backend/app/services/production_card_service.py": {
+      "effective_lines": 456,
+      "max_function_lines": 74,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/production_control.py": {
+      "effective_lines": 657,
+      "max_function_lines": 91,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "audit_and_persist_workflow_media",
+          "actual": 91
+        }
+      ]
+    },
+    "backend/app/services/production_graph_service.py": {
+      "effective_lines": 413,
+      "max_function_lines": 85,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_episode_state_snapshot",
+          "actual": 85
+        }
+      ]
+    },
+    "backend/app/services/production_metrics.py": {
+      "effective_lines": 181,
+      "max_function_lines": 89,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "aggregate_production_metrics",
+          "actual": 89
+        }
+      ]
+    },
+    "backend/app/services/production_strategy_routing.py": {
+      "effective_lines": 24,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/prompt_composer.py": {
+      "effective_lines": 134,
+      "max_function_lines": 111,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "compose_generation_prompt",
+          "actual": 111
+        }
+      ]
+    },
+    "backend/app/services/prompt_skill_service.py": {
+      "effective_lines": 545,
+      "max_function_lines": 67,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/prompt_skill_variable_guides.py": {
+      "effective_lines": 187,
+      "max_function_lines": 21,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/prompt_template_router.py": {
+      "effective_lines": 106,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/provider_asset_binding_service.py": {
+      "effective_lines": 309,
+      "max_function_lines": 83,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "resolve_provider_binding",
+          "actual": 83
+        }
+      ]
+    },
+    "backend/app/services/provider_prompt_safety.py": {
+      "effective_lines": 359,
+      "max_function_lines": 49,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/publication_readiness.py": {
+      "effective_lines": 76,
+      "max_function_lines": 62,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/qianlian_service.py": {
+      "effective_lines": 285,
+      "max_function_lines": 94,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "chat_completion",
+          "actual": 94
+        }
+      ]
+    },
+    "backend/app/services/quality_evaluation_service.py": {
+      "effective_lines": 689,
+      "max_function_lines": 134,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_deterministic_issues",
+          "actual": 104
+        },
+        {
+          "code": "function_too_long",
+          "subject": "evaluate_artifact",
+          "actual": 134
+        },
+        {
+          "code": "function_too_long",
+          "subject": "evaluate_bound_anchor",
+          "actual": 120
+        },
+        {
+          "code": "function_too_long",
+          "subject": "validate_persisted_anchor_evaluations",
+          "actual": 108
+        }
+      ]
+    },
+    "backend/app/services/reference_failure_evidence.py": {
+      "effective_lines": 40,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/reference_layout_evaluator.py": {
+      "effective_lines": 123,
+      "max_function_lines": 43,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/reference_package_builder.py": {
+      "effective_lines": 724,
+      "max_function_lines": 133,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_image_candidates",
+          "actual": 133
+        },
+        {
+          "code": "function_too_long",
+          "subject": "bind_reference_package",
+          "actual": 82
+        },
+        {
+          "code": "function_too_long",
+          "subject": "build_reference_package",
+          "actual": 100
+        }
+      ]
+    },
+    "backend/app/services/reference_predecessor.py": {
+      "effective_lines": 98,
+      "max_function_lines": 54,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/repair_planner.py": {
+      "effective_lines": 100,
+      "max_function_lines": 42,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/seedance_contract.py": {
+      "effective_lines": 150,
+      "max_function_lines": 33,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_production.py": {
+      "effective_lines": 752,
+      "max_function_lines": 263,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_series_plan",
+          "actual": 263
+        },
+        {
+          "code": "function_too_long",
+          "subject": "resolve_production_graph_artifact_impact",
+          "actual": 89
+        }
+      ]
+    },
+    "backend/app/services/series_reference_artifact_recovery.py": {
+      "effective_lines": 34,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_reference_artifact_validation.py": {
+      "effective_lines": 63,
+      "max_function_lines": 47,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_reference_budget.py": {
+      "effective_lines": 32,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_reference_contract.py": {
+      "effective_lines": 66,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_reference_provider.py": {
+      "effective_lines": 162,
+      "max_function_lines": 75,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_reference_rebinding.py": {
+      "effective_lines": 79,
+      "max_function_lines": 43,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_run_execution_queue.py": {
+      "effective_lines": 37,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_run_live_preflight.py": {
+      "effective_lines": 365,
+      "max_function_lines": 69,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_run_orchestrator.py": {
+      "effective_lines": 241,
+      "max_function_lines": 53,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_run_reference_preparation.py": {
+      "effective_lines": 519,
+      "max_function_lines": 249,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_finalize_candidate",
+          "actual": 82
+        },
+        {
+          "code": "function_too_long",
+          "subject": "prepare_series_reference",
+          "actual": 249
+        }
+      ]
+    },
+    "backend/app/services/series_run_skill_routing.py": {
+      "effective_lines": 45,
+      "max_function_lines": 22,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/series_studio_flags.py": {
+      "effective_lines": 20,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/short_video_production.py": {
+      "effective_lines": 908,
+      "max_function_lines": 101,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_shot_production_contract",
+          "actual": 101
+        }
+      ]
+    },
+    "backend/app/services/shot_image_delivery.py": {
+      "effective_lines": 42,
+      "max_function_lines": 17,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/shot_input_fingerprint.py": {
+      "effective_lines": 18,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/shot_quality_service.py": {
+      "effective_lines": 600,
+      "max_function_lines": 190,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "auto_retry_video",
+          "actual": 89
+        },
+        {
+          "code": "function_too_long",
+          "subject": "check_shot_quality",
+          "actual": 190
+        },
+        {
+          "code": "service_imports_endpoint",
+          "subject": "app.api.v1.endpoints.video",
+          "actual": "app.api.v1.endpoints.video"
+        }
+      ]
+    },
+    "backend/app/services/shot_reference_input_service.py": {
+      "effective_lines": 215,
+      "max_function_lines": 56,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/shot_review_projection.py": {
+      "effective_lines": 72,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/single_reference_anchor.py": {
+      "effective_lines": 50,
+      "max_function_lines": 17,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/story_entity_lifecycle.py": {
+      "effective_lines": 213,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/story_entity_stats.py": {
+      "effective_lines": 8,
+      "max_function_lines": 5,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/story_prompt_context.py": {
+      "effective_lines": 335,
+      "max_function_lines": 143,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "load_story_prompt_context",
+          "actual": 143
+        }
+      ]
+    },
+    "backend/app/services/story_state_machine.py": {
+      "effective_lines": 696,
+      "max_function_lines": 211,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_build_issues",
+          "actual": 111
+        },
+        {
+          "code": "function_too_long",
+          "subject": "build_story_state_machine",
+          "actual": 211
+        }
+      ]
+    },
+    "backend/app/services/storyboard_template_service.py": {
+      "effective_lines": 819,
+      "max_function_lines": 78,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/studio_actions.py": {
+      "effective_lines": 409,
+      "max_function_lines": 154,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "run_studio_action",
+          "actual": 154
+        }
+      ]
+    },
+    "backend/app/services/studio_episode_shots.py": {
+      "effective_lines": 62,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/studio_guidance.py": {
+      "effective_lines": 425,
+      "max_function_lines": 183,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_build_legacy_studio_guidance",
+          "actual": 164
+        },
+        {
+          "code": "function_too_long",
+          "subject": "build_studio_guidance",
+          "actual": 183
+        }
+      ]
+    },
+    "backend/app/services/studio_mode.py": {
+      "effective_lines": 74,
+      "max_function_lines": 43,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/studio_snapshot.py": {
+      "effective_lines": 778,
+      "max_function_lines": 178,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "_load_jobs",
+          "actual": 83
+        },
+        {
+          "code": "function_too_long",
+          "subject": "build_studio_snapshot",
+          "actual": 178
+        }
+      ]
+    },
+    "backend/app/services/synthesis_executor.py": {
+      "effective_lines": 384,
+      "max_function_lines": 60,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/version_service.py": {
+      "effective_lines": 284,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/video_frame_extractor.py": {
+      "effective_lines": 152,
+      "max_function_lines": 72,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/video_reference_adapter.py": {
+      "effective_lines": 315,
+      "max_function_lines": 141,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "build_video_provider_content",
+          "actual": 141
+        }
+      ]
+    },
+    "backend/app/services/visual_consistency_service.py": {
+      "effective_lines": 168,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/visual_similarity_adapter.py": {
+      "effective_lines": 78,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/voice_service.py": {
+      "effective_lines": 103,
+      "max_function_lines": 42,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/volcano_service.py": {
+      "effective_lines": 432,
+      "max_function_lines": 86,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "generate_image",
+          "actual": 86
+        }
+      ]
+    },
+    "backend/app/services/volcano_speech_tts.py": {
+      "effective_lines": 275,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/services/workflow_shot_scope.py": {
+      "effective_lines": 68,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/analytics/page.tsx": {
+      "effective_lines": 551,
+      "max_function_lines": 377,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "AnalyticsPage",
+          "actual": 377
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/analytics/page.tsx",
+          "actual": 551
+        }
+      ]
+    },
+    "frontend/src/app/assets/page.tsx": {
+      "effective_lines": 1929,
+      "max_function_lines": 1395,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 142
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "AssetsPage",
+          "actual": 1395
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/assets/page.tsx",
+          "actual": 1929
+        }
+      ]
+    },
+    "frontend/src/app/characters/page.tsx": {
+      "effective_lines": 981,
+      "max_function_lines": 860,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "CharactersPageContent",
+          "actual": 860
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/characters/page.tsx",
+          "actual": 981
+        }
+      ]
+    },
+    "frontend/src/app/dashboard/page.tsx": {
+      "effective_lines": 635,
+      "max_function_lines": 548,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "DashboardPage",
+          "actual": 548
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/dashboard/page.tsx",
+          "actual": 635
+        }
+      ]
+    },
+    "frontend/src/app/entities/page.tsx": {
+      "effective_lines": 1287,
+      "max_function_lines": 1108,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "renderEntityCard",
+          "actual": 112
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "EntitiesPageContent",
+          "actual": 1108
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/entities/page.tsx",
+          "actual": 1287
+        }
+      ]
+    },
+    "frontend/src/app/forgot-password/page.tsx": {
+      "effective_lines": 102,
+      "max_function_lines": 94,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/graph/page.tsx": {
+      "effective_lines": 771,
+      "max_function_lines": 659,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 113
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "GraphPage",
+          "actual": 659
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/graph/page.tsx",
+          "actual": 771
+        }
+      ]
+    },
+    "frontend/src/app/jobs/page.tsx": {
+      "effective_lines": 905,
+      "max_function_lines": 749,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 104
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "JobsPage",
+          "actual": 749
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/jobs/page.tsx",
+          "actual": 905
+        }
+      ]
+    },
+    "frontend/src/app/layout.tsx": {
+      "effective_lines": 49,
+      "max_function_lines": 21,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/llm-config/page.tsx": {
+      "effective_lines": 6,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/login/page.tsx": {
+      "effective_lines": 227,
+      "max_function_lines": 207,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "LoginPage",
+          "actual": 207
+        }
+      ]
+    },
+    "frontend/src/app/media-player/page.tsx": {
+      "effective_lines": 171,
+      "max_function_lines": 160,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/novels/[id]/asset-analysis/page.tsx": {
+      "effective_lines": 37,
+      "max_function_lines": 24,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/novels/[id]/chapters/[chapter_id]/edit/page.tsx": {
+      "effective_lines": 444,
+      "max_function_lines": 405,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ChapterEditPage",
+          "actual": 405
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/novels/[id]/chapters/[chapter_id]/edit/page.tsx",
+          "actual": 444
+        }
+      ]
+    },
+    "frontend/src/app/novels/[id]/chapters/[chapter_id]/page.tsx": {
+      "effective_lines": 436,
+      "max_function_lines": 387,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ChapterDetailPage",
+          "actual": 387
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/novels/[id]/chapters/[chapter_id]/page.tsx",
+          "actual": 436
+        }
+      ]
+    },
+    "frontend/src/app/novels/[id]/chapters/page.tsx": {
+      "effective_lines": 447,
+      "max_function_lines": 385,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ChaptersContent",
+          "actual": 385
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/novels/[id]/chapters/page.tsx",
+          "actual": 447
+        }
+      ]
+    },
+    "frontend/src/app/novels/[id]/page.tsx": {
+      "effective_lines": 2160,
+      "max_function_lines": 1752,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "loadNovelData",
+          "actual": 89
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "NovelDetailPage",
+          "actual": 1752
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/novels/[id]/page.tsx",
+          "actual": 2160
+        }
+      ]
+    },
+    "frontend/src/app/novels/new/page.tsx": {
+      "effective_lines": 458,
+      "max_function_lines": 403,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "NewNovelPage",
+          "actual": 403
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/novels/new/page.tsx",
+          "actual": 458
+        }
+      ]
+    },
+    "frontend/src/app/novels/page.tsx": {
+      "effective_lines": 607,
+      "max_function_lines": 517,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 101
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "NovelsContent",
+          "actual": 517
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/novels/page.tsx",
+          "actual": 607
+        }
+      ]
+    },
+    "frontend/src/app/page.tsx": {
+      "effective_lines": 145,
+      "max_function_lines": 104,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/producer/page.tsx": {
+      "effective_lines": 2653,
+      "max_function_lines": 2354,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "createBatchJob",
+          "actual": 91
+        },
+        {
+          "code": "function_too_long",
+          "subject": "runOneClickProduction",
+          "actual": 119
+        },
+        {
+          "code": "function_too_long",
+          "subject": "runPreviewProduction",
+          "actual": 106
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "ProducerCenterContent",
+          "actual": 2354
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/producer/page.tsx",
+          "actual": 2653
+        }
+      ]
+    },
+    "frontend/src/app/production-adapters/page.tsx": {
+      "effective_lines": 5,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/prompt-skills/page.tsx": {
+      "effective_lines": 5,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/quick-start/page.tsx": {
+      "effective_lines": 1273,
+      "max_function_lines": 1051,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 100
+        },
+        {
+          "code": "function_too_long",
+          "subject": "runQuickStart",
+          "actual": 154
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "QuickStartPage",
+          "actual": 1051
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/quick-start/page.tsx",
+          "actual": 1273
+        }
+      ]
+    },
+    "frontend/src/app/register/page.tsx": {
+      "effective_lines": 199,
+      "max_function_lines": 181,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/reset-password/page.tsx": {
+      "effective_lines": 131,
+      "max_function_lines": 123,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/scripts/[id]/page.tsx": {
+      "effective_lines": 688,
+      "max_function_lines": 614,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ScriptDetailPage",
+          "actual": 614
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/scripts/[id]/page.tsx",
+          "actual": 688
+        }
+      ]
+    },
+    "frontend/src/app/scripts/page.tsx": {
+      "effective_lines": 1289,
+      "max_function_lines": 1159,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 102
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "ScriptsPage",
+          "actual": 1159
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/scripts/page.tsx",
+          "actual": 1289
+        }
+      ]
+    },
+    "frontend/src/app/settings/appearance/page.tsx": {
+      "effective_lines": 302,
+      "max_function_lines": 200,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/settings/appearance/page.tsx",
+          "actual": 302
+        }
+      ]
+    },
+    "frontend/src/app/settings/notifications/page.tsx": {
+      "effective_lines": 227,
+      "max_function_lines": 143,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/settings/page.tsx": {
+      "effective_lines": 268,
+      "max_function_lines": 152,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/settings/profile/page.tsx": {
+      "effective_lines": 252,
+      "max_function_lines": 222,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ProfileSettingsPage",
+          "actual": 222
+        }
+      ]
+    },
+    "frontend/src/app/settings/security/page.tsx": {
+      "effective_lines": 221,
+      "max_function_lines": 202,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "SecuritySettingsPage",
+          "actual": 202
+        }
+      ]
+    },
+    "frontend/src/app/settings/team/page.tsx": {
+      "effective_lines": 382,
+      "max_function_lines": 329,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "TeamSettingsPage",
+          "actual": 329
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/settings/team/page.tsx",
+          "actual": 382
+        }
+      ]
+    },
+    "frontend/src/app/shots/page.tsx": {
+      "effective_lines": 2347,
+      "max_function_lines": 2134,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 280
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "ShotsPage",
+          "actual": 2134
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/shots/page.tsx",
+          "actual": 2347
+        }
+      ]
+    },
+    "frontend/src/app/story-bibles/page.tsx": {
+      "effective_lines": 837,
+      "max_function_lines": 724,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "StoryBiblesPage",
+          "actual": 724
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/story-bibles/page.tsx",
+          "actual": 837
+        }
+      ]
+    },
+    "frontend/src/app/storyboards/[id]/page.tsx": {
+      "effective_lines": 9,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/storyboards/page.tsx": {
+      "effective_lines": 2311,
+      "max_function_lines": 2100,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 91
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "StoryboardsPage",
+          "actual": 2100
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/storyboards/page.tsx",
+          "actual": 2311
+        }
+      ]
+    },
+    "frontend/src/app/studio/cards/page.tsx": {
+      "effective_lines": 715,
+      "max_function_lines": 382,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "CardsContent",
+          "actual": 382
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "ProductionCardItem",
+          "actual": 218
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/studio/cards/page.tsx",
+          "actual": 715
+        }
+      ]
+    },
+    "frontend/src/app/studio/continuity-review/page.tsx": {
+      "effective_lines": 560,
+      "max_function_lines": 391,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ContinuityReviewContent",
+          "actual": 391
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/studio/continuity-review/page.tsx",
+          "actual": 560
+        }
+      ]
+    },
+    "frontend/src/app/studio/page.tsx": {
+      "effective_lines": 13,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/app/studio/shot-review/page.tsx": {
+      "effective_lines": 374,
+      "max_function_lines": 275,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "ShotReviewContent",
+          "actual": 275
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/studio/shot-review/page.tsx",
+          "actual": 374
+        }
+      ]
+    },
+    "frontend/src/app/subtitles/page.tsx": {
+      "effective_lines": 556,
+      "max_function_lines": 483,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "SubtitlesPage",
+          "actual": 483
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/subtitles/page.tsx",
+          "actual": 556
+        }
+      ]
+    },
+    "frontend/src/app/synthesis/page.tsx": {
+      "effective_lines": 1018,
+      "max_function_lines": 910,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 105
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "SynthesisPage",
+          "actual": 910
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/synthesis/page.tsx",
+          "actual": 1018
+        }
+      ]
+    },
+    "frontend/src/app/teams/page.tsx": {
+      "effective_lines": 276,
+      "max_function_lines": 248,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "TeamsPage",
+          "actual": 248
+        }
+      ]
+    },
+    "frontend/src/app/templates/page.tsx": {
+      "effective_lines": 684,
+      "max_function_lines": 620,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "renderTemplateCard",
+          "actual": 106
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "TemplatesPage",
+          "actual": 620
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/templates/page.tsx",
+          "actual": 684
+        }
+      ]
+    },
+    "frontend/src/app/timelines/page.tsx": {
+      "effective_lines": 872,
+      "max_function_lines": 764,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 93
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "TimelinesPage",
+          "actual": 764
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/timelines/page.tsx",
+          "actual": 872
+        }
+      ]
+    },
+    "frontend/src/app/tts/page.tsx": {
+      "effective_lines": 1261,
+      "max_function_lines": 1170,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 82
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "TTSPage",
+          "actual": 1170
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/tts/page.tsx",
+          "actual": 1261
+        }
+      ]
+    },
+    "frontend/src/app/versions/page.tsx": {
+      "effective_lines": 489,
+      "max_function_lines": 458,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "VersionsPage",
+          "actual": 458
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/versions/page.tsx",
+          "actual": 489
+        }
+      ]
+    },
+    "frontend/src/app/video-generation/page.tsx": {
+      "effective_lines": 2947,
+      "max_function_lines": 2516,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 143
+        },
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 173
+        },
+        {
+          "code": "function_too_long",
+          "subject": "handleGenerate",
+          "actual": 101
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "VideoGenerationPageInner",
+          "actual": 2516
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/video-generation/page.tsx",
+          "actual": 2947
+        }
+      ]
+    },
+    "frontend/src/app/workflow/page.tsx": {
+      "effective_lines": 3645,
+      "max_function_lines": 827,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "<anonymous>",
+          "actual": 114
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "CharacterStep",
+          "actual": 214
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "ShortVideoProductionPanel",
+          "actual": 238
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "StoryboardStep",
+          "actual": 202
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "SynthesisStep",
+          "actual": 550
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "VideoStep",
+          "actual": 281
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "WorkflowPageContent",
+          "actual": 827
+        },
+        {
+          "code": "react_page_too_long",
+          "subject": "frontend/src/app/workflow/page.tsx",
+          "actual": 3645
+        }
+      ]
+    },
+    "frontend/src/components/layout/main-layout.tsx": {
+      "effective_lines": 36,
+      "max_function_lines": 15,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/layout/top-navigation.tsx": {
+      "effective_lines": 278,
+      "max_function_lines": 199,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/media/image-style-template-picker.tsx": {
+      "effective_lines": 297,
+      "max_function_lines": 200,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/media/reference-image-preview.tsx": {
+      "effective_lines": 76,
+      "max_function_lines": 58,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/model-capability-selector.tsx": {
+      "effective_lines": 132,
+      "max_function_lines": 108,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/novels/anchor-shot-selector.tsx": {
+      "effective_lines": 68,
+      "max_function_lines": 60,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/novels/novel-production-entry-card.tsx": {
+      "effective_lines": 107,
+      "max_function_lines": 62,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/novels/series-plan-setup-card.tsx": {
+      "effective_lines": 49,
+      "max_function_lines": 42,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/novels/series-run-panel.tsx": {
+      "effective_lines": 242,
+      "max_function_lines": 230,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "react_component_too_long",
+          "subject": "SeriesRunPanel",
+          "actual": 230
+        }
+      ]
+    },
+    "frontend/src/components/novels/story-workbench-panel.tsx": {
+      "effective_lines": 82,
+      "max_function_lines": 53,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/production/history-preflight-evidence.tsx": {
+      "effective_lines": 177,
+      "max_function_lines": 46,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/production/next-step-guide.tsx": {
+      "effective_lines": 64,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/production/preflight-issue-list.tsx": {
+      "effective_lines": 333,
+      "max_function_lines": 63,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/production/production-status-rail.tsx": {
+      "effective_lines": 77,
+      "max_function_lines": 54,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/consistency-ledger-panel.tsx": {
+      "effective_lines": 99,
+      "max_function_lines": 79,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/episode-contract-panel.tsx": {
+      "effective_lines": 57,
+      "max_function_lines": 48,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/episode-plan-panel.tsx": {
+      "effective_lines": 91,
+      "max_function_lines": 58,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/production-bible-panel.tsx": {
+      "effective_lines": 148,
+      "max_function_lines": 89,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/production-graph-panel.tsx": {
+      "effective_lines": 102,
+      "max_function_lines": 47,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/prompt-skill-panel.tsx": {
+      "effective_lines": 75,
+      "max_function_lines": 67,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/quality-gate-panel.tsx": {
+      "effective_lines": 161,
+      "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/series-overview-panel.tsx": {
+      "effective_lines": 46,
+      "max_function_lines": 41,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/shot-review-card.tsx": {
+      "effective_lines": 166,
+      "max_function_lines": 50,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-action-confirmation-dialog.tsx": {
+      "effective_lines": 67,
+      "max_function_lines": 55,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-action-progress.tsx": {
+      "effective_lines": 60,
+      "max_function_lines": 42,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-agent-panel.tsx": {
+      "effective_lines": 97,
+      "max_function_lines": 90,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-command-bar.tsx": {
+      "effective_lines": 42,
+      "max_function_lines": 36,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-context-panel.tsx": {
+      "effective_lines": 43,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-episode-board-data.ts": {
+      "effective_lines": 75,
+      "max_function_lines": 51,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-episode-sidebar.tsx": {
+      "effective_lines": 50,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-episode-stage-board.tsx": {
+      "effective_lines": 50,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-episode-workspace.tsx": {
+      "effective_lines": 69,
+      "max_function_lines": 55,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-expert-sections.tsx": {
+      "effective_lines": 56,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-issue-card.tsx": {
+      "effective_lines": 73,
+      "max_function_lines": 66,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-mode-banner.tsx": {
+      "effective_lines": 45,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-model-contracts.tsx": {
+      "effective_lines": 82,
+      "max_function_lines": 65,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-production-board.tsx": {
+      "effective_lines": 168,
+      "max_function_lines": 129,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-return-dock.tsx": {
+      "effective_lines": 32,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-series-board.tsx": {
+      "effective_lines": 256,
+      "max_function_lines": 166,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-shell.tsx": {
+      "effective_lines": 738,
+      "max_function_lines": 467,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "buildContinuityItems",
+          "actual": 101
+        },
+        {
+          "code": "react_component_too_long",
+          "subject": "StudioShell",
+          "actual": 467
+        }
+      ]
+    },
+    "frontend/src/components/studio/studio-stage-flow.tsx": {
+      "effective_lines": 98,
+      "max_function_lines": 73,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/studio/studio-workspace-header.tsx": {
+      "effective_lines": 162,
+      "max_function_lines": 81,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/badge.tsx": {
+      "effective_lines": 30,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/button.tsx": {
+      "effective_lines": 48,
+      "max_function_lines": 10,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/card.tsx": {
+      "effective_lines": 58,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/checkbox.tsx": {
+      "effective_lines": 24,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/confirm-dialog.tsx": {
+      "effective_lines": 60,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/dialog.tsx": {
+      "effective_lines": 144,
+      "max_function_lines": 24,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/dropdown-menu.tsx": {
+      "effective_lines": 238,
+      "max_function_lines": 32,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/empty-state.tsx": {
+      "effective_lines": 51,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/input.tsx": {
+      "effective_lines": 21,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/select.tsx": {
+      "effective_lines": 52,
+      "max_function_lines": 41,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/skeleton.tsx": {
+      "effective_lines": 73,
+      "max_function_lines": 45,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/slider.tsx": {
+      "effective_lines": 40,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/tabs.tsx": {
+      "effective_lines": 101,
+      "max_function_lines": 24,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/textarea.tsx": {
+      "effective_lines": 20,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/toast.tsx": {
+      "effective_lines": 140,
+      "max_function_lines": 74,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/ui/tooltip.tsx": {
+      "effective_lines": 46,
+      "max_function_lines": 16,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/components/user-preferences-hydrator.tsx": {
+      "effective_lines": 24,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/contexts/AuthContext.tsx": {
+      "effective_lines": 205,
+      "max_function_lines": 140,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/api.ts": {
+      "effective_lines": 24,
+      "max_function_lines": 16,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/asset-workbench-model.ts": {
+      "effective_lines": 77,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-bulk-bar.tsx": {
+      "effective_lines": 28,
+      "max_function_lines": 16,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-collection-sidebar.tsx": {
+      "effective_lines": 59,
+      "max_function_lines": 38,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-editor-drawer.tsx": {
+      "effective_lines": 36,
+      "max_function_lines": 25,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-entity-deactivate-dialog.tsx": {
+      "effective_lines": 20,
+      "max_function_lines": 10,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-inspector.tsx": {
+      "effective_lines": 78,
+      "max_function_lines": 55,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-pagination.tsx": {
+      "effective_lines": 61,
+      "max_function_lines": 47,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-production-wizard.tsx": {
+      "effective_lines": 78,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-table.tsx": {
+      "effective_lines": 83,
+      "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-workbench-header.tsx": {
+      "effective_lines": 58,
+      "max_function_lines": 43,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/components/asset-workbench.tsx": {
+      "effective_lines": 104,
+      "max_function_lines": 59,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/assets/types.ts": {
+      "effective_lines": 20,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/api.ts": {
+      "effective_lines": 29,
+      "max_function_lines": 6,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/entity-edit-form.tsx": {
+      "effective_lines": 26,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/entity-review-inspector.tsx": {
+      "effective_lines": 32,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/entity-review-table.tsx": {
+      "effective_lines": 62,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/entity-review-toolbar.tsx": {
+      "effective_lines": 44,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/types.ts": {
+      "effective_lines": 59,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/entity-review/use-entity-review-workbench.ts": {
+      "effective_lines": 76,
+      "max_function_lines": 69,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/api.ts": {
+      "effective_lines": 313,
+      "max_function_lines": 24,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/advanced-parameters-drawer.tsx": {
+      "effective_lines": 15,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/binding-editor.tsx": {
+      "effective_lines": 102,
+      "max_function_lines": 85,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/certification-run-panel.tsx": {
+      "effective_lines": 17,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/impact-dialog.tsx": {
+      "effective_lines": 17,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/legacy-model-center-redirect.tsx": {
+      "effective_lines": 11,
+      "max_function_lines": 6,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-catalog-detail.tsx": {
+      "effective_lines": 54,
+      "max_function_lines": 45,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-catalog-panel.tsx": {
+      "effective_lines": 47,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-connections-panel.tsx": {
+      "effective_lines": 98,
+      "max_function_lines": 84,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-inspector.tsx": {
+      "effective_lines": 15,
+      "max_function_lines": 6,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-management-panel.tsx": {
+      "effective_lines": 47,
+      "max_function_lines": 16,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-overview-panel.tsx": {
+      "effective_lines": 15,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-pagination.tsx": {
+      "effective_lines": 15,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-rail.tsx": {
+      "effective_lines": 76,
+      "max_function_lines": 45,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-shell.tsx": {
+      "effective_lines": 32,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-center-state.tsx": {
+      "effective_lines": 15,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-setup-guide.tsx": {
+      "effective_lines": 28,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/model-version-picker.tsx": {
+      "effective_lines": 12,
+      "max_function_lines": 10,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-assistant-panel.tsx": {
+      "effective_lines": 82,
+      "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-legacy-actions.tsx": {
+      "effective_lines": 35,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-profile-diff.tsx": {
+      "effective_lines": 4,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-profile-editor.tsx": {
+      "effective_lines": 112,
+      "max_function_lines": 40,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-profile-history.tsx": {
+      "effective_lines": 8,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-profile-list.tsx": {
+      "effective_lines": 102,
+      "max_function_lines": 58,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-profile-workbench.tsx": {
+      "effective_lines": 33,
+      "max_function_lines": 23,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-usage-assignment-dialog.tsx": {
+      "effective_lines": 57,
+      "max_function_lines": 52,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-usage-detail.tsx": {
+      "effective_lines": 48,
+      "max_function_lines": 45,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-usage-map.tsx": {
+      "effective_lines": 38,
+      "max_function_lines": 27,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-usage-stage-list.tsx": {
+      "effective_lines": 38,
+      "max_function_lines": 23,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/prompt-usage-summary.tsx": {
+      "effective_lines": 31,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/provider-model-label.tsx": {
+      "effective_lines": 9,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/provider-profile-editor.tsx": {
+      "effective_lines": 127,
+      "max_function_lines": 111,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/readiness-checklist.tsx": {
+      "effective_lines": 9,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/recipe-detail.tsx": {
+      "effective_lines": 84,
+      "max_function_lines": 57,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/recipe-editor.tsx": {
+      "effective_lines": 46,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/recipe-list.tsx": {
+      "effective_lines": 28,
+      "max_function_lines": 18,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/recipe-pipeline.tsx": {
+      "effective_lines": 27,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/remove-connection-dialog.tsx": {
+      "effective_lines": 38,
+      "max_function_lines": 28,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/test-lab.tsx": {
+      "effective_lines": 113,
+      "max_function_lines": 86,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/video-capability-editor.tsx": {
+      "effective_lines": 77,
+      "max_function_lines": 30,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/components/video-contract-summary.tsx": {
+      "effective_lines": 31,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/model-center-query-store.ts": {
+      "effective_lines": 41,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/run-model-center-mutation.ts": {
+      "effective_lines": 12,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-certification-history.ts": {
+      "effective_lines": 23,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-certification-run.ts": {
+      "effective_lines": 20,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-bindings.ts": {
+      "effective_lines": 23,
+      "max_function_lines": 17,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-catalog.ts": {
+      "effective_lines": 17,
+      "max_function_lines": 11,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-center-overview.ts": {
+      "effective_lines": 7,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-center-query.ts": {
+      "effective_lines": 63,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-connections.ts": {
+      "effective_lines": 35,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-drivers.ts": {
+      "effective_lines": 7,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-model-providers.ts": {
+      "effective_lines": 10,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-paged-model-catalog.ts": {
+      "effective_lines": 24,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-production-recipes.ts": {
+      "effective_lines": 35,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-prompt-profile-detail.ts": {
+      "effective_lines": 12,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-prompt-profiles.ts": {
+      "effective_lines": 35,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/hooks/use-prompt-usage-map.ts": {
+      "effective_lines": 55,
+      "max_function_lines": 51,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/model-center-labels.ts": {
+      "effective_lines": 61,
+      "max_function_lines": 12,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/navigation.ts": {
+      "effective_lines": 62,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/prompt-usage-api.ts": {
+      "effective_lines": 34,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/prompt-usage-types.ts": {
+      "effective_lines": 141,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/model-center/types.ts": {
+      "effective_lines": 361,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/api.ts": {
+      "effective_lines": 13,
+      "max_function_lines": 8,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/components/first-frame-controls.tsx": {
+      "effective_lines": 40,
+      "max_function_lines": 37,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/components/recovery-card.tsx": {
+      "effective_lines": 34,
+      "max_function_lines": 22,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/components/skill-evidence-grid.tsx": {
+      "effective_lines": 74,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/execute-and-poll.ts": {
+      "effective_lines": 18,
+      "max_function_lines": 16,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/first-frame-continuity.ts": {
+      "effective_lines": 4,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/hooks/use-series-run-recovery.ts": {
+      "effective_lines": 55,
+      "max_function_lines": 44,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/poll-anchor-generation.ts": {
+      "effective_lines": 37,
+      "max_function_lines": 17,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/series-run-view.tsx": {
+      "effective_lines": 129,
+      "max_function_lines": 105,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/types/recovery.ts": {
+      "effective_lines": 31,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/use-anchor-generation.ts": {
+      "effective_lines": 95,
+      "max_function_lines": 73,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/use-live-preflight.ts": {
+      "effective_lines": 35,
+      "max_function_lines": 33,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-runs/use-selected-first-frames.ts": {
+      "effective_lines": 110,
+      "max_function_lines": 90,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "useSelectedFirstFrames",
+          "actual": 90
+        }
+      ]
+    },
+    "frontend/src/features/series-story-locks/api.ts": {
+      "effective_lines": 17,
+      "max_function_lines": 7,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-story-locks/story-lock-control.tsx": {
+      "effective_lines": 29,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-story-locks/types.ts": {
+      "effective_lines": 22,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/series-story-locks/use-story-lock-preparation.ts": {
+      "effective_lines": 65,
+      "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/video-generation/video-model-capabilities.ts": {
+      "effective_lines": 84,
+      "max_function_lines": 13,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/video-generation/video-reference-inputs.tsx": {
+      "effective_lines": 53,
+      "max_function_lines": 34,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/hooks/use-toast.ts": {
+      "effective_lines": 2,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/hooks/useActiveLLMConfig.ts": {
+      "effective_lines": 73,
+      "max_function_lines": 35,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/api-client.ts": {
+      "effective_lines": 2940,
+      "max_function_lines": 39,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/chapter-label.ts": {
+      "effective_lines": 21,
+      "max_function_lines": 17,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/episode-preview-production.ts": {
+      "effective_lines": 522,
+      "max_function_lines": 274,
+      "route_count": 0,
+      "known_violations": [
+        {
+          "code": "function_too_long",
+          "subject": "runEpisodePreviewProduction",
+          "actual": 274
+        }
+      ]
+    },
+    "frontend/src/lib/fetch-with-auth.ts": {
+      "effective_lines": 131,
+      "max_function_lines": 31,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/media-url.ts": {
+      "effective_lines": 8,
+      "max_function_lines": 6,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/model-configs.ts": {
+      "effective_lines": 136,
+      "max_function_lines": 41,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/production-strategy.ts": {
+      "effective_lines": 74,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/prompt-skills-api.ts": {
+      "effective_lines": 145,
+      "max_function_lines": 20,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/shot-labels.ts": {
+      "effective_lines": 101,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/storyboard-templates.ts": {
+      "effective_lines": 136,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-api.ts": {
+      "effective_lines": 59,
+      "max_function_lines": 19,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-context-links.ts": {
+      "effective_lines": 58,
+      "max_function_lines": 28,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-guidance.ts": {
+      "effective_lines": 49,
+      "max_function_lines": 31,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-mode.ts": {
+      "effective_lines": 26,
+      "max_function_lines": 6,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-quick-actions.ts": {
+      "effective_lines": 27,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-types.ts": {
+      "effective_lines": 396,
+      "max_function_lines": 0,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/subtitle-query-context.ts": {
+      "effective_lines": 10,
+      "max_function_lines": 10,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/user-preferences.ts": {
+      "effective_lines": 90,
+      "max_function_lines": 14,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/utils.ts": {
+      "effective_lines": 5,
+      "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    }
+  }
+}

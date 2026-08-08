@@ -354,6 +354,7 @@ html[data-theme='light'] :is(.bg-cyan-500, .bg-cyan-600) { background-color: rgb
 
   @media (min-width: 1280px) {
     .model-center-shell { grid-template-columns: 210px minmax(0, 1fr) 260px; }
+    .model-center-shell-wide { grid-template-columns: 210px minmax(0, 1fr); }
   }
 
   .model-center-shell main { min-width: 0; }

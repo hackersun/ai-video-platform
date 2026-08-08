@@ -238,6 +238,11 @@ export const modelCenterApi = {
     apiClient.request<unknown>('/model-center/connections', { method: 'POST', body: jsonBody(input) }).then(connectionView),
   updateConnection: (connectionId: string, input: ModelConnectionUpdateInput) =>
     apiClient.request<unknown>(`/model-center/connections/${connectionId}`, { method: 'PUT', body: jsonBody(input) }).then(connectionView),
+  removeConnection: (connectionId: string, input: PublishInput) =>
+    apiClient.request<{ id: string; status: 'disabled'; revision: number; credentials_removed: boolean }>(
+      `/model-center/connections/${connectionId}`,
+      { method: 'DELETE', body: jsonBody(input) },
+    ),
   testConnection: (connectionId: string) =>
     apiClient.request<CertificationRun>(`/model-center/connections/${connectionId}/test`, { method: 'POST' }),
 

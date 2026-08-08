@@ -54,6 +54,13 @@ class ConnectionItem(BaseModel):
     revision: int
 
 
+class ConnectionRemovalResponse(BaseModel):
+    id: str
+    status: Literal["disabled"]
+    revision: int
+    credentials_removed: bool
+
+
 class CatalogItem(BaseModel):
     provider_id: str
     provider_name: str
@@ -144,6 +151,7 @@ class BindingItem(BaseModel):
     connection_id: str
     connection_name: str
     provider_name: str
+    native_audio_supported: bool
     priority: int
     route_policy: str
     fallback_profile_version_ids: list[str]

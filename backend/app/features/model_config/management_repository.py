@@ -22,6 +22,7 @@ from app.models.model_center import (
     ModelProvider,
     ProductionRecipeVersion,
 )
+from app.features.model_config.video_contract import native_audio_supported
 from app.models.llm_config import LLMProvider
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 
@@ -104,6 +105,7 @@ def _recipe_view(row: ProductionRecipeVersion) -> dict:
 async def management_overview(db: AsyncSession, user_id: str) -> dict:
     connection_rows = list((await db.scalars(select(ModelConnection).where(
         ModelConnection.user_id == user_id,
+        ModelConnection.status != "disabled",
     ).order_by(ModelConnection.id))).all())
     recipe_rows = list((await db.scalars(select(ProductionRecipeVersion).where(
         ProductionRecipeVersion.user_id == user_id,
@@ -119,7 +121,10 @@ async def management_overview(db: AsyncSession, user_id: str) -> dict:
 
 async def connection_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     rows, total = await _paged_rows(
-        db, ModelConnection, (ModelConnection.user_id == user_id,), page, page_size,
+        db, ModelConnection, (
+            ModelConnection.user_id == user_id,
+            ModelConnection.status != "disabled",
+        ), page, page_size,
     )
     provider_labels = await _provider_labels(db, {row.provider_id for row in rows})
     items = [_connection_view(row, provider_labels) for row in rows]
@@ -186,6 +191,10 @@ async def binding_page(db: AsyncSession, user_id: str, page: int, page_size: int
             "profile_version_id": profile.id, "profile_name": model.display_name,
             "api_model_id": profile.api_model_id, "connection_id": connection.id,
             "connection_name": connection.name, "provider_name": provider.display_name,
+            "native_audio_supported": native_audio_supported(
+                profile.capabilities or [], profile.limits or {}, profile.default_params or {},
+                api_model_id=profile.api_model_id,
+            ),
             "priority": binding.priority, "route_policy": binding.route_policy,
             "fallback_profile_version_ids": list(binding.fallback_profile_version_ids or []),
             "certification_status": certification or "unverified",

@@ -16,7 +16,7 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.api_key_utils import get_user_text_generation_service
 from app.core.database import get_db
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
@@ -1053,12 +1053,9 @@ async def _extract_story_entities_with_optional_ai(
     requested = set(entity_types)
     if model_config_id:
         try:
-            api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-                db,
-                user_id,
-                config_id=model_config_id,
+            service, provider_name, model_id, _base_url = await get_user_text_generation_service(
+                db, user_id, config_id=model_config_id,
             )
-            service = create_text_generation_service(api_key or "", provider_name or "", base_url)
             prompt = f"""请从小说文本中提取结构化实体，严格输出 JSON 数组。
 
 实体类型只能使用：{', '.join(sorted(requested))}

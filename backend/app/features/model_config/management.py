@@ -369,13 +369,13 @@ async def publish_prompt_profile_version(
         if candidate is None:
             raise ManagementOperationError("resource_not_found", "Prompt Profile version was not found.", "refresh", 404)
         if candidate.status != "draft" or candidate.version != expected_revision:
-            raise ManagementOperationError("revision_conflict", "Configuration has changed.", "refresh_and_retry", 409)
+            raise ManagementOperationError("revision_conflict", "提示词版本已更新，请刷新后重新提交。", "refresh_and_retry", 409)
         impact = await prompt_impact(db, user_id=user_id, profile_id=candidate.profile_id)
         published = await publish_prompt_draft(
             db, candidate=candidate, expected_version=expected_revision, reason=reason,
         )
         if published is None:
-            raise ManagementOperationError("revision_conflict", "Configuration has changed.", "refresh_and_retry", 409)
+            raise ManagementOperationError("revision_conflict", "提示词版本已更新，请刷新后重新提交。", "refresh_and_retry", 409)
     row, audit_id = published
     return {
         "published_version_id": row.id, "previous_version_id": None,

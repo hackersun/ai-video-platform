@@ -12,7 +12,7 @@ const items: RailItem[] = [
   { section: 'catalog', label: '模型目录', description: '文本、图像、视频、语音', icon: Clapperboard },
   { section: 'bindings', label: '默认模型', description: '生产任务使用哪个模型', icon: Workflow },
   { section: 'recipes', label: '组合预设', description: '生产方案版本', icon: PlugZap },
-  { section: 'prompts', label: '提示词模板', description: '版本与发布状态', icon: BookText },
+  { section: 'prompts', label: '提示词模板', description: '生产环节实际使用', icon: BookText },
   { section: 'test-lab', label: '测试实验室', description: '认证运行与证据', icon: Sparkles },
 ];
 

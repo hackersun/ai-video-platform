@@ -32,6 +32,7 @@ class DashScopeService:
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        request_timeout: float = 300,
         **kwargs
     ) -> Dict:
         """
@@ -73,7 +74,8 @@ class DashScopeService:
             async with session.post(
                 url,
                 headers=self.headers,
-                json=payload
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=request_timeout),
             ) as response:
                 if response.status != 200:
                     error_text = await response.text()

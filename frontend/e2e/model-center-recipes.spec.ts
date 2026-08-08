@@ -2,12 +2,12 @@ import { expect, test } from '@playwright/test';
 
 const bindings = {
   items: [
-    { id: 'binding-text', scope_type: 'system', scope_id: '', task: 'script_generation', capability: 'text_generation', profile_version_id: 'profile-text', connection_id: 'connection-text', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
-    { id: 'binding-image', scope_type: 'system', scope_id: '', task: 'shot_image', capability: 'image_generation', profile_version_id: 'profile-image', connection_id: 'connection-image', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
-    { id: 'binding-video', scope_type: 'system', scope_id: '', task: 'shot_video', capability: 'video_generation', profile_version_id: 'profile-video', connection_id: 'connection-video', priority: 10, route_policy: 'direct_av_first', is_active: true, revision: 1 },
-    { id: 'binding-audio', scope_type: 'system', scope_id: '', task: 'shot_speech', capability: 'speech_generation', profile_version_id: 'profile-audio', connection_id: 'connection-audio', priority: 10, route_policy: 'separate_video_tts', is_active: true, revision: 1 },
-    { id: 'binding-render', scope_type: 'system', scope_id: '', task: 'workflow_render', capability: 'media_render', profile_version_id: 'profile-render', connection_id: 'connection-render', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
-    { id: 'binding-storage', scope_type: 'system', scope_id: '', task: 'workflow_storage', capability: 'object_storage', profile_version_id: 'profile-storage', connection_id: 'connection-storage', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
+    { id: 'binding-text', scope_type: 'system', scope_id: '', task: 'script_generation', capability: 'text_generation', profile_version_id: 'profile-text', profile_name: '豆包文本', api_model_id: 'doubao-text', connection_id: 'connection-text', connection_name: '文本生产账号', provider_name: '火山引擎', certification_status: 'live_verified', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
+    { id: 'binding-image', scope_type: 'system', scope_id: '', task: 'shot_image', capability: 'image_generation', profile_version_id: 'profile-image', profile_name: '豆包图像', api_model_id: 'doubao-image', connection_id: 'connection-image', connection_name: '图像生产账号', provider_name: '火山引擎', certification_status: 'live_verified', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
+    { id: 'binding-video', scope_type: 'system', scope_id: '', task: 'shot_video', capability: 'video_generation', profile_version_id: 'profile-video', profile_name: 'Seedance 1.5 Pro', api_model_id: 'doubao-seedance-1-5-pro', connection_id: 'connection-video', connection_name: '主视频账号', provider_name: '火山引擎', certification_status: 'live_verified', priority: 10, route_policy: 'direct_av_first', is_active: true, revision: 1 },
+    { id: 'binding-audio', scope_type: 'system', scope_id: '', task: 'shot_speech', capability: 'speech_generation', profile_version_id: 'profile-audio', profile_name: '豆包语音', api_model_id: 'doubao-tts', connection_id: 'connection-audio', connection_name: '语音生产账号', provider_name: '火山引擎', certification_status: 'connection_verified', priority: 10, route_policy: 'separate_video_tts', is_active: true, revision: 1 },
+    { id: 'binding-render', scope_type: 'system', scope_id: '', task: 'workflow_render', capability: 'media_render', profile_version_id: 'profile-render', profile_name: '本地成片合成', api_model_id: 'local-ffmpeg', connection_id: 'connection-render', connection_name: '本地渲染', provider_name: '本地工具', certification_status: 'live_verified', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
+    { id: 'binding-storage', scope_type: 'system', scope_id: '', task: 'workflow_storage', capability: 'object_storage', profile_version_id: 'profile-storage', profile_name: '七牛云存储', api_model_id: 'qiniu-kodo', connection_id: 'connection-storage', connection_name: '生产存储', provider_name: '七牛云', certification_status: 'live_verified', priority: 10, route_policy: 'final_quality', is_active: true, revision: 1 },
   ],
   meta: { page: 1, page_size: 20, total: 6 },
 };
@@ -32,16 +32,23 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('native-audio video recipe disables separate TTS but keeps subtitle policy', async ({ page }) => {
+test('native-audio video recipe disables separate TTS but keeps subtitle policy', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/llm-config?section=recipes');
   await page.getByRole('button', { name: '新建生产方案' }).click();
-  await page.getByLabel('视频内生语音').check();
-  await expect(page.getByLabel('独立语音合成')).toBeDisabled();
+  await page.getByLabel('视频自带声音').check();
+  await expect(page.getByLabel('视频自带声音')).toBeChecked();
   await expect(page.getByLabel('字幕来源')).toHaveValue('video_dialogue_timeline');
-  await expect(page.getByText('首帧仅作为生成约束，不进入成片')).toBeVisible();
-  await page.getByLabel('生产策略').selectOption('draft_fast');
-  await expect(page.getByLabel('生产策略')).toHaveValue('draft_fast');
+  await expect(page.getByLabel('生产目标')).toHaveValue('draft_fast');
+  await expect(page.getByLabel('生产目标').getByRole('option')).toHaveText(['快速预览', '高质量成片', '低成本试错']);
+  await page.getByLabel('生产目标').selectOption('final_quality');
+  await expect(page.getByText('草片确认后再生成关键镜头，优先画面质量、角色稳定和发布前一致性。')).toBeVisible();
+  await expect(page.getByText('direct_av_first')).toHaveCount(0);
   await expect(page.getByText('直接填写模型 ID')).not.toBeVisible();
+  await expect(page.getByRole('option', { name: 'Seedance 1.5 Pro（火山引擎 · 主视频账号）' })).toHaveCount(1);
+  await expect(page.getByText('profile-video')).toHaveCount(0);
+  await expect(page.getByText('system 作用域')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('recipe-editor-1440.png'), fullPage: true });
 });
 
 test('separate TTS cannot save without its binding and persists binding-only recipe stages', async ({ page }) => {
@@ -63,12 +70,12 @@ test('separate TTS cannot save without its binding and persists binding-only rec
   await page.getByRole('button', { name: '新建生产方案' }).click();
   await page.getByLabel('方案名称').fill('动漫终版');
   await page.getByLabel('方案键').fill('anime-final');
-  await page.getByLabel('视频内生语音').uncheck();
+  await page.getByLabel('单独生成配音').check();
   await expect(page.getByRole('button', { name: '保存为草稿版本' })).toBeDisabled();
-  await page.getByLabel('镜头视频绑定').selectOption('binding-video');
-  await page.getByLabel('合成绑定').selectOption('binding-render');
-  await page.getByLabel('交付存储绑定').selectOption('binding-storage');
-  await page.getByLabel('独立配音绑定').selectOption('binding-audio');
+  await page.getByLabel('镜头视频使用的模型').selectOption('binding-video');
+  await page.getByLabel('合成使用的模型').selectOption('binding-render');
+  await page.getByLabel('交付存储使用的模型').selectOption('binding-storage');
+  await page.getByLabel('独立配音使用的模型').selectOption('binding-audio');
   await page.getByRole('button', { name: '保存为草稿版本' }).click();
   await expect.poll(() => requests.length).toBe(2);
   expect(requests[0]?.body).toMatchObject({ spec: { audio: { mode: 'separate_tts', binding_id: 'binding-audio' }, subtitle: { source: 'tts_timeline' }, video: { binding_id: 'binding-video' } } });
@@ -106,9 +113,9 @@ test('creates validates and publishes a recipe from the frontend', async ({ page
   await page.getByRole('button', { name: '新建生产方案' }).click();
   await page.getByLabel('方案名称').fill('四章动漫终版');
   await page.getByLabel('方案键').fill('four-chapter-final');
-  await page.getByLabel('镜头视频绑定').selectOption('binding-video');
-  await page.getByLabel('合成绑定').selectOption('binding-render');
-  await page.getByLabel('交付存储绑定').selectOption('binding-storage');
+  await page.getByLabel('镜头视频使用的模型').selectOption('binding-video');
+  await page.getByLabel('合成使用的模型').selectOption('binding-render');
+  await page.getByLabel('交付存储使用的模型').selectOption('binding-storage');
   await page.getByRole('button', { name: '保存为草稿版本' }).click();
   await page.getByRole('button', { name: '查看四章动漫终版' }).click();
   await page.getByRole('button', { name: '发布方案' }).click();
@@ -119,7 +126,7 @@ test('creates validates and publishes a recipe from the frontend', async ({ page
   expect(publishBody).toMatchObject({ expected_revision: 1, reason: '前端组合验收' });
 });
 
-test('rolls the current published recipe back to a selected historical version', async ({ page }) => {
+test('rolls the current published recipe back to a selected historical version', async ({ page }, testInfo) => {
   const spec = { strategy: 'direct_av_first', video: { binding_id: 'binding-video', required: true } };
   const versions = [
     { id: 'anime-v2', recipe_key: 'anime', name: '动漫方案', strategy: 'final_quality', stages: spec, spec, version: 2, status: 'published', revision: 2 },
@@ -138,7 +145,11 @@ test('rolls the current published recipe back to a selected historical version',
   });
 
   await page.goto('/llm-config?section=recipes');
+  await expect(page.getByText('高质量成片', { exact: true })).toBeVisible();
+  await expect(page.getByText('final_quality', { exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('recipe-list-1440.png'), fullPage: true });
   await page.getByRole('button', { name: '查看动漫方案' }).first().click();
+  await expect(page.getByText('binding-video', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '回滚方案' }).click();
   await page.getByLabel('回滚目标版本').selectOption('anime-v1');
   await page.getByLabel('回滚原因').fill('恢复已验收的首版策略');

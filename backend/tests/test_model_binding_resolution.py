@@ -59,6 +59,48 @@ def test_production_adapters_expose_binding_context_paths_and_keep_legacy_builde
     assert "create_text_generation_service" in text_source
 
 
+def test_text_generation_entrypoints_use_unified_service_resolution() -> None:
+    paths = [
+        "app/api/v1/endpoints/chapters.py",
+        "app/api/v1/endpoints/characters.py",
+        "app/api/v1/endpoints/coding_plan.py",
+        "app/api/v1/endpoints/novels.py",
+        "app/api/v1/endpoints/scripts.py",
+        "app/api/v1/endpoints/story_bible.py",
+        "app/api/v1/endpoints/storyboards.py",
+        "app/services/prompt_skill_service.py",
+    ]
+
+    for path in paths:
+        source = Path(path).read_text(encoding="utf-8")
+        assert "get_user_text_model_config" not in source, path
+        assert "get_user_text_generation_service" in source, path
+
+
+def test_legacy_config_projection_exposes_model_center_text_default() -> None:
+    from app.api.v1.endpoints.llm_config import canonical_text_default_config
+
+    projected = canonical_text_default_config("user-1", [{
+        "id": "project-binding", "scope_type": "project", "scope_id": "project-1",
+        "task": "script_generation", "capability": "text_generation", "is_active": True,
+        "profile_version_id": "wrong-profile", "api_model_id": "wrong-model",
+        "profile_name": "Wrong", "connection_id": "wrong-connection",
+        "provider_name": "Wrong", "certification_status": "success", "version": 9,
+    }, {
+        "id": "binding-1", "scope_type": "user", "scope_id": "user-1",
+        "task": "script_generation", "capability": "text_generation",
+        "is_active": True, "profile_version_id": "profile-v1", "api_model_id": "ark-code-latest",
+        "profile_name": "Ark Code Latest", "connection_id": "connection-1",
+        "provider_name": "火山方舟 Agent Plan", "certification_status": "success", "version": 2,
+    }])
+
+    assert projected is not None
+    assert projected["id"] == ""
+    assert projected["api_model_id"] == "ark-code-latest"
+    assert projected["is_default"] is True
+    assert projected["key_available"] is True
+
+
 def test_text_catalog_limits_are_normalized_to_driver_command_contract() -> None:
     from app.features.model_config.generation_context import _runtime_execution_binding
 

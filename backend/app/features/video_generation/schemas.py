@@ -18,6 +18,8 @@ class VideoGenerateRequest(BaseModel):
     model_config_id: Optional[str] = Field(None, description="已保存的视频模型配置ID")
     model_profile_version_id: Optional[str] = Field(None, description="模型中心已发布的视频模型版本ID")
     image_url: Optional[str] = Field(None, description="参考图片URL，用于图生视频")
+    last_frame_image_url: Optional[str] = Field(None, description="尾帧图片 URL，用于支持首尾帧的视频模型")
+    ratio: Optional[str] = Field(None, description="视频宽高比；图生视频模型可使用 adaptive")
     reference_image_urls: List[str] = Field(default_factory=list, description="额外公网图片参考 URL")
     reference_video_urls: List[str] = Field(default_factory=list, description="公网视频参考 URL")
     reference_audio_urls: List[str] = Field(default_factory=list, description="公网音频参考 URL")

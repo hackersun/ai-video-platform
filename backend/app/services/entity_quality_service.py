@@ -66,6 +66,14 @@ def _noise_flags(candidate: CanonicalEntityCandidate) -> list[str]:
             flags.append("noise:character_group_or_non_character")
         if extraction_rules._is_event_like_name(name):
             flags.append("noise:character_event_phrase")
+        if name.endswith("家"):
+            flags.append("noise:character_family_or_faction")
+        if name.endswith((*extraction_rules.PROP_SUFFIXES, "果")):
+            flags.append("noise:character_prop_name")
+        predicate_tails = {"深": ("以",), "正": ("在", "要", "是"), "可": ("是", "以", "能")}
+        continuations = predicate_tails.get(name[-1:], ())
+        if len(name) >= 3 and any(f"{name}{continuation}" in (candidate.evidence or "") for continuation in continuations):
+            flags.append("noise:character_predicate_fragment")
     elif candidate.entity_type == "scene" and extraction_rules._is_production_copy_scene_name(name):
         flags.append("noise:production_copy_scene")
     elif candidate.entity_type == "prop" and extraction_rules._is_production_copy_prop_name(name):
@@ -77,6 +85,11 @@ def _noise_flags(candidate: CanonicalEntityCandidate) -> list[str]:
             flags.append("noise:prop_predicate_phrase")
         else:
             flags.append("noise:production_copy_prop")
+    elif candidate.entity_type == "event":
+        if re.match(r"^(?:这日|当日|次日|翌日|当天|中午|清晨|傍晚|夜幕|片刻)", name):
+            flags.append("noise:event_time_fragment")
+        if re.search(r"(?:气血翻涌|不寒而栗|眼中闪过|面色一变|心中一惊|眉头一皱)", name):
+            flags.append("noise:event_state_fragment")
     return flags
 
 
@@ -113,7 +126,16 @@ def score_entity_candidate(candidate: CanonicalEntityCandidate | dict[str, Any])
     usefulness_score, usefulness_flags = _production_usefulness_score(canonical)
     confidence_score = _clamp(round((canonical.confidence or 0) * 0.05), 0, 5)
 
-    flags = [*evidence_flags, *name_flags, *type_flags, *usefulness_flags]
+    explicit_deterministic_label = (
+        canonical.source == "deterministic_label"
+        or str(canonical.description or "").startswith("文本标注")
+    )
+    source_flags = (
+        ["deterministic_requires_review"]
+        if canonical.source.startswith("deterministic") and not explicit_deterministic_label
+        else []
+    )
+    flags = [*evidence_flags, *name_flags, *type_flags, *usefulness_flags, *source_flags]
     components = {
         "evidence": evidence_score,
         "name_shape": name_score,
@@ -126,7 +148,7 @@ def score_entity_candidate(candidate: CanonicalEntityCandidate | dict[str, Any])
     if any(flag.startswith("noise:") for flag in flags):
         score = min(score, 35)
         decision: AutoDecision = REJECT_NOISE
-    elif score >= 86 and not evidence_flags and not name_flags:
+    elif score >= 86 and not evidence_flags and not name_flags and not usefulness_flags and not source_flags:
         decision = AUTO_APPROVE
     elif score >= 55:
         decision = NEEDS_REVIEW

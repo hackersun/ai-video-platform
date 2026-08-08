@@ -1,0 +1,15 @@
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+.pytest_cache/
+.coverage
+coverage.xml
+tests/
+test_*.py
+static/dev/
+static/generated/
+static/exports/
+static/audio/

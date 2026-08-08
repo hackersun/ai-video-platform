@@ -11,7 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.api_key_utils import create_text_generation_service, get_user_text_model_config
+from app.core.api_key_utils import get_user_text_generation_service
 from app.features.prompt_profiles.public import (
     PromptRouteQuery,
     apply_version_to_legacy_skill,
@@ -518,15 +518,9 @@ async def optimize_prompt_skill_content(
 }}"""
 
     try:
-        api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-            db,
-            user_id,
-            raise_if_missing=False,
-            config_id=model_config_id,
+        service, _provider_name, model_id, _base_url = await get_user_text_generation_service(
+            db, user_id, config_id=model_config_id,
         )
-        if not api_key or not provider_name or not model_id:
-            return _build_local_prompt_skill_optimization(data)
-        service = create_text_generation_service(api_key, provider_name, base_url)
         response = await service.safe_chat_completion(
             model=model_id,
             messages=[

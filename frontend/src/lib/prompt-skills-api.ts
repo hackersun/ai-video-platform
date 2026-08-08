@@ -118,7 +118,7 @@ export async function bulkActionPromptSkills(payload: {
 }
 
 export async function listPromptSkillOptimizationModelConfigs() {
-  return fetchJsonWithAuth<SavedModelConfig[]>(`${API_BASE}/llm/configs`);
+  return fetchJsonWithAuth<SavedModelConfig[]>(`${API_BASE}/llm/configs?include_model_center_defaults=true`);
 }
 
 export async function previewPromptSkill(payload: {

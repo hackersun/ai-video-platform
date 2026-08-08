@@ -58,7 +58,7 @@ async def test_legacy_text_factory_preserves_provider_request_and_response_contr
 
 @pytest.mark.asyncio
 async def test_legacy_user_text_service_tuple_preserves_resolved_model_and_base_url(monkeypatch):
-    async def fake_model_config(_db, _user_id):
+    async def fake_model_config(_db, _user_id, config_id=None):
         return "not-a-real-key", "minimax", "MiniMax-M3", "https://minimax.example.test/v1/"
 
     monkeypatch.setattr(api_key_utils, "get_user_text_model_config", fake_model_config)

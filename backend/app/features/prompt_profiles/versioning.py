@@ -66,6 +66,41 @@ async def edit_prompt_profile(
     return draft
 
 
+async def create_prompt_profile_from_published_version(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    key: str,
+    name: str,
+    task: str,
+    source: PromptProfileVersion,
+    routing: dict[str, Any],
+    release_notes: str,
+) -> tuple[PromptProfile, PromptProfileVersion]:
+    if source.status != "published":
+        raise ValueError("only a published prompt profile can be copied")
+    profile = PromptProfile(
+        id=str(uuid4()), user_id=user_id, key=key, name=name, task=task,
+    )
+    evaluation = deepcopy(source.evaluation or {})
+    evaluation["release_notes"] = release_notes
+    values = {
+        "stage": source.stage,
+        "content": source.content,
+        "variables": deepcopy(source.variables or {}),
+        "routing": deepcopy(routing),
+        "output_contract": source.output_contract,
+    }
+    draft = PromptProfileVersion(
+        id=str(uuid4()), profile_id=profile.id, version=1,
+        **values, evaluation=evaluation, status="draft",
+        checksum=canonical_prompt_values_checksum(values, evaluation),
+    )
+    db.add_all([profile, draft])
+    await db.flush()
+    return profile, draft
+
+
 async def publish_prompt_profile_version(
     db: AsyncSession, version_id: str,
 ) -> PromptProfileVersion:

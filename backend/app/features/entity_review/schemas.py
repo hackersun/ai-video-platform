@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field
+
+
+class ReviewEntityItem(BaseModel):
+    id: str
+    novel_id: str | None = None
+    chapter_id: str | None = None
+    script_id: str | None = None
+    entity_type: str
+    name: str
+    canonical_name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+    description: str | None = None
+    appearance: str | None = None
+    visual_prompt: str | None = None
+    evidence: str | None = None
+    confidence: int = 0
+    source: str = "deterministic"
+    review_status: str
+    is_approved: bool = False
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
+    extra_data: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ReviewSummary(BaseModel):
+    total: int
+    counts: dict[str, int] = Field(default_factory=dict)
+    by_type: dict[str, int] = Field(default_factory=dict)
+    candidate_count: int = 0
+    approved_count: int = 0
+    rejected_count: int = 0
+    duplicate_risk_count: int = 0
+    missing_evidence_count: int = 0
+    rejected_noise_count: int = 0
+    asset_gap_count: int = 0
+    recommended_next_action: str = "run_analysis"
+
+
+class PagedReviewEntities(BaseModel):
+    items: list[ReviewEntityItem]
+    page: int
+    page_size: int
+    total: int
+    total_pages: int
+    summary: ReviewSummary
+
+
+ReviewStatus = Literal["candidate", "approved", "rejected", "legacy_active", "archived"]
+ReviewSort = Literal["updated_desc", "updated_asc", "name_asc", "quality_desc"]
+
+
+class BulkReviewRequest(BaseModel):
+    novel_id: str = Field(min_length=1)
+    entity_ids: list[str] = Field(min_length=1, max_length=100)
+    action: Literal["approve", "reject"]
+    reason: str | None = Field(None, max_length=500)
+
+
+class BulkSkippedItem(BaseModel):
+    id: str
+    reason: str
+    repair_action: str | None = None
+
+
+class BulkReviewResponse(BaseModel):
+    updated: list[ReviewEntityItem] = Field(default_factory=list)
+    skipped: list[BulkSkippedItem] = Field(default_factory=list)
+    summary: ReviewSummary
+
+
+class ReanalysisRequest(BaseModel):
+    mode: Literal["preview", "apply"] = "preview"
+    preview_run_id: str | None = None
+    model_config_id: str | None = None
+
+
+class ReanalysisResponse(BaseModel):
+    mode: Literal["preview", "apply"]
+    preview_run_id: str
+    current: ReviewEntityItem
+    proposed: dict[str, Any]
+    differences: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    model_execution: dict[str, Any] = Field(default_factory=dict)
+
+
+class RebuildCandidatesRequest(BaseModel):
+    mode: Literal["preview", "apply"] = "preview"
+    preview_run_id: str | None = None
+    model_config_id: str | None = None
+    source_text: str | None = Field(None, max_length=100_000)
+
+
+class RebuildCandidatesResponse(BaseModel):
+    mode: Literal["preview", "apply"]
+    preview_run_id: str
+    proposed: list[dict[str, Any]] = Field(default_factory=list)
+    archived_count: int = 0
+    created_count: int = 0
+    model_execution: dict[str, Any] = Field(default_factory=dict)
+    summary: ReviewSummary

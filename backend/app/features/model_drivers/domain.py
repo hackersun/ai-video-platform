@@ -31,12 +31,20 @@ class SpeechCommand:
 
 
 @dataclass(frozen=True)
+class VideoReference:
+    media_type: Literal["image", "video", "audio"]
+    url: str
+    role: str
+
+
+@dataclass(frozen=True)
 class VideoCommand:
     capability: Literal["video_generation"] = field(default="video_generation", init=False)
     prompt: str = ""
     reference_images: tuple[str, ...] = ()
     reference_videos: tuple[str, ...] = ()
     reference_audios: tuple[str, ...] = ()
+    references: tuple[VideoReference, ...] = ()
     native_audio: bool = False
     dialogue_contract: Mapping[str, Any] | None = None
     params: Mapping[str, Any] = field(default_factory=dict)
@@ -183,4 +191,5 @@ __all__ = [
     "SpeechCommand",
     "TextCommand",
     "VideoCommand",
+    "VideoReference",
 ]

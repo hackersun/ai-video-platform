@@ -87,6 +87,56 @@ test('connection form uses provider picker and readable paged rows', async ({ pa
   await expect(page.getByRole('button', { name: '下一页' })).toBeEnabled();
 });
 
+test('unused provider account can be removed through a clear safety dialog', async ({ page }) => {
+  let removalBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/connections/connection-1', async (route) => {
+    if (route.request().method() !== 'DELETE') return route.fallback();
+    removalBody = route.request().postDataJSON();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({
+      id: 'connection-1', status: 'disabled', revision: 2, credentials_removed: true,
+    }) });
+  });
+
+  await page.goto('/llm-config?section=connections');
+  await page.getByRole('button', { name: '移除主视频连接' }).click();
+  const dialog = page.getByRole('dialog', { name: '移除供应商账号' });
+  await expect(dialog.getByText('密钥会被清除，历史测试与任务记录仍会保留。')).toBeVisible();
+  await dialog.getByLabel('移除说明').fill('停用旧生产账号');
+  await dialog.getByRole('button', { name: '确认移除' }).click();
+
+  await expect.poll(() => removalBody).not.toBeNull();
+  expect(removalBody).toEqual({ expected_revision: 1, reason: '停用旧生产账号' });
+  await expect(page.getByText('账号已移除，密钥已清除；历史测试和任务记录仍保留。')).toBeVisible();
+});
+
+test('connection and catalog actions stay on one line at desktop width', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/llm-config?section=connections');
+  await expect(page.getByRole('button', { name: '测试可用性' })).toHaveCSS('white-space', 'nowrap');
+  await expect(page.getByRole('button', { name: '替换凭证' })).toHaveCSS('white-space', 'nowrap');
+  await expect.poll(async () => {
+    const container = await page.getByRole('table').locator('..').boundingBox();
+    const action = await page.getByRole('button', { name: '移除主视频连接' }).boundingBox();
+    return Boolean(container && action && action.x + action.width <= container.x + container.width);
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('connections-1440.png'), fullPage: true });
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect.poll(() => page.getByRole('table').locator('..').evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/llm-config?section=catalog');
+  await expect(page.getByText('待验证', { exact: true }).first()).toHaveCSS('white-space', 'nowrap');
+  await expect(page.getByRole('button', { name: '查看 Seedance 1.5 Pro' })).toHaveCSS('white-space', 'nowrap');
+  await expect.poll(async () => {
+    const container = await page.getByRole('table').locator('..').boundingBox();
+    const action = await page.getByRole('button', { name: '查看 Seedance 1.5 Pro' }).boundingBox();
+    return Boolean(container && action && action.x + action.width <= container.x + container.width);
+  }).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('catalog-1440.png'), fullPage: true });
+  await page.setViewportSize({ width: 800, height: 800 });
+  await expect.poll(() => page.getByRole('table').locator('..').evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+});
+
 test('model profile wizard saves validates and publishes an installed driver', async ({ page }) => {
   const requests: Array<{ path: string; body: unknown }> = [];
   await page.route('**/api/v1/model-center/**', async (route) => {

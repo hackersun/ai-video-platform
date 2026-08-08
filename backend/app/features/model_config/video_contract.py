@@ -4,8 +4,25 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+from app.services.seedance_contract import SEEDANCE_NATIVE_AUDIO_MODEL_IDS
+
 
 REFERENCE_LIMIT_KEYS = ("reference_images", "reference_videos", "reference_audios")
+
+
+def native_audio_supported(
+    capabilities: Sequence[str],
+    limits: Mapping[str, Any],
+    default_params: Mapping[str, Any],
+    *,
+    api_model_id: str | None = None,
+) -> bool:
+    return (
+        api_model_id in SEEDANCE_NATIVE_AUDIO_MODEL_IDS
+        or "native_audio" in capabilities
+        or bool(limits.get("native_audio"))
+        or bool(default_params.get("native_audio"))
+    )
 
 
 def _error(code: str, message: str, field: str) -> dict[str, str]:
@@ -53,4 +70,4 @@ def validate_video_capability_contract(
     return errors
 
 
-__all__ = ["validate_video_capability_contract"]
+__all__ = ["native_audio_supported", "validate_video_capability_contract"]

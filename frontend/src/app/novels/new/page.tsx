@@ -99,7 +99,7 @@ export default function NewNovelPage() {
 
   const loadModelConfigs = async () => {
     try {
-      const response = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      const response = await fetchWithAuth(`${API_BASE}/llm/configs?include_model_center_defaults=true`);
       if (!response.ok) return;
       const configs = await response.json();
       const list = Array.isArray(configs) ? configs : [];

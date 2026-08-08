@@ -45,6 +45,7 @@ from app.features.model_config.binding_management import (
     create_binding as create_model_binding,
     update_binding as update_model_binding,
 )
+from app.features.model_config.connection_lifecycle import remove_connection
 
 
 __all__ = [
@@ -74,6 +75,7 @@ __all__ = [
     "publish_model_profile_version",
     "prompt_profiles_page",
     "preview_prompt_profile",
+    "remove_connection",
     "publish_recipe",
     "recipes_page",
     "recipe_bindings_display",

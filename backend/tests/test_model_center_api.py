@@ -50,6 +50,7 @@ MODEL_CENTER_ROUTES = {
     ("get", "/api/v1/model-center/connections"),
     ("post", "/api/v1/model-center/connections"),
     ("put", "/api/v1/model-center/connections/{connection_id}"),
+    ("delete", "/api/v1/model-center/connections/{connection_id}"),
     ("post", "/api/v1/model-center/connections/{connection_id}/test"),
     ("get", "/api/v1/model-center/catalog"),
     ("post", "/api/v1/model-center/profiles"),
@@ -138,7 +139,7 @@ async def test_overview_returns_the_frontend_model_center_contract(client):
 
 
 @pytest.mark.asyncio
-async def test_overview_blocks_uncertified_model_missing_prompt_and_unpublished_recipe(client):
+async def test_overview_blocks_uncertified_model_and_unpublished_recipe_without_false_prompt_issue(client):
     async with AsyncSessionLocal() as db:
         db.add_all([
             ModelProfile(
@@ -166,10 +167,111 @@ async def test_overview_blocks_uncertified_model_missing_prompt_and_unpublished_
     assert response.status_code == 200
     issues = response.json()["blocking_issues"]
     codes = {item["code"] for item in issues}
-    assert {"model_certification_missing", "prompt_profile_missing", "published_recipe_missing"} <= codes
+    assert {"model_certification_missing", "published_recipe_missing"} <= codes
+    assert not any(
+        item["code"] == "prompt_profile_missing"
+        and item.get("capability") == "image_generation"
+        for item in issues
+    )
     assert all(set(item) >= {
         "code", "message", "severity", "section", "resource_id", "action_label",
     } for item in issues)
+
+
+@pytest.mark.asyncio
+async def test_overview_accepts_effective_stage_template_without_legacy_model_prompt_key(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            ModelProfile(
+                id="readiness-routed-speech", provider_id="provider-1",
+                profile_key="readiness-routed-speech",
+                display_name="Routed Speech", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="readiness-routed-speech-v1", model_id="readiness-routed-speech",
+                version=1, api_model_id="readiness-routed-speech-api",
+                driver_key="driver-speech", capabilities=["speech_generation"],
+                input_contract={}, output_contract={}, parameter_schema={},
+                default_params={}, limits={}, pricing={}, prompt_profile_key=None,
+                contract_version="v1", status="published", checksum="u" * 64,
+            ),
+            ModelBinding(
+                id="readiness-routed-speech-binding", user_id=USER_ID,
+                scope_type="project", scope_id="readiness-routed-project",
+                task="shot_speech", capability="speech_generation",
+                profile_version_id="readiness-routed-speech-v1",
+                connection_id="connection-1", version=1, is_active=True,
+            ),
+            PromptProfile(
+                id="readiness-routed-speech-prompt", user_id=USER_ID,
+                key="readiness.routed.speech", name="Routed Speech Prompt",
+                task="tts_dialogue",
+            ),
+            PromptProfileVersion(
+                id="readiness-routed-speech-prompt-v1",
+                profile_id="readiness-routed-speech-prompt", version=1,
+                content="生成对白语音。", variables={}, routing={}, evaluation={},
+                status="published", checksum="v" * 64,
+            ),
+        ])
+        await db.commit()
+
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    prompt_issues = [
+        issue for issue in response.json()["blocking_issues"]
+        if issue["code"] == "prompt_profile_missing"
+        and issue.get("capability") == "speech_generation"
+    ]
+    assert prompt_issues == []
+
+
+@pytest.mark.asyncio
+async def test_overview_names_model_when_connection_passed_but_production_certification_is_missing(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            ModelProfile(
+                id="readiness-named-cert", provider_id="provider-1",
+                profile_key="readiness-named-cert",
+                display_name="Readiness Certification", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="readiness-named-cert-v1", model_id="readiness-named-cert",
+                version=1, api_model_id="readiness-named-cert-api",
+                driver_key="driver-video", capabilities=["video_generation"],
+                input_contract={}, output_contract={}, parameter_schema={},
+                default_params={}, limits={}, pricing={}, prompt_profile_key=None,
+                contract_version="v1", status="published", checksum="w" * 64,
+            ),
+            ModelBinding(
+                id="readiness-named-cert-binding", user_id=USER_ID,
+                scope_type="project", scope_id="readiness-named-cert-project",
+                task="shot_video", capability="video_generation",
+                profile_version_id="readiness-named-cert-v1",
+                connection_id="connection-1", version=1, is_active=True,
+            ),
+            ModelCertificationRun(
+                id="readiness-named-connection-cert", user_id=USER_ID,
+                profile_version_id="readiness-named-cert-v1",
+                connection_id="connection-1", level="connection", status="success",
+                request_fingerprint="x" * 64, sanitized_evidence={},
+                estimated_cost_rmb=0, actual_cost_rmb=0,
+            ),
+        ])
+        await db.commit()
+
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    issue = next(
+        item for item in response.json()["blocking_issues"]
+        if item["code"] == "model_certification_missing"
+        and item["resource_id"] == "readiness-named-cert-v1"
+    )
+    assert issue["message"] == (
+        "“Readiness Certification”已通过连接测试，但尚未完成契约或实模认证。"
+    )
 
 
 @pytest.mark.asyncio
@@ -375,6 +477,85 @@ async def test_connections_return_readable_provider_labels(client):
     connection = response.json()["items"][0]
     assert connection["provider_name"] == "Provider"
     assert connection["provider_code"] == "provider-1"
+
+
+@pytest.mark.asyncio
+async def test_unused_connection_can_be_safely_removed_and_hidden(client):
+    connection = ModelConnection(
+        id="connection-removable", user_id=USER_ID, provider_id="provider-1",
+        name="可移除账号", status="connection_verified",
+    )
+    connection.set_api_key_encrypted("removable-key")
+    connection.set_api_secret_encrypted("removable-secret")
+    async with AsyncSessionLocal() as db:
+        db.add(connection)
+        await db.commit()
+
+    response = await client.request(
+        "DELETE", "/api/v1/model-center/connections/connection-removable",
+        json={"expected_revision": 1, "reason": "移除已停用的测试账号"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "id": "connection-removable",
+        "status": "disabled",
+        "revision": 2,
+        "credentials_removed": True,
+    }
+    listed = await client.get("/api/v1/model-center/connections")
+    assert "connection-removable" not in {item["id"] for item in listed.json()["items"]}
+    async with AsyncSessionLocal() as db:
+        stored = await db.get(ModelConnection, "connection-removable")
+        audit = await db.scalar(select(ModelConfigAuditEvent).where(
+            ModelConfigAuditEvent.resource_id == "connection-removable",
+            ModelConfigAuditEvent.action == "remove",
+        ))
+        assert stored is not None
+        assert stored.status == "disabled"
+        assert stored.api_key == ""
+        assert stored.api_secret is None
+        assert audit is not None
+        assert audit.reason == "移除已停用的测试账号"
+
+
+@pytest.mark.asyncio
+async def test_active_connection_cannot_be_removed(client):
+    connection = ModelConnection(
+        id="connection-in-use", user_id=USER_ID, provider_id="provider-1",
+        name="正在使用的账号", status="connection_verified",
+    )
+    connection.set_api_key_encrypted("still-needed")
+    binding = ModelBinding(
+        id="binding-in-use-removal", user_id=USER_ID, scope_type="project", scope_id="removal-project",
+        task="shot_video", capability="video_generation",
+        profile_version_id="profile-video-v1", connection_id=connection.id,
+        version=1, is_active=True,
+    )
+    async with AsyncSessionLocal() as db:
+        db.add_all([connection, binding])
+        await db.commit()
+
+    try:
+        response = await client.request(
+            "DELETE", "/api/v1/model-center/connections/connection-in-use",
+            json={"expected_revision": 1, "reason": "尝试移除正在使用的账号"},
+        )
+
+        assert response.status_code == 409, response.text
+        assert response.json()["detail"]["code"] == "resource_in_use"
+        assert response.json()["detail"]["action_code"] == "replace_active_bindings"
+        assert "默认模型" in response.json()["detail"]["message"]
+        async with AsyncSessionLocal() as db:
+            stored = await db.get(ModelConnection, "connection-in-use")
+            assert stored is not None
+            assert stored.status == "connection_verified"
+            assert stored.api_key != ""
+    finally:
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(ModelBinding).where(ModelBinding.id == binding.id))
+            await db.execute(delete(ModelConnection).where(ModelConnection.id == connection.id))
+            await db.commit()
 
 
 @pytest.mark.asyncio
@@ -783,6 +964,7 @@ async def test_binding_contract_is_readable_and_rejects_connection_mismatch(clie
     assert item["api_model_id"] == "api-video"
     assert item["connection_name"] == "Primary"
     assert item["provider_name"] == "Provider"
+    assert item["native_audio_supported"] is True
 
     async with AsyncSessionLocal() as db:
         other_provider = ModelProvider(
@@ -1053,7 +1235,9 @@ async def test_prompt_publish_is_atomic_and_creates_one_audit_event(client):
         ),
     )
     assert sorted(item.status_code for item in responses) == [200, 409]
-    assert next(item for item in responses if item.status_code == 409).json()["detail"]["code"] == "revision_conflict"
+    conflict = next(item for item in responses if item.status_code == 409).json()["detail"]
+    assert conflict["code"] == "revision_conflict"
+    assert conflict["message"] == "提示词版本已更新，请刷新后重新提交。"
     async with AsyncSessionLocal() as db:
         audit_count = await db.scalar(select(func.count()).select_from(ModelConfigAuditEvent).where(
             ModelConfigAuditEvent.resource_type == "prompt_profile",

@@ -44,8 +44,19 @@ class TextGenerationServiceAdapter:
     async def chat_completion(self, *args: Any, **kwargs: Any) -> dict:
         snapshot_id = await self._snapshot_id()
         return self._with_trace(
-            sanitize_chat_response(await self._service.chat_completion(*args, **kwargs)), snapshot_id,
+            self._sanitize_response(await self._service.chat_completion(*args, **kwargs)), snapshot_id,
         )
+
+    @staticmethod
+    def _sanitize_response(response: dict) -> dict:
+        base_response = response.get("base_resp") if isinstance(response, dict) else None
+        if isinstance(base_response, dict) and base_response.get("status_code") not in (None, 0, "0"):
+            error_code = str(base_response.get("status_code"))
+            message = {
+                "2056": "已达到 Token Plan 用量上限，请升级套餐或补充用量。",
+            }.get(error_code, f"供应商拒绝了文本生成请求（错误码 {error_code}）")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+        return sanitize_chat_response(response)
 
     async def _snapshot_id(self) -> str | None:
         if self._snapshot_factory is not None:
@@ -74,7 +85,7 @@ class TextGenerationServiceAdapter:
         snapshot_id = await self._snapshot_id()
         provider_safe = getattr(self._service, "safe_chat_completion", None)
         if callable(provider_safe):
-            return self._with_trace(sanitize_chat_response(
+            return self._with_trace(self._sanitize_response(
                 await provider_safe(
                     model=model,
                     messages=messages,
@@ -110,7 +121,7 @@ class TextGenerationServiceAdapter:
         )
 
         try:
-            return self._with_trace(sanitize_chat_response(
+            return self._with_trace(self._sanitize_response(
                 await self._service.chat_completion(
                     model=model,
                     messages=prepared,
@@ -350,12 +361,13 @@ async def get_user_text_generation_service(
     db: AsyncSession,
     user_id: str,
     *,
+    config_id: str | None = None,
     recipe_version_id: str | None = None,
     prompt_profile_version_id: str | None = None,
 ) -> Tuple[Any, str, str, Optional[str]]:
     """Return (service, provider_name, model_id, base_url) for the default text config."""
     context = None
-    if isinstance(db, AsyncSession):
+    if isinstance(db, AsyncSession) and not config_id:
         try:
             context = await resolve_generation_context(
                 db, user_id=user_id, stage="text", recipe_version_id=recipe_version_id,
@@ -381,6 +393,8 @@ async def get_user_text_generation_service(
 
     from app.core.api_key_utils import get_user_text_model_config
 
-    api_key, provider_name, model_id, base_url = await get_user_text_model_config(db, user_id)
+    api_key, provider_name, model_id, base_url = await get_user_text_model_config(
+        db, user_id, config_id=config_id,
+    )
     service = create_text_generation_service(api_key or "", provider_name or "", base_url)
     return service, provider_name or "", model_id or "", base_url

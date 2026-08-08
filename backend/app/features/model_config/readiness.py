@@ -6,14 +6,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
+from app.features.model_config.prompt_usage import (
+    PromptUsageError,
+    resolve_prompt_usage_stage,
+)
+from app.features.model_config.prompt_usage_contract import prompt_usage_stages
 from app.models.model_center import (
     ModelBinding,
     ModelCertificationRun,
     ModelConnection,
+    ModelProfile,
     ModelProfileVersion,
     ProductionRecipeVersion,
 )
-from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 
 
 PROMPT_CAPABILITIES = {
@@ -44,11 +49,22 @@ async def production_readiness(db: AsyncSession, *, user_id: str) -> list[dict]:
             ModelProfileVersion.id.in_({item.profile_version_id for item in bindings}),
         ))).all()
     } if bindings else {}
+    model_names = dict((await db.execute(select(
+        ModelProfile.id, ModelProfile.display_name,
+    ).where(
+        ModelProfile.id.in_({item.model_id for item in profiles.values()}),
+    ))).all()) if profiles else {}
+    profile_names = {
+        profile_id: model_names.get(profile.model_id) or profile.api_model_id
+        for profile_id, profile in profiles.items()
+    }
     issues = _connection_issues(connections)
     issues.extend(_binding_issues(bindings, profiles))
-    issues.extend(await _prompt_issues(db, user_id=user_id, bindings=bindings, profiles=profiles))
+    issues.extend(await _prompt_issues(db, user_id=user_id, bindings=bindings))
     issues.extend(await _recipe_issues(db, user_id=user_id))
-    issues.extend(await _certification_issues(db, user_id=user_id, bindings=bindings))
+    issues.extend(await _certification_issues(
+        db, user_id=user_id, bindings=bindings, profile_names=profile_names,
+    ))
     unique = {(item["code"], item.get("capability"), item["resource_id"]): item for item in issues}
     return sorted(unique.values(), key=lambda item: (item["section"], item["code"], item["resource_id"]))
 
@@ -87,29 +103,37 @@ def _binding_issues(bindings: list[ModelBinding], profiles: dict[str, ModelProfi
 
 async def _prompt_issues(
     db: AsyncSession, *, user_id: str, bindings: list[ModelBinding],
-    profiles: dict[str, ModelProfileVersion],
 ) -> list[dict]:
-    required = [
-        (binding, profiles.get(binding.profile_version_id)) for binding in bindings
-        if binding.capability in PROMPT_CAPABILITIES
-    ]
-    keys = {profile.prompt_profile_key for _, profile in required if profile and profile.prompt_profile_key}
-    published_keys = set((await db.scalars(select(PromptProfile.key).join(
-        PromptProfileVersion, PromptProfileVersion.profile_id == PromptProfile.id,
-    ).where(
-        PromptProfile.user_id.in_((user_id, "system")), PromptProfile.key.in_(keys),
-        PromptProfileVersion.status == "published",
-    ))).all()) if keys else set()
-    return [
-        _issue(
-            "prompt_profile_missing", "模型绑定缺少已发布的提示词模板。",
-            section="prompts", capability=binding.capability,
-            resource_id=binding.id, action_label="配置提示词模板",
-        )
-        for binding, profile in required
-        if profile is None or not profile.prompt_profile_key
-        or profile.prompt_profile_key not in published_keys
-    ]
+    routed_stages = [stage for stage in prompt_usage_stages() if stage.uses_prompt]
+    issues = []
+    for binding in bindings:
+        if binding.capability not in PROMPT_CAPABILITIES:
+            continue
+        matching_stages = [
+            stage for stage in routed_stages
+            if stage.model_task == binding.task and stage.capability == binding.capability
+        ]
+        for stage in matching_stages:
+            try:
+                resolved = await resolve_prompt_usage_stage(
+                    db, user_id=user_id, stage_id=stage.id,
+                    profile_version_id=binding.profile_version_id,
+                )
+            except PromptUsageError:
+                resolved = {"status": "invalid_binding"}
+            if resolved["status"] not in {"internal_fallback", "invalid_binding"}:
+                continue
+            message = (
+                f"{stage.name}没有可用的默认模型。"
+                if resolved["status"] == "invalid_binding"
+                else f"{stage.name}没有匹配到已发布的提示词模板。"
+            )
+            issues.append(_issue(
+                "prompt_profile_missing", message,
+                section="prompts", capability=binding.capability,
+                resource_id=stage.id, action_label="配置提示词模板",
+            ))
+    return issues
 
 
 async def _recipe_issues(db: AsyncSession, *, user_id: str) -> list[dict]:
@@ -125,6 +149,7 @@ async def _recipe_issues(db: AsyncSession, *, user_id: str) -> list[dict]:
 
 async def _certification_issues(
     db: AsyncSession, *, user_id: str, bindings: list[ModelBinding],
+    profile_names: dict[str, str],
 ) -> list[dict]:
     profile_ids = {item.profile_version_id for item in bindings}
     certified = set((await db.scalars(select(ModelCertificationRun.profile_version_id).where(
@@ -133,9 +158,24 @@ async def _certification_issues(
         ModelCertificationRun.status == "success",
         ModelCertificationRun.level.in_(("contract", "live")),
     ))).all()) if profile_ids else set()
+    connection_verified = set((await db.scalars(select(
+        ModelCertificationRun.profile_version_id,
+    ).where(
+        ModelCertificationRun.user_id == user_id,
+        ModelCertificationRun.profile_version_id.in_(profile_ids),
+        ModelCertificationRun.status == "success",
+        ModelCertificationRun.level == "connection",
+    ))).all()) if profile_ids else set()
     return [
         _issue(
-            "model_certification_missing", "已绑定模型缺少成功的契约或真实认证。",
+            "model_certification_missing",
+            (
+                f"“{profile_names.get(binding.profile_version_id, '当前模型')}”"
+                "已通过连接测试，但尚未完成契约或实模认证。"
+                if binding.profile_version_id in connection_verified
+                else f"“{profile_names.get(binding.profile_version_id, '当前模型')}”"
+                "尚未完成连接、契约或实模认证。"
+            ),
             section="test-lab", capability=binding.capability,
             resource_id=binding.profile_version_id, action_label="运行模型认证",
         )

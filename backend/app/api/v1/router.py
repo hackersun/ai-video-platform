@@ -19,8 +19,11 @@ from app.features.series_run_recovery.api import router as series_run_recovery_r
 from app.features.series_run_story_locks.api import router as series_story_lock_router
 from app.features.assets.api import router as asset_maintenance_router
 from app.features.model_config.api import router as model_center_router
+from app.features.entity_review.api import router as entity_review_router
 
 api_router = APIRouter()
+
+api_router.include_router(entity_review_router, prefix="", tags=["实体审核"])
 
 # 统一模型中心管理 API
 api_router.include_router(model_center_router, prefix="", tags=["模型中心"])

@@ -182,7 +182,7 @@ def test_ai_assist_rewrite_extend_polish_are_persisted(client: TestClient) -> No
     assert persisted.json()["content"] == polished["content"]
 
 
-def test_ai_assist_rewrite_accepts_minimax_reply_response(
+def test_ai_assist_rewrite_uses_model_center_text_default(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -211,21 +211,16 @@ def test_ai_assist_rewrite_accepts_minimax_reply_response(
     assert chapter_resp.status_code == 201
     chapter_id = chapter_resp.json()["id"]
 
-    class _MiniMaxReplyService:
+    class _ArkReplyService:
         async def safe_chat_completion(self, *args, **kwargs):
             return {
                 "reply": "<think>先分析剧情</think>\n谭云握紧祖传玉简，刑台上的风声像刀一样掠过。他没有再退，抬眼看向宗门长老。"
             }
 
-    async def _fake_config(*args, **kwargs):
-        return "sk-test", "minimax", "MiniMax-M3", "https://api.minimaxi.com/v1"
+    async def _fake_default_service(*args, **kwargs):
+        return _ArkReplyService(), "volcano_agent_plan", "ark-code-latest", "https://ark.example/v3"
 
-    def _fake_factory(api_key: str, provider_name: str, base_url: str | None):
-        assert provider_name == "minimax"
-        return _MiniMaxReplyService()
-
-    monkeypatch.setattr("app.api.v1.endpoints.chapters.get_user_text_model_config", _fake_config)
-    monkeypatch.setattr("app.api.v1.endpoints.chapters.create_text_generation_service", _fake_factory)
+    monkeypatch.setattr("app.api.v1.endpoints.chapters.get_user_text_generation_service", _fake_default_service)
 
     response = client.post(
         f"/api/v1/chapters/{chapter_id}/ai-assist",
@@ -236,7 +231,7 @@ def test_ai_assist_rewrite_accepts_minimax_reply_response(
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "completed"
-    assert data["ai_generation"]["provider"] == "minimax"
+    assert data["ai_generation"]["provider"] == "volcano_agent_plan"
     assert "<think>" not in data["content"]
     assert "谭云握紧祖传玉简" in data["content"]
 
@@ -286,14 +281,10 @@ def test_ai_assist_rewrite_summarizes_title_for_generic_chapter(
                 ]
             }
 
-    async def _fake_config(*args, **kwargs):
-        return "sk-test", "minimax", "MiniMax-M3", "https://api.minimaxi.com/v1"
+    async def _fake_default_service(*args, **kwargs):
+        return _TitleReplyService(), "volcano_agent_plan", "ark-code-latest", "https://ark.example/v3"
 
-    def _fake_factory(api_key: str, provider_name: str, base_url: str | None):
-        return _TitleReplyService()
-
-    monkeypatch.setattr("app.api.v1.endpoints.chapters.get_user_text_model_config", _fake_config)
-    monkeypatch.setattr("app.api.v1.endpoints.chapters.create_text_generation_service", _fake_factory)
+    monkeypatch.setattr("app.api.v1.endpoints.chapters.get_user_text_generation_service", _fake_default_service)
 
     response = client.post(
         f"/api/v1/chapters/{chapter_id}/ai-assist",

@@ -242,7 +242,7 @@ function CharactersPageContent() {
 
   const loadModelConfigs = async () => {
     try {
-      const res = await fetchWithAuth(`${API_BASE}/llm/configs`);
+      const res = await fetchWithAuth(`${API_BASE}/llm/configs?include_model_center_defaults=true`);
       if (!res.ok) return;
       const configs = await res.json();
       const list = Array.isArray(configs) ? configs : [];

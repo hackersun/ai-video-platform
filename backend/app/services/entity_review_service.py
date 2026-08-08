@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time_utils import utc_now
 from app.models import Asset, EntityExtractionRun, EntityFeedback, StoryEntity, StoryEntityMention
 from app.services.entity_extraction_schema import CanonicalEntityCandidate
+from app.features.entity_review.approval_policy import can_auto_approve_candidate, mention_has_approval_evidence
 from app.services.entity_extraction_service import (
     CHARACTER_RE,
     EVENT_RE,
@@ -272,14 +273,6 @@ def _new_entity(
     return entity
 
 
-def _mention_has_approval_evidence(mention: StoryEntityMention) -> bool:
-    return bool(
-        str(mention.source_id or "").strip()
-        and str(mention.evidence or "").strip()
-        and mention.confidence is not None
-    )
-
-
 def _quality_summary(items: list[dict[str, Any]]) -> dict[str, Any]:
     decisions = Counter(_quality_payload(item).get("auto_decision") for item in items)
     scores = [_quality_payload(item).get("score", 0) for item in items]
@@ -451,6 +444,11 @@ async def run_candidate_entity_extraction(
             text=text,
             item=item,
         )
+        auto_approved = can_auto_approve_candidate(
+            quality,
+            allow_auto_approve=allow_auto_approve,
+            has_approval_evidence=mention_has_approval_evidence(mention),
+        )
 
         if preserve_existing_status:
             final_status = previous_status
@@ -458,7 +456,7 @@ async def run_candidate_entity_extraction(
         elif auto_decision == REJECT_NOISE:
             final_status = REJECTED
             stats["rejected"] += 1
-        elif allow_auto_approve and auto_decision == AUTO_APPROVE and _mention_has_approval_evidence(mention):
+        elif auto_approved:
             final_status = APPROVED
             stats["approved"] += 1
         else:
@@ -473,12 +471,11 @@ async def run_candidate_entity_extraction(
         elif not preserve_existing_status:
             stats["updated"] += 1
 
-        set_entity_review_status(entity, final_status, changed_by=user_id, reason=f"entity_extraction_v2:{auto_decision}")
+        approval_decision = AUTO_APPROVE if auto_approved else auto_decision
+        set_entity_review_status(entity, final_status, changed_by=user_id, reason=f"entity_extraction_v2:{approval_decision}")
         if (
             final_status == APPROVED
-            and allow_auto_approve
-            and auto_decision == AUTO_APPROVE
-            and _mention_has_approval_evidence(mention)
+            and auto_approved
         ):
             attributes = dict(entity.attributes or {})
             attributes["approval_record"] = {

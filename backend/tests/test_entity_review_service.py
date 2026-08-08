@@ -114,6 +114,42 @@ def test_auto_approved_extraction_persists_production_approval_record() -> None:
     )
 
 
+def test_verified_deterministic_chapter_candidate_requires_explicit_auto_approval() -> None:
+    async def scenario(*, allow_auto_approve: bool) -> str:
+        from app.services.entity_review_service import run_candidate_entity_extraction
+        from app.services.story_entity_lifecycle import get_entity_review_status
+
+        token = uuid4().hex
+        chapter_id = f"chapter-{token}"
+        async with AsyncSessionLocal() as db:
+            result = await run_candidate_entity_extraction(
+                db,
+                user_id=f"review-user-{token[:20]}",
+                novel_id=f"review-novel-{token}",
+                chapter_id=chapter_id,
+                source_type="chapter",
+                source_id=chapter_id,
+                text="林澈说：必须关闭星门。",
+                entity_types=["character"],
+                persist=True,
+                allow_auto_approve=allow_auto_approve,
+                candidate_items=[{
+                    "entity_type": "character",
+                    "name": "林澈",
+                    "canonical_name": "林澈",
+                    "evidence": "林澈",
+                    "evidence_span": "林澈",
+                    "confidence": 100,
+                    "source": "deterministic",
+                    "attributes": {"visual_dna": {"identity_anchor": "林澈"}},
+                }],
+            )
+            return get_entity_review_status(result["entities"][0])
+
+    assert _run(scenario(allow_auto_approve=False)) == "candidate"
+    assert _run(scenario(allow_auto_approve=True)) == "approved"
+
+
 def test_chapter_extraction_persists_scoped_evidence_contract() -> None:
     async def scenario() -> dict:
         from app.services.entity_review_service import run_candidate_entity_extraction

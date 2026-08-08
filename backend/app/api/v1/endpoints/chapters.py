@@ -13,7 +13,10 @@ from sqlalchemy import select, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.api_key_utils import create_text_generation_service, extract_chat_content, get_user_text_model_config
+from app.core.api_key_utils import (
+    extract_chat_content,
+    get_user_text_generation_service,
+)
 from app.core.dev_generation import is_dev_mode
 from app.core.security import get_current_user_id
 from app.models import Novel, Chapter, StoryBible, StoryEntity, Script, Storyboard, Shot
@@ -394,13 +397,9 @@ async def generate_chapter_text(
     }
 
     try:
-        api_key, provider_name, model_id, base_url = await get_user_text_model_config(
-            db,
-            user_id,
-            raise_if_missing=True,
-            config_id=model_config_id,
+        service, provider_name, model_id, base_url = await get_user_text_generation_service(
+            db, user_id, config_id=model_config_id,
         )
-        service = create_text_generation_service(api_key or "", provider_name or "", base_url)
     except HTTPException as exc:
         detail = str(exc.detail)
         if (
@@ -475,6 +474,7 @@ async def generate_chapter_text(
 {instruction or '无'}
 """
     try:
+        request_options = {"request_timeout": 300} if provider_name.startswith("volcano") else {}
         response = await service.safe_chat_completion(
             model=model_id or "",
             messages=[
@@ -483,6 +483,7 @@ async def generate_chapter_text(
             ],
             temperature=0.78 if mode != "polish" else 0.45,
             max_tokens=min(max(target_word_count * 3, 2400), 12000),
+            **request_options,
         )
         content = clean_generated_content(extract_chat_content(response))
     except HTTPException:

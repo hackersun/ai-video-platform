@@ -442,6 +442,117 @@ async def test_text_adapter_returns_execution_snapshot_trace_id() -> None:
     assert response["execution_snapshot_id"] == "snapshot-text-1"
 
 
+def test_empty_timeout_error_has_actionable_message() -> None:
+    from app.services.ai_service_base import parse_api_error
+
+    assert parse_api_error(TimeoutError()) == "AI服务响应超时，请稍后重试。"
+
+
+@pytest.mark.parametrize(
+    "service_path",
+    [
+        "app.services.volcano_service.VolcanoService",
+        "app.services.openai_service.OpenAIService",
+        "app.services.qianlian_service.QianlianService",
+        "app.services.minimax_service.MiniMaxService",
+        "app.services.dashscope_service.DashScopeService",
+    ],
+)
+def test_text_services_share_long_generation_timeout(service_path: str) -> None:
+    import importlib
+    import inspect
+
+    module_name, class_name = service_path.rsplit(".", 1)
+    service_class = getattr(importlib.import_module(module_name), class_name)
+    parameter = inspect.signature(service_class.chat_completion).parameters["request_timeout"]
+
+    assert parameter.default == 300
+
+
+@pytest.mark.asyncio
+async def test_volcano_chat_completion_uses_long_text_timeout_without_sending_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.volcano_service import VolcanoService
+
+    captured = {}
+
+    class Response:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            captured.update(kwargs)
+            return Response()
+
+    monkeypatch.setattr("app.services.volcano_service.aiohttp.ClientSession", Session)
+
+    await VolcanoService("key", "https://ark.example.test/v1").chat_completion(
+        model="ark-code-latest",
+        messages=[{"role": "user", "content": "write"}],
+    )
+
+    assert captured["timeout"].total == 300
+    assert "request_timeout" not in captured["json"]
+
+
+@pytest.mark.asyncio
+async def test_text_adapter_surfaces_provider_base_response_error() -> None:
+    from fastapi import HTTPException
+    from app.features.model_drivers.text_execution import TextGenerationServiceAdapter
+
+    class Service:
+        async def chat_completion(self, **_kwargs):
+            return {
+                "choices": None,
+                "base_resp": {"status_code": 2056, "status_msg": "Token Plan 用量上限"},
+            }
+
+    with pytest.raises(HTTPException, match="Token Plan 用量上限") as exc_info:
+        await TextGenerationServiceAdapter(Service()).safe_chat_completion(
+            model="text-model", messages=[{"role": "user", "content": "prompt"}],
+        )
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_text_service_explicit_config_skips_canonical_binding(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core import api_key_utils
+    from app.features.model_drivers import text_execution
+
+    captured = {}
+
+    async def fake_model_config(_db, _user_id, config_id=None):
+        captured["config_id"] = config_id
+        return "key", "minimax", "MiniMax-M3", "https://minimax.example/v1"
+
+    monkeypatch.setattr(api_key_utils, "get_user_text_model_config", fake_model_config)
+    service, provider, model, _base_url = await text_execution.get_user_text_generation_service(
+        object(), "user-1", config_id="selected-text-config",
+    )
+
+    assert captured["config_id"] == "selected-text-config"
+    assert provider == "minimax"
+    assert model == "MiniMax-M3"
+    assert type(service._service).__name__ == "MiniMaxService"
+
+
 @pytest.mark.asyncio
 async def test_bound_text_service_creates_distinct_snapshot_for_each_chat_call(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,

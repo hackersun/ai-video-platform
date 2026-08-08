@@ -1,11 +1,12 @@
 """
 MiniMax 模型配置
-支持文本生成、图像生成、TTS语音合成
+支持文本生成、图像生成、视频生成、TTS语音合成
 
 API调用规范:
 - M3文本/多模态: POST /v1/text/chatcompletion_v2 → model_id = MiniMax-M3
 - 旧文本模型: POST /v1/chat/completions      → model_id 传模型名（如 MiniMax-M2.7）
 - 图像模型: POST /v1/image_generation     → model_id 传 image-01
+- H3视频模型: POST /v2/video_generation  → model_id 传 MiniMax-H3
 - TTS模型:   POST /v1/t2a_v2              → model_id 传 speech-2.6-hd
 """
 
@@ -123,6 +124,24 @@ MINIMAX_MODELS = [
         "description": "MiniMax 高质量图像生成，支持文生图/图生图，生成快速",
         "use_cases": ["角色形象", "场景图", "道具图", "分镜参考图"],
         "version": "image-01",
+        "is_verified": False,
+    },
+
+    # ========== H3 视频生成模型 ==========
+    {
+        "id": "MiniMax-H3",
+        "name": "MiniMax-H3",
+        "name_cn": "MiniMax H3",
+        "type": "video-generation",
+        "endpoint": "/v2/video_generation",
+        "api_model_id": "MiniMax-H3",
+        "capabilities": ["text-to-video", "image-to-video", "reference-to-video"],
+        "supported_durations": list(range(4, 16)),
+        "supported_resolutions": ["768P", "2K"],
+        "reference_limits": {"images": 9, "videos": 3, "audios": 3, "total": 12},
+        "description": "MiniMax H3 多模态视频生成，支持文本、图片、视频和音频参考",
+        "use_cases": ["文生视频", "首尾帧视频", "多模态参考视频"],
+        "version": "H3",
         "is_verified": False,
     },
 
