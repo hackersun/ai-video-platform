@@ -3,6 +3,10 @@
 """
 
 from app.core.database import Base, engine, sync_engine
+from app.db_migrations.script_chapter_lineage import (
+    add_script_chapter_lineage,
+    add_script_chapter_lineage_async,
+)
 
 
 # Migration: Add shot image fields
@@ -212,39 +216,6 @@ def migrate_add_user_account_fields():
                 conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {sql_type}"))
         conn.commit()
         print("✅ User account fields migration completed.")
-    finally:
-        conn.close()
-
-
-def migrate_add_script_chapter_field():
-    """Add direct chapter lineage column to scripts and backfill from extra_data."""
-    from sqlalchemy import text, inspect
-
-    conn = sync_engine.connect()
-    try:
-        inspector = inspect(sync_engine)
-        if not inspector.has_table("scripts"):
-            return
-        existing = {col["name"] for col in inspector.get_columns("scripts")}
-        if "chapter_id" not in existing:
-            conn.execute(text("ALTER TABLE scripts ADD COLUMN chapter_id VARCHAR(36)"))
-        conn.execute(
-            text(
-                """
-                UPDATE scripts
-                SET chapter_id = json_extract(extra_data, '$.chapter_id')
-                WHERE (chapter_id IS NULL OR chapter_id = '')
-                  AND extra_data IS NOT NULL
-                  AND json_valid(extra_data)
-                  AND json_extract(extra_data, '$.chapter_id') IS NOT NULL
-                """
-            )
-        )
-        conn.commit()
-        print("✅ Script chapter lineage migration completed.")
-    except Exception:
-        conn.rollback()
-        raise
     finally:
         conn.close()
 
@@ -506,37 +477,6 @@ async def migrate_add_user_account_fields_async():
             if col not in existing:
                 await conn.execute(text(f"ALTER TABLE users ADD COLUMN {col} {sql_type}"))
         print("✅ User account fields migration completed (async).")
-
-
-async def migrate_add_script_chapter_field_async():
-    """Add direct chapter lineage column to scripts and backfill from extra_data (async)."""
-    from sqlalchemy import text, inspect
-
-    async with engine.begin() as conn:
-        def _inspect(sync_conn):
-            inspector = inspect(sync_conn)
-            if not inspector.has_table("scripts"):
-                return set()
-            return {col["name"] for col in inspector.get_columns("scripts")}
-
-        existing = await conn.run_sync(_inspect)
-        if not existing:
-            return
-        if "chapter_id" not in existing:
-            await conn.execute(text("ALTER TABLE scripts ADD COLUMN chapter_id VARCHAR(36)"))
-        await conn.execute(
-            text(
-                """
-                UPDATE scripts
-                SET chapter_id = json_extract(extra_data, '$.chapter_id')
-                WHERE (chapter_id IS NULL OR chapter_id = '')
-                  AND extra_data IS NOT NULL
-                  AND json_valid(extra_data)
-                  AND json_extract(extra_data, '$.chapter_id') IS NOT NULL
-                """
-            )
-        )
-        print("✅ Script chapter lineage migration completed (async).")
 
 
 async def migrate_add_entity_asset_scope_fields_async():
@@ -832,7 +772,7 @@ def init_db():
     migrate_add_character_scope_fields()
     migrate_add_media_subtitle_fields()
     migrate_add_user_account_fields()
-    migrate_add_script_chapter_field()
+    add_script_chapter_lineage(sync_engine)
     migrate_add_entity_asset_scope_fields()
     migrate_add_story_entity_extended_fields()
     migrate_add_project_id_fields()
@@ -941,7 +881,7 @@ async def init_db_async():
     await migrate_add_character_scope_fields_async()
     await migrate_add_media_subtitle_fields_async()
     await migrate_add_user_account_fields_async()
-    await migrate_add_script_chapter_field_async()
+    await add_script_chapter_lineage_async(engine)
     await migrate_add_entity_asset_scope_fields_async()
     await migrate_add_story_entity_extended_fields_async()
     await migrate_add_project_id_fields_async()
