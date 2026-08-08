@@ -9,13 +9,14 @@ from app.features.model_drivers.public import (
     DriverError,
     DriverUnavailableError,
     VideoCommand,
-    VideoReference,
     build_builtin_driver_registry,
     execute_generation,
 )
 from app.features.model_config.public import ExecutionSnapshotCommand, create_execution_snapshot
 from app.features.video_generation.adapters.ark import submit_ark_video_task
 from app.features.video_generation.errors import VideoGenerationError
+from app.features.private_media.service import record_provider_inputs_for_urls
+from app.features.video_generation.domain.reference_content import video_references
 
 
 @dataclass(frozen=True)
@@ -23,27 +24,10 @@ class SubmittedVideoTask:
     id: str
 
 
-def _references(content: list[dict[str, Any]]) -> tuple[VideoReference, ...]:
-    references: list[VideoReference] = []
-    media_types = {"image_url": "image", "video_url": "video", "audio_url": "audio"}
-    for item in content:
-        item_type = item.get("type") if isinstance(item, dict) else None
-        value = item.get(item_type) if item_type in media_types else None
-        url = value.get("url") if isinstance(value, dict) else None
-        if isinstance(url, str) and url:
-            media_type = media_types[item_type]
-            references.append(VideoReference(
-                media_type,
-                url,
-                str(item.get("role") or f"reference_{media_type}"),
-            ))
-    return tuple(references)
-
-
 def build_video_command(
     *, prompt: str, content: list[dict[str, Any]], params: dict[str, Any], native_audio: bool = False,
 ) -> VideoCommand:
-    references = _references(content)
+    references = video_references(content)
     return VideoCommand(
         prompt=prompt,
         reference_images=tuple(item.url for item in references if item.media_type == "image"),
@@ -100,7 +84,7 @@ async def create_bound_video_execution_snapshot(
 ) -> str | None:
     if generation_context is None:
         return None
-    references = _references(create_kwargs.get("content") or [])
+    references = video_references(create_kwargs.get("content") or [])
     images = [item for item in references if item.media_type == "image"]
     videos = [item for item in references if item.media_type == "video"]
     audios = [item for item in references if item.media_type == "audio"]
@@ -123,6 +107,12 @@ async def create_bound_video_execution_snapshot(
                 "seed": create_kwargs.get("seed"),
             },
         ),
+    )
+    await record_provider_inputs_for_urls(
+        db, user_id=user_id,
+        delivered_urls=[item.url for item in references],
+        provider_task_id=None, submission_id=job_id,
+        purpose="视频模型参考媒体",
     )
     return snapshot.id
 

@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models import Shot, VideoJob
-from app.services.media_delivery import resolve_provider_media_url
-from app.services.media_persistence import persist_remote_media_url
+from app.features.private_media.integration import persist_private_video_output
+from app.features.private_media.service import bind_provider_task
 
 
 @dataclass(frozen=True)
@@ -26,34 +26,13 @@ async def _persist_output(
 ) -> Optional[str]:
     if not url:
         return url
-    extra = dict(job.extra_data) if isinstance(job.extra_data, dict) else {}
     try:
-        persisted = await persist_remote_media_url(
-            url, media_type="image" if cover else "video", subdir="images" if cover else "videos",
-            prefix=f"video-cover-{job.id[:8]}" if cover else f"video-{job.id[:8]}",
-            max_bytes=20 * 1024 * 1024 if cover else 300 * 1024 * 1024,
-        ) or url
-        if persisted != url:
-            extra["original_cover_url" if cover else "original_video_url"] = url
-            if not cover:
-                extra["video_persisted"] = True
-        delivery = await resolve_provider_media_url(
-            db, job.user_id, persisted, media_type="image" if cover else "video",
-        )
-        delivered = delivery.get("provider_url") or persisted
-        extra["cover_delivery" if cover else "video_delivery"] = {
-            key: delivery.get(key) for key in (
-                "delivery_method", "storage_config_id", "storage_config_name",
-                "public_base_url", "object_key", "omitted_reason",
-            ) if delivery.get(key) is not None
-        }
-        if delivered != persisted:
-            extra["cover_public_delivery" if cover else "video_public_delivery"] = True
-        extra["cover_delivery" if cover else "video_delivery"]["canonical_local_url"] = persisted
+        persisted, extra = await persist_private_video_output(db, job, url, cover=cover)
         job.extra_data = extra
         flag_modified(job, "extra_data")
-        return delivered
+        return persisted
     except Exception as exc:
+        extra = dict(job.extra_data) if isinstance(job.extra_data, dict) else {}
         extra["cover_persist_error" if cover else "video_persist_error"] = str(exc)
         if not cover:
             extra["video_persisted"] = False
@@ -120,6 +99,10 @@ async def sync_video_job_and_shot(
     job: VideoJob,
     command: VideoJobSyncCommand,
 ) -> None:
+    if job.task_id:
+        await bind_provider_task(
+            db, user_id=job.user_id, submission_id=job.id, provider_task_id=job.task_id,
+        )
     video_url, cover_url = command.video_url, command.cover_url
     if command.status_value == "succeeded":
         video_url = await _persist_output(db, job, video_url, cover=False)

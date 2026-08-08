@@ -131,15 +131,15 @@ async def test_sync_video_job_prefers_configured_public_storage_delivery(
     from app.features.video_generation.application import job_sync
     from app.features.video_generation.public import VideoJobSyncCommand, sync_video_job_and_shot
 
-    async def persist(*_args, **_kwargs):
-        return "/static/generated/videos/shot.mp4"
+    async def persist(_db, _job, _url, *, cover):
+        assert cover is False
+        return "/static/generated/videos/shot.mp4", {
+            "shot_id": _job.extra_data["shot_id"],
+            "video_delivery": {"canonical_local_url": "/static/generated/videos/shot.mp4"},
+            "video_public_delivery": True, "video_media_object_id": "media-video-1",
+        }
 
-    async def deliver(_db, _user_id, media_url, **_kwargs):
-        assert media_url == "/static/generated/videos/shot.mp4"
-        return {"provider_url": "https://cdn.example.com/static/generated/videos/shot.mp4"}
-
-    monkeypatch.setattr(job_sync, "persist_remote_media_url", persist)
-    monkeypatch.setattr(job_sync, "resolve_provider_media_url", deliver)
+    monkeypatch.setattr(job_sync, "persist_private_video_output", persist)
     user_id = f"user-{uuid4()}"
     shot = _shot(user_id)
     job = _video_job(user_id, shot.id, auto_check=False)
@@ -151,6 +151,8 @@ async def test_sync_video_job_prefers_configured_public_storage_delivery(
         VideoJobSyncCommand("succeeded", 100, "https://provider.example.com/shot.mp4", None),
     )
 
-    assert job.video_url == "https://cdn.example.com/static/generated/videos/shot.mp4"
+    assert job.video_url == "/static/generated/videos/shot.mp4"
     assert shot.video_url == job.video_url
     assert job.extra_data["video_public_delivery"] is True
+    assert job.extra_data["video_media_object_id"] == "media-video-1"
+    assert "token=" not in str(job.extra_data)

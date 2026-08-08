@@ -47,15 +47,10 @@ from app.models.series_production_run import SeriesProductionRun
 from app.models.series_anchor_generation_submission import SeriesAnchorGenerationSubmission
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
 from app.models.billing import BillingAccount, BillingLedgerEntry, BillingReservation, ProjectBillingBudget, ProviderReconciliation, UsageEvent
+from app.models.private_media import MediaDeletionReceipt, MediaDeletionRequest, MediaObject, ProviderMediaInput
 from app.models.model_center import (
-    ModelBinding,
-    ModelCertificationRun,
-    ModelConfigAuditEvent,
-    ModelConnection,
-    ModelExecutionSnapshot,
-    ModelProfile,
-    ModelProfileVersion,
-    ModelProvider,
+    ModelBinding, ModelCertificationRun, ModelConfigAuditEvent, ModelConnection,
+    ModelExecutionSnapshot, ModelProfile, ModelProfileVersion, ModelProvider,
     ProductionRecipeVersion,
 )
 
@@ -106,6 +101,7 @@ __all__ = [
     "SeriesProductionRun",
     "LiveCanaryProviderOperation",
     "BillingAccount", "ProjectBillingBudget", "BillingReservation", "BillingLedgerEntry", "UsageEvent", "ProviderReconciliation",
+    "MediaObject", "ProviderMediaInput", "MediaDeletionRequest", "MediaDeletionReceipt",
     "ModelProvider",
     "ModelProfile",
     "ModelConnection",

@@ -135,18 +135,20 @@ async def test_persist_shot_image_uses_public_storage_delivery(monkeypatch) -> N
         persistence.update(kwargs)
         return "/static/generated/images/shot.jpg"
 
-    async def deliver(db, user_id, source_url, **kwargs):
+    async def deliver(db, user_id, canonical_url):
+        assert (user_id, canonical_url) == ("user", "/static/generated/images/shot.jpg")
         return {"provider_url": "https://cdn.example.com/static/generated/images/shot.jpg",
                 "image_url_sent": True, "delivery_method": "qiniu_object_upload",
-                "storage_config_id": "qiniu"}
+                "storage_config_id": "qiniu", "media_object_id": "media-shot-1"}
 
     monkeypatch.setattr("app.services.shot_image_delivery.persist_remote_media_url", persist)
-    monkeypatch.setattr("app.services.shot_image_delivery.resolve_provider_media_url", deliver)
+    monkeypatch.setattr("app.services.shot_image_delivery.resolve_process_image", deliver)
     result = await persist_shot_image_publicly(object(), user_id="user", source_url="https://provider/shot.jpg",
                                                shot_id="shot-1")
     assert result.public_url == "https://cdn.example.com/static/generated/images/shot.jpg"
     assert result.storage_url == "/static/generated/images/shot.jpg"
     assert result.delivery["delivery_method"] == "qiniu_object_upload"
+    assert result.delivery["media_object_id"] == "media-shot-1"
     assert persistence["image_max_dimension"] >= 1024
 
 

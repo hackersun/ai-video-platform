@@ -94,3 +94,35 @@ def test_non_minimax_image_prompt_is_not_compacted() -> None:
 
     assert calls[0]["prompt"] == prompt
     assert calls[0]["watermark"] is False
+
+
+def test_reference_inputs_are_recorded_with_the_real_provider_task(monkeypatch) -> None:
+    evidence = {}
+
+    class _FakeService:
+        async def generate_image(self, **_kwargs):
+            return {"id": "provider-task-1", "data": [{"url": "https://example.test/result.png"}]}
+
+    async def record(db, **kwargs):
+        evidence.update(kwargs)
+
+    monkeypatch.setattr(
+        "app.features.private_media.integration.record_provider_inputs_for_urls", record,
+    )
+    async def no_binding(*_args, **_kwargs):
+        return None
+    monkeypatch.setattr(
+        "app.services.image_generation_pipeline.resolve_generation_context", no_binding,
+    )
+    asyncio.run(call_image_generation_provider(
+        _FakeService(), provider_name="volcano", model_id="seedream", prompt="生成镜头",
+        db=object(), user_id="user-1", job_id="shot-1",
+        reference_images=["https://private.test/ref.jpg?e=1900000000&token=hidden"],
+    ))
+
+    assert evidence["provider_task_id"] == "provider-task-1"
+    assert evidence["submission_id"] == "shot-1:provider-task-1"
+    assert evidence["user_id"] == "user-1"
+    assert evidence["delivered_urls"] == [
+        "https://private.test/ref.jpg?e=1900000000&token=hidden",
+    ]

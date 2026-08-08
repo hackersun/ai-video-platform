@@ -152,6 +152,7 @@ async def upload_local_static_to_qiniu(
     secret_key: str,
     public_base_url: str,
     params: dict[str, Any],
+    object_key_override: str | None = None,
     timeout: float = 60,
 ) -> dict[str, Any]:
     access_key = str(access_key or "").strip()
@@ -162,6 +163,11 @@ async def upload_local_static_to_qiniu(
             "provider_url": None,
             "omitted_reason": "七牛对象存储需要配置 Access Key、Secret Key 和 bucket，不能仅映射公网域名",
         }
+    if object_key_override and not (params.get("private_download") or params.get("private_bucket")):
+        return {
+            "provider_url": None,
+            "omitted_reason": "正式媒体必须使用七牛私有桶并启用短时下载签名",
+        }
 
     local_path = local_static_path_for_url(local_url)
     if not local_path or not local_path.exists() or not local_path.is_file():
@@ -169,9 +175,8 @@ async def upload_local_static_to_qiniu(
             "provider_url": None,
             "omitted_reason": "本地静态参考图文件不存在，无法上传到七牛对象存储",
         }
-    object_key = _static_object_key(
-        local_url,
-        local_static_prefix=str(params.get("local_static_prefix") or "/static/"),
+    object_key = object_key_override or _static_object_key(
+        local_url, local_static_prefix=str(params.get("local_static_prefix") or "/static/"),
         public_static_prefix=str(params.get("public_static_prefix") or "/static/"),
     )
     if not object_key:
@@ -212,6 +217,7 @@ async def refresh_existing_qiniu_media_url(
     media_url: Optional[str],
     *,
     storage_config_id: Optional[str] = None,
+    object_key: str | None = None,
 ) -> dict[str, Any]:
     """Create a fresh download URL for an already-uploaded static object."""
     source_url = str(media_url or "").strip()
@@ -224,11 +230,13 @@ async def refresh_existing_qiniu_media_url(
     if storage_provider not in {"qiniu", "kodo", "qiniu_kodo"}:
         return {"provider_url": None, "delivery_method": None}
     public_base_url = str(extra.get("public_base_url") or config.custom_base_url or provider.base_url or "").strip()
-    public_url = _public_static_url(
-        source_url,
-        public_base_url=public_base_url,
-        local_static_prefix=extra.get("local_static_prefix") or "/static/",
-        public_static_prefix=extra.get("public_static_prefix") or "/static/",
+    public_url = (
+        f"{public_base_url.rstrip('/')}/{quote(object_key, safe='/-._~')}" if object_key else
+        _public_static_url(
+            source_url, public_base_url=public_base_url,
+            local_static_prefix=extra.get("local_static_prefix") or "/static/",
+            public_static_prefix=extra.get("public_static_prefix") or "/static/",
+        )
     )
     if not public_url or not is_cloud_accessible_http_url(public_url):
         return {"provider_url": None, "delivery_method": None}
@@ -251,139 +259,118 @@ async def refresh_existing_qiniu_media_url(
     }
 
 
-async def resolve_provider_media_url(
-    db: AsyncSession,
-    user_id: str,
-    media_url: Optional[str],
-    *,
-    media_type: str = "image",
-    storage_config_id: Optional[str] = None,
+def _unavailable_delivery(
+    source_url: str | None, reason: str | None, *, config: Any = None,
+    provider: Any = None, public_base_url: str | None = None,
 ) -> dict[str, Any]:
-    """Resolve a media URL into a URL safe to send to cloud providers."""
-    if not media_url:
-        return {
-            "source_url": media_url,
-            "provider_url": None,
-            "image_url_sent": False,
-            "delivery_method": None,
-            "omitted_reason": None,
-        }
+    result = {
+        "source_url": source_url, "provider_url": None, "image_url_sent": False,
+        "delivery_method": None, "omitted_reason": reason,
+    }
+    if config is not None:
+        result.update(storage_config_id=config.id, storage_config_name=config.name)
+    if provider is not None:
+        result.update(
+            storage_provider_id=provider.id,
+            storage_provider_name=provider.name_cn or provider.name,
+        )
+    if public_base_url:
+        result["public_base_url"] = public_base_url
+    return result
 
-    source_url = media_url.strip()
-    if is_cloud_accessible_http_url(source_url):
-        return {
-            "source_url": source_url,
-            "provider_url": source_url,
-            "image_url_sent": True,
-            "delivery_method": "direct_public_url",
-            "omitted_reason": None,
-        }
 
-    if not is_local_static_url(source_url):
-        return {
-            "source_url": source_url,
-            "provider_url": None,
-            "image_url_sent": False,
-            "delivery_method": None,
-            "omitted_reason": f"参考{media_type}不是公网 http(s) URL，云端模型无法直接访问",
-        }
+async def _resolve_qiniu_delivery(
+    source_url: str, *, config: Any, provider: Any, extra: dict[str, Any],
+    public_base_url: str, object_key_override: str | None,
+) -> dict[str, Any]:
+    upload = await upload_local_static_to_qiniu(
+        source_url, access_key=config.get_api_key_decrypted(),
+        secret_key=config.get_api_secret_decrypted(), public_base_url=public_base_url,
+        params=extra, object_key_override=object_key_override,
+        timeout=float(getattr(config, "timeout", None) or 60),
+    )
+    provider_url = upload.get("provider_url")
+    if not provider_url or not is_cloud_accessible_http_url(provider_url):
+        return _unavailable_delivery(
+            source_url, upload.get("omitted_reason") or "七牛对象存储上传失败，未生成可用公网 URL",
+            config=config, provider=provider, public_base_url=public_base_url,
+        )
+    return {
+        "source_url": source_url, "provider_url": provider_url, "image_url_sent": True,
+        "delivery_method": "qiniu_object_upload", "storage_config_id": config.id,
+        "storage_config_name": config.name, "storage_provider_id": provider.id,
+        "storage_provider_name": provider.name_cn or provider.name,
+        "public_base_url": public_base_url, "object_key": upload.get("object_key"),
+        "omitted_reason": None,
+    }
 
-    if storage_config_id:
-        storage = await _get_default_storage_config(db, user_id, storage_config_id=storage_config_id)
-    else:
-        storage = await _get_default_storage_config(db, user_id)
+
+async def _resolve_local_delivery(
+    db: AsyncSession, user_id: str, source_url: str, *,
+    storage_config_id: str | None, object_key_override: str | None,
+) -> dict[str, Any]:
+    storage = (
+        await _get_default_storage_config(db, user_id, storage_config_id=storage_config_id)
+        if storage_config_id else await _get_default_storage_config(db, user_id)
+    )
     if not storage:
-        return {
-            "source_url": source_url,
-            "provider_url": None,
-            "image_url_sent": False,
-            "delivery_method": None,
-            "omitted_reason": "参考图是本地静态资源，未配置对象存储/CDN公网出口，云端模型无法直接访问",
-        }
-
+        return _unavailable_delivery(
+            source_url, "参考图是本地静态资源，未配置对象存储/CDN公网出口，云端模型无法直接访问",
+        )
     config, provider = storage
     extra = config.extra_config or {}
     if config.test_status not in READY_CONFIG_STATUSES and not extra.get("allow_unverified"):
-        return {
-            "source_url": source_url,
-            "provider_url": None,
-            "image_url_sent": False,
-            "delivery_method": None,
-            "storage_config_id": config.id,
-            "omitted_reason": "对象存储/CDN配置尚未测试通过，未将本地参考图转换为公网 URL",
-        }
-
+        return _unavailable_delivery(
+            source_url, "对象存储/CDN配置尚未测试通过，未将本地参考图转换为公网 URL", config=config,
+        )
     public_base_url = (extra.get("public_base_url") or config.custom_base_url or provider.base_url or "").strip()
     if not is_cloud_accessible_http_url(public_base_url):
-        return {
-            "source_url": source_url,
-            "provider_url": None,
-            "image_url_sent": False,
-            "delivery_method": None,
-            "storage_config_id": config.id,
-            "omitted_reason": "对象存储/CDN公网基础地址无效，必须是云端可访问的 http(s) URL",
-        }
-
+        return _unavailable_delivery(
+            source_url, "对象存储/CDN公网基础地址无效，必须是云端可访问的 http(s) URL", config=config,
+        )
     provider_url = _public_static_url(
-        source_url,
-        public_base_url=public_base_url,
+        source_url, public_base_url=public_base_url,
         local_static_prefix=extra.get("local_static_prefix") or "/static/",
         public_static_prefix=extra.get("public_static_prefix") or "/static/",
     )
     if not provider_url or not is_cloud_accessible_http_url(provider_url):
-        return {
-            "source_url": source_url,
-            "provider_url": None,
-            "image_url_sent": False,
-            "delivery_method": None,
-            "storage_config_id": config.id,
-            "omitted_reason": "对象存储/CDN配置无法映射当前本地静态资源路径",
-        }
-
+        return _unavailable_delivery(
+            source_url, "对象存储/CDN配置无法映射当前本地静态资源路径", config=config,
+        )
     storage_provider = str(extra.get("storage_provider") or extra.get("provider") or "").strip().lower()
     if storage_provider in {"qiniu", "kodo", "qiniu_kodo"}:
-        upload_result = await upload_local_static_to_qiniu(
-            source_url, access_key=config.get_api_key_decrypted(),
-            secret_key=config.get_api_secret_decrypted(), public_base_url=public_base_url,
-            params=extra, timeout=float(getattr(config, "timeout", None) or 60),
+        return await _resolve_qiniu_delivery(
+            source_url, config=config, provider=provider, extra=extra,
+            public_base_url=public_base_url, object_key_override=object_key_override,
         )
-        provider_url = upload_result.get("provider_url")
-        if not provider_url or not is_cloud_accessible_http_url(provider_url):
-            return {
-                "source_url": source_url,
-                "provider_url": None,
-                "image_url_sent": False,
-                "delivery_method": None,
-                "storage_config_id": config.id,
-                "storage_config_name": config.name,
-                "storage_provider_id": provider.id,
-                "storage_provider_name": provider.name_cn or provider.name,
-                "public_base_url": public_base_url,
-                "omitted_reason": upload_result.get("omitted_reason") or "七牛对象存储上传失败，未生成可用公网 URL",
-            }
-        return {
-            "source_url": source_url,
-            "provider_url": provider_url,
-            "image_url_sent": True,
-            "delivery_method": "qiniu_object_upload",
-            "storage_config_id": config.id,
-            "storage_config_name": config.name,
-            "storage_provider_id": provider.id,
-            "storage_provider_name": provider.name_cn or provider.name,
-            "public_base_url": public_base_url,
-            "object_key": upload_result.get("object_key"),
-            "omitted_reason": None,
-        }
-
     return {
-        "source_url": source_url,
-        "provider_url": provider_url,
-        "image_url_sent": True,
-        "delivery_method": "public_static_base_url",
-        "storage_config_id": config.id,
-        "storage_config_name": config.name,
-        "storage_provider_id": provider.id,
+        "source_url": source_url, "provider_url": provider_url, "image_url_sent": True,
+        "delivery_method": "public_static_base_url", "storage_config_id": config.id,
+        "storage_config_name": config.name, "storage_provider_id": provider.id,
         "storage_provider_name": provider.name_cn or provider.name,
-        "public_base_url": public_base_url,
-        "omitted_reason": None,
+        "public_base_url": public_base_url, "omitted_reason": None,
     }
+
+
+async def resolve_provider_media_url(
+    db: AsyncSession, user_id: str, media_url: Optional[str], *,
+    media_type: str = "image", storage_config_id: Optional[str] = None,
+    object_key_override: str | None = None,
+) -> dict[str, Any]:
+    """Resolve a media URL into a URL safe to send to cloud providers."""
+    if not media_url:
+        return _unavailable_delivery(media_url, None)
+    source_url = media_url.strip()
+    if is_cloud_accessible_http_url(source_url):
+        return {
+            "source_url": source_url, "provider_url": source_url, "image_url_sent": True,
+            "delivery_method": "direct_public_url", "omitted_reason": None,
+        }
+    if not is_local_static_url(source_url):
+        return _unavailable_delivery(
+            source_url, f"参考{media_type}不是公网 http(s) URL，云端模型无法直接访问",
+        )
+    return await _resolve_local_delivery(
+        db, user_id, source_url, storage_config_id=storage_config_id,
+        object_key_override=object_key_override,
+    )
