@@ -64,6 +64,8 @@ feature/* 或 fix/*
 
 ## 旧远端 dev 的处理
 
+实际归档证据见[旧 dev 分支归档记录](legacy-dev-archive.md)。
+
 旧 `dev` 与当前 `main` 属于不同历史。处理顺序固定为：
 
 1. 读取旧 `dev` 的远端 SHA。
