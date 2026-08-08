@@ -151,6 +151,7 @@ class BindingItem(BaseModel):
     connection_id: str
     connection_name: str
     provider_name: str
+    native_audio_supported: bool
     priority: int
     route_policy: str
     fallback_profile_version_ids: list[str]

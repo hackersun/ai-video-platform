@@ -100,7 +100,14 @@ test('opens the prompt usage map before the template library', async ({ page }) 
   await expect(page.getByText('标准分镜创建 · v3')).toBeVisible();
   await expect(page.getByText('模型专用覆盖')).toBeVisible();
   await expect(page.getByText('此环节不使用提示词模板。', { exact: true }).first()).toBeVisible();
-  await expect(page.getByTestId('prompt-usage-summary')).toContainText('12 个环节');
+  const summary = page.getByTestId('prompt-usage-summary');
+  await expect(summary).toContainText('使用模板环节');
+  await expect(summary).toContainText('10 / 12');
+  await expect(summary).toContainText('另有 2 个环节无需模板');
+  await expect(summary).toContainText('模板已就绪');
+  await expect(summary).toContainText('8 / 10');
+  await expect(summary).toContainText('提示词问题');
+  await expect(summary).toContainText('2 个');
   await expect(page.getByLabel('输入映射 JSON')).toHaveCount(0);
 
   await page.getByRole('button', { name: '只看问题环节' }).click();

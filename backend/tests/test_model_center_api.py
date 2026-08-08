@@ -139,7 +139,7 @@ async def test_overview_returns_the_frontend_model_center_contract(client):
 
 
 @pytest.mark.asyncio
-async def test_overview_blocks_uncertified_model_missing_prompt_and_unpublished_recipe(client):
+async def test_overview_blocks_uncertified_model_and_unpublished_recipe_without_false_prompt_issue(client):
     async with AsyncSessionLocal() as db:
         db.add_all([
             ModelProfile(
@@ -167,10 +167,111 @@ async def test_overview_blocks_uncertified_model_missing_prompt_and_unpublished_
     assert response.status_code == 200
     issues = response.json()["blocking_issues"]
     codes = {item["code"] for item in issues}
-    assert {"model_certification_missing", "prompt_profile_missing", "published_recipe_missing"} <= codes
+    assert {"model_certification_missing", "published_recipe_missing"} <= codes
+    assert not any(
+        item["code"] == "prompt_profile_missing"
+        and item.get("capability") == "image_generation"
+        for item in issues
+    )
     assert all(set(item) >= {
         "code", "message", "severity", "section", "resource_id", "action_label",
     } for item in issues)
+
+
+@pytest.mark.asyncio
+async def test_overview_accepts_effective_stage_template_without_legacy_model_prompt_key(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            ModelProfile(
+                id="readiness-routed-speech", provider_id="provider-1",
+                profile_key="readiness-routed-speech",
+                display_name="Routed Speech", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="readiness-routed-speech-v1", model_id="readiness-routed-speech",
+                version=1, api_model_id="readiness-routed-speech-api",
+                driver_key="driver-speech", capabilities=["speech_generation"],
+                input_contract={}, output_contract={}, parameter_schema={},
+                default_params={}, limits={}, pricing={}, prompt_profile_key=None,
+                contract_version="v1", status="published", checksum="u" * 64,
+            ),
+            ModelBinding(
+                id="readiness-routed-speech-binding", user_id=USER_ID,
+                scope_type="project", scope_id="readiness-routed-project",
+                task="shot_speech", capability="speech_generation",
+                profile_version_id="readiness-routed-speech-v1",
+                connection_id="connection-1", version=1, is_active=True,
+            ),
+            PromptProfile(
+                id="readiness-routed-speech-prompt", user_id=USER_ID,
+                key="readiness.routed.speech", name="Routed Speech Prompt",
+                task="tts_dialogue",
+            ),
+            PromptProfileVersion(
+                id="readiness-routed-speech-prompt-v1",
+                profile_id="readiness-routed-speech-prompt", version=1,
+                content="生成对白语音。", variables={}, routing={}, evaluation={},
+                status="published", checksum="v" * 64,
+            ),
+        ])
+        await db.commit()
+
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    prompt_issues = [
+        issue for issue in response.json()["blocking_issues"]
+        if issue["code"] == "prompt_profile_missing"
+        and issue.get("capability") == "speech_generation"
+    ]
+    assert prompt_issues == []
+
+
+@pytest.mark.asyncio
+async def test_overview_names_model_when_connection_passed_but_production_certification_is_missing(client):
+    async with AsyncSessionLocal() as db:
+        db.add_all([
+            ModelProfile(
+                id="readiness-named-cert", provider_id="provider-1",
+                profile_key="readiness-named-cert",
+                display_name="Readiness Certification", enabled=True,
+            ),
+            ModelProfileVersion(
+                id="readiness-named-cert-v1", model_id="readiness-named-cert",
+                version=1, api_model_id="readiness-named-cert-api",
+                driver_key="driver-video", capabilities=["video_generation"],
+                input_contract={}, output_contract={}, parameter_schema={},
+                default_params={}, limits={}, pricing={}, prompt_profile_key=None,
+                contract_version="v1", status="published", checksum="w" * 64,
+            ),
+            ModelBinding(
+                id="readiness-named-cert-binding", user_id=USER_ID,
+                scope_type="project", scope_id="readiness-named-cert-project",
+                task="shot_video", capability="video_generation",
+                profile_version_id="readiness-named-cert-v1",
+                connection_id="connection-1", version=1, is_active=True,
+            ),
+            ModelCertificationRun(
+                id="readiness-named-connection-cert", user_id=USER_ID,
+                profile_version_id="readiness-named-cert-v1",
+                connection_id="connection-1", level="connection", status="success",
+                request_fingerprint="x" * 64, sanitized_evidence={},
+                estimated_cost_rmb=0, actual_cost_rmb=0,
+            ),
+        ])
+        await db.commit()
+
+    response = await client.get("/api/v1/model-center/overview")
+
+    assert response.status_code == 200
+    issue = next(
+        item for item in response.json()["blocking_issues"]
+        if item["code"] == "model_certification_missing"
+        and item["resource_id"] == "readiness-named-cert-v1"
+    )
+    assert issue["message"] == (
+        "“Readiness Certification”已通过连接测试，但尚未完成契约或实模认证。"
+    )
 
 
 @pytest.mark.asyncio

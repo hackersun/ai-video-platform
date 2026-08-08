@@ -34,11 +34,15 @@ SEEDANCE_2_EVIDENCE: dict[str, object] = {
 SEEDANCE_2_MODEL_IDS = {
     "doubao-seedance-2-0-260128",
     "doubao-seedance-2-0-fast-260128",
+    "doubao-seedance-2-0-mini-260615",
     "volcano.seedance.2_0",
     "volcano.seedance.2_0_fast",
     "doubao-seedance-2.0",
     "doubao-seedance-2.0-fast",
 }
+SEEDANCE_NATIVE_AUDIO_MODEL_IDS = frozenset(
+    {*SEEDANCE_2_MODEL_IDS, "doubao-seedance-1-5-pro-251215"}
+)
 
 
 @dataclass(frozen=True)

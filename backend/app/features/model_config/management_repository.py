@@ -22,6 +22,7 @@ from app.models.model_center import (
     ModelProvider,
     ProductionRecipeVersion,
 )
+from app.features.model_config.video_contract import native_audio_supported
 from app.models.llm_config import LLMProvider
 from app.models.prompt_profile import PromptProfile, PromptProfileVersion
 
@@ -190,6 +191,10 @@ async def binding_page(db: AsyncSession, user_id: str, page: int, page_size: int
             "profile_version_id": profile.id, "profile_name": model.display_name,
             "api_model_id": profile.api_model_id, "connection_id": connection.id,
             "connection_name": connection.name, "provider_name": provider.display_name,
+            "native_audio_supported": native_audio_supported(
+                profile.capabilities or [], profile.limits or {}, profile.default_params or {},
+                api_model_id=profile.api_model_id,
+            ),
             "priority": binding.priority, "route_policy": binding.route_policy,
             "fallback_profile_version_ids": list(binding.fallback_profile_version_ids or []),
             "certification_status": certification or "unverified",
