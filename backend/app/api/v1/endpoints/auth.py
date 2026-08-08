@@ -4,146 +4,60 @@
 """
 
 from app.core.time_utils import utc_now
-from datetime import datetime, timedelta
+from app.core.auth_tokens import create_access_token as create_signed_access_token
+from datetime import timedelta
 from typing import Optional, List
 from uuid import uuid4
-import hashlib
-import os
+import logging
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.core.database import get_db
+from app.core.runtime_environment import allows_development_identity
 from app.core.security import get_current_user_id
-from app.models import User
+from app.features.auth.cookies import clear_auth_cookies, set_auth_cookies
+from app.features.auth.passwords import hash_password, hash_reset_token, verify_password
+from app.features.auth.presenters import to_user_response
+from app.features.auth.recovery_api import router as recovery_router
+from app.features.auth.schemas import (
+    AuthResponse,
+    ChangePasswordRequest,
+    MessageResponse,
+    RefreshTokenRequest,
+    TokenResponse,
+    UserLoginRequest,
+    UserProfileUpdateRequest,
+    UserRegisterRequest,
+    UserResponse,
+)
+from app.models import User, UserSession
+from app.services.auth_sessions import (
+    InvalidRefreshToken,
+    issue_session,
+    revoke_all_user_sessions,
+    revoke_session,
+    rotate_session,
+)
+from app.services.auth_rate_limit import enforce_auth_rate_limit
+from app.services.auth_notifications import queue_auth_notification
+from app.services.password_policy import PasswordPolicyError, validate_password
 
 router = APIRouter(tags=["用户认证"])
+router.include_router(recovery_router)
+logger = logging.getLogger(__name__)
 
 
 # ============== JWT / bcrypt 配置 ==============
 
-# 从环境变量读取JWT密钥，生产环境必须设置
-_JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret-change-in-production")
-_JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-_ACCESS_TOKEN_EXPIRE_HOURS = 24
-_REFRESH_TOKEN_EXPIRE_DAYS = 7
-_RESET_TOKEN_EXPIRE_MINUTES = 30
-
-# 密码哈希 - 支持 sha256_crypt (新) 和 bcrypt (旧兼容)
-pwd_context = CryptContext(schemes=["sha256_crypt", "bcrypt"], deprecated="auto")
-
-
-# ============== Pydantic模型 ==============
-
-class UserRegisterRequest(BaseModel):
-    """注册请求"""
-    username: str = Field(..., min_length=3, max_length=50, description="用户名")
-    email: str = Field(..., description="邮箱")
-    password: str = Field(..., min_length=6, max_length=100, description="密码")
-
-
-class UserLoginRequest(BaseModel):
-    """登录请求"""
-    username: str = Field(..., description="用户名")
-    password: str = Field(..., description="密码")
-
-
-class UserResponse(BaseModel):
-    """用户响应"""
-    id: str
-    username: str
-    email: str
-    avatar: Optional[str] = None
-    created_at: datetime
-    is_active: bool
-
-
-class TokenResponse(BaseModel):
-    """令牌响应"""
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    expires_in: int  # seconds
-
-
-class AuthResponse(BaseModel):
-    """认证响应（兼容前端格式）"""
-    success: bool = True
-    message: str = "成功"
-    user: Optional[UserResponse] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
-    token_type: str = "bearer"
-
-
-class RefreshTokenRequest(BaseModel):
-    """刷新令牌请求"""
-    refresh_token: str
-
-
-class UserProfileUpdateRequest(BaseModel):
-    """资料更新请求"""
-    username: str = Field(..., min_length=3, max_length=50, description="用户名")
-    email: str = Field(..., description="邮箱")
-    avatar: Optional[str] = Field(None, max_length=500, description="头像URL")
-
-
-class ChangePasswordRequest(BaseModel):
-    """修改密码请求"""
-    current_password: str = Field(..., min_length=1, description="当前密码")
-    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
-
-
-class ForgotPasswordRequest(BaseModel):
-    """忘记密码请求"""
-    email: str = Field(..., description="账户邮箱")
-
-
-class ResetPasswordRequest(BaseModel):
-    """重置密码请求"""
-    token: str = Field(..., min_length=24, description="重置令牌")
-    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
-
-
-class MessageResponse(BaseModel):
-    """通用消息响应"""
-    success: bool = True
-    message: str
-    reset_token: Optional[str] = None
-
-
-# ============== 辅助函数 ==============
-
-def hash_password(password: str) -> str:
-    """使用bcrypt哈希密码。"""
-    return pwd_context.hash(password)
-
-
-def hash_reset_token(token: str) -> str:
-    """Hash password reset token for storage."""
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+_ACCESS_TOKEN_EXPIRE_SECONDS = 15 * 60
 
 
 def is_dev_mode() -> bool:
     """Return whether local development compatibility mode is enabled."""
-    return os.getenv("DEV_MODE", "true").lower() in ("true", "1", "yes")
-
-
-def to_user_response(user: User) -> UserResponse:
-    """Convert ORM user to API response."""
-    return UserResponse(
-        id=user.id,
-        username=user.username,
-        email=user.email,
-        avatar=user.avatar,
-        created_at=user.created_at,
-        is_active=user.is_active,
-    )
+    return allows_development_identity()
 
 
 async def get_or_create_dev_user(user_id: str, db: AsyncSession) -> User:
@@ -174,75 +88,12 @@ async def get_or_create_dev_user(user_id: str, db: AsyncSession) -> User:
     return user
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """验证密码，支持 sha256_crypt, bcrypt, 以及旧 SHA256 hex 格式。"""
-    import hashlib
-    # 1. 先尝试 sha256_crypt
-    if hashed_password.startswith('$5$'):
-        try:
-            return pwd_context.verify(plain_password, hashed_password)
-        except Exception:
-            pass
-    # 2. 降级：直接使用 bcrypt 验证旧哈希
-    try:
-        import bcrypt
-        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-    except Exception:
-        pass
-    # 3. 尝试 SHA256 hex 格式（旧数据的 64 字符格式）
-    if len(hashed_password) == 64:
-        try:
-            import secrets
-            return secrets.compare_digest(
-                hashlib.sha256(plain_password.encode()).hexdigest(),
-                hashed_password
-            )
-        except Exception:
-            pass
-    return False
-
-
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """创建JWT access token。"""
-    to_encode = data.copy()
-    expire = utc_now() + (expires_delta or timedelta(hours=_ACCESS_TOKEN_EXPIRE_HOURS))
-    to_encode.update({"exp": expire, "type": "access"})
-    return jwt.encode(to_encode, _JWT_SECRET_KEY, algorithm=_JWT_ALGORITHM)
-
-
-def create_refresh_token(data: dict) -> str:
-    """创建JWT refresh token（有效期更长）。"""
-    to_encode = {"sub": data.get("sub", data.get("user_id")), "type": "refresh"}
-    expire = utc_now() + timedelta(days=_REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode["exp"] = expire
-    return jwt.encode(to_encode, _JWT_SECRET_KEY, algorithm=_JWT_ALGORITHM)
-
-
-def decode_token(token: str) -> dict:
-    """解码并验证JWT token。"""
-    return jwt.decode(token, _JWT_SECRET_KEY, algorithms=[_JWT_ALGORITHM])
-
-
-def verify_access_token(token: str) -> Optional[str]:
-    """验证access token并返回user_id。如果无效返回None。"""
-    try:
-        payload = decode_token(token)
-        if payload.get("type") != "access":
-            return None
-        return payload.get("sub")
-    except JWTError:
-        return None
-
-
-def verify_refresh_token(token: str) -> Optional[str]:
-    """验证refresh token并返回user_id。如果无效返回None。"""
-    try:
-        payload = decode_token(token)
-        if payload.get("type") != "refresh":
-            return None
-        return payload.get("sub")
-    except JWTError:
-        return None
+    subject = data.get("sub", data.get("user_id"))
+    if not isinstance(subject, str) or not subject:
+        raise ValueError("访问令牌缺少用户标识")
+    return create_signed_access_token(subject, expires_delta)
 
 
 # ============== API端点 ==============
@@ -250,67 +101,73 @@ def verify_refresh_token(token: str) -> Optional[str]:
 @router.post("/auth/register")
 async def register(
     request: UserRegisterRequest,
+    http_request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
-    """用户注册 - 注册成功后直接返回access和refresh token。"""
-    # 检查用户名是否存在
-    result = await db.execute(
-        select(User).where(User.username == request.username)
-    )
-    if result.scalar_one_or_none():
-        return AuthResponse(success=False, message="用户名已存在")
+    """Create a pending account and begin email verification."""
+    await enforce_auth_rate_limit("register", http_request, request.email)
+    try:
+        validate_password(request.password, username=request.username, email=request.email)
+    except PasswordPolicyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
-    # 检查邮箱是否存在
-    result = await db.execute(
-        select(User).where(User.email == request.email)
+    existing = await db.execute(
+        select(User).where(
+            (User.username == request.username) | (User.email == request.email)
+        )
     )
-    if result.scalar_one_or_none():
-        return AuthResponse(success=False, message="邮箱已被注册")
+    public_message = "注册申请已提交，请验证邮箱后登录"
+    if existing.scalar_one_or_none():
+        return AuthResponse(success=True, message=public_message)
 
-    # 创建用户
+    verification_token = secrets.token_urlsafe(32)
     user = User(
         id=str(uuid4()),
         username=request.username,
         email=request.email,
         hashed_password=hash_password(request.password),
-        is_active=True
+        account_status="pending_verification",
+        email_verification_token_hash=hash_reset_token(verification_token),
+        email_verification_token_expires_at=utc_now() + timedelta(hours=24),
+        is_active=False,
     )
     db.add(user)
     try:
+        await db.flush()
+        queue_auth_notification(
+            db,
+            user_id=user.id,
+            recipient=user.email,
+            kind="verify_email",
+            token=verification_token,
+        )
         await db.commit()
         await db.refresh(user)
-    except Exception as e:
+    except Exception as error:
         await db.rollback()
-        if "UNIQUE" in str(e).upper() or "unique" in str(e).lower():
-            return AuthResponse(success=False, message="用户名或邮箱已被注册")
-        return AuthResponse(success=False, message=f"注册失败: {str(e)}")
-
-    # 生成tokens
-    access_token = create_access_token(data={"sub": user.id})
-    refresh_token = create_refresh_token(data={"user_id": user.id})
+        logger.exception("Registration transaction failed", exc_info=error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="注册服务暂时不可用，请稍后重试",
+        ) from error
 
     return AuthResponse(
         success=True,
-        message="注册成功",
-        user=UserResponse(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            avatar=user.avatar,
-            created_at=user.created_at,
-            is_active=user.is_active
-        ),
-        access_token=access_token,
-        refresh_token=refresh_token
+        message=public_message,
+        verification_token=verification_token if is_dev_mode() else None,
     )
 
 
 @router.post("/auth/login")
 async def login(
     request: UserLoginRequest,
+    http_request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """用户登录 - 返回access和refresh token。"""
+    await enforce_auth_rate_limit("login", http_request, request.username)
     # 查找用户
     result = await db.execute(
         select(User).where(User.username == request.username)
@@ -329,12 +186,16 @@ async def login(
         return AuthResponse(success=False, message="用户名或密码错误")
 
     # 检查是否激活
+    if user.account_status == "pending_verification":
+        return AuthResponse(success=False, message="请先完成邮箱验证")
     if not user.is_active:
         return AuthResponse(success=False, message="账户已被禁用")
 
     # 生成tokens
     access_token = create_access_token(data={"sub": user.id})
-    refresh_token = create_refresh_token(data={"user_id": user.id})
+    session = await issue_session(db, user.id, http_request.headers.get("user-agent"))
+    refresh_token = session.refresh_token
+    set_auth_cookies(response, access_token, refresh_token)
 
     return AuthResponse(
         success=True,
@@ -348,25 +209,38 @@ async def login(
             is_active=user.is_active
         ),
         access_token=access_token,
-        refresh_token=refresh_token
+        refresh_token=refresh_token if is_dev_mode() else None
     )
 
 
 @router.post("/auth/refresh")
 async def refresh_token(
-    request: RefreshTokenRequest,
+    http_request: Request,
+    response: Response,
+    request: Optional[RefreshTokenRequest] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """使用refresh token获取新的access token。"""
-    user_id = verify_refresh_token(request.refresh_token)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的refresh token"
+    presented_token = http_request.cookies.get("refresh_token") or (
+        request.refresh_token if request else None
+    )
+    if not presented_token:
+        raise HTTPException(status_code=401, detail="登录会话已过期，请重新登录")
+    try:
+        session = await rotate_session(
+            db,
+            presented_token,
+            http_request.headers.get("user-agent"),
         )
+    except InvalidRefreshToken as error:
+        clear_auth_cookies(response)
+        raise HTTPException(status_code=401, detail=str(error)) from error
 
     # 验证用户仍存在且活跃
-    result = await db.execute(select(User).where(User.id == user_id))
+    stored_session = await db.get(UserSession, session.session_id)
+    if stored_session is None:
+        raise HTTPException(status_code=401, detail="登录会话无效，请重新登录")
+    result = await db.execute(select(User).where(User.id == stored_session.user_id))
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
         raise HTTPException(
@@ -376,11 +250,25 @@ async def refresh_token(
 
     # 生成新的access token（保留原refresh token）
     access_token = create_access_token(data={"sub": user.id})
+    set_auth_cookies(response, access_token, session.refresh_token)
     return TokenResponse(
         access_token=access_token,
-        refresh_token=request.refresh_token,
-        expires_in=_ACCESS_TOKEN_EXPIRE_HOURS * 3600
+        refresh_token=session.refresh_token if is_dev_mode() else None,
+        expires_in=_ACCESS_TOKEN_EXPIRE_SECONDS,
     )
+
+
+@router.post("/auth/logout", response_model=MessageResponse)
+async def logout(
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    refresh_token = request.cookies.get("refresh_token")
+    if refresh_token:
+        await revoke_session(db, refresh_token)
+    clear_auth_cookies(response)
+    return MessageResponse(message="已安全退出登录")
 
 
 @router.get("/auth/me", response_model=UserResponse)
@@ -438,79 +326,30 @@ async def change_password(
         raise HTTPException(status_code=400, detail="当前密码不正确")
     if request.current_password == request.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
-
+    try:
+        validate_password(request.new_password, username=user.username, email=user.email)
+    except PasswordPolicyError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     user.hashed_password = hash_password(request.new_password)
     user.updated_at = utc_now()
-    await db.commit()
-    return MessageResponse(message="密码修改成功")
-
-
-@router.post("/auth/forgot-password", response_model=MessageResponse)
-async def forgot_password(
-    request: ForgotPasswordRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """发起密码重置。生产环境应在邮件服务中发送重置链接。"""
-    result = await db.execute(select(User).where(User.email == request.email))
-    user = result.scalar_one_or_none()
-
-    reset_token: Optional[str] = None
-    if user and user.is_active:
-        reset_token = secrets.token_urlsafe(32)
-        user.reset_token_hash = hash_reset_token(reset_token)
-        user.reset_token_expires_at = utc_now() + timedelta(minutes=_RESET_TOKEN_EXPIRE_MINUTES)
-        user.updated_at = utc_now()
-        await db.commit()
-
-    response = MessageResponse(message="如果邮箱存在，系统已生成密码重置说明")
-    if reset_token and is_dev_mode():
-        response.reset_token = reset_token
-        response.message = "DEV_MODE 已生成重置令牌，请在重置密码页面使用"
-    return response
-
-
-@router.post("/auth/reset-password", response_model=MessageResponse)
-async def reset_password(
-    request: ResetPasswordRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """使用重置令牌设置新密码。"""
-    token_hash = hash_reset_token(request.token)
-    result = await db.execute(select(User).where(User.reset_token_hash == token_hash))
-    user = result.scalar_one_or_none()
-    if not user or not user.reset_token_expires_at or user.reset_token_expires_at < utc_now():
-        raise HTTPException(status_code=400, detail="重置令牌无效或已过期")
-    if verify_password(request.new_password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
-
-    user.hashed_password = hash_password(request.new_password)
-    user.reset_token_hash = None
-    user.reset_token_expires_at = None
-    user.updated_at = utc_now()
-    await db.commit()
-    return MessageResponse(message="密码重置成功")
+    await revoke_all_user_sessions(db, user.id)
+    return MessageResponse(message="密码修改成功，请重新登录")
 
 
 @router.get("/users", response_model=List[UserResponse])
 async def list_users(
+    user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
     skip: int = 0,
     limit: int = 100
 ):
-    """获取用户列表。"""
+    """Local support-only directory until the RBAC batch adds an admin role."""
+    del user_id
+    if not is_dev_mode():
+        raise HTTPException(status_code=403, detail="当前账号无权查看用户目录")
     result = await db.execute(
         select(User).where(User.is_active == True).offset(skip).limit(limit)
     )
     users = result.scalars().all()
 
-    return [
-        UserResponse(
-            id=user.id,
-            username=user.username,
-            email=user.email,
-            avatar=user.avatar,
-            created_at=user.created_at,
-            is_active=user.is_active
-        )
-        for user in users
-    ]
+    return [to_user_response(user) for user in users]

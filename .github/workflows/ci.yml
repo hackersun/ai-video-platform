@@ -173,6 +173,14 @@ jobs:
         REDIS_PASSWORD: ci-only-password
         REDIS_URL: redis://:ci-only-password@redis:6379/0
         FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        JWT_SECRET_KEY: ci-jwt-secret-that-is-definitely-long-enough
+        OBJECT_STORAGE_PROVIDER: qiniu
+        AUTH_EMAIL_PROVIDER: smtp
+        SMTP_HOST: smtp.example.test
+        SMTP_USERNAME: ci-mailer
+        SMTP_PASSWORD: ci-only-password
+        AUTH_EMAIL_FROM: no-reply@example.test
+        PUBLIC_APP_URL: http://127.0.0.1:3000
         NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
       run: |
         docker compose -f infra/compose/production.yml config --quiet

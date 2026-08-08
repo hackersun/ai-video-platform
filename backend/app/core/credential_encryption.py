@@ -3,10 +3,11 @@
 import os
 import warnings
 from pathlib import Path
-from typing import Optional
+
+from app.core.runtime_environment import AppEnvironment, effective_environment
 
 
-def _configured_encryption_key() -> Optional[bytes]:
+def _configured_encryption_key() -> bytes | None:
     """Read a configured Fernet key without generating a development key."""
     key = os.getenv("FERNET_KEY")
     if not key:
@@ -45,12 +46,12 @@ def get_encryption_key() -> bytes:
     return _Fernet.generate_key()
 
 
-_fernet_cache: Optional[tuple[Optional[bytes], "Fernet"]] = None
+_fernet_cache: tuple[bytes | None, "Fernet"] | None = None
 
 
 def require_stable_encryption_key() -> None:
     """Validate and install the production Fernet instance before startup."""
-    if os.getenv("DEV_MODE", "true").lower() in {"true", "1", "yes"}:
+    if effective_environment() in {AppEnvironment.LOCAL, AppEnvironment.TEST}:
         return
     key = _configured_encryption_key()
     if not key:

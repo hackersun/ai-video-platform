@@ -32,7 +32,7 @@ def test_blank_database_is_bootstrapped_and_stamped(tmp_path) -> None:
     result = _upgrade(database_path)
     engine = create_engine(_sync_url(database_path))
 
-    assert "Database migration complete: 20260808_0001" in result.stdout
+    assert "Database migration complete: 20260808_0002" in result.stdout
     assert inspect(engine).has_table("users")
     assert inspect(engine).has_table("alembic_version")
 
@@ -48,5 +48,5 @@ def test_existing_database_keeps_data_and_is_stamped(tmp_path) -> None:
     with engine.connect() as connection:
         value = connection.execute(text("SELECT value FROM legacy_sentinel")).scalar_one()
 
-    assert "Database migration complete: 20260808_0001" in result.stdout
+    assert "Database migration complete: 20260808_0002" in result.stdout
     assert value == "keep-me"

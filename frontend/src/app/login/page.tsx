@@ -45,10 +45,8 @@ export default function LoginPage() {
       const result = await login(username, password);
 
       if (result.success) {
-        setSuccess('登录成功！正在跳转...');
-        setTimeout(() => {
-          router.push('/dashboard');
-        }, 1000);
+        setSuccess('登录成功，正在进入工作台');
+        router.push('/dashboard');
       } else {
         setError(result.detail || result.message || '登录失败');
       }

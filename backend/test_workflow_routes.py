@@ -4386,18 +4386,21 @@ def test_tts_requires_api_key_outside_dev_mode(
     fake_tts_service: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setenv("DEV_MODE", "true")
     suffix = uuid4().hex[:10]
     register_resp = client.post(
         "/api/v1/auth/register",
         json={
             "username": f"tts-key-user-{suffix}",
             "email": f"tts-key-user-{suffix}@example.test",
-            "password": "testPass123",
+            "password": "CommercialPass123!",
         },
     )
     assert register_resp.status_code == 200
-    access_token = register_resp.json()["access_token"]
+    verification_token = register_resp.json()["verification_token"]
+    verified = client.post("/api/v1/auth/verify-email", json={"token": verification_token})
+    access_token = verified.json()["access_token"]
+    monkeypatch.setenv("DEV_MODE", "false")
     response = client.post(
         "/api/v1/tts/generate",
         json={
