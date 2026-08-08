@@ -49,6 +49,13 @@ jobs:
       with:
         python-version: '3.11'
 
+    - name: Install media runtime
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ffmpeg
+        ffmpeg -version
+        ffprobe -version
+
     - name: Install dependencies
       working-directory: ./backend
       run: |
