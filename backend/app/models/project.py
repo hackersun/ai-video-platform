@@ -2,10 +2,7 @@
 动漫制作项目模型 - 顶层容器
 """
 from app.core.time_utils import utc_now
-from datetime import datetime
-
 from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text
-from sqlalchemy.orm import relationship
 
 from app.core.database import Base
 
@@ -26,6 +23,7 @@ class Project(Base):
 
     id = Column(String(36), primary_key=True)
     user_id = Column(String(36), nullable=False, index=True)
+    workspace_id = Column(String(36), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # 基本信息
     name = Column(String(200), nullable=False)
@@ -79,7 +77,7 @@ class ProjectMember(Base):
     project_id = Column(String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(String(36), nullable=False, index=True)
 
-    role = Column(String(20), default="editor")  # owner, editor, viewer
+    role = Column(String(20), default="editor")  # owner, editor, reviewer, viewer
     is_active = Column(Boolean, default=True)
 
     invited_at = Column(DateTime, default=utc_now)
