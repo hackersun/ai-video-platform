@@ -48,8 +48,7 @@ from app.services.series_run_orchestrator import (
     transition_run,
 )
 from app.services.series_run_execution_queue import (
-    series_run_execution_active,
-    start_series_run_execution,
+    queue_series_run_execution,
 )
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
 from app.features.series_run_acceptance import setup_acceptance_fixture
@@ -323,14 +322,15 @@ async def execute_series_run_async(
     """Queue resumable episode work and return without holding the browser request."""
     run = await _owned_run(db, user_id, run_id)
     if run.status in {"shots_ready", "anchor_ready", "completed", "paused"}:
-        queued = False
+        execution, queued = None, False
     else:
-        queued = start_series_run_execution(run.id, user_id)
+        execution, queued = await queue_series_run_execution(db, run)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={
             **_payload(run),
-            "execution_status": "queued" if queued else "already_running" if series_run_execution_active(run.id) else "not_required",
+            "execution_status": "queued" if queued else "already_running" if execution else "not_required",
+            "execution_id": execution.id if execution else None,
         },
     )
 

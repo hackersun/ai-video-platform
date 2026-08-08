@@ -94,6 +94,18 @@ services:
     restart: unless-stopped
     networks: [data, edge]
 
+  task-worker:
+    image: ${BACKEND_IMAGE:-ai-video-backend}:${IMAGE_TAG:?IMAGE_TAG is required}
+    build:
+      context: ../../backend
+    command: ["python", "scripts/run_task_worker.py"]
+    environment: *backend-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [data, edge]
+
   frontend:
     image: ${FRONTEND_IMAGE:-ai-video-frontend}:${IMAGE_TAG:?IMAGE_TAG is required}
     build:

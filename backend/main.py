@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
 from app.features.access_control.api import router as access_control_router
+from app.features.task_execution.api import router as task_execution_router
 from app.core.credential_encryption import require_stable_encryption_key
 from app.core.csrf import csrf_is_valid
 from app.core.runtime_environment import validate_runtime_environment
@@ -136,6 +137,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # 注册API路由
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(access_control_router, prefix="/api/v1")
+app.include_router(task_execution_router, prefix="/api/v1")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)

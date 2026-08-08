@@ -22,6 +22,7 @@ from app.models.workflow import Workflow
 from app.models.image_job import ImageJob
 from app.models.project import Project, ProjectMember
 from app.models.tenant import AuditEvent, Organization, OrganizationMember, Workspace, WorkspaceMember
+from app.models.task_execution import TaskExecution, TaskExecutionEvent
 from app.models.publication import Publication
 from app.models.asset import Asset, AssetCategory
 from app.models.timeline import Timeline, Track, Clip
