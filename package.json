@@ -6,6 +6,7 @@
   "scripts": {
     "test": "npm run verify:quick",
     "verify:backend": "tmp_db=$(mktemp /tmp/ai-video-platform-pytest-XXXXXX.db) && trap 'rm -f \"$tmp_db\"' EXIT && cd backend && DATABASE_URL=sqlite+aiosqlite:///$tmp_db E2E_REQUIRE_ISOLATED_DB=true python3 -m pytest",
+    "verify:code-health": "python3 tools/code_health/check.py --policy tools/code_health/policy.json --baseline tools/code_health/baseline.json",
     "verify:frontend": "npm --prefix frontend run typecheck && NEXT_DIST_DIR=.next-verify npm --prefix frontend run build",
     "verify:e2e": "npm --prefix frontend run e2e:smoke",
     "verify:e2e:legacy": "npm --prefix e2e test",
