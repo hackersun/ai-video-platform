@@ -12,10 +12,10 @@
     "incremental": true,
     "esModuleInterop": true,
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "jsx": "preserve",
+    "jsx": "react-jsx",
     "baseUrl": ".",
     "paths": {
       "@/*": [
@@ -26,7 +26,8 @@
       {
         "name": "next"
       }
-    ]
+    ],
+    "target": "ES2017"
   },
   "include": [
     "next-env.d.ts",
@@ -43,7 +44,10 @@
     ".next-playwright-four-chapter-1f4e1bab-bfad-4183-a2aa-1d2d05c0e315/types/**/*.ts",
     ".next-playwright-live-evidence/types/**/*.ts",
     ".next-playwright-four-chapter-063fbf11-631d-4635-b85e-2326bca0f767/types/**/*.ts",
-    ".next-playwright-four-chapter-cb46a276-0cc0-49a0-8011-9fd02b50ddf6/types/**/*.ts"
+    ".next-playwright-four-chapter-cb46a276-0cc0-49a0-8011-9fd02b50ddf6/types/**/*.ts",
+    ".next-verify/dev/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    ".next-playwright/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

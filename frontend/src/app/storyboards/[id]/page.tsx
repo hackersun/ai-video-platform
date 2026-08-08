@@ -1,11 +1,6 @@
 import { redirect } from 'next/navigation';
 
-interface StoryboardDetailRedirectProps {
-  params: {
-    id: string;
-  };
-}
-
-export default function StoryboardDetailRedirect({ params }: StoryboardDetailRedirectProps) {
-  redirect(`/storyboards?storyboard_id=${encodeURIComponent(params.id)}`);
+export default async function StoryboardDetailRedirect({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  redirect(`/storyboards?storyboard_id=${encodeURIComponent(id)}`);
 }

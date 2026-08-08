@@ -8,6 +8,7 @@ import {
   fetchWithSession,
   getLegacyAccessToken,
 } from '@/lib/auth-session';
+import { loginPathFor } from '@/features/auth/navigation';
 
 type User = {
   id: string;
@@ -45,7 +46,9 @@ function isPublicPath(pathname: string): boolean {
 }
 
 function redirectToLoginIfNeeded(): void {
-  if (!isPublicPath(window.location.pathname)) window.location.href = '/login';
+  if (!isPublicPath(window.location.pathname)) {
+    window.location.href = loginPathFor(window.location.pathname, window.location.search);
+  }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
