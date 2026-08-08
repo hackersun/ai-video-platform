@@ -33,7 +33,7 @@ jobs:
       run: python3 tools/code_health/check.py --report-only --json-report /tmp/ai-video-code-health.json
 
     - name: Upload code health report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: code-health-report
         path: /tmp/ai-video-code-health.json
