@@ -28,6 +28,7 @@ from app.services.live_canary_policy import (
     trusted_live_canary_policy,
 )
 from app.services.live_canary_repair_budget import effective_budget_maximum
+from app.features.billing.integration import reserve_customer_operation, settle_customer_operation
 
 
 class BudgetExceeded(ValueError):
@@ -96,23 +97,26 @@ async def prepare_provider_operation(
     estimate_rmb: Decimal,
 ) -> LiveCanaryProviderOperation:
     """Atomically persist reservation and recoverable operation before provider submission."""
-    await reserve_budget(
-        db, run, reservation_id=reservation_id, estimate_rmb=estimate_rmb, commit=False
-    )
+    await reserve_budget(db, run, reservation_id=reservation_id, estimate_rmb=estimate_rmb, commit=False)
     summary = _summary(run)
     reservation = summary["reservations"][_reservation_id(reservation_id)]
     reservation.update(job_id=str(job_id), job_type=str(job_type), capability=str(capability), provider_task_id=None)
     run.cost_summary = summary
     flag_modified(run, "cost_summary")
     operation = LiveCanaryProviderOperation(
-        id=str(uuid4()), run_id=run.id, user_id=run.user_id,
-        reservation_id=_reservation_id(reservation_id), capability=str(capability),
-        job_type=str(job_type), job_id=str(job_id), provider_task_id=None, status="reserved",
-    )
+        id=str(uuid4()), run_id=run.id, user_id=run.user_id, reservation_id=_reservation_id(reservation_id),
+        capability=str(capability), job_type=str(job_type), job_id=str(job_id), provider_task_id=None, status="reserved")
     reservation["operation_id"] = operation.id
     run.cost_summary = summary
     flag_modified(run, "cost_summary")
     db.add(operation)
+    await db.flush()
+    try:
+        await reserve_customer_operation(db, operation, supplier_estimate_rmb=estimate_rmb)
+    except Exception:
+        await db.rollback()
+        await db.refresh(run)
+        raise
     await db.commit()
     await db.refresh(operation)
     return operation
@@ -122,9 +126,7 @@ async def bind_provider_operation_for_reservation(
     db: AsyncSession, run: SeriesProductionRun, *, reservation_id: str, provider_task_id: str
 ) -> LiveCanaryProviderOperation:
     operation = await db.scalar(select(LiveCanaryProviderOperation).where(
-        LiveCanaryProviderOperation.run_id == run.id,
-        LiveCanaryProviderOperation.reservation_id == _reservation_id(reservation_id),
-    ))
+        LiveCanaryProviderOperation.run_id == run.id, LiveCanaryProviderOperation.reservation_id == _reservation_id(reservation_id)))
     if operation is None:
         raise InvalidAccountingInput("provider operation is missing")
     return await bind_provider_operation_task(db, operation, provider_task_id=provider_task_id)
@@ -134,9 +136,7 @@ async def mark_provider_operation_confirmed_reject(
     db: AsyncSession, run: SeriesProductionRun, *, reservation_id: str
 ) -> None:
     operation = await db.scalar(select(LiveCanaryProviderOperation).where(
-        LiveCanaryProviderOperation.run_id == run.id,
-        LiveCanaryProviderOperation.reservation_id == _reservation_id(reservation_id),
-    ))
+        LiveCanaryProviderOperation.run_id == run.id, LiveCanaryProviderOperation.reservation_id == _reservation_id(reservation_id)))
     if operation is None:
         raise InvalidAccountingInput("provider operation is missing")
     operation.status = "confirmed_rejected_before_acceptance"
@@ -156,6 +156,7 @@ async def settle_confirmed_provider_rejection(
     if operation is None or reservation is None:
         raise InvalidAccountingInput("provider operation accounting is missing")
     if operation.status == "confirmed_rejected_before_acceptance":
+        await settle_customer_operation(db, operation, provider_status="rejected")
         return
     if operation.provider_task_id is not None or reservation.get("state") != "reserved":
         raise InvalidAccountingInput("confirmed rejection requires an unaccepted reserved operation")
@@ -165,6 +166,7 @@ async def settle_confirmed_provider_rejection(
     run.cost_summary = summary
     flag_modified(run, "cost_summary")
     operation.status = "confirmed_rejected_before_acceptance"
+    await settle_customer_operation(db, operation, provider_status="rejected")
     await db.commit()
 
 
@@ -207,9 +209,7 @@ async def settle_provider_operation(
     actual_rmb: Any = None,
 ) -> None:
     operation = await db.scalar(select(LiveCanaryProviderOperation).where(
-        LiveCanaryProviderOperation.id == operation_id,
-        LiveCanaryProviderOperation.user_id == user_id,
-    ))
+        LiveCanaryProviderOperation.id == operation_id, LiveCanaryProviderOperation.user_id == user_id))
     if operation is None:
         raise InvalidAccountingInput("provider operation is missing")
     expected = (operation.run_id, operation.reservation_id, operation.capability, operation.job_id, operation.provider_task_id)
@@ -221,9 +221,7 @@ async def settle_provider_operation(
     reservation = (summary.get("reservations") or {}).get(reservation_id)
     if run is None or reservation is None:
         raise InvalidAccountingInput("provider operation reservation is missing")
-    reservation_expected = (
-        reservation.get("job_id"), reservation.get("capability"), reservation.get("provider_task_id")
-    )
+    reservation_expected = (reservation.get("job_id"), reservation.get("capability"), reservation.get("provider_task_id"))
     if reservation_expected != (job_id, capability, provider_task_id):
         raise InvalidAccountingInput("reservation accounting mismatch")
     if operation.status in {"reconciled", "provider_failed_released"}:
@@ -233,11 +231,13 @@ async def settle_provider_operation(
             actual_rmb = reservation["estimate_rmb"]
             reservation["provider_cost_missing"] = True
             operation.cost_source = "estimated_as_actual"
+        await settle_customer_operation(db, operation, provider_status=provider_status, supplier_actual_rmb=actual_rmb)
         await reconcile_reservation(db, run, reservation_id=reservation_id, actual_rmb=Decimal(str(actual_rmb)))
         operation.status = "reconciled"
         operation.actual_rmb = _text(_money(actual_rmb))
         await db.commit()
     elif provider_status in {"failed", "rejected", "cancelled"}:
+        await settle_customer_operation(db, operation, provider_status=provider_status)
         estimate = _money(reservation["estimate_rmb"])
         summary["reserved_rmb"] = _text(_money(summary["reserved_rmb"]) - estimate)
         reservation["state"] = "provider_failed_released"

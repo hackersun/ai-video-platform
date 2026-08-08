@@ -15,6 +15,7 @@ x-backend-environment: &backend-environment
   SMTP_PASSWORD: ${SMTP_PASSWORD:?SMTP_PASSWORD is required}
   AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM:?AUTH_EMAIL_FROM is required}
   PUBLIC_APP_URL: ${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}
+  CUSTOMER_BILLING_MODE: ${CUSTOMER_BILLING_MODE:?CUSTOMER_BILLING_MODE is required}
 
 services:
   postgres:

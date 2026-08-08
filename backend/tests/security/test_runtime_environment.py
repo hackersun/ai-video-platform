@@ -33,6 +33,7 @@ def test_production_rejects_development_mode(monkeypatch: pytest.MonkeyPatch) ->
         ("SMTP_PASSWORD", "SMTP 密码"),
         ("AUTH_EMAIL_FROM", "认证邮件发件人"),
         ("PUBLIC_APP_URL", "前端公开地址"),
+        ("CUSTOMER_BILLING_MODE", "客户计费模式"),
     ],
 )
 def test_production_rejects_each_missing_security_setting(
@@ -54,6 +55,7 @@ def test_production_rejects_each_missing_security_setting(
         "SMTP_PASSWORD": "secret",
         "AUTH_EMAIL_FROM": "no-reply@example.test",
         "PUBLIC_APP_URL": "https://app.example.test",
+        "CUSTOMER_BILLING_MODE": "enforced",
     }
     for name, value in configured.items():
         monkeypatch.setenv(name, value)
@@ -73,6 +75,24 @@ def test_local_environment_keeps_explicit_development_compatibility(
     validate_runtime_environment()
 
 
+def test_production_rejects_disabled_customer_billing(monkeypatch: pytest.MonkeyPatch) -> None:
+    configured = {
+        "APP_ENV": "production", "DEV_MODE": "false",
+        "JWT_SECRET_KEY": "production-jwt-key-that-is-longer-than-32-bytes",
+        "DATABASE_URL": "postgresql+asyncpg://app:secret@postgres/app",
+        "REDIS_URL": "redis://:secret@redis:6379/0",
+        "FERNET_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+        "OBJECT_STORAGE_PROVIDER": "qiniu", "AUTH_EMAIL_PROVIDER": "smtp",
+        "SMTP_HOST": "smtp.example.test", "SMTP_USERNAME": "mailer",
+        "SMTP_PASSWORD": "secret", "AUTH_EMAIL_FROM": "no-reply@example.test",
+        "PUBLIC_APP_URL": "https://app.example.test", "CUSTOMER_BILLING_MODE": "off",
+    }
+    for name, value in configured.items():
+        monkeypatch.setenv(name, value)
+    with pytest.raises(RuntimeError, match="客户计费模式必须设置为 enforced"):
+        validate_runtime_environment()
+
+
 def test_auth_notification_worker_rejects_invalid_fernet_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -90,6 +110,7 @@ def test_auth_notification_worker_rejects_invalid_fernet_key(
         "SMTP_PASSWORD": "secret",
         "AUTH_EMAIL_FROM": "no-reply@example.test",
         "PUBLIC_APP_URL": "https://app.example.test",
+        "CUSTOMER_BILLING_MODE": "enforced",
     }
     for name, value in configured.items():
         monkeypatch.setenv(name, value)
