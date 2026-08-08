@@ -1,0 +1,11 @@
+# 默认所有改动由仓库维护者审批。
+* @hackersun
+
+# 高风险区域需要明确复核。
+/.github/ @hackersun
+/backend/app/core/ @hackersun
+/backend/app/models/ @hackersun
+/backend/app/db_migrations/ @hackersun
+/docs/release/ @hackersun
+/docs/security/ @hackersun
+/tools/code_health/ @hackersun
