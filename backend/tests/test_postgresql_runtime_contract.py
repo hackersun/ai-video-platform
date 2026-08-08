@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import sync_engine
@@ -173,3 +174,38 @@ def test_postgresql_billing_schema_immutability_and_concurrent_reserve() -> None
             await engine.dispose()
 
     asyncio.run(verify_single_reservation_winner())
+
+
+def test_postgresql_private_media_schema_and_append_only_receipts() -> None:
+    inspector = inspect(sync_engine)
+    assert {
+        "media_objects", "provider_media_inputs", "media_deletion_requests",
+        "media_deletion_receipts",
+    }.issubset(inspector.get_table_names())
+    with sync_engine.begin() as connection:
+        triggers = set(connection.execute(text(
+            "SELECT tgname FROM pg_trigger "
+            "WHERE tgrelid = 'media_deletion_receipts'::regclass AND NOT tgisinternal"
+        )).scalars())
+    assert "trg_media_deletion_receipts_append_only" in triggers
+
+    media_id = str(uuid4())
+    receipt_id = str(uuid4())
+    with sync_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO media_objects "
+            "(id, user_id, media_kind, lifecycle_class, storage_provider, object_key, sha256, "
+            "size_bytes, content_type, status, legal_hold, media_metadata, created_at, updated_at) "
+            "VALUES (:id, :user_id, 'video', 'final', 'qiniu', :object_key, :sha256, 1, "
+            "'video/mp4', 'active', false, CAST('{}' AS JSON), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ), {"id": media_id, "user_id": str(uuid4()), "object_key": f"private/final/{media_id}.mp4", "sha256": "a" * 64})
+        connection.execute(text(
+            "INSERT INTO media_deletion_receipts "
+            "(id, media_object_id, request_id, outcome, object_key_sha256, detail, created_at) "
+            "VALUES (:id, :media_id, :request_id, 'deleted', :sha256, '对象已删除', CURRENT_TIMESTAMP)"
+        ), {"id": receipt_id, "media_id": media_id, "request_id": str(uuid4()), "sha256": "b" * 64})
+    with pytest.raises(DBAPIError, match="append-only"):
+        with sync_engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE media_deletion_receipts SET detail = '被篡改' WHERE id = :id"
+            ), {"id": receipt_id})

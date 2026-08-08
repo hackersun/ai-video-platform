@@ -73,8 +73,6 @@ services:
         condition: service_completed_successfully
     ports:
       - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
-    volumes:
-      - generated_media:/app/static/generated
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
@@ -136,4 +134,3 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  generated_media:

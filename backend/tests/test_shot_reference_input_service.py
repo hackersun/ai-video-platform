@@ -8,6 +8,7 @@ from app.services.shot_reference_input_service import (
     resolve_shot_reference_images,
 )
 from app.services.series_run_reference_preparation import reference_visual_contract_hash
+from app.models.asset import Asset
 
 
 def test_locked_asset_ids_are_stable_and_deduplicated() -> None:
@@ -40,15 +41,52 @@ async def test_locked_asset_is_refreshed_to_provider_accessible_reference(monkey
         async def scalars(self, _query):
             return Result()
 
-    async def resolve(_db, _user_id, source, **_kwargs):
-        assert source == "/static/generated/reference.jpg"
+    async def resolve(_db, _user_id, canonical_url, **_kwargs):
+        assert canonical_url == "/static/generated/reference.jpg"
         return {"provider_url": "https://cdn.example.test/fresh-reference.jpg"}
 
-    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve)
 
     assert await resolve_shot_reference_images(DB(), "user-1", shot, required=True) == [
         "https://cdn.example.test/fresh-reference.jpg",
     ]
+
+
+@pytest.mark.asyncio
+async def test_local_locked_asset_is_registered_before_being_sent_to_provider(monkeypatch) -> None:
+    shot = SimpleNamespace(id="shot-1", character_refs=[], extra_data={"production_context": {
+        "asset_version_locks": [{"asset_id": "asset-1", "locked": True}],
+    }})
+    asset = Asset(
+        id="asset-1", user_id="user-1", category="character", name="角色三视图",
+        asset_type="image", url="/static/generated/images/ref.jpg",
+        project_id="project-1", generation_params={}, is_active=True,
+    )
+
+    class Result:
+        def all(self): return [asset]
+
+    class DB:
+        async def scalars(self, _query): return Result()
+
+    registered = {}
+
+    async def resolve(_db, _user_id, canonical_url, **kwargs):
+        kwargs["canonical_url"] = canonical_url
+        registered.update(kwargs)
+        return {
+            "provider_url": "https://private.test/ref.jpg?e=1900000000&token=hidden",
+            "delivery_method": "qiniu_object_upload", "storage_config_id": "storage-1",
+            "object_key": "private/original/user-1/ref.jpg",
+        }
+
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve)
+
+    result = await resolve_shot_reference_images(DB(), "user-1", shot, required=True)
+
+    assert result == ["https://private.test/ref.jpg?e=1900000000&token=hidden"]
+    assert registered["canonical_url"] == "/static/generated/images/ref.jpg"
+    assert registered["project_id"] == "project-1"
 
 
 @pytest.mark.asyncio
@@ -68,7 +106,7 @@ async def test_live_run_reference_is_used_before_shot_media_context_is_activated
     async def resolve(*_args, **_kwargs):
         return {"provider_url": "https://cdn.example.test/reference.jpg"}
 
-    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve)
     result = await resolve_shot_reference_images(
         DB(), "user-1", shot, required=True,
         fallback_asset_ids=["series-reference-1"],
@@ -98,10 +136,10 @@ async def test_manual_repair_can_add_same_novel_shot_identity_reference(monkeypa
             self.calls += 1
             return Result([asset] if self.calls == 1 else [reference_shot])
 
-    async def resolve(_db, _user_id, source, **_kwargs):
-        return {"provider_url": f"https://cdn.example.test/{source.rsplit('/', 1)[-1]}"}
+    async def resolve_registered(_db, _user_id, canonical_url, **_kwargs):
+        return {"provider_url": f"https://cdn.example.test/{canonical_url.rsplit('/', 1)[-1]}"}
 
-    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve_registered)
     async def same_novel(*_args, **_kwargs): return True
     monkeypatch.setattr("app.services.shot_reference_input_service._same_novel", same_novel)
     result = await resolve_shot_reference_images(
@@ -202,10 +240,10 @@ async def test_single_character_shot_uses_only_its_locked_multiview_and_style(mo
     class DB:
         async def scalars(self, _query): return Result()
 
-    async def resolve(_db, _user_id, source, **_kwargs):
-        return {"provider_url": source}
+    async def resolve(_db, _user_id, canonical_url, **_kwargs):
+        return {"provider_url": canonical_url}
 
-    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve)
 
     result = await resolve_shot_reference_images(DB(), "user-1", shot, required=True)
 
@@ -249,7 +287,7 @@ async def test_multi_character_composite_is_ambiguous_for_single_character_shot(
             return Result([asset] if self.calls == 1 else [character_one, character_two])
 
     async def resolve(*_args, **_kwargs): return {"provider_url": asset.url}
-    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve)
     with pytest.raises(ShotReferenceInputError) as error:
         await resolve_shot_reference_images(DB(), "user-1", shot, required=True)
 
@@ -298,7 +336,7 @@ async def test_multi_character_composite_is_allowed_when_shot_contract_names_eve
             return Result([asset] if self.calls == 1 else [character_one, character_two])
 
     async def resolve(*_args, **_kwargs): return {"provider_url": asset.url}
-    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)
+    monkeypatch.setattr("app.services.shot_reference_input_service.resolve_original_image", resolve)
 
     result = await resolve_shot_reference_images(DB(), "user-1", shot, required=True)
 

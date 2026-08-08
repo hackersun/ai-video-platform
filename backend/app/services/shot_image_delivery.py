@@ -5,8 +5,8 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.media_delivery import resolve_provider_media_url
 from app.services.media_persistence import persist_remote_media_url
+from app.features.private_media.integration import resolve_process_image
 
 
 @dataclass(frozen=True)
@@ -45,9 +45,7 @@ async def persist_shot_image_publicly(
         prefix=f"shot-{shot_id[:8]}", max_bytes=20 * 1024 * 1024,
         optimize_image=True, image_max_dimension=1024, image_quality=76,
     ) or source_url
-    delivery = await resolve_provider_media_url(
-        db, user_id, local_url, media_type="image",
-    )
+    delivery = await resolve_process_image(db, user_id, local_url)
     public_url = str(delivery.get("provider_url") or "")
     return ShotImageDelivery(
         local_url=local_url,

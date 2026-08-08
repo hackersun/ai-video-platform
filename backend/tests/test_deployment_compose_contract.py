@@ -20,6 +20,17 @@ def test_production_compose_is_secret_driven_and_private() -> None:
     assert "./backend:/app" not in content
     assert "./frontend:/app" not in content
     assert "npm run dev" not in content
+    assert "generated_media:/app/static/generated" not in content
+    assert "generated_media:" not in content
+
+
+def test_static_media_mount_is_disabled_outside_local_test() -> None:
+    from main import should_mount_local_static
+
+    assert should_mount_local_static("local") is True
+    assert should_mount_local_static("test") is True
+    assert should_mount_local_static("staging") is False
+    assert should_mount_local_static("production") is False
 
 
 def test_api_waits_for_successful_one_shot_migration() -> None:

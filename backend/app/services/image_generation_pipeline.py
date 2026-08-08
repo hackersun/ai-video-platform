@@ -15,6 +15,7 @@ from app.features.model_config.public import (
     resolve_generation_context,
 )
 from app.features.model_drivers import public as driver_kernel
+from app.features.private_media.integration import call_legacy_image_provider, record_image_reference_evidence
 
 MINIMAX_IMAGE_PROMPT_MAX_CHARS = 1450
 
@@ -206,32 +207,23 @@ async def call_image_generation_provider(
             output["task_id"] = submission.provider_task_id
         if snapshot_id:
             output["execution_snapshot_id"] = snapshot_id
+        await record_image_reference_evidence(
+            db, user_id, job_id, output, reference_images,
+            provider_task_id=provider_task_id(output, provider_name=provider_name),
+        )
         return output
     provider = (provider_name or "").lower()
     prepared_prompt = _prepare_image_prompt_for_provider(provider, prompt)
-    if provider in ("volcano", "volcano_agent_plan"):
-        return await service.generate_image(
-            prompt=prepared_prompt, model=model_id, size=size, num=num,
-            watermark=False,
-            **({"image": list(reference_images)} if reference_images else {}),
-        )
-    if provider == "minimax":
-        return await service.generate_image(
-            prompt=prepared_prompt,
-            model=model_id,
-            aspect_ratio=aspect_ratio,
-            n=num,
-            response_format=minimax_response_format,
-        )
-    if provider == "openai":
-        return await service.generate_image(
-            prompt=prepared_prompt,
-            model=model_id,
-            size=openai_size,
-            n=num,
-            save_local=False,
-        )
-    raise HTTPException(status_code=400, detail=f"不支持的图像模型服务商: {provider_name}")
+    output = await call_legacy_image_provider(
+        service, provider=provider, model_id=model_id, prompt=prepared_prompt,
+        num=num, size=size, aspect_ratio=aspect_ratio, openai_size=openai_size,
+        minimax_response_format=minimax_response_format, reference_images=reference_images,
+    )
+    await record_image_reference_evidence(
+        db, user_id, job_id, output, reference_images,
+        provider_task_id=provider_task_id(output, provider_name=provider_name),
+    )
+    return output
 
 
 def _driver_image_params(

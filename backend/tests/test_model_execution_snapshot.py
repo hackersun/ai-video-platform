@@ -369,13 +369,23 @@ async def test_direct_video_driver_receives_persisted_snapshot_id(
         ),
     )
     captured = {}
+    reference_evidence = {}
 
     async def execute(_registry, _command, driver_context):
         captured["snapshot_id"] = driver_context.execution_snapshot_id
         return SimpleNamespace(provider_task_id="provider-task")
 
     monkeypatch.setattr(driver_submission, "execute_generation", execute)
-    create_kwargs = {"content": [], "duration": 8, "resolution": "720p", "seed": 42}
+    async def record(db, **kwargs):
+        reference_evidence.update(kwargs)
+
+    monkeypatch.setattr(driver_submission, "record_provider_inputs_for_urls", record)
+    create_kwargs = {
+        "content": [{"type": "image_url", "image_url": {
+            "url": "https://private.test/ref.jpg?e=1900000000&token=hidden",
+        }}],
+        "duration": 8, "resolution": "720p", "seed": 42,
+    }
     snapshot_id = await driver_submission.create_bound_video_execution_snapshot(
         db_session, user_id="user-1", generation_context=generation,
         job_id="job-1", create_kwargs=create_kwargs,
@@ -389,6 +399,11 @@ async def test_direct_video_driver_receives_persisted_snapshot_id(
     snapshot = await load_execution_snapshot(db_session, snapshot_id, user_id="user-1")
     assert snapshot.recipe_version_id == "recipe-v1"
     assert snapshot.prompt_profile_version_id == "prompt-v1"
+    assert reference_evidence["submission_id"] == "job-1"
+    assert reference_evidence["provider_task_id"] is None
+    assert reference_evidence["delivered_urls"] == [
+        "https://private.test/ref.jpg?e=1900000000&token=hidden",
+    ]
 
 
 @pytest.mark.asyncio

@@ -40,7 +40,7 @@ def test_customer_billing_schema_and_immutable_ledger_are_created_by_alembic(tmp
         "usage_events",
         "provider_reconciliations",
     }
-    assert "Database migration complete: 20260809_0005" in result.stdout
+    assert "Database migration complete: 20260809_0006" in result.stdout
     assert expected.issubset(inspector.get_table_names())
 
     with Session(engine) as session:

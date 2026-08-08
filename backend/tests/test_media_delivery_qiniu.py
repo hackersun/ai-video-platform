@@ -289,9 +289,12 @@ def test_refresh_existing_private_qiniu_media_replaces_expired_signature(monkeyp
         db=None,
         user_id="user-1",
         media_url="https://private-bucket.example.com/static/generated/final.mp4?e=1600000000&token=expired",
+        object_key="private/final/user-1/final.mp4",
     ))
 
-    query = parse_qs(urlparse(result["provider_url"]).query)
+    parsed = urlparse(result["provider_url"])
+    query = parse_qs(parsed.query)
+    assert parsed.path == "/private/final/user-1/final.mp4"
     assert query["e"] == ["1700000300"]
     assert len(query["e"]) == 1
     assert len(query["token"]) == 1
@@ -316,3 +319,16 @@ def test_object_storage_config_requires_qiniu_upload_fields_for_qiniu_provider()
 
     assert status == "failed"
     assert "七牛对象存储需要配置 Access Key、Secret Key 和 bucket" in message
+
+
+def test_private_object_key_is_not_uploaded_to_a_public_bucket() -> None:
+    from app.services.media_delivery import upload_local_static_to_qiniu
+
+    result = asyncio.run(upload_local_static_to_qiniu(
+        "/static/generated/images/ref.jpg", access_key="ak", secret_key="sk",
+        public_base_url="https://cdn.example.test", params={"bucket": "public-bucket"},
+        object_key_override="private/original/user-1/ref.jpg",
+    ))
+
+    assert result["provider_url"] is None
+    assert result["omitted_reason"] == "正式媒体必须使用七牛私有桶并启用短时下载签名"
