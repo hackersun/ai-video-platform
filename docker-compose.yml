@@ -1,3 +1,5 @@
+# DEVELOPMENT-ONLY compatibility topology.
+# Staging and production must use infra/compose/production.yml plus an environment file.
 version: '3.8'
 
 services:
