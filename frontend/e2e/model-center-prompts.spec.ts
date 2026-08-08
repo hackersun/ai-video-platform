@@ -109,6 +109,80 @@ test('publishing a prompt profile displays affected model versions and recipes',
   await expect(page.getByRole('dialog', { name: '发布影响确认' }).getByLabel('发布原因')).toBeVisible();
 });
 
+test('published prompt head is not offered as a publishable version', async ({ page }) => {
+  const publishedHead = { ...promptHead, status: 'published', published_at: '2026-08-08T00:00:00' };
+  await page.route('**/api/v1/model-center/**', async (route) => {
+    const url = route.request().url();
+    const body = url.endsWith('/prompt-usage-map') ? promptUsageMap
+      : url.endsWith('/prompt-profiles/prompt-profile-1') ? { ...promptDetail, head: publishedHead, versions: [publishedHead] }
+        : url.includes('/prompt-profiles?') ? { ...promptProfiles, items: [{ ...promptProfiles.items[0], status: 'published' }] }
+          : url.includes('/impact') ? impact
+            : { blocking_issues: [], connections: [], recipes: [] };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+
+  await openPromptLibrary(page);
+
+  await expect(page.getByRole('button', { name: '当前版本已发布' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '发布此版本' })).toHaveCount(0);
+});
+
+test('publishing uses the current detail head instead of a stale list revision', async ({ page }) => {
+  const requests: Array<{ url: string; body: unknown }> = [];
+  const currentHead = { ...promptHead, id: 'prompt-version-4', version: 4 };
+  await page.route('**/api/v1/model-center/**', async (route) => {
+    const url = route.request().url();
+    if (route.request().method() === 'POST') requests.push({ url, body: route.request().postDataJSON() });
+    const body = url.endsWith('/prompt-usage-map') ? promptUsageMap
+      : url.endsWith('/prompt-profiles/prompt-profile-1') ? { ...promptDetail, head: currentHead, versions: [currentHead, promptHead] }
+        : url.includes('/prompt-profiles?') ? { ...promptProfiles, items: [{ ...promptProfiles.items[0], head_version_id: 'prompt-version-3', head_version: 3 }] }
+          : url.includes('/impact') ? impact
+            : url.includes('/publish') ? { published_version_id: currentHead.id, previous_version_id: null, impact, audit_event_id: 'audit-current' }
+              : { blocking_issues: [], connections: [], recipes: [] };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await openPromptLibrary(page);
+
+  await page.getByRole('button', { name: '发布此版本' }).click();
+  await page.getByRole('dialog', { name: '发布影响确认' }).getByLabel('发布原因').fill('确认发布最新草稿');
+  await page.getByRole('dialog', { name: '发布影响确认' }).getByRole('button', { name: '确认发布' }).click();
+
+  await expect.poll(() => requests.length).toBe(1);
+  expect(requests[0]?.url).toContain('/prompt-profile-versions/prompt-version-4/publish');
+  expect(requests[0]?.body).toEqual({ expected_revision: 4, reason: '确认发布最新草稿' });
+});
+
+test('publish conflict refreshes state and shows a Chinese next action', async ({ page }) => {
+  let listRequests = 0;
+  await page.route('**/api/v1/model-center/**', async (route) => {
+    const url = route.request().url();
+    if (url.includes('/prompt-profiles?')) listRequests += 1;
+    if (url.includes('/publish')) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: { code: 'revision_conflict', message: 'Configuration has changed.' } }),
+      });
+      return;
+    }
+    const body = url.endsWith('/prompt-usage-map') ? promptUsageMap
+      : url.endsWith('/prompt-profiles/prompt-profile-1') ? promptDetail
+        : url.includes('/prompt-profiles?') ? promptProfiles
+          : url.includes('/impact') ? impact
+            : { blocking_issues: [], connections: [], recipes: [] };
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await openPromptLibrary(page);
+
+  await page.getByRole('button', { name: '发布此版本' }).click();
+  await page.getByRole('dialog', { name: '发布影响确认' }).getByLabel('发布原因').fill('发布最新草稿');
+  await page.getByRole('dialog', { name: '发布影响确认' }).getByRole('button', { name: '确认发布' }).click();
+
+  await expect(page.getByText('提示词版本已更新，已刷新最新状态，请确认后重新发布。')).toBeVisible();
+  await expect(page.getByText(/revision_conflict/)).toHaveCount(0);
+  await expect.poll(() => listRequests).toBeGreaterThanOrEqual(2);
+});
+
 test('rollback intent republishes a historical version instead of mutating it', async ({ page }) => {
   await openPromptLibrary(page);
   await page.getByRole('button', { name: '回滚为新版本' }).click();

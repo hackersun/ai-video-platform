@@ -13,7 +13,13 @@ import { emptyPromptDraft, PromptFields, promptVersionInput } from './prompt-pro
 import { PromptProfileWorkbench } from './prompt-profile-workbench';
 import { ModelCenterEmpty, ModelCenterError, ModelCenterLoading } from './model-center-state';
 
-type ImpactAction = { profile: PromptProfileView; kind: 'publish' | 'rollback'; impact: ResourceImpact };
+type ImpactAction = {
+  profile: PromptProfileView;
+  kind: 'publish' | 'rollback';
+  impact: ResourceImpact;
+  versionId: string;
+  revision: number;
+};
 
 function CreatePromptDialog({ onClose, onSave }: { onClose: () => void; onSave: (input: PromptProfileInput) => Promise<void> }) {
   const [key, setKey] = useState('');
@@ -60,12 +66,17 @@ export function PromptProfileList({ location, initialSelectedId = null, onPublis
     return matchesKeyword && (status === 'all' || profile.status === status);
   });
   const active = filtered.find((profile) => profile.id === selectedId) || filtered[0] || null;
-  const openImpact = async (profile: PromptProfileView, kind: ImpactAction['kind']) => {
+  const openImpact = async (
+    profile: PromptProfileView,
+    kind: ImpactAction['kind'],
+    versionId: string,
+    revision: number,
+  ) => {
     try {
       setMessage(null);
       const impact = await modelCenterApi.getImpact('prompt_profile', profile.id);
       setReason('');
-      setAction({ profile, kind, impact });
+      setAction({ profile, kind, impact, versionId, revision });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '无法读取发布影响，请稍后重试。');
     }
@@ -74,16 +85,23 @@ export function PromptProfileList({ location, initialSelectedId = null, onPublis
     if (!action || action.profile.head_version === null || !action.profile.head_version_id) return;
     try {
       setPending(true);
-      if (action.kind === 'publish') await query.publishPromptProfileVersion(action.profile.head_version_id, { expected_revision: action.profile.head_version, reason });
-      else await query.rollbackPromptProfile(action.profile.id, { expected_revision: action.profile.head_version, target_version_id: action.profile.head_version_id, reason });
+      if (action.kind === 'publish') await query.publishPromptProfileVersion(action.versionId, { expected_revision: action.revision, reason });
+      else await query.rollbackPromptProfile(action.profile.id, { expected_revision: action.revision, target_version_id: action.versionId, reason });
       setAction(null);
       setMessage(action.kind === 'publish' ? '发布请求已提交。' : '已创建新的回滚草稿版本。');
       if (action.kind === 'publish') onPublished?.();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : '提示词版本操作失败');
+      const detail = (error as { detail?: { code?: string } })?.detail;
+      if (detail?.code === 'revision_conflict') {
+        setAction(null);
+        await query.reload().catch(() => undefined);
+        setMessage('提示词版本已更新，已刷新最新状态，请确认后重新发布。');
+      } else {
+        setMessage(error instanceof Error ? error.message : '提示词版本操作失败');
+      }
     } finally {
       setPending(false);
     }
   };
-  return <div className="p-4"><header className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-white">提示词版本工作台</h2><p className="mt-1 text-xs text-slate-500">正文、历史、AI 优化和预览已统一到同一个版本工作区。</p></div><div className="flex flex-wrap gap-2">{location.returnTo && <Link href={location.returnTo} className="model-center-quiet">返回工作台</Link>}<button type="button" onClick={() => setCreating(true)} className="model-center-primary"><Plus className="h-4 w-4" />新建提示词模板</button></div></header><div className="mt-4 flex flex-wrap gap-2"><input aria-label="搜索提示词" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、键或任务" className="model-center-input min-w-56 flex-1" /><select aria-label="提示词状态" value={status} onChange={(event) => setStatus(event.target.value)} className="model-center-input"><option value="all">全部状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="disabled">已停用</option></select></div>{message && <p className="mt-4 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{message}</p>}{profiles.length ? <div className="mt-4 grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]"><nav aria-label="提示词版本" className="space-y-2">{filtered.map((profile) => <button type="button" key={profile.id} onClick={() => setSelectedId(profile.id)} className={`w-full rounded-lg border p-3 text-left ${active?.id === profile.id ? 'border-violet-400/50 bg-violet-500/10' : 'border-white/10 bg-black/10'}`}><span className="block text-sm font-medium text-white">{profile.name}</span><span className="mt-1 block text-xs text-slate-500">{profile.key} · v{profile.head_version ?? '—'} · {profile.status || '未创建'}</span></button>)}</nav>{active && <PromptProfileWorkbench profile={active} onSaveVersion={async (input) => { await query.createPromptProfileVersion(active.id, input); setMessage('新草稿版本已保存。'); }} onPublish={() => void openImpact(active, 'publish')} onRollback={() => void openImpact(active, 'rollback')} onLegacyChanged={async () => { await query.reload(); }} />}</div> : <ModelCenterEmpty title="还没有提示词版本" description="从新建模板开始，后续编辑将创建不可变草稿版本。" />}{creating && <CreatePromptDialog onClose={() => setCreating(false)} onSave={async (input) => { await query.createPromptProfile(input); setMessage('提示词草稿已保存。'); }} />}{action && <ImpactDialog title={action.kind === 'publish' ? '发布影响确认' : '回滚影响确认'} description={action.kind === 'publish' ? '发布会让受影响模型版本和生产方案在后续任务中解析到此提示词版本。' : '将创建新的头版本，不会改写任何历史版本。'} impact={action.impact} reason={reason} confirmLabel={action.kind === 'publish' ? '确认发布' : '确认回滚'} pending={pending} onReasonChange={setReason} onCancel={() => setAction(null)} onConfirm={() => void confirm()} />}</div>;
+  return <div className="p-4"><header className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-white">提示词版本工作台</h2><p className="mt-1 text-xs text-slate-500">正文、历史、AI 优化和预览已统一到同一个版本工作区。</p></div><div className="flex flex-wrap gap-2">{location.returnTo && <Link href={location.returnTo} className="model-center-quiet">返回工作台</Link>}<button type="button" onClick={() => setCreating(true)} className="model-center-primary"><Plus className="h-4 w-4" />新建提示词模板</button></div></header><div className="mt-4 flex flex-wrap gap-2"><input aria-label="搜索提示词" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索名称、键或任务" className="model-center-input min-w-56 flex-1" /><select aria-label="提示词状态" value={status} onChange={(event) => setStatus(event.target.value)} className="model-center-input"><option value="all">全部状态</option><option value="draft">草稿</option><option value="published">已发布</option><option value="disabled">已停用</option></select></div>{message && <p className="mt-4 rounded-md bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{message}</p>}{profiles.length ? <div className="mt-4 grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]"><nav aria-label="提示词版本" className="space-y-2">{filtered.map((profile) => <button type="button" key={profile.id} onClick={() => setSelectedId(profile.id)} className={`w-full rounded-lg border p-3 text-left ${active?.id === profile.id ? 'border-violet-400/50 bg-violet-500/10' : 'border-white/10 bg-black/10'}`}><span className="block text-sm font-medium text-white">{profile.name}</span><span className="mt-1 block text-xs text-slate-500">{profile.key} · v{profile.head_version ?? '—'} · {profile.status || '未创建'}</span></button>)}</nav>{active && <PromptProfileWorkbench key={active.id} profile={active} onSaveVersion={async (input) => { await query.createPromptProfileVersion(active.id, input); setMessage('新草稿版本已保存。'); }} onPublish={(versionId, revision) => void openImpact(active, 'publish', versionId, revision)} onRollback={(versionId, revision) => void openImpact(active, 'rollback', versionId, revision)} onLegacyChanged={async () => { await query.reload(); }} />}</div> : <ModelCenterEmpty title="还没有提示词版本" description="从新建模板开始，后续编辑将创建不可变草稿版本。" />}{creating && <CreatePromptDialog onClose={() => setCreating(false)} onSave={async (input) => { await query.createPromptProfile(input); setMessage('提示词草稿已保存。'); }} />}{action && <ImpactDialog title={action.kind === 'publish' ? '发布影响确认' : '回滚影响确认'} description={action.kind === 'publish' ? '发布会让受影响模型版本和生产方案在后续任务中解析到此提示词版本。' : '将创建新的头版本，不会改写任何历史版本。'} impact={action.impact} reason={reason} confirmLabel={action.kind === 'publish' ? '确认发布' : '确认回滚'} pending={pending} onReasonChange={setReason} onCancel={() => setAction(null)} onConfirm={() => void confirm()} />}</div>;
 }

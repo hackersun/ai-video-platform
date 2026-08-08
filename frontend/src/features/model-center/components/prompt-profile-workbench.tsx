@@ -20,8 +20,8 @@ export function PromptProfileWorkbench({
 }: {
   profile: PromptProfileView;
   onSaveVersion: (input: PromptProfileVersionInput) => Promise<void>;
-  onPublish: () => void;
-  onRollback: () => void;
+  onPublish: (versionId: string, revision: number) => void;
+  onRollback: (versionId: string, revision: number) => void;
   onLegacyChanged: () => Promise<void>;
 }) {
   const query = usePromptProfileDetail(profile.id);

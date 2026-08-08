@@ -863,6 +863,7 @@ async def test_binding_contract_is_readable_and_rejects_connection_mismatch(clie
     assert item["api_model_id"] == "api-video"
     assert item["connection_name"] == "Primary"
     assert item["provider_name"] == "Provider"
+    assert item["native_audio_supported"] is True
 
     async with AsyncSessionLocal() as db:
         other_provider = ModelProvider(
@@ -1133,7 +1134,9 @@ async def test_prompt_publish_is_atomic_and_creates_one_audit_event(client):
         ),
     )
     assert sorted(item.status_code for item in responses) == [200, 409]
-    assert next(item for item in responses if item.status_code == 409).json()["detail"]["code"] == "revision_conflict"
+    conflict = next(item for item in responses if item.status_code == 409).json()["detail"]
+    assert conflict["code"] == "revision_conflict"
+    assert conflict["message"] == "提示词版本已更新，请刷新后重新提交。"
     async with AsyncSessionLocal() as db:
         audit_count = await db.scalar(select(func.count()).select_from(ModelConfigAuditEvent).where(
             ModelConfigAuditEvent.resource_type == "prompt_profile",

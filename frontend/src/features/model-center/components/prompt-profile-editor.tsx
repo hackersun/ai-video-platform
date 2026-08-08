@@ -72,8 +72,8 @@ type PromptProfileEditorProps = {
   appliedTaskTemplate?: string | null;
   onTaskTemplateChange?: (value: string) => void;
   onSaveVersion: (input: PromptProfileVersionInput) => Promise<void>;
-  onPublish: () => void;
-  onRollback: () => void;
+  onPublish: (versionId: string, revision: number) => void;
+  onRollback: (versionId: string, revision: number) => void;
 };
 
 export function PromptProfileEditor({
@@ -103,18 +103,18 @@ export function PromptProfileEditor({
     if (key === 'taskTemplate') onTaskTemplateChange?.(value);
   };
   const save = async () => {
-    if (profile.head_version === null) return setError('当前模板没有可作为父版本的草稿。');
     try {
       setPending(true);
       setError(null);
-      await onSaveVersion(promptVersionInput(draft, profile.head_version));
+      await onSaveVersion(promptVersionInput(draft, detail.head.version));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '提示词草稿保存失败');
     } finally {
       setPending(false);
     }
   };
-  return <section className="rounded-lg border border-white/10 bg-slate-950/20 p-4"><header className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">{profile.name} · {profile.key}</h3><p className="mt-1 text-xs text-slate-500">已恢复服务端头版本正文：v{detail.head.version} · {detail.head.status}。修改会保存为新草稿，不会覆盖历史版本。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={onRollback} disabled={!profile.head_version_id || profile.head_version === null} className="model-center-quiet"><History className="h-3.5 w-3.5" />回滚为新版本</button><button type="button" onClick={onPublish} disabled={!profile.head_version_id || profile.head_version === null} className="model-center-primary">发布此版本</button></div></header><PromptFields draft={draft} onChange={update} /><button type="button" onClick={() => void save()} disabled={pending || profile.head_version === null} className="model-center-quiet mt-4"><Save className="h-3.5 w-3.5" />{pending ? '保存中' : '保存为新草稿版本'}</button>{error && <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{error}</p>}</section>;
+  const publishable = detail.head.status === 'draft';
+  return <section className="rounded-lg border border-white/10 bg-slate-950/20 p-4"><header className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold text-white">{profile.name} · {profile.key}</h3><p className="mt-1 text-xs text-slate-500">已恢复服务端头版本正文：v{detail.head.version} · {detail.head.status}。修改会保存为新草稿，不会覆盖历史版本。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={() => onRollback(detail.head.id, detail.head.version)} className="model-center-quiet"><History className="h-3.5 w-3.5" />回滚为新版本</button><button type="button" onClick={() => onPublish(detail.head.id, detail.head.version)} disabled={!publishable} className="model-center-primary">{publishable ? '发布此版本' : '当前版本已发布'}</button></div></header><PromptFields draft={draft} onChange={update} /><button type="button" onClick={() => void save()} disabled={pending} className="model-center-quiet mt-4"><Save className="h-3.5 w-3.5" />{pending ? '保存中' : '保存为新草稿版本'}</button>{error && <p className="mt-3 rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-100">{error}</p>}</section>;
 }
 
 export function PromptFields({ draft, onChange, optional = false }: { draft: PromptDraft; onChange: (key: keyof PromptDraft, value: string) => void; optional?: boolean }) {
