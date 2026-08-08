@@ -25,6 +25,7 @@ _PRODUCTION_REQUIRED_SETTINGS = {
     "SMTP_PASSWORD": "SMTP 密码",
     "AUTH_EMAIL_FROM": "认证邮件发件人",
     "PUBLIC_APP_URL": "前端公开地址",
+    "CUSTOMER_BILLING_MODE": "客户计费模式",
 }
 
 
@@ -70,3 +71,5 @@ def validate_runtime_environment() -> None:
         raise RuntimeError("JWT 签名密钥长度不足，至少需要 32 字节")
     if os.environ["AUTH_EMAIL_PROVIDER"].strip().lower() != "smtp":
         raise RuntimeError("认证邮件提供商当前必须配置为 smtp")
+    if os.environ["CUSTOMER_BILLING_MODE"].strip().lower() != "enforced":
+        raise RuntimeError("正式环境的客户计费模式必须设置为 enforced")

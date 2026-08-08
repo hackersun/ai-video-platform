@@ -19,6 +19,8 @@ from app.core.database import sync_engine
 from app.db_migrations.script_chapter_lineage import add_script_chapter_lineage
 from app.features.task_execution.repository import claim_one
 from app.models.task_execution import TaskExecution
+from app.models.billing import BillingAccount, BillingReservation
+from app.features.billing.service import credit_account, reserve_charge
 
 
 pytestmark = pytest.mark.skipif(
@@ -132,3 +134,42 @@ def test_postgresql_durable_task_schema_and_concurrent_claim() -> None:
             await engine.dispose()
 
     asyncio.run(verify_single_winner())
+
+
+def test_postgresql_billing_schema_immutability_and_concurrent_reserve() -> None:
+    inspector = inspect(sync_engine)
+    assert {"billing_accounts", "billing_reservations", "billing_ledger_entries", "usage_events", "provider_reconciliations"}.issubset(inspector.get_table_names())
+    with sync_engine.connect() as connection:
+        triggers = set(connection.execute(text(
+            "SELECT tgname FROM pg_trigger WHERE tgrelid = 'billing_ledger_entries'::regclass AND NOT tgisinternal"
+        )).scalars())
+    assert "trg_billing_ledger_entries_append_only" in triggers
+
+    async def verify_single_reservation_winner() -> None:
+        async_url = os.environ["DATABASE_URL"].replace("postgresql://", "postgresql+asyncpg://", 1)
+        engine = create_async_engine(async_url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        account = BillingAccount(owner_type="user", owner_id=str(uuid4()), max_concurrent_jobs=1)
+        async with factory() as db:
+            db.add(account)
+            await db.commit()
+            await credit_account(db, account_id=account.id, amount_micros=5_000_000, actor_user_id="contract-admin", reason="并发合同充值", idempotency_key=str(uuid4()))
+
+        async def attempt(label: str):
+            async with factory() as db:
+                return await reserve_charge(
+                    db, account_id=account.id, user_id=account.owner_id, project_id=None,
+                    provider_operation_id=str(uuid4()), idempotency_key=f"request-{label}-{uuid4()}",
+                    supplier_estimate_micros=1_000_000,
+                )
+        try:
+            results = await asyncio.gather(attempt("a"), attempt("b"), return_exceptions=True)
+            assert sum(isinstance(item, BillingReservation) for item in results) == 1, repr(results)
+            async with factory() as db:
+                stored = await db.get(BillingAccount, account.id)
+                assert stored.active_reservations == 1
+                assert stored.reserved_micros == 1_000_000
+        finally:
+            await engine.dispose()
+
+    asyncio.run(verify_single_reservation_winner())

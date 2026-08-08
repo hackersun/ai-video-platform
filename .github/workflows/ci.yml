@@ -181,6 +181,7 @@ jobs:
         SMTP_PASSWORD: ci-only-password
         AUTH_EMAIL_FROM: no-reply@example.test
         PUBLIC_APP_URL: http://127.0.0.1:3000
+        CUSTOMER_BILLING_MODE: enforced
         NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
       run: |
         docker compose -f infra/compose/production.yml config --quiet

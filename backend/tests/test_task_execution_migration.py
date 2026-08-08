@@ -33,7 +33,7 @@ def test_durable_task_tables_are_created_by_alembic(tmp_path) -> None:
     engine = create_engine(f"sqlite:///{database_path}")
     inspector = inspect(engine)
 
-    assert "Database migration complete: 20260809_0004" in result.stdout
+    assert "Database migration complete: 20260809_0005" in result.stdout
     assert {"task_executions", "task_execution_events"} <= set(inspector.get_table_names())
     execution_indexes = {item["name"] for item in inspector.get_indexes("task_executions")}
     assert "ix_task_executions_claim" in execution_indexes
