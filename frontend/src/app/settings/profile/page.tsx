@@ -60,7 +60,7 @@ export default function ProfileSettingsPage() {
           email: data.email || '',
           avatar: data.avatar || ''
         });
-      } else {
+      } else if (response.status !== 401) {
         const data = await response.json().catch(() => ({}));
         throw new Error(data.detail || data.message || `加载用户信息失败：HTTP ${response.status}`);
       }

@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 
 test('unauthenticated protected pages redirect to login and expose password recovery', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('console', message => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
   await page.route('**/api/v1/auth/refresh', route => route.fulfill({
     status: 401,
     contentType: 'application/json',
@@ -12,7 +16,7 @@ test('unauthenticated protected pages redirect to login and expose password reco
     body: JSON.stringify({ detail: '请先登录后再继续操作' }),
   }));
   await page.goto('/settings/profile');
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/);
 
   await expect(page.getByRole('link', { name: '忘记密码？' })).toBeVisible();
   await page.getByRole('link', { name: '忘记密码？' }).click();
@@ -21,6 +25,7 @@ test('unauthenticated protected pages redirect to login and expose password reco
 
   await page.goto('/reset-password');
   await expect(page.getByRole('heading', { name: '重置密码' })).toBeVisible();
+  expect(consoleErrors.filter(message => message.includes('加载用户信息失败'))).toEqual([]);
 });
 
 test('cookie login succeeds without storing a new access token in localStorage', async ({ page }) => {

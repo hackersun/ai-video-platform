@@ -8,16 +8,19 @@ function devToken(userId: string) {
 }
 
 test('未登录用户点击首页开始创作进入登录页', async ({ page }) => {
+  await page.route('**/api/v1/auth/me', async (route) => {
+    await route.fulfill({ status: 401, contentType: 'application/json', body: '{"detail":"未登录"}' });
+  });
   await page.addInitScript(() => {
     localStorage.clear();
   });
 
   await page.goto('/');
-  const startLink = page.getByRole('link', { name: /开始创作/ });
+  const startLink = page.getByRole('link', { name: /开始创作/ }).first();
 
-  await expect(startLink).toHaveAttribute('href', '/login');
+  await expect(startLink).toHaveAttribute('href', '/login?next=%2Fquick-start');
   await startLink.click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?next=%2Fquick-start$/);
 });
 
 test('已登录用户点击首页开始创作进入极速向导', async ({ page }) => {
@@ -33,7 +36,7 @@ test('已登录用户点击首页开始创作进入极速向导', async ({ page 
   }, { authToken: token, authUserId: userId });
 
   await page.goto('/');
-  const startLink = page.getByRole('link', { name: /开始创作/ });
+  const startLink = page.getByRole('link', { name: /开始创作/ }).first();
 
   await expect(startLink).toHaveAttribute('href', '/quick-start');
   await startLink.click();
