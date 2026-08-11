@@ -127,6 +127,139 @@ jobs:
         DEV_MODE: "true"
       run: pytest -q tests/test_postgresql_runtime_contract.py tests/test_script_chapter_lineage_migration.py
 
+  operations-recovery:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15.13-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: recovery_source
+        options: >-
+          --health-cmd "pg_isready -U postgres -d recovery_source"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install recovery test dependencies
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install --require-hashes -r requirements.lock
+        pip install pytest==9.1.1 pytest-asyncio==1.3.0
+
+    - name: Build pinned PostgreSQL 15 recovery image
+      run: docker build -f infra/docker/postgres-recovery.Dockerfile -t ai-video-postgres-recovery:ci .
+
+    - name: Upgrade source database and write recovery canary
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/recovery_source
+        DEV_MODE: "true"
+        POSTGRES_RECOVERY_CANARY: commercial-recovery-${{ github.sha }}
+      run: |
+        python scripts/upgrade_database.py
+        docker run --rm --network host -i \
+          -e PGPASSWORD=postgres \
+          postgres:15.13-alpine \
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<SQL
+        CREATE TABLE recovery_drill_canary (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO recovery_drill_canary (id, value) VALUES (1, '${POSTGRES_RECOVERY_CANARY}');
+        SQL
+
+    - name: Back up and restore into isolated drill database
+      working-directory: ./backend
+      env:
+        SOURCE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/recovery_source
+        RESTORE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_video_restore_drill
+        RELEASE_SHA: ${{ github.sha }}
+      run: |
+        backup_dir=$(mktemp -d /tmp/ai-video-recovery-XXXXXX)
+        docker run --rm --network host \
+          --user "$(id -u):$(id -g)" \
+          --volume "$backup_dir:/backups" \
+          ai-video-postgres-recovery:ci \
+          /app/scripts/backup_postgres.py \
+          --database-url "$SOURCE_DATABASE_URL" \
+          --output-dir /backups \
+          --label ci-recovery \
+          --release-sha "$RELEASE_SHA"
+        archive=$(find "$backup_dir" -maxdepth 1 -name '*.dump' -type f -print -quit)
+        test -n "$archive"
+        docker run --rm --network host \
+          -e PGPASSWORD=postgres \
+          postgres:15.13-alpine \
+          createdb --host localhost --username postgres ai_video_restore_drill
+        docker run --rm --network host \
+          --user "$(id -u):$(id -g)" \
+          --volume "$backup_dir:/backups:ro" \
+          ai-video-postgres-recovery:ci \
+          /app/scripts/restore_postgres.py \
+          --database-url "$RESTORE_DATABASE_URL" \
+          --archive "/backups/$(basename "$archive")" \
+          --manifest "/backups/$(basename "${archive}.json")" \
+          --confirm-target ai_video_restore_drill
+        cp "${archive}.json" /tmp/postgres-recovery-manifest.json
+
+    - name: Verify restored data and migration head
+      working-directory: ./backend
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_video_restore_drill
+        DEV_MODE: "true"
+        RUN_POSTGRES_RECOVERY_DRILL: "true"
+        POSTGRES_RECOVERY_CANARY: commercial-recovery-${{ github.sha }}
+      run: pytest -q tests/test_postgres_recovery_runtime.py
+
+    - name: Validate monitoring rules and Compose overlay
+      env:
+        IMAGE_TAG: latest
+        POSTGRES_PASSWORD: ci-only-password
+        DATABASE_URL: postgresql://ai_video:ci-only-password@postgres:5432/ai_video_platform
+        REDIS_PASSWORD: ci-only-password
+        REDIS_URL: redis://:ci-only-password@redis:6379/0
+        FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        JWT_SECRET_KEY: ci-jwt-secret-that-is-definitely-long-enough
+        OBJECT_STORAGE_PROVIDER: qiniu
+        AUTH_EMAIL_PROVIDER: smtp
+        SMTP_HOST: smtp.example.test
+        SMTP_USERNAME: ci-mailer
+        SMTP_PASSWORD: ci-only-password
+        AUTH_EMAIL_FROM: no-reply@example.test
+        PUBLIC_APP_URL: http://127.0.0.1:3000
+        CUSTOMER_BILLING_MODE: enforced
+        OPERATIONS_TOKEN: ci-operations-token-that-is-long-enough
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+      run: |
+        monitoring_dir=$(mktemp -d /tmp/ai-video-monitoring-XXXXXX)
+        printf '%s' "$OPERATIONS_TOKEN" > "$monitoring_dir/operations-token"
+        cp infra/monitoring/alertmanager.yml.example "$monitoring_dir/alertmanager.yml"
+        docker run --rm \
+          -v "$PWD/infra/monitoring:/etc/prometheus:ro" \
+          -v "$monitoring_dir/operations-token:/run/secrets/operations_token:ro" \
+          --entrypoint promtool prom/prometheus:v3.5.0 \
+          check config /etc/prometheus/prometheus.yml
+        OPERATIONS_TOKEN_FILE="$monitoring_dir/operations-token" \
+          ALERTMANAGER_CONFIG_FILE="$monitoring_dir/alertmanager.yml" \
+          docker compose -f infra/compose/production.yml -f infra/compose/monitoring.yml config --quiet
+
+    - name: Upload recovery manifest
+      uses: actions/upload-artifact@v4
+      with:
+        name: postgres-recovery-manifest
+        path: /tmp/postgres-recovery-manifest.json
+
   frontend-tests:
     runs-on: ubuntu-latest
     
@@ -184,7 +317,7 @@ jobs:
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: [backend-tests, postgres-contract, frontend-tests, security-scan]
+    needs: [backend-tests, postgres-contract, operations-recovery, frontend-tests, security-scan]
     
     steps:
     - uses: actions/checkout@v4

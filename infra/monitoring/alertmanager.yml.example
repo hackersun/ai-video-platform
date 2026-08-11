@@ -1,0 +1,13 @@
+# 复制到受控路径后替换为真实值班地址；不要把真实令牌提交到仓库。
+route:
+  receiver: on-call-webhook
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 2h
+
+receivers:
+  - name: on-call-webhook
+    webhook_configs:
+      - url: https://replace-with-on-call-webhook.example.invalid/alerts
+        send_resolved: true
