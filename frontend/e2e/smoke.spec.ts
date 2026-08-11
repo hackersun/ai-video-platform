@@ -8,16 +8,19 @@ function devToken(userId: string) {
 }
 
 test('unauthenticated homepage CTA opens login', async ({ page }) => {
+  await page.route('**/api/v1/auth/me', async (route) => {
+    await route.fulfill({ status: 401, contentType: 'application/json', body: '{"detail":"未登录"}' });
+  });
   await page.addInitScript(() => {
     localStorage.clear();
   });
 
   await page.goto('/');
-  const startLink = page.getByRole('link', { name: /开始连续动漫向导/ });
+  const startLink = page.getByRole('link', { name: /开始创作/ }).first();
 
-  await expect(startLink).toHaveAttribute('href', '/login');
+  await expect(startLink).toHaveAttribute('href', '/login?next=%2Fquick-start');
   await startLink.click();
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?next=%2Fquick-start$/);
 });
 
 test('authenticated studio shell renders without backend', async ({ page }) => {

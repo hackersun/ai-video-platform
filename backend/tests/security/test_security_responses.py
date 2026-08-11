@@ -25,6 +25,7 @@ async def test_unhandled_exception_is_hidden_behind_stable_chinese_message() -> 
     assert payload == {
         "code": "INTERNAL_ERROR",
         "detail": "服务暂时不可用，请稍后重试",
+        "request_id": "unavailable",
     }
     assert response.headers.get("access-control-allow-origin") != "*"
 

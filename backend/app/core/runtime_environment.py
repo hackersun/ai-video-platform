@@ -26,6 +26,7 @@ _PRODUCTION_REQUIRED_SETTINGS = {
     "AUTH_EMAIL_FROM": "认证邮件发件人",
     "PUBLIC_APP_URL": "前端公开地址",
     "CUSTOMER_BILLING_MODE": "客户计费模式",
+    "OPERATIONS_TOKEN": "运营监控令牌",
 }
 
 

@@ -16,6 +16,7 @@ x-backend-environment: &backend-environment
   AUTH_EMAIL_FROM: ${AUTH_EMAIL_FROM:?AUTH_EMAIL_FROM is required}
   PUBLIC_APP_URL: ${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}
   CUSTOMER_BILLING_MODE: ${CUSTOMER_BILLING_MODE:?CUSTOMER_BILLING_MODE is required}
+  OPERATIONS_TOKEN: ${OPERATIONS_TOKEN:?OPERATIONS_TOKEN is required}
 
 services:
   postgres:
@@ -74,7 +75,7 @@ services:
     ports:
       - "${HTTP_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -111,6 +112,7 @@ services:
       context: ../../frontend
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?NEXT_PUBLIC_API_URL is required}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     environment:
       NODE_ENV: production
     depends_on:
