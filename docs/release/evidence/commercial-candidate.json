@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "candidate_version": "2026.08.11-rc2",
+  "candidate_source": "releases",
+  "generated_at": "2026-08-11T06:45:00Z",
+  "gates": [
+    {
+      "id": "G0",
+      "name_cn": "仓库与变更",
+      "status": "pass",
+      "owner": "发布负责人",
+      "summary_cn": "三线分支、分支保护、代码健康和发布候选来源已经完成复核。",
+      "evidence": [
+        "docs/release/branching-strategy.md",
+        "docs/release/evidence/2026-08-11-commercial-batch9.md"
+      ],
+      "verified_at": "2026-08-11T06:40:00Z",
+      "valid_until": "2026-09-10T06:40:00Z"
+    },
+    {
+      "id": "G1",
+      "name_cn": "构建与依赖",
+      "status": "pass",
+      "owner": "研发负责人",
+      "summary_cn": "前后端构建、数据库契约、依赖审计和生产镜像门禁已经通过。",
+      "evidence": [
+        "docs/release/evidence/2026-08-11-commercial-batch8.md",
+        "docs/release/evidence/2026-08-11-commercial-batch9.md"
+      ],
+      "verified_at": "2026-08-11T06:40:00Z",
+      "valid_until": "2026-09-10T06:40:00Z"
+    },
+    {
+      "id": "G2",
+      "name_cn": "配置与安全",
+      "status": "blocked",
+      "owner": "安全负责人",
+      "summary_cn": "代码安全门禁已完成，但真实密钥托管、生产配置和管理员审计仍缺运行环境证据。",
+      "evidence": [
+        "docs/security/commercial-security-baseline.md",
+        "docs/superpowers/plans/2026-08-08-commercial-batch2-auth-sessions.md",
+        "docs/superpowers/plans/2026-08-09-commercial-batch3-rbac.md"
+      ],
+      "remediation_cn": "在预发布环境接入受控密钥，完成匿名、跨租户、管理员和异常脱敏验收并归档结果。"
+    },
+    {
+      "id": "G3",
+      "name_cn": "数据库与恢复",
+      "status": "blocked",
+      "owner": "运维负责人",
+      "summary_cn": "本机和持续集成恢复演练已通过，但尚未使用预发布真实数据规模测得恢复目标。",
+      "evidence": [
+        "docs/release/evidence/2026-08-11-commercial-batch9.md",
+        "docs/operations/postgres-backup-recovery.md"
+      ],
+      "remediation_cn": "使用预发布真实数据规模完成加密备份、异地恢复、接口就绪检查，并记录实际恢复点和恢复时间。"
+    },
+    {
+      "id": "G4",
+      "name_cn": "任务与媒体",
+      "status": "blocked",
+      "owner": "生产流程负责人",
+      "summary_cn": "持久任务和私有媒体代码合同已建立，但真实对象存储删除回执与重启恢复仍缺预发布证据。",
+      "evidence": [
+        "docs/superpowers/plans/2026-08-09-commercial-batch4-durable-tasks.md",
+        "docs/superpowers/plans/2026-08-09-commercial-batch6-private-media.md"
+      ],
+      "remediation_cn": "在预发布环境执行服务重启、重复提交、签名播放、链接过期、跨租户访问和删除回执验收。"
+    },
+    {
+      "id": "G5",
+      "name_cn": "实模与参考资产",
+      "status": "blocked",
+      "owner": "内容生产负责人",
+      "summary_cn": "参考资产合同已具备，但当前候选版本尚未完成三章付费实模和跨章一致性复核。",
+      "evidence": [
+        "docs/operations/four-chapter-live-canary.md",
+        "docs/release/evidence/2026-08-11-commercial-batch9.md"
+      ],
+      "remediation_cn": "用当前候选版本完成三章付费实模，核对参考图输入顺序、人物连续性、字幕、音频、视频和停止预算。"
+    },
+    {
+      "id": "G6",
+      "name_cn": "费用与结算",
+      "status": "blocked",
+      "owner": "财务负责人",
+      "summary_cn": "客户流水和供应商对账代码已完成，但尚未使用真实供应商账单完成财务差异复核。",
+      "evidence": [
+        "docs/superpowers/plans/2026-08-09-commercial-batch5-billing.md",
+        "docs/release/evidence/2026-08-11-commercial-batch9.md"
+      ],
+      "remediation_cn": "导入受控实模账单，按任务核对预扣、结算、释放、退款、供应商成本和差异阻断。"
+    },
+    {
+      "id": "G7",
+      "name_cn": "产品验收",
+      "status": "blocked",
+      "owner": "产品负责人",
+      "summary_cn": "自动构建已通过，但登录、移动端、工作室全流程和无障碍仍缺人工验收记录。",
+      "evidence": [
+        "docs/superpowers/plans/2026-08-09-commercial-batch7-frontend.md",
+        "docs/release/commercial-release-gates.md"
+      ],
+      "remediation_cn": "按桌面和移动端清单完成登录、恢复、主流程、错误状态、键盘顺序和关键视觉人工验收。"
+    },
+    {
+      "id": "G8",
+      "name_cn": "运维与发布",
+      "status": "blocked",
+      "owner": "值班负责人",
+      "summary_cn": "监控规则和恢复手册已通过自动校验，但真实告警送达、确认、恢复通知和灰度回滚尚未演练。",
+      "evidence": [
+        "docs/operations/observability-runbook.md",
+        "docs/release/evidence/2026-08-11-commercial-batch9.md"
+      ],
+      "remediation_cn": "配置真实值班地址，触发并确认 P0/P1 告警，完成灰度观察和应用、数据库、任务、前端回滚演练。"
+    }
+  ]
+}
