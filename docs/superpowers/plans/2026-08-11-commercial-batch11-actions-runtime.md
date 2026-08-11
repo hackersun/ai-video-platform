@@ -4,15 +4,15 @@
 
 **Goal:** Eliminate GitHub Actions Node 20 deprecation warnings while keeping the existing CI jobs, commands, artifacts, and branch gates unchanged.
 
-**Architecture:** Keep `.github/workflows/ci.yml` as the single workflow owner. Add one repository-level contract test that rejects the four deprecated action majors observed in remote CI, then upgrade only those action references to official Node 24-based v7 releases.
+**Architecture:** Keep `.github/workflows/ci.yml` as the single workflow owner. Add one repository-level contract test that rejects every deprecated action major observed in remote CI, then upgrade only those action references to official Node 24-compatible releases.
 
 **Tech Stack:** GitHub Actions YAML, Python 3.11, pytest.
 
 ## Global Constraints
 
 - Do not change job names, dependencies, permissions, triggers, test commands, artifact names, or branch protection contexts.
-- Only `actions/checkout`, `actions/setup-python`, `actions/setup-node`, and `actions/upload-artifact` are in scope.
-- The accepted major for all four actions is v7; official v7 `action.yml` files declare `runs.using: node24`.
+- Only `actions/checkout`, `actions/setup-python`, `actions/setup-node`, `actions/upload-artifact`, `codecov/codecov-action`, and `docker/setup-buildx-action` are in scope.
+- The accepted majors are v7 for the four `actions/*` references and Codecov, plus v4 for Docker Buildx. Official references are Node 24-compatible.
 - Preserve the current commercial release gate and its G0-G8 behavior.
 - User's dirty primary worktree remains untouched.
 
@@ -50,12 +50,14 @@ REQUIRED_ACTION_MAJORS = {
     "actions/setup-python": {"v7"},
     "actions/setup-node": {"v7"},
     "actions/upload-artifact": {"v7"},
+    "codecov/codecov-action": {"v7"},
+    "docker/setup-buildx-action": {"v4"},
 }
 
 
 def test_ci_uses_node24_action_majors() -> None:
     references = re.findall(
-        r"uses:\s*(actions/[^@\s]+)@(v\d+)",
+        r"uses:\s*([\w.-]+/[\w.-]+)@(v\d+)",
         WORKFLOW.read_text(encoding="utf-8"),
     )
     observed = {
@@ -70,11 +72,11 @@ def test_ci_uses_node24_action_majors() -> None:
 
 Run: `pytest -q backend/tests/test_ci_action_runtime.py`
 
-Expected: FAIL because the workflow still contains checkout v4/v5, setup-python v5, setup-node v4, and upload-artifact v4.
+Expected: FAIL because at least one observed Action still uses a Node 20-era major.
 
 - [x] **Step 3: Apply the minimal workflow update**
 
-Replace every in-scope `uses:` reference with the corresponding `@v7`. Make no other workflow changes.
+Replace every in-scope `uses:` reference with its accepted major. Make no other workflow changes.
 
 - [x] **Step 4: Run focused GREEN verification**
 

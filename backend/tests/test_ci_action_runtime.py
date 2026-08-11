@@ -8,12 +8,14 @@ REQUIRED_ACTION_MAJORS = {
     "actions/setup-python": {"v7"},
     "actions/setup-node": {"v7"},
     "actions/upload-artifact": {"v7"},
+    "codecov/codecov-action": {"v7"},
+    "docker/setup-buildx-action": {"v4"},
 }
 
 
 def test_ci_uses_node24_action_majors() -> None:
     references = re.findall(
-        r"uses:\s*(actions/[^@\s]+)@(v\d+)",
+        r"uses:\s*([\w.-]+/[\w.-]+)@(v\d+)",
         WORKFLOW.read_text(encoding="utf-8"),
     )
     observed = {
