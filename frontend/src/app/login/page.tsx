@@ -60,17 +60,20 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.08)_1px,transparent_1px)] bg-[size:42px_42px]" />
-      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,rgba(15,23,42,0.62),rgba(15,23,42,0.94)_48%,rgba(2,6,23,1)),radial-gradient(circle_at_20%_12%,rgba(20,184,166,0.18),transparent_30%),radial-gradient(circle_at_82%_18%,rgba(245,158,11,0.1),transparent_24%)]" />
+    <main
+      data-testid="login-page"
+      className="relative min-h-screen overflow-hidden bg-background text-foreground"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(hsl(var(--border)/0.38)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--border)/0.38)_1px,transparent_1px)] bg-[size:42px_42px]" />
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(115deg,hsl(var(--background)/0.56),hsl(var(--background)/0.9)_48%,hsl(var(--background))),radial-gradient(circle_at_20%_12%,rgba(20,184,166,0.15),transparent_30%),radial-gradient(circle_at_82%_18%,rgba(245,158,11,0.08),transparent_24%)]" />
 
       <div className="relative mx-auto grid min-h-screen w-full max-w-7xl grid-cols-1 lg:grid-cols-[1.05fr_0.95fr]">
-        <section className="hidden border-r border-white/10 px-10 py-8 lg:flex lg:flex-col lg:justify-between">
+        <section className="hidden border-r border-border px-10 py-8 lg:flex lg:flex-col lg:justify-between">
           <Link href="/" className="inline-flex w-fit items-center gap-3" aria-label="AI视频平台">
-            <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-white/15 bg-white/10">
+            <span className="flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-card/80">
               <Sparkles className="h-5 w-5 text-cyan-200" aria-hidden="true" />
             </span>
-            <span className="text-xl font-semibold text-white">AI视频平台</span>
+            <span className="text-xl font-semibold text-foreground">AI视频平台</span>
           </Link>
 
           <div className="max-w-2xl">
@@ -78,33 +81,33 @@ export default function LoginPage() {
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               AI 动漫制作工作台
             </div>
-            <h1 className="text-4xl font-semibold leading-tight text-white">
+            <h1 className="text-4xl font-semibold leading-tight text-foreground">
               从小说进入角色、分镜与视频生产
             </h1>
-            <p className="mt-4 max-w-xl text-base leading-7 text-slate-300">
+            <p className="mt-4 max-w-xl text-base leading-7 text-muted-foreground">
               登录后继续管理小说章节、角色资产、提示词技能与生产任务，让创作流程保持一致、可核对、可追踪。
             </p>
 
             <div className="mt-8 grid grid-cols-3 gap-3">
-              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+              <div className="rounded-lg border border-border bg-card/80 p-4">
                 <User className="mb-3 h-5 w-5 text-cyan-200" aria-hidden="true" />
-                <div className="text-sm font-semibold text-white">角色资产</div>
-                <div className="mt-1 text-xs leading-5 text-slate-400">人物设定与一致性</div>
+                <div className="text-sm font-semibold text-card-foreground">角色资产</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">人物设定与一致性</div>
               </div>
-              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+              <div className="rounded-lg border border-border bg-card/80 p-4">
                 <Workflow className="mb-3 h-5 w-5 text-amber-200" aria-hidden="true" />
-                <div className="text-sm font-semibold text-white">剧本分镜</div>
-                <div className="mt-1 text-xs leading-5 text-slate-400">章节改编与镜头拆解</div>
+                <div className="text-sm font-semibold text-card-foreground">剧本分镜</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">章节改编与镜头拆解</div>
               </div>
-              <div className="rounded-lg border border-white/10 bg-white/[0.08] p-4">
+              <div className="rounded-lg border border-border bg-card/80 p-4">
                 <Film className="mb-3 h-5 w-5 text-violet-200" aria-hidden="true" />
-                <div className="text-sm font-semibold text-white">视频生成</div>
-                <div className="mt-1 text-xs leading-5 text-slate-400">镜头预览与任务跟踪</div>
+                <div className="text-sm font-semibold text-card-foreground">视频生成</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">镜头预览与任务跟踪</div>
               </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm text-slate-300">
+          <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-2 text-sm text-muted-foreground">
             <BadgeCheck className="mt-0.5 h-4 w-4 text-emerald-300" aria-hidden="true" />
             <span>登录状态会沿用现有工作台权限与任务上下文</span>
             <BadgeCheck className="mt-0.5 h-4 w-4 text-emerald-300" aria-hidden="true" />
@@ -116,10 +119,10 @@ export default function LoginPage() {
           <div className="w-full max-w-md space-y-5">
             <div className="lg:hidden">
               <Link href="/" className="mb-5 inline-flex items-center gap-3" aria-label="AI视频平台">
-                <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-white/15 bg-white/10">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-card/80">
                   <Sparkles className="h-5 w-5 text-cyan-200" aria-hidden="true" />
                 </span>
-                <span className="text-lg font-semibold text-white">AI视频平台</span>
+                <span className="text-lg font-semibold text-foreground">AI视频平台</span>
               </Link>
               <div className="inline-flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-sm font-medium text-cyan-100">
                 <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -129,22 +132,22 @@ export default function LoginPage() {
 
             <div
               data-testid="login-form-panel"
-              className="rounded-lg border border-white/[0.12] bg-slate-900/90 p-5 shadow-2xl shadow-black/30 backdrop-blur sm:p-6"
+              className="bg-card text-card-foreground rounded-lg border border-border p-5 shadow-2xl shadow-black/15 backdrop-blur sm:p-6"
             >
               <div className="mb-6">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-white/10 bg-white/[0.08] px-3 py-1.5 text-xs font-medium text-slate-300">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
                   <Lock className="h-3.5 w-3.5 text-emerald-300" aria-hidden="true" />
                   安全登录
                 </div>
-                <h2 className="text-2xl font-semibold text-white">用户登录</h2>
-                <p className="mt-2 text-sm leading-6 text-slate-400">
+                <h2 className="text-2xl font-semibold text-card-foreground">用户登录</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
                   继续处理小说、角色资产与视频生产任务。
                 </p>
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label htmlFor="username" className="mb-2 block text-sm font-medium text-slate-200">
+                  <label htmlFor="username" className="mb-2 block text-sm font-medium text-foreground">
                     用户名
                   </label>
                   <div className="relative">
@@ -156,7 +159,7 @@ export default function LoginPage() {
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       autoComplete="username"
-                      className="h-12 border-white/10 bg-white/[0.06] pl-10 text-white placeholder:text-slate-500 focus-visible:ring-cyan-300"
+                      className="h-12 border-input bg-background pl-10 text-foreground placeholder:text-muted-foreground focus-visible:ring-cyan-300"
                     />
                   </div>
                 </div>
@@ -202,7 +205,7 @@ export default function LoginPage() {
                 </Button>
               </form>
 
-              <div className="mt-6 flex flex-col gap-3 border-t border-white/10 pt-5 text-center text-sm text-slate-400">
+              <div className="mt-6 flex flex-col gap-3 border-t border-border pt-5 text-center text-sm text-muted-foreground">
                 <p>
                   还没有账号？{' '}
                   <Link href="/register" className="font-medium text-cyan-200 hover:text-cyan-100">
@@ -218,7 +221,7 @@ export default function LoginPage() {
             <div className="text-center">
               <Link
                 href="/"
-                className="inline-flex items-center gap-2 text-sm font-medium text-slate-400 hover:text-white"
+                className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground"
               >
                 <ArrowRight className="h-4 w-4 rotate-180" aria-hidden="true" />
                 返回首页
