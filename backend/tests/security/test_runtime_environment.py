@@ -34,6 +34,7 @@ def test_production_rejects_development_mode(monkeypatch: pytest.MonkeyPatch) ->
         ("AUTH_EMAIL_FROM", "认证邮件发件人"),
         ("PUBLIC_APP_URL", "前端公开地址"),
         ("CUSTOMER_BILLING_MODE", "客户计费模式"),
+        ("OPERATIONS_TOKEN", "运营监控令牌"),
     ],
 )
 def test_production_rejects_each_missing_security_setting(
@@ -56,6 +57,7 @@ def test_production_rejects_each_missing_security_setting(
         "AUTH_EMAIL_FROM": "no-reply@example.test",
         "PUBLIC_APP_URL": "https://app.example.test",
         "CUSTOMER_BILLING_MODE": "enforced",
+        "OPERATIONS_TOKEN": "production-operations-token",
     }
     for name, value in configured.items():
         monkeypatch.setenv(name, value)
@@ -86,6 +88,7 @@ def test_production_rejects_disabled_customer_billing(monkeypatch: pytest.Monkey
         "SMTP_HOST": "smtp.example.test", "SMTP_USERNAME": "mailer",
         "SMTP_PASSWORD": "secret", "AUTH_EMAIL_FROM": "no-reply@example.test",
         "PUBLIC_APP_URL": "https://app.example.test", "CUSTOMER_BILLING_MODE": "off",
+        "OPERATIONS_TOKEN": "production-operations-token",
     }
     for name, value in configured.items():
         monkeypatch.setenv(name, value)
@@ -111,6 +114,7 @@ def test_auth_notification_worker_rejects_invalid_fernet_key(
         "AUTH_EMAIL_FROM": "no-reply@example.test",
         "PUBLIC_APP_URL": "https://app.example.test",
         "CUSTOMER_BILLING_MODE": "enforced",
+        "OPERATIONS_TOKEN": "production-operations-token",
     }
     for name, value in configured.items():
         monkeypatch.setenv(name, value)

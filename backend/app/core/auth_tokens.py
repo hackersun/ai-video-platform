@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
+import jwt
+from jwt import InvalidTokenError
 
 
 ACCESS_TOKEN_TTL = timedelta(minutes=15)
@@ -35,7 +36,7 @@ def create_access_token(subject: str, expires_delta: timedelta | None = None) ->
 def verify_access_token(token: str) -> str | None:
     try:
         payload = jwt.decode(token, _jwt_secret(), algorithms=[_jwt_algorithm()])
-    except JWTError:
+    except InvalidTokenError:
         return None
     if payload.get("type") != "access":
         return None

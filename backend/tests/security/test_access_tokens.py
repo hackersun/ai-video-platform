@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
-from jose import jwt
+import jwt
 
 from app.core.auth_tokens import (
     ACCESS_TOKEN_TTL,
@@ -18,7 +18,7 @@ def test_access_token_expires_after_fifteen_minutes(
     monkeypatch.setenv("JWT_SECRET_KEY", "test-jwt-secret-that-is-definitely-long-enough")
 
     token = create_access_token("user-123")
-    payload = jwt.get_unverified_claims(token)
+    payload = jwt.decode(token, options={"verify_signature": False})
 
     assert ACCESS_TOKEN_TTL == timedelta(minutes=15)
     assert payload["sub"] == "user-123"

@@ -110,6 +110,7 @@ def test_production_startup_rejects_malformed_fernet_key(monkeypatch: pytest.Mon
     monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.test")
     monkeypatch.setenv("PUBLIC_APP_URL", "https://app.example.test")
     monkeypatch.setenv("CUSTOMER_BILLING_MODE", "enforced")
+    monkeypatch.setenv("OPERATIONS_TOKEN", "test-operations-token")
     monkeypatch.setenv("FERNET_KEY", "not-a-valid-fernet-key")
 
     from main import app

@@ -4,6 +4,7 @@ FastAPI 应用入口
 
 import os
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,11 +27,11 @@ def _load_local_env() -> None:
 
 _load_local_env()
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
@@ -40,6 +41,12 @@ from app.features.billing.api import router as billing_router
 from app.features.private_media.api import router as private_media_router
 from app.core.credential_encryption import require_stable_encryption_key
 from app.core.csrf import csrf_is_valid
+from app.core.operational_health import collect_operational_snapshot
+from app.core.request_observability import (
+    REQUEST_METRICS,
+    metrics_access_allowed,
+    normalize_request_id,
+)
 from app.core.runtime_environment import validate_runtime_environment
 from app.core.validation_errors import redact_credential_validation_errors
 from app.services.auth_rate_limit import RateLimitExceeded
@@ -107,6 +114,28 @@ async def add_private_network_cors_header(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def observe_request(request: Request, call_next):
+    request_id = normalize_request_id(request.headers.get("X-Request-ID"))
+    request.state.request_id = request_id
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration = time.perf_counter() - started
+    route = request.scope.get("route")
+    route_path = getattr(route, "path", "unmatched")
+    REQUEST_METRICS.observe(request.method, route_path, response.status_code, duration)
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "request_completed request_id=%s method=%s path=%s status=%s duration_ms=%.2f",
+        request_id,
+        request.method,
+        route_path,
+        response.status_code,
+        duration * 1000,
+    )
+    return response
+
+
 @app.exception_handler(RequestValidationError)
 async def credential_safe_validation_error_handler(request: Request, exc: RequestValidationError):
     del request
@@ -124,7 +153,8 @@ async def auth_rate_limit_handler(request: Request, exc: RateLimitExceeded):
 async def global_exception_handler(request: Request, exc: Exception):
     """Hide internal failures from clients while retaining controlled logs."""
     logger.error(
-        "Unhandled request failure method=%s path=%s error_type=%s",
+        "Unhandled request failure request_id=%s method=%s path=%s error_type=%s",
+        getattr(request.state, "request_id", "unavailable"),
         request.method,
         request.url.path,
         type(exc).__name__,
@@ -132,7 +162,11 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
     return JSONResponse(
         status_code=500,
-        content={"code": "INTERNAL_ERROR", "detail": "服务暂时不可用，请稍后重试"},
+        content={
+            "code": "INTERNAL_ERROR",
+            "detail": "服务暂时不可用，请稍后重试",
+            "request_id": getattr(request.state, "request_id", "unavailable"),
+        },
     )
 
 
@@ -161,6 +195,42 @@ async def health_check():
         "service": "AI视频平台",
         "version": "1.0.0"
     }
+
+
+@app.get("/health/live")
+async def liveness_check():
+    return {"status": "alive", "service": "AI视频平台", "version": "1.0.0"}
+
+
+@app.get("/health/ready")
+async def readiness_check(request: Request):
+    try:
+        checks = await collect_operational_snapshot()
+    except Exception as exc:
+        logger.warning(
+            "readiness_failed request_id=%s error_type=%s",
+            request.state.request_id,
+            type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "detail": "服务尚未准备好，请稍后重试",
+                "request_id": request.state.request_id,
+            },
+        )
+    return {"status": "ready", "checks": checks}
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+async def metrics(request: Request):
+    if not metrics_access_allowed(request.headers.get("Authorization")):
+        raise HTTPException(status_code=401, detail="运营监控凭证无效")
+    return PlainTextResponse(
+        REQUEST_METRICS.render(),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
 
 
 @app.get("/")
