@@ -56,12 +56,14 @@ GitHub 远端 CI 已明确提示六类 Action 仍面向已弃用的 Node 20 Acti
 - [x] 全量后端测试通过：2368 passed、7 skipped、83 warnings。
 - [x] 前端类型检查和生产构建通过：46 个路由。
 - [x] npm 审计 0 漏洞；Python 锁定依赖未发现已知漏洞。
-- [ ] 修订后的远端八项 CI 通过，且没有 Node 20 Actions 运行时弃用提示。
+- [ ] 最终远端八项 CI 通过，且没有 Action 运行时或输入兼容性提示。
 - [ ] `dev` 晋级 `releases`，`main` 保持不变。
 
 本地全量验证日期：2026-08-11。现有 83 条 Python 弃用告警与本批次 Action 版本变更无关，远端 CI 将继续作为最终兼容性证据。
 
 首次远端运行 `31470328843` 的八项检查全部通过，但最终注释仍指出 `codecov/codecov-action@v3` 和 `docker/setup-buildx-action@v3` 使用 Node 20。因此该运行没有被当作完成证据，也没有执行合并；修订后的远端运行才是最终验收来源。
+
+第二次远端运行 `31472400038` 的八项检查全部通过，Node 20 注释清零，但 Codecov v7 指出旧输入 `file` 无效，支持的输入名是 `files`。该运行同样没有被当作完成证据；合同测试已增加 Codecov v7 输入名约束。
 
 ## 回滚
 

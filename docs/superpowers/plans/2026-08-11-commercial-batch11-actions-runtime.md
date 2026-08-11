@@ -66,6 +66,13 @@ def test_ci_uses_node24_action_majors() -> None:
     }
 
     assert observed == REQUIRED_ACTION_MAJORS
+
+
+def test_codecov_v7_uses_supported_files_input() -> None:
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "file: ./backend/coverage.xml" not in workflow
+    assert "files: ./backend/coverage.xml" in workflow
 ```
 
 - [x] **Step 2: Run the test and verify RED**
