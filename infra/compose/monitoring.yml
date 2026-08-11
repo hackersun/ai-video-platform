@@ -1,0 +1,38 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus-alerts.yml:/etc/prometheus/prometheus-alerts.yml:ro
+      - ${OPERATIONS_TOKEN_FILE:?OPERATIONS_TOKEN_FILE is required}:/run/secrets/operations_token:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      api:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+    ports:
+      - "${MONITORING_BIND_ADDRESS:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    restart: unless-stopped
+    networks: [edge]
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ${ALERTMANAGER_CONFIG_FILE:?ALERTMANAGER_CONFIG_FILE is required}:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    ports:
+      - "${MONITORING_BIND_ADDRESS:-127.0.0.1}:${ALERTMANAGER_PORT:-9093}:9093"
+    restart: unless-stopped
+    networks: [edge]
+
+volumes:
+  prometheus_data:
+  alertmanager_data:

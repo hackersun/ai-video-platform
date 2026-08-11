@@ -32,7 +32,10 @@
 
 - `ai_video_http_requests_total{method,path,status}`：按 HTTP 方法、路由模板和状态码分组统计请求数。
 - `ai_video_http_request_duration_seconds_sum{method,path}`：按 HTTP 方法和路由模板统计累计耗时。
-- readiness 的 `task_queue` 返回 `pending`、`running`、`retry_wait`、`dead_letter`、`needs_attention` 数量，不包含任务载荷。
+- `ai_video_database_ready`：数据库可用为 1，不可用为 0。
+- `ai_video_task_queue_depth{status}`：只使用固定的 `pending`、`running`、`retry_wait`、`dead_letter`、`needs_attention` 状态。
+- `ai_video_task_oldest_active_age_seconds`：最早的排队、运行或等待重试任务距今秒数。
+- readiness 的 `task_queue` 返回相同队列数量和最老任务年龄，不包含任务载荷。
 
 指标使用路由模板，不使用小说 ID、任务 ID、用户 ID 或原始 URL，避免标签数量无限增长。多 worker 部署时由 Prometheus 分实例抓取并聚合，不能把单个进程内数字当成全局总量。
 
@@ -46,6 +49,24 @@
 | P2 | p95 延迟高于基线两倍且持续 15 分钟 | 后端负责人 | 检查慢路由、数据库连接和队列积压 |
 
 这里的“负责人”是值班角色，不是伪造的个人姓名。正式上线前，运营必须在告警平台绑定具体排班、电话和升级人。
+
+## 启动监控
+
+先把 `infra/monitoring/alertmanager.yml.example` 复制到仓库外的受控目录，并替换为真实值班 Webhook。把运营令牌单独写入只读文件，然后叠加启动监控：
+
+```bash
+export OPERATIONS_TOKEN_FILE=/secure-secrets/operations-token
+export ALERTMANAGER_CONFIG_FILE=/secure-secrets/alertmanager.yml
+docker compose \
+  -f infra/compose/production.yml \
+  -f infra/compose/monitoring.yml \
+  --env-file /secure-secrets/production.env \
+  up -d prometheus alertmanager
+```
+
+Prometheus 和 Alertmanager 默认只绑定 `127.0.0.1`。需要远程访问时，应通过企业 VPN 或受认证的反向代理，不要直接暴露 9090/9093 端口。
+
+仓库规则只证明告警表达式可加载。正式门禁还必须发送一次测试告警，保存值班人员实际收到、确认和恢复通知的时间证据。
 
 ## 标准处置顺序
 
@@ -65,3 +86,5 @@ curl -fsS -H "Authorization: Bearer ${OPERATIONS_TOKEN}" http://127.0.0.1:8000/m
 ```
 
 正式环境还必须完成监控采集、告警路由、备份恢复演练和 staging 流量验证。仅在本机看到三个入口成功，不等于已满足公开收费运营门禁。
+
+数据库备份与恢复步骤见[PostgreSQL 备份与恢复操作手册](postgres-backup-recovery.md)。

@@ -46,6 +46,7 @@ from app.core.request_observability import (
     REQUEST_METRICS,
     metrics_access_allowed,
     normalize_request_id,
+    render_operational_metrics,
 )
 from app.core.runtime_environment import validate_runtime_environment
 from app.core.validation_errors import redact_credential_validation_errors
@@ -227,8 +228,17 @@ async def readiness_check(request: Request):
 async def metrics(request: Request):
     if not metrics_access_allowed(request.headers.get("Authorization")):
         raise HTTPException(status_code=401, detail="运营监控凭证无效")
+    try:
+        snapshot = await collect_operational_snapshot()
+    except Exception as exc:
+        logger.warning(
+            "metrics_dependency_failed request_id=%s error_type=%s",
+            request.state.request_id,
+            type(exc).__name__,
+        )
+        snapshot = {"database": {"status": "error"}, "task_queue": {"status": "unavailable"}}
     return PlainTextResponse(
-        REQUEST_METRICS.render(),
+        REQUEST_METRICS.render() + render_operational_metrics(snapshot),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
 
