@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v7
 
     - name: Validate commercial release evidence
       env:
@@ -28,15 +28,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: '20'
         cache: 'npm'
@@ -53,7 +53,7 @@ jobs:
       run: python3 tools/code_health/check.py --policy tools/code_health/policy.json --baseline tools/code_health/baseline.json
 
     - name: Upload code health report
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: code-health-report
         path: /tmp/ai-video-code-health.json
@@ -62,10 +62,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
@@ -116,10 +116,10 @@ jobs:
           - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
@@ -163,10 +163,10 @@ jobs:
           - 5432:5432
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
@@ -272,7 +272,7 @@ jobs:
           docker compose -f infra/compose/production.yml -f infra/compose/monitoring.yml config --quiet
 
     - name: Upload recovery manifest
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: postgres-recovery-manifest
         path: /tmp/postgres-recovery-manifest.json
@@ -281,10 +281,10 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: '20'
         cache: 'npm'
@@ -306,15 +306,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v7
       with:
         python-version: '3.11'
 
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v7
       with:
         node-version: '20'
         cache: 'npm'
@@ -337,7 +337,7 @@ jobs:
     needs: [backend-tests, postgres-contract, operations-recovery, frontend-tests, security-scan]
     
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
