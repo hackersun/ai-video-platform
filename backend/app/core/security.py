@@ -8,13 +8,10 @@ import os
 import base64
 import json
 import re
-from jose import JWTError, jwt
+from app.core.auth_tokens import verify_access_token
+from app.core.runtime_environment import allows_development_identity
 
 security = HTTPBearer(auto_error=False)  # auto_error=False allows optional auth
-
-_JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret-change-in-production")
-_JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-
 
 def _decode_jwt_payload(token: str) -> dict | None:
     """Decode JWT payload without verification (for development)."""
@@ -28,20 +25,9 @@ def _decode_jwt_payload(token: str) -> dict | None:
         return None
 
 
-def _verify_signed_access_token(token: str) -> str | None:
-    """Verify a signed access JWT and return the subject."""
-    try:
-        payload = jwt.decode(token, _JWT_SECRET_KEY, algorithms=[_JWT_ALGORITHM])
-    except JWTError:
-        return None
-    if payload.get("type") != "access":
-        return None
-    subject = payload.get("sub")
-    return subject if isinstance(subject, str) and subject else None
-
-
 async def get_current_user_id(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> str:
     """
     获取当前用户ID
@@ -54,7 +40,7 @@ async def get_current_user_id(
     - 从JWT的sub claim中提取用户ID
     """
     # 检查是否是开发模式
-    dev_mode = os.getenv("DEV_MODE", "true").lower() in ("true", "1", "yes")
+    dev_mode = allows_development_identity()
     dev_user_id = os.getenv("DEV_USER_ID", "dev-user-001")
 
     # 开发模式：无凭证时使用默认用户
@@ -62,14 +48,16 @@ async def get_current_user_id(
         return dev_user_id
 
     # 没有凭证时报错
-    if credentials is None:
+    cookie_token = request.cookies.get("access_token")
+    if credentials is None and cookie_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
+            detail="请先登录后再继续操作",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = credentials.credentials
+    token = credentials.credentials if credentials is not None else cookie_token
+    assert token is not None
 
     if dev_mode:
         # DEV_MODE keeps compatibility with existing local/E2E tokens that only
@@ -81,22 +69,23 @@ async def get_current_user_id(
             return token[:36]
         return token
 
-    user_id = _verify_signed_access_token(token)
+    user_id = verify_access_token(token)
     if user_id:
         return user_id
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired token",
+        detail="登录状态无效或已过期，请重新登录",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> dict:
     """获取当前用户信息"""
-    user_id = await get_current_user_id(credentials)
+    user_id = await get_current_user_id(request, credentials)
     return {"id": user_id, "username": "dev_user"}
 
 

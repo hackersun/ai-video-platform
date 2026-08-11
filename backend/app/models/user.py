@@ -3,11 +3,11 @@
 """
 from app.core.time_utils import utc_now
 from sqlalchemy import Column, String, Boolean, DateTime
-from datetime import datetime
 from app.core.database import Base
+from app.models.user_account import VerifiedAccountColumns
 
 
-class User(Base):
+class User(VerifiedAccountColumns, Base):
     """用户模型"""
     __tablename__ = "users"
 

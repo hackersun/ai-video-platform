@@ -32,6 +32,9 @@ jobs:
     - name: Generate code health report
       run: python3 tools/code_health/check.py --report-only --json-report /tmp/ai-video-code-health.json
 
+    - name: Enforce code health ratchet
+      run: python3 tools/code_health/check.py --policy tools/code_health/policy.json --baseline tools/code_health/baseline.json
+
     - name: Upload code health report
       uses: actions/upload-artifact@v4
       with:
@@ -60,8 +63,8 @@ jobs:
       working-directory: ./backend
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest==9.0.2 pytest-asyncio==1.3.0 pytest-cov==7.0.0
+        pip install --require-hashes -r requirements.lock
+        pip install pytest==9.1.1 pytest-asyncio==1.3.0 pytest-cov==7.0.0
 
     - name: Run tests
       working-directory: ./backend
@@ -107,15 +110,15 @@ jobs:
       working-directory: ./backend
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest==9.0.2 pytest-asyncio==1.3.0
+        pip install --require-hashes -r requirements.lock
+        pip install pytest==9.1.1 pytest-asyncio==1.3.0
 
-    - name: Initialize PostgreSQL schema
+    - name: Upgrade PostgreSQL schema
       working-directory: ./backend
       env:
         DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
         DEV_MODE: "true"
-      run: python init_db.py
+      run: python scripts/upgrade_database.py
 
     - name: Run PostgreSQL contract
       working-directory: ./backend
@@ -149,9 +152,39 @@ jobs:
       working-directory: ./frontend
       run: npm run build
 
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Reject tracked credentials and databases
+      run: python3 tools/security/check_tracked_files.py
+
+    - name: Audit frontend dependencies
+      working-directory: ./frontend
+      run: npm audit --audit-level=high
+
+    - name: Audit backend dependencies
+      run: |
+        python -m pip install pip-audit==2.10.1
+        python -m pip_audit -r backend/requirements.lock
+
   docker-build:
     runs-on: ubuntu-latest
-    needs: [backend-tests, postgres-contract, frontend-tests]
+    needs: [backend-tests, postgres-contract, frontend-tests, security-scan]
     
     steps:
     - uses: actions/checkout@v4
@@ -163,4 +196,27 @@ jobs:
       run: docker build -t ai-video-backend:latest ./backend
     
     - name: Build frontend
-      run: docker build -t ai-video-frontend:latest ./frontend
+      run: docker build --build-arg NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 -t ai-video-frontend:latest ./frontend
+
+    - name: Validate production Compose contract
+      env:
+        IMAGE_TAG: latest
+        POSTGRES_PASSWORD: ci-only-password
+        DATABASE_URL: postgresql://ai_video:ci-only-password@postgres:5432/ai_video_platform
+        REDIS_PASSWORD: ci-only-password
+        REDIS_URL: redis://:ci-only-password@redis:6379/0
+        FERNET_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        JWT_SECRET_KEY: ci-jwt-secret-that-is-definitely-long-enough
+        OBJECT_STORAGE_PROVIDER: qiniu
+        AUTH_EMAIL_PROVIDER: smtp
+        SMTP_HOST: smtp.example.test
+        SMTP_USERNAME: ci-mailer
+        SMTP_PASSWORD: ci-only-password
+        AUTH_EMAIL_FROM: no-reply@example.test
+        PUBLIC_APP_URL: http://127.0.0.1:3000
+        CUSTOMER_BILLING_MODE: enforced
+        OPERATIONS_TOKEN: ci-operations-token-that-is-long-enough
+        NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+      run: |
+        docker compose -f infra/compose/production.yml config --quiet
+        docker compose -f infra/compose/production.yml -f infra/compose/staging.yml config --quiet

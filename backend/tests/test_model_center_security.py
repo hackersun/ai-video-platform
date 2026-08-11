@@ -84,6 +84,7 @@ def test_llm_api_secret_empty_value_is_not_persisted(monkeypatch: pytest.MonkeyP
 
 
 def test_production_requires_a_present_and_valid_fernet_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setattr(credential_encryption, "_configured_encryption_key", lambda: None)
 
@@ -96,7 +97,20 @@ def test_production_requires_a_present_and_valid_fernet_key(monkeypatch: pytest.
 
 
 def test_production_startup_rejects_malformed_fernet_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setenv("JWT_SECRET_KEY", "test-jwt-secret-that-is-definitely-long-enough")
+    monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:////tmp/model-center-security.db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("OBJECT_STORAGE_PROVIDER", "qiniu")
+    monkeypatch.setenv("AUTH_EMAIL_PROVIDER", "smtp")
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_USERNAME", "mailer")
+    monkeypatch.setenv("SMTP_PASSWORD", "secret")
+    monkeypatch.setenv("AUTH_EMAIL_FROM", "no-reply@example.test")
+    monkeypatch.setenv("PUBLIC_APP_URL", "https://app.example.test")
+    monkeypatch.setenv("CUSTOMER_BILLING_MODE", "enforced")
+    monkeypatch.setenv("OPERATIONS_TOKEN", "test-operations-token")
     monkeypatch.setenv("FERNET_KEY", "not-a-valid-fernet-key")
 
     from main import app

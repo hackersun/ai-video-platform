@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Asset, Shot, StoryEntity, Storyboard
-from app.services.media_delivery import resolve_provider_media_url
+from app.features.private_media.integration import resolve_original_image
 from app.services.series_run_reference_preparation import reference_visual_contract_hash
 
 
@@ -205,7 +205,7 @@ async def resolve_shot_reference_images(
     urls: list[str] = []
     for asset in selected_assets:
         source = _canonical_source(asset)
-        delivery = await resolve_provider_media_url(db, user_id, source, media_type="图")
+        delivery = await resolve_original_image(db, user_id, source, project_id=getattr(asset, "project_id", None))
         url = str(delivery.get("provider_url") or "").strip()
         if not url:
             raise _unavailable(shot, "统一角色参考资产无法生成供应商可访问地址，请检查七牛映射后重试。")
@@ -224,7 +224,7 @@ async def resolve_shot_reference_images(
             or not await _same_novel(db, user_id, shot, candidate)
         ):
             raise _unavailable(shot, "选作人物延续参考的镜头不可用或不属于当前小说，请重新选择后重试。")
-        delivery = await resolve_provider_media_url(db, user_id, candidate.image_url, media_type="图")
+        delivery = await resolve_original_image(db, user_id, candidate.image_url)
         continuity_url = str(delivery.get("provider_url") or "").strip()
         if not continuity_url:
             raise _unavailable(shot, "人物延续参考图无法生成供应商可访问地址，请检查七牛映射后重试。")

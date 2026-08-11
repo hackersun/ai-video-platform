@@ -6,6 +6,8 @@ from app.models.llm_config import LLMProvider, LLMModel, LLMConfig, LLMUsageLog
 from app.models.external_api import ExternalAPIConfig
 from app.models.ai_model import ModelConfig
 from app.models.user import User
+from app.models.user_session import UserSession
+from app.models.auth_notification import AuthNotificationOutbox
 from app.models.character import Character
 from app.models.novel import Novel
 from app.models.chapter import Chapter
@@ -19,6 +21,8 @@ from app.models.activity import Activity
 from app.models.workflow import Workflow
 from app.models.image_job import ImageJob
 from app.models.project import Project, ProjectMember
+from app.models.tenant import AuditEvent, Organization, OrganizationMember, Workspace, WorkspaceMember
+from app.models.task_execution import TaskExecution, TaskExecutionEvent
 from app.models.publication import Publication
 from app.models.asset import Asset, AssetCategory
 from app.models.timeline import Timeline, Track, Clip
@@ -42,29 +46,19 @@ from app.models.quality_evaluation import QualityEvaluation
 from app.models.series_production_run import SeriesProductionRun
 from app.models.series_anchor_generation_submission import SeriesAnchorGenerationSubmission
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.models.billing import BillingAccount, BillingLedgerEntry, BillingReservation, ProjectBillingBudget, ProviderReconciliation, UsageEvent
+from app.models.private_media import MediaDeletionReceipt, MediaDeletionRequest, MediaObject, ProviderMediaInput
 from app.models.model_center import (
-    ModelBinding,
-    ModelCertificationRun,
-    ModelConfigAuditEvent,
-    ModelConnection,
-    ModelExecutionSnapshot,
-    ModelProfile,
-    ModelProfileVersion,
-    ModelProvider,
+    ModelBinding, ModelCertificationRun, ModelConfigAuditEvent, ModelConnection,
+    ModelExecutionSnapshot, ModelProfile, ModelProfileVersion, ModelProvider,
     ProductionRecipeVersion,
 )
 
 __all__ = [
-    "LLMProvider",
-    "LLMModel",
-    "LLMConfig",
-    "LLMUsageLog",
-    "ExternalAPIConfig",
-    "ModelConfig",
-    "User",
-    "Character",
-    "Novel",
-    "Chapter",
+    "LLMProvider", "LLMModel", "LLMConfig", "LLMUsageLog",
+    "ExternalAPIConfig", "ModelConfig", "User",
+    "UserSession", "AuthNotificationOutbox",
+    "Character", "Novel", "Chapter",
     "Script",
     "Storyboard",
     "Shot",
@@ -106,6 +100,8 @@ __all__ = [
     "QualityEvaluation",
     "SeriesProductionRun",
     "LiveCanaryProviderOperation",
+    "BillingAccount", "ProjectBillingBudget", "BillingReservation", "BillingLedgerEntry", "UsageEvent", "ProviderReconciliation",
+    "MediaObject", "ProviderMediaInput", "MediaDeletionRequest", "MediaDeletionReceipt",
     "ModelProvider",
     "ModelProfile",
     "ModelConnection",

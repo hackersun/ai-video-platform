@@ -19,6 +19,8 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { safeLoginDestination } from '@/features/auth/navigation';
+import { PasswordInput } from '@/features/auth/password-input';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,10 +47,8 @@ export default function LoginPage() {
       const result = await login(username, password);
 
       if (result.success) {
-        setSuccess('登录成功！正在跳转...');
-        setTimeout(() => {
-          router.push('/dashboard');
-        }, 1000);
+        setSuccess('登录成功，正在进入工作台');
+        router.replace(safeLoginDestination(window.location.search));
       } else {
         setError(result.detail || result.message || '登录失败');
       }
@@ -161,23 +161,7 @@ export default function LoginPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-200">
-                    密码
-                  </label>
-                  <div className="relative">
-                    <Lock className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="请输入密码"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      autoComplete="current-password"
-                      className="h-12 border-white/10 bg-white/[0.06] pl-10 text-white placeholder:text-slate-500 focus-visible:ring-cyan-300"
-                    />
-                  </div>
-                </div>
+                <PasswordInput value={password} onChange={setPassword} />
 
                 {error && (
                   <div
@@ -207,7 +191,7 @@ export default function LoginPage() {
                   {isLoading ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      登录中...
+                      正在登录...
                     </>
                   ) : (
                     <>

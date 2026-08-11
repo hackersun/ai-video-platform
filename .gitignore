@@ -49,6 +49,7 @@ npm-debug.log*
 /frontend/test-results/
 /frontend/.next-playwright*/
 /frontend/.next-verify/
+/frontend/next-env.d.ts
 /test-results/
 *.tsbuildinfo
 

@@ -2,7 +2,6 @@
 镜头管理 API 端点
 """
 from app.core.time_utils import utc_now
-import asyncio
 import uuid
 from typing import List, Optional
 from datetime import datetime
@@ -15,6 +14,7 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.core.api_key_utils import create_image_generation_service, get_user_image_model_config
 from app.core.dev_generation import dev_image_url, is_dev_mode
+from app.features.task_execution.shot_image_handler import queue_shot_image_poll
 from app.services.shot_quality_service import build_shot_quality_report, estimate_shot_generation_budget
 from app.core.security import get_current_user_id
 from app.models import Asset, Chapter, Script, Shot, StoryEntity, Storyboard
@@ -1191,14 +1191,11 @@ async def generate_shot_image(
     }
     shot.image_status = "generating"
     shot.updated_at = utc_now()
-    await db.commit()
-
-    from app.services.image_poll_service import poll_and_update_shot_image
-    asyncio.create_task(poll_and_update_shot_image(shot_id, task_id, user_id))
-
+    execution_id = await queue_shot_image_poll(db, shot_id, task_id, user_id)
     return {
         "shot_id": shot_id,
         "task_id": task_id,
+        "execution_id": execution_id,
         "status": shot.image_status,
         "provider": provider_name,
         "model": model_id,

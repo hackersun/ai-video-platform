@@ -8,6 +8,7 @@
     "verify:backend": "tmp_db=$(mktemp /tmp/ai-video-platform-pytest-XXXXXX.db) && trap 'rm -f \"$tmp_db\"' EXIT && cd backend && DATABASE_URL=sqlite+aiosqlite:///$tmp_db E2E_REQUIRE_ISOLATED_DB=true python3 -m pytest",
     "verify:code-health": "python3 tools/code_health/check.py --policy tools/code_health/policy.json --baseline tools/code_health/baseline.json",
     "verify:frontend": "npm --prefix frontend run typecheck && NEXT_DIST_DIR=.next-verify npm --prefix frontend run build",
+    "verify:security": "python3 tools/security/check_tracked_files.py && npm --prefix frontend audit --audit-level=high && pip-audit -r backend/requirements.lock",
     "verify:e2e": "npm --prefix frontend run e2e:smoke",
     "verify:e2e:legacy": "npm --prefix e2e test",
     "verify:live:anime": "npm --prefix frontend run e2e -- live-anime-production-seedance.spec.ts --project=chromium --workers=1",

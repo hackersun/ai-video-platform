@@ -6,16 +6,23 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, desc, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.permissions import allowed_roles_for_query, get_project_access, normalize_project_role, require_project_role
+from app.core.permissions import allowed_roles_for_query, get_project_access, require_project_role
 from app.core.security import get_current_user_id
+from app.features.access_control.membership import (
+    add_or_restore_project_member,
+    change_project_member_role,
+    deactivate_project_member,
+)
+from app.features.access_control.tenancy import ensure_personal_workspace
 from app.models.project import Project, ProjectMember
 from app.models.asset import AssetCategory, DEFAULT_CATEGORIES
+from app.models.tenant import Organization, OrganizationMember, Workspace, WorkspaceMember
 
 router = APIRouter(tags=["项目管理"])
 
@@ -90,11 +97,11 @@ class ProjectMemberResponse(BaseModel):
 
 class ProjectMemberUpsert(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=36)
-    role: str = Field("editor", description="owner, editor, viewer")
+    role: str = Field("editor", description="owner, editor, reviewer, viewer")
 
 
 class ProjectMemberRoleUpdate(BaseModel):
-    role: str = Field(..., description="owner, editor, viewer")
+    role: str = Field(..., description="owner, editor, reviewer, viewer")
 
 
 # ========== 辅助函数 ==========
@@ -125,6 +132,17 @@ def build_project_response(project: Project) -> ProjectResponse:
         tags=project.tags,
         created_at=str(project.created_at),
         updated_at=str(project.updated_at),
+    )
+
+
+def build_member_response(member: ProjectMember) -> ProjectMemberResponse:
+    return ProjectMemberResponse(
+        id=str(member.id),
+        project_id=str(member.project_id),
+        user_id=str(member.user_id),
+        role=member.role,
+        is_active=member.is_active,
+        joined_at=str(member.joined_at) if member.joined_at else None,
     )
 
 
@@ -166,7 +184,29 @@ async def list_projects(
             ProjectMember.role.in_(allowed_roles_for_query("viewer")),
         )
     )
-    query = select(Project).where(or_(Project.user_id == user_id, Project.id.in_(member_project_ids)))
+    active_workspace_ids = (
+        select(WorkspaceMember.workspace_id)
+        .join(Workspace, Workspace.id == WorkspaceMember.workspace_id)
+        .join(Organization, Organization.id == Workspace.organization_id)
+        .join(
+            OrganizationMember,
+            and_(
+                OrganizationMember.organization_id == Organization.id,
+                OrganizationMember.user_id == user_id,
+                OrganizationMember.is_active.is_(True),
+            ),
+        )
+        .where(
+            WorkspaceMember.user_id == user_id,
+            WorkspaceMember.is_active.is_(True),
+            Workspace.is_active.is_(True),
+            Organization.is_active.is_(True),
+        )
+    )
+    query = select(Project).where(
+        or_(Project.user_id == user_id, Project.id.in_(member_project_ids)),
+        or_(Project.workspace_id.is_(None), Project.workspace_id.in_(active_workspace_ids)),
+    )
     if status:
         query = query.where(Project.status == status)
     query = query.order_by(desc(Project.updated_at)).offset(offset).limit(limit)
@@ -195,10 +235,12 @@ async def create_project(
 ):
     """创建新项目"""
     await ensure_default_categories(db)
+    workspace = await ensure_personal_workspace(db, user_id, user_id)
 
     project = Project(
         id=str(uuid4()),
         user_id=user_id,
+        workspace_id=workspace.id,
         name=request.name,
         description=request.description,
         global_style=request.global_style,
@@ -278,17 +320,7 @@ async def list_project_members(
                  ProjectMember.is_active == True))
     )
     members = member_result.scalars().all()
-    return [
-        ProjectMemberResponse(
-            id=str(m.id),
-            project_id=str(m.project_id),
-            user_id=str(m.user_id),
-            role=m.role,
-            is_active=m.is_active,
-            joined_at=str(m.joined_at) if m.joined_at else None,
-        )
-        for m in members
-    ]
+    return [build_member_response(member) for member in members]
 
 
 @router.post("/{project_id}/members", response_model=ProjectMemberResponse, status_code=status.HTTP_201_CREATED)
@@ -299,46 +331,16 @@ async def add_project_member(
     user_id: str = Depends(get_current_user_id),
 ):
     """邀请/添加项目成员"""
-    project = await require_project_role(db, project_id, user_id, "owner")
-    member_role = normalize_project_role(request.role)
-    if request.user_id == project.user_id and member_role != "owner":
-        raise HTTPException(status_code=400, detail="项目所有者必须保持 owner 角色")
-
-    result = await db.execute(
-        select(ProjectMember).where(
-            and_(ProjectMember.project_id == project_id, ProjectMember.user_id == request.user_id)
-        )
+    member = await add_or_restore_project_member(
+        db,
+        project_id=project_id,
+        actor_user_id=user_id,
+        member_user_id=request.user_id,
+        role=request.role,
     )
-    member = result.scalar_one_or_none()
-    if member:
-        if member.user_id == project.user_id and member_role != "owner":
-            raise HTTPException(status_code=400, detail="项目所有者必须保持 owner 角色")
-        member.role = "owner" if member.user_id == project.user_id else member_role
-        member.is_active = True
-        if not member.joined_at:
-            member.joined_at = utc_now()
-    else:
-        member = ProjectMember(
-            id=str(uuid4()),
-            project_id=project_id,
-            user_id=request.user_id,
-            role="owner" if request.user_id == project.user_id else member_role,
-            is_active=True,
-            invited_at=utc_now(),
-            joined_at=utc_now(),
-        )
-        db.add(member)
-
     await db.commit()
     await db.refresh(member)
-    return ProjectMemberResponse(
-        id=str(member.id),
-        project_id=str(member.project_id),
-        user_id=str(member.user_id),
-        role=member.role,
-        is_active=member.is_active,
-        joined_at=str(member.joined_at) if member.joined_at else None,
-    )
+    return build_member_response(member)
 
 
 @router.put("/{project_id}/members/{member_user_id}", response_model=ProjectMemberResponse)
@@ -350,37 +352,16 @@ async def update_project_member_role(
     user_id: str = Depends(get_current_user_id),
 ):
     """更新项目成员角色"""
-    project = await require_project_role(db, project_id, user_id, "owner")
-    role = normalize_project_role(request.role)
-    if member_user_id == project.user_id and role != "owner":
-        raise HTTPException(status_code=400, detail="项目所有者必须保持 owner 角色")
-
-    result = await db.execute(
-        select(ProjectMember).where(
-            and_(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == member_user_id,
-                ProjectMember.is_active == True,
-            )
-        )
+    member = await change_project_member_role(
+        db,
+        project_id=project_id,
+        actor_user_id=user_id,
+        member_user_id=member_user_id,
+        role=request.role,
     )
-    member = result.scalar_one_or_none()
-    if not member:
-        raise HTTPException(status_code=404, detail="成员不存在")
-    if member.user_id == project.user_id and role != "owner":
-        raise HTTPException(status_code=400, detail="项目所有者必须保持 owner 角色")
-
-    member.role = "owner" if member.user_id == project.user_id else role
     await db.commit()
     await db.refresh(member)
-    return ProjectMemberResponse(
-        id=str(member.id),
-        project_id=str(member.project_id),
-        user_id=str(member.user_id),
-        role=member.role,
-        is_active=member.is_active,
-        joined_at=str(member.joined_at) if member.joined_at else None,
-    )
+    return build_member_response(member)
 
 
 @router.delete("/{project_id}/members/{member_user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -391,26 +372,12 @@ async def remove_project_member(
     user_id: str = Depends(get_current_user_id),
 ):
     """移除项目成员"""
-    project = await require_project_role(db, project_id, user_id, "owner")
-    if member_user_id == project.user_id:
-        raise HTTPException(status_code=400, detail="不能移除项目所有者")
-
-    result = await db.execute(
-        select(ProjectMember).where(
-            and_(
-                ProjectMember.project_id == project_id,
-                ProjectMember.user_id == member_user_id,
-                ProjectMember.is_active == True,
-            )
-        )
+    await deactivate_project_member(
+        db,
+        project_id=project_id,
+        actor_user_id=user_id,
+        member_user_id=member_user_id,
     )
-    member = result.scalar_one_or_none()
-    if not member:
-        raise HTTPException(status_code=404, detail="成员不存在")
-    if member.role == "owner":
-        raise HTTPException(status_code=400, detail="不能移除 owner 成员")
-
-    member.is_active = False
     await db.commit()
 
 

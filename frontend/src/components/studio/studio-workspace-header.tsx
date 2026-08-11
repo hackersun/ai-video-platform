@@ -57,7 +57,7 @@ function episodeOptions(snapshot: StudioSnapshot, workflows: StudioWorkflowOptio
     ? chapters.map((chapter) => ({ chapter, workflow: workflowMap.get(chapter.id) }))
     : related.map((workflow) => ({ chapter: chapterMap.get(workflow.chapter_id || ''), workflow }));
   const knownChapterIds = new Set(chapters.map((chapter) => chapter.id));
-  related.filter((workflow) => !workflow.chapter_id || !knownChapterIds.has(workflow.chapter_id)).forEach((workflow) => episodeRows.push({ chapter: undefined, workflow }));
+  if (chapters.length) related.filter((workflow) => !workflow.chapter_id || !knownChapterIds.has(workflow.chapter_id)).forEach((workflow) => episodeRows.push({ chapter: undefined, workflow }));
   return episodeRows.map(({ chapter, workflow }, index) => {
     if (!workflow) return {
       id: `chapter:${chapter?.id || index}`,

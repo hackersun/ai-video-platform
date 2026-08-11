@@ -5,10 +5,9 @@
 
 import type { NovelProductionEntry } from './studio-types';
 import { formatSafeApiErrorDetail } from './safe-api-error.mjs';
+import { fetchWithSession } from './auth-session';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
-
-const TOKEN_KEY = 'auth_token';
 
 // ========== 类型定义 ==========
 
@@ -540,26 +539,6 @@ class ApiClient {
     this.baseUrl = baseUrl;
   }
 
-  // ========== Token 管理 ==========
-
-  private getToken(): string | null {
-    if (typeof window === 'undefined') return null;
-    return localStorage.getItem(TOKEN_KEY);
-  }
-
-  setToken(token: string | null): void {
-    if (typeof window === 'undefined') return;
-    if (token) {
-      localStorage.setItem(TOKEN_KEY, token);
-    } else {
-      localStorage.removeItem(TOKEN_KEY);
-    }
-  }
-
-  clearToken(): void {
-    this.setToken(null);
-  }
-
   // ========== 请求核心 ==========
 
   async request<T>(
@@ -568,22 +547,17 @@ class ApiClient {
   ): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
 
-    const token = this.getToken();
     const headers: Record<string, string> = {
       ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...(options.headers as Record<string, string> || {}),
     };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
     const config: RequestInit = {
       ...options,
       headers,
     };
 
     try {
-      const response = await fetch(url, config);
+      const response = await fetchWithSession(url, config);
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({})) as ApiError;
@@ -3182,10 +3156,6 @@ class ApiClient {
       body: JSON.stringify({ username, password }),
     });
 
-    if (response.access_token) {
-      this.setToken(response.access_token);
-    }
-
     return response;
   }
 
@@ -3202,10 +3172,6 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ username, email, password }),
     });
-
-    if (response.access_token) {
-      this.setToken(response.access_token);
-    }
 
     return response;
   }

@@ -26,7 +26,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(app)
 
 
-def _register(client: TestClient, suffix: str, password: str = "oldPass123") -> dict:
+def _register(client: TestClient, suffix: str, password: str = "OldCommercial123!") -> dict:
     response = client.post(
         "/api/v1/auth/register",
         json={
@@ -38,7 +38,13 @@ def _register(client: TestClient, suffix: str, password: str = "oldPass123") -> 
     assert response.status_code == 200
     payload = response.json()
     assert payload["success"] is True
-    return payload
+    verification_token = payload["verification_token"]
+    verified = client.post(
+        "/api/v1/auth/verify-email",
+        json={"token": verification_token},
+    )
+    assert verified.status_code == 200
+    return verified.json()
 
 
 def _dev_style_token(user_id: str) -> str:
@@ -71,27 +77,27 @@ def test_profile_update_and_change_password_persist(client: TestClient) -> None:
 
     change_response = client.post(
         "/api/v1/auth/change-password",
-        json={"current_password": "oldPass123", "new_password": "newPass123"},
+        json={"current_password": "OldCommercial123!", "new_password": "NewCommercial123!"},
         headers=headers,
     )
     assert change_response.status_code == 200
 
     old_login = client.post(
         "/api/v1/auth/login",
-        json={"username": f"renamed-{suffix}", "password": "oldPass123"},
+        json={"username": f"renamed-{suffix}", "password": "OldCommercial123!"},
     )
     assert old_login.json()["success"] is False
 
     new_login = client.post(
         "/api/v1/auth/login",
-        json={"username": f"renamed-{suffix}", "password": "newPass123"},
+        json={"username": f"renamed-{suffix}", "password": "NewCommercial123!"},
     )
     assert new_login.json()["success"] is True
 
 
 def test_forgot_and_reset_password_flow(client: TestClient) -> None:
     suffix = uuid4().hex[:10]
-    _register(client, suffix, password="beforeReset123")
+    _register(client, suffix, password="BeforeReset123!")
 
     forgot_response = client.post(
         "/api/v1/auth/forgot-password",
@@ -103,13 +109,13 @@ def test_forgot_and_reset_password_flow(client: TestClient) -> None:
 
     reset_response = client.post(
         "/api/v1/auth/reset-password",
-        json={"token": reset_token, "new_password": "afterReset123"},
+        json={"token": reset_token, "new_password": "AfterReset123!"},
     )
     assert reset_response.status_code == 200
 
     login_response = client.post(
         "/api/v1/auth/login",
-        json={"username": f"account-{suffix}", "password": "afterReset123"},
+        json={"username": f"account-{suffix}", "password": "AfterReset123!"},
     )
     assert login_response.json()["success"] is True
 
