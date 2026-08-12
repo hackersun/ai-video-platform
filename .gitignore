@@ -6,6 +6,7 @@ __pycache__/
 
 # Build outputs
 .next/
+/frontend/.next-*/
 dist/
 build/
 
@@ -41,9 +42,11 @@ npm-debug.log*
 .netlify
 
 # Local generated media and automation outputs
+/output/
 /backend/static/dev/
 /backend/static/generated/
 /backend/static/exports/
+/backend/static/audio/
 /output/playwright/
 /output/live-anime/
 /frontend/test-results/
@@ -57,3 +60,11 @@ npm-debug.log*
 /.logs/
 /.playwright-cli/
 /.superpowers/
+
+# Browser inspection bundles saved at repository root
+/app-session-*.js
+/main-*.js
+/bootstrap.js
+
+# Accidental local package resolver output
+/backend/=*
