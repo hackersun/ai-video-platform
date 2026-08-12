@@ -218,6 +218,7 @@ function modelCenterOverview(value: unknown): ModelCenterOverview {
     }),
     connections: arrayValue(input, 'connections', '概览').map(connectionView),
     recipes: arrayValue(input, 'recipes', '概览').map(productionRecipeView),
+    can_manage_catalog: input.can_manage_catalog !== false,
   };
 }
 

@@ -5,6 +5,7 @@ import asyncio
 from copy import deepcopy
 from decimal import Decimal
 import json
+import os
 from pathlib import Path
 
 import httpx
@@ -88,11 +89,17 @@ MODEL_CENTER_ROUTES = {
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def isolated_database():
+    previous_admins = os.environ.get("MODEL_CATALOG_ADMIN_USER_IDS")
+    os.environ["MODEL_CATALOG_ADMIN_USER_IDS"] = USER_ID
     await reset_database()
     async with AsyncSessionLocal() as db:
         await _seed_collection_rows(db)
     yield
     await dispose_database()
+    if previous_admins is None:
+        os.environ.pop("MODEL_CATALOG_ADMIN_USER_IDS", None)
+    else:
+        os.environ["MODEL_CATALOG_ADMIN_USER_IDS"] = previous_admins
 
 
 @pytest_asyncio.fixture()
@@ -131,7 +138,8 @@ async def test_overview_returns_the_frontend_model_center_contract(client):
 
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"blocking_issues", "connections", "recipes"}
+    assert set(body) == {"blocking_issues", "connections", "recipes", "can_manage_catalog"}
+    assert body["can_manage_catalog"] is True
     assert isinstance(body["blocking_issues"], list)
     assert body["connections"][0]["has_secret"] is True
     assert "api_key" not in body["connections"][0]

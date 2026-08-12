@@ -2549,7 +2549,11 @@ async def generate_storyboard_shot_images(
     results = []
     for shot_id in shot_ids:
         shot_result = await db.execute(
-            select(Shot).where(and_(Shot.id == shot_id, Shot.storyboard_id == storyboard_id))
+            select(Shot).where(and_(
+                Shot.id == shot_id,
+                Shot.storyboard_id == storyboard_id,
+                Shot.user_id == user_id,
+            ))
         )
         shot = shot_result.scalar_one_or_none()
         if not shot:
