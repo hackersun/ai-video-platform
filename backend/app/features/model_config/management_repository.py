@@ -5,13 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import uuid4
 
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import desc, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
 from app.features.model_config.catalog import is_product_visible_provider
 from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
 from app.features.model_config.readiness import production_readiness
+from app.features.model_config.catalog_permissions import is_catalog_admin
 from app.models.model_center import (
     ModelBinding,
     ModelCertificationRun,
@@ -116,6 +117,7 @@ async def management_overview(db: AsyncSession, user_id: str) -> dict:
         "blocking_issues": blocking_issues,
         "connections": [_connection_view(row, provider_labels) for row in connection_rows],
         "recipes": [_recipe_view(row) for row in recipe_rows],
+        "can_manage_catalog": is_catalog_admin(user_id),
     }
 
 
@@ -214,7 +216,9 @@ async def recipe_page(db: AsyncSession, user_id: str, page: int, page_size: int)
 
 async def prompt_profile_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:
     profiles, total = await _paged_rows(
-        db, PromptProfile, (PromptProfile.user_id == user_id,), page, page_size,
+        db, PromptProfile, (
+            or_(PromptProfile.user_id == user_id, PromptProfile.user_id == "system"),
+        ), page, page_size,
     )
     items = []
     for profile in profiles:
@@ -226,6 +230,8 @@ async def prompt_profile_page(db: AsyncSession, user_id: str, page: int, page_si
             "head_version_id": head.id if head else None,
             "head_version": head.version if head else None,
             "status": head.status if head else None,
+            "source_label": "系统内置" if profile.user_id == "system" else "当前账号",
+            "editable": profile.user_id == user_id,
         })
     return _page(items, page, page_size, total)
 

@@ -235,6 +235,8 @@ export interface PromptProfileView {
   head_version_id: string | null;
   head_version: number | null;
   status: ConfigurationState | null;
+  source_label?: string;
+  editable?: boolean;
 }
 
 export interface PromptProfileVersionDetail {
@@ -261,6 +263,7 @@ export interface PromptProfileDetail {
   key: string;
   name: string;
   task: string;
+  editable?: boolean;
   head: PromptProfileVersionDetail;
   versions: PromptProfileVersionDetail[];
   legacy_skill: {
@@ -387,6 +390,7 @@ export interface ModelCenterOverview {
   blocking_issues: ReadinessIssue[];
   connections: ModelConnectionView[];
   recipes: ProductionRecipeView[];
+  can_manage_catalog: boolean;
 }
 
 export interface ReadinessIssue {

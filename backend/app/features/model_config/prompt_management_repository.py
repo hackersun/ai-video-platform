@@ -203,6 +203,26 @@ async def load_owned_prompt_profile_history(
     return profile, versions
 
 
+async def load_visible_prompt_profile_history(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    profile_id: str,
+) -> tuple[PromptProfile | None, list[PromptProfileVersion]]:
+    profile = await db.scalar(select(PromptProfile).where(
+        PromptProfile.id == profile_id,
+        PromptProfile.user_id.in_((user_id, "system")),
+    ))
+    if profile is None:
+        return None, []
+    versions = list((await db.scalars(
+        select(PromptProfileVersion)
+        .where(PromptProfileVersion.profile_id == profile_id)
+        .order_by(desc(PromptProfileVersion.version), desc(PromptProfileVersion.id))
+    )).all())
+    return profile, versions
+
+
 async def load_linked_prompt_skill(
     db: AsyncSession,
     *,

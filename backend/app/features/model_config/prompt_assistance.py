@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.prompt_management_repository import (
-    load_owned_prompt_profile_history,
+    load_visible_prompt_profile_history,
     load_linked_prompt_skill,
     load_prompt_version_for_user,
     prompt_version_values,
@@ -39,7 +39,7 @@ async def get_prompt_profile_detail(
     user_id: str,
     profile_id: str,
 ) -> dict | None:
-    profile, versions = await load_owned_prompt_profile_history(
+    profile, versions = await load_visible_prompt_profile_history(
         db,
         user_id=user_id,
         profile_id=profile_id,
@@ -58,6 +58,7 @@ async def get_prompt_profile_detail(
         "key": profile.key,
         "name": profile.name,
         "task": profile.task,
+        "editable": profile.user_id == user_id,
         "head": details[0],
         "versions": details,
         "legacy_skill": ({

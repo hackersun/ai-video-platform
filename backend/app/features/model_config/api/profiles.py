@@ -18,6 +18,15 @@ from app.features.model_config.api.schemas import (
     RevisionedUpdateRequest,
     RollbackRequest,
 )
+from app.features.model_config.catalog_permissions import CatalogPermissionError, require_catalog_admin
+
+
+def _raise_catalog_permission(error: CatalogPermissionError):
+    from fastapi import HTTPException
+    raise HTTPException(status_code=403, detail={
+        "code": "catalog_admin_required", "message": str(error),
+        "action_code": "contact_catalog_admin",
+    }) from error
 
 
 router = APIRouter()
@@ -29,8 +38,11 @@ async def create_profile(
     db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
 ):
     try:
+        require_catalog_admin(user_id)
         async with db.begin():
             return await service.create_model_profile(db, user_id=user_id, request=request)
+    except CatalogPermissionError as error:
+        return _raise_catalog_permission(error)
     except service.ManagementOperationError as error:
         return raise_http(error)
 
@@ -41,10 +53,13 @@ async def create_profile_version(
     db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
 ):
     try:
+        require_catalog_admin(user_id)
         async with db.begin():
             return await service.create_model_profile_version(
                 db, user_id=user_id, profile_id=profile_id, request=request,
             )
+    except CatalogPermissionError as error:
+        return _raise_catalog_permission(error)
     except service.ManagementOperationError as error:
         return raise_http(error)
 
@@ -61,10 +76,13 @@ async def validate_profile_version(
     db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
 ):
     try:
+        require_catalog_admin(user_id)
         async with db.begin():
             return await service.validate_profile_contract(
                 db, user_id=user_id, version_id=profile_version_id,
             )
+    except CatalogPermissionError as error:
+        return _raise_catalog_permission(error)
     except service.ManagementOperationError as error:
         return raise_http(error)
 
@@ -75,10 +93,13 @@ async def publish_profile_version(
     db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
 ):
     try:
+        require_catalog_admin(user_id)
         async with db.begin():
             return await service.publish_model_profile_version(
                 db, user_id=user_id, version_id=profile_version_id, request=request,
             )
+    except CatalogPermissionError as error:
+        return _raise_catalog_permission(error)
     except service.ManagementOperationError as error:
         return raise_http(error)
 

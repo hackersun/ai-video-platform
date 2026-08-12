@@ -15,6 +15,7 @@ from app.features.model_config.api.schemas import (
     ProviderCreateRequest,
     RevisionedUpdateRequest,
 )
+from app.features.model_config.catalog_permissions import CatalogPermissionError, require_catalog_admin
 
 
 router = APIRouter()
@@ -38,8 +39,15 @@ async def create_provider(
     db: AsyncSession = Depends(get_db), user_id: str = Depends(get_current_user_id),
 ):
     try:
+        require_catalog_admin(user_id)
         async with db.begin():
             return await service.create_model_provider(db, user_id=user_id, request=request)
+    except CatalogPermissionError as error:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail={
+            "code": "catalog_admin_required", "message": str(error),
+            "action_code": "contact_catalog_admin",
+        }) from error
     except service.ManagementOperationError as error:
         return raise_http(error)
 

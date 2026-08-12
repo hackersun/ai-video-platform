@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.model_config.management_repository import (
@@ -51,6 +52,7 @@ from app.features.model_config.recipe_management_repository import (
 from app.features.model_config.recipes import RecipeValidationError, recipe_binding_references, stable_recipe_checksum, validate_recipe
 from app.features.model_config.recipe_repository import load_recipe_binding_contracts
 from app.features.model_drivers.public import describe_installed_drivers
+from app.models.prompt_profile import PromptProfile
 
 
 class ManagementOperationError(ValueError):
@@ -350,6 +352,14 @@ async def create_prompt_profile_draft(
     db: AsyncSession, *, user_id: str, profile_id: str, expected_revision: int, changes: dict,
 ) -> dict:
     async with db.begin():
+        owner = await db.scalar(select(PromptProfile.user_id).where(PromptProfile.id == profile_id))
+        if owner == "system":
+            raise ManagementOperationError(
+                "system_prompt_read_only",
+                "系统基础模板为共享只读，请先复制为当前账号模板。",
+                "create_personal_prompt",
+                403,
+            )
         try:
             row = await create_prompt_draft(
                 db, profile_id=profile_id, user_id=user_id, expected_version=expected_revision, changes=changes,
