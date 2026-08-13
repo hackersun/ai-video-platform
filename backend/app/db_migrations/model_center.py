@@ -19,6 +19,22 @@ _VERSION_TABLES = (
 )
 
 
+def _prompt_skill_id_capacity_statement(bind):
+    if bind.dialect.name != "postgresql":
+        return None
+    inspector = inspect(bind)
+    if not inspector.has_table("prompt_skills"):
+        return None
+    id_column = next(
+        (column for column in inspector.get_columns("prompt_skills") if column["name"] == "id"),
+        None,
+    )
+    current_length = getattr(id_column["type"], "length", None) if id_column else None
+    if current_length is None or current_length >= 80:
+        return None
+    return text('ALTER TABLE "prompt_skills" ALTER COLUMN "id" TYPE VARCHAR(80)')
+
+
 def _quote_postgresql_identifier(value: str) -> str:
     return f'"{value.replace(chr(34), chr(34) * 2)}"'
 
@@ -274,6 +290,10 @@ def _execute_sync_ddl(engine: Engine, statement, duplicate_check, state_check) -
 
 def add_model_center_links(engine: Engine) -> None:
     """Add model-center compatibility columns to already-created legacy tables."""
+    capacity_statement = _prompt_skill_id_capacity_statement(engine)
+    if capacity_statement is not None:
+        with engine.begin() as connection:
+            connection.execute(capacity_statement)
     for table_name, columns in _LINK_COLUMNS.items():
         for column, sql_type in columns.items():
             if _has_column(engine, table_name, column) is not False:
@@ -301,6 +321,10 @@ async def _execute_async_ddl(engine, statement, duplicate_check, state_check) ->
 
 async def add_model_center_links_async(engine: AsyncEngine) -> None:
     """Async equivalent with duplicate-only recovery for concurrent initializers."""
+    async with engine.begin() as connection:
+        capacity_statement = await connection.run_sync(_prompt_skill_id_capacity_statement)
+        if capacity_statement is not None:
+            await connection.execute(capacity_statement)
     for table_name, columns in _LINK_COLUMNS.items():
         for column, sql_type in columns.items():
             if await _has_column_async(engine, table_name, column) is not False:

@@ -1,0 +1,19 @@
+:80 {
+    encode zstd gzip
+
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle /static/* {
+        reverse_proxy api:8000
+    }
+
+    handle /healthz {
+        respond "ok" 200
+    }
+
+    handle {
+        reverse_proxy frontend:3000
+    }
+}
