@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "commit": "0b8eec46763740725da92c6fd7dc74d25109275d",
-  "generated_at": "2026-08-08T11:16:09.131438+00:00",
+  "commit": "19186e249b08f4fae38c0dd19a4cf92f8a4eb6ba",
+  "generated_at": "2026-08-18T15:01:50.910890+00:00",
   "limits": {
     "new_file_lines": 500
   },
@@ -258,7 +258,7 @@
       ]
     },
     "backend/app/api/v1/endpoints/llm_config.py": {
-      "effective_lines": 1438,
+      "effective_lines": 1436,
       "max_function_lines": 67,
       "route_count": 13,
       "known_violations": [
@@ -416,7 +416,7 @@
       "known_violations": []
     },
     "backend/app/api/v1/endpoints/shots.py": {
-      "effective_lines": 1350,
+      "effective_lines": 1354,
       "max_function_lines": 246,
       "route_count": 18,
       "known_violations": [
@@ -433,7 +433,7 @@
         {
           "code": "route_too_long",
           "subject": "batch_rebuild_consistency_prompts",
-          "actual": 62
+          "actual": 63
         },
         {
           "code": "route_too_long",
@@ -512,7 +512,7 @@
       ]
     },
     "backend/app/api/v1/endpoints/storyboards.py": {
-      "effective_lines": 2357,
+      "effective_lines": 2361,
       "max_function_lines": 367,
       "route_count": 14,
       "known_violations": [
@@ -571,7 +571,7 @@
       "known_violations": []
     },
     "backend/app/api/v1/endpoints/synthesis.py": {
-      "effective_lines": 1055,
+      "effective_lines": 1061,
       "max_function_lines": 120,
       "route_count": 16,
       "known_violations": [
@@ -583,12 +583,17 @@
         {
           "code": "route_too_long",
           "subject": "execute_synthesis",
-          "actual": 64
+          "actual": 67
         },
         {
           "code": "route_too_long",
           "subject": "publish_export",
           "actual": 120
+        },
+        {
+          "code": "route_too_long",
+          "subject": "synthesize_video",
+          "actual": 61
         }
       ]
     },
@@ -666,7 +671,7 @@
       "known_violations": []
     },
     "backend/app/api/v1/endpoints/video.py": {
-      "effective_lines": 1184,
+      "effective_lines": 1179,
       "max_function_lines": 382,
       "route_count": 11,
       "known_violations": [
@@ -693,7 +698,7 @@
         {
           "code": "route_too_long",
           "subject": "get_video_status",
-          "actual": 111
+          "actual": 114
         },
         {
           "code": "route_too_long",
@@ -811,6 +816,12 @@
       "route_count": 0,
       "known_violations": []
     },
+    "backend/app/core/deepseek_catalog.py": {
+      "effective_lines": 55,
+      "max_function_lines": 26,
+      "route_count": 0,
+      "known_violations": []
+    },
     "backend/app/core/dev_generation.py": {
       "effective_lines": 269,
       "max_function_lines": 53,
@@ -908,7 +919,7 @@
       "known_violations": []
     },
     "backend/app/db_migrations/model_center.py": {
-      "effective_lines": 272,
+      "effective_lines": 294,
       "max_function_lines": 42,
       "route_count": 0,
       "known_violations": []
@@ -916,6 +927,12 @@
     "backend/app/db_migrations/runner.py": {
       "effective_lines": 59,
       "max_function_lines": 43,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "backend/app/db_migrations/script_chapter_lineage.py": {
+      "effective_lines": 57,
+      "max_function_lines": 10,
       "route_count": 0,
       "known_violations": []
     },
@@ -1004,8 +1021,8 @@
       "known_violations": []
     },
     "backend/app/features/model_config/api/catalog.py": {
-      "effective_lines": 56,
-      "max_function_lines": 10,
+      "effective_lines": 64,
+      "max_function_lines": 16,
       "route_count": 6,
       "known_violations": []
     },
@@ -1028,8 +1045,8 @@
       "known_violations": []
     },
     "backend/app/features/model_config/api/profiles.py": {
-      "effective_lines": 77,
-      "max_function_lines": 11,
+      "effective_lines": 96,
+      "max_function_lines": 14,
       "route_count": 7,
       "known_violations": []
     },
@@ -1099,6 +1116,12 @@
       "route_count": 0,
       "known_violations": []
     },
+    "backend/app/features/model_config/catalog_permissions.py": {
+      "effective_lines": 20,
+      "max_function_lines": 9,
+      "route_count": 0,
+      "known_violations": []
+    },
     "backend/app/features/model_config/certification_execution.py": {
       "effective_lines": 127,
       "max_function_lines": 36,
@@ -1136,7 +1159,7 @@
       "known_violations": []
     },
     "backend/app/features/model_config/generation_context.py": {
-      "effective_lines": 215,
+      "effective_lines": 223,
       "max_function_lines": 54,
       "route_count": 0,
       "known_violations": []
@@ -1160,25 +1183,25 @@
       "known_violations": []
     },
     "backend/app/features/model_config/management.py": {
-      "effective_lines": 430,
+      "effective_lines": 440,
       "max_function_lines": 34,
       "route_count": 0,
       "known_violations": []
     },
     "backend/app/features/model_config/management_repository.py": {
-      "effective_lines": 245,
+      "effective_lines": 251,
       "max_function_lines": 41,
       "route_count": 0,
       "known_violations": []
     },
     "backend/app/features/model_config/prompt_assistance.py": {
-      "effective_lines": 109,
-      "max_function_lines": 33,
+      "effective_lines": 110,
+      "max_function_lines": 34,
       "route_count": 0,
       "known_violations": []
     },
     "backend/app/features/model_config/prompt_management_repository.py": {
-      "effective_lines": 215,
+      "effective_lines": 233,
       "max_function_lines": 23,
       "route_count": 0,
       "known_violations": []
@@ -1273,8 +1296,14 @@
       "route_count": 0,
       "known_violations": []
     },
+    "backend/app/features/model_config/shared_catalog_projection.py": {
+      "effective_lines": 38,
+      "max_function_lines": 31,
+      "route_count": 0,
+      "known_violations": []
+    },
     "backend/app/features/model_config/snapshots.py": {
-      "effective_lines": 163,
+      "effective_lines": 164,
       "max_function_lines": 28,
       "route_count": 0,
       "known_violations": []
@@ -1334,8 +1363,8 @@
       "known_violations": []
     },
     "backend/app/features/model_drivers/adapters/legacy_text.py": {
-      "effective_lines": 34,
-      "max_function_lines": 14,
+      "effective_lines": 43,
+      "max_function_lines": 21,
       "route_count": 0,
       "known_violations": []
     },
@@ -1352,7 +1381,7 @@
       "known_violations": []
     },
     "backend/app/features/model_drivers/adapters/minimax_h3_video.py": {
-      "effective_lines": 130,
+      "effective_lines": 136,
       "max_function_lines": 25,
       "route_count": 0,
       "known_violations": []
@@ -1417,6 +1446,12 @@
       "route_count": 0,
       "known_violations": []
     },
+    "backend/app/features/model_drivers/openai_compatible.py": {
+      "effective_lines": 9,
+      "max_function_lines": 4,
+      "route_count": 0,
+      "known_violations": []
+    },
     "backend/app/features/model_drivers/public.py": {
       "effective_lines": 59,
       "max_function_lines": 0,
@@ -1430,7 +1465,7 @@
       "known_violations": []
     },
     "backend/app/features/model_drivers/text_execution.py": {
-      "effective_lines": 354,
+      "effective_lines": 352,
       "max_function_lines": 56,
       "route_count": 0,
       "known_violations": []
@@ -1850,8 +1885,8 @@
       "known_violations": []
     },
     "backend/app/features/series_skill_execution/entity_stage.py": {
-      "effective_lines": 63,
-      "max_function_lines": 33,
+      "effective_lines": 74,
+      "max_function_lines": 29,
       "route_count": 0,
       "known_violations": []
     },
@@ -1868,8 +1903,8 @@
       "known_violations": []
     },
     "backend/app/features/series_skill_execution/stage_contracts.py": {
-      "effective_lines": 72,
-      "max_function_lines": 29,
+      "effective_lines": 83,
+      "max_function_lines": 31,
       "route_count": 0,
       "known_violations": []
     },
@@ -1921,8 +1956,14 @@
       "route_count": 0,
       "known_violations": []
     },
+    "backend/app/features/video_generation/application/driver_poll.py": {
+      "effective_lines": 36,
+      "max_function_lines": 29,
+      "route_count": 0,
+      "known_violations": []
+    },
     "backend/app/features/video_generation/application/driver_submission.py": {
-      "effective_lines": 116,
+      "effective_lines": 118,
       "max_function_lines": 31,
       "route_count": 0,
       "known_violations": []
@@ -1946,7 +1987,7 @@
       "known_violations": []
     },
     "backend/app/features/video_generation/application/model_config.py": {
-      "effective_lines": 202,
+      "effective_lines": 204,
       "max_function_lines": 26,
       "route_count": 0,
       "known_violations": []
@@ -2396,14 +2437,14 @@
       "known_violations": []
     },
     "backend/app/services/asset_generation_service.py": {
-      "effective_lines": 1654,
+      "effective_lines": 1673,
       "max_function_lines": 243,
       "route_count": 0,
       "known_violations": [
         {
           "code": "function_too_long",
           "subject": "_generate_asset_image_url",
-          "actual": 93
+          "actual": 94
         },
         {
           "code": "function_too_long",
@@ -2484,14 +2525,14 @@
       "known_violations": []
     },
     "backend/app/services/consistency_context.py": {
-      "effective_lines": 673,
-      "max_function_lines": 110,
+      "effective_lines": 675,
+      "max_function_lines": 112,
       "route_count": 0,
       "known_violations": [
         {
           "code": "function_too_long",
           "subject": "build_consistency_prompt",
-          "actual": 110
+          "actual": 112
         }
       ]
     },
@@ -2538,8 +2579,8 @@
       "known_violations": []
     },
     "backend/app/services/default_prompt_skills.py": {
-      "effective_lines": 272,
-      "max_function_lines": 27,
+      "effective_lines": 311,
+      "max_function_lines": 28,
       "route_count": 0,
       "known_violations": []
     },
@@ -2633,14 +2674,14 @@
       "known_violations": []
     },
     "backend/app/services/entity_review_service.py": {
-      "effective_lines": 740,
-      "max_function_lines": 219,
+      "effective_lines": 747,
+      "max_function_lines": 223,
       "route_count": 0,
       "known_violations": [
         {
           "code": "function_too_long",
           "subject": "run_candidate_entity_extraction",
-          "actual": 219
+          "actual": 223
         }
       ]
     },
@@ -2807,7 +2848,7 @@
       "known_violations": []
     },
     "backend/app/services/media_persistence.py": {
-      "effective_lines": 250,
+      "effective_lines": 268,
       "max_function_lines": 59,
       "route_count": 0,
       "known_violations": []
@@ -2951,14 +2992,14 @@
       "known_violations": []
     },
     "backend/app/services/prompt_composer.py": {
-      "effective_lines": 134,
-      "max_function_lines": 111,
+      "effective_lines": 137,
+      "max_function_lines": 114,
       "route_count": 0,
       "known_violations": [
         {
           "code": "function_too_long",
           "subject": "compose_generation_prompt",
-          "actual": 111
+          "actual": 114
         }
       ]
     },
@@ -3365,8 +3406,8 @@
       ]
     },
     "backend/app/services/synthesis_executor.py": {
-      "effective_lines": 384,
-      "max_function_lines": 60,
+      "effective_lines": 411,
+      "max_function_lines": 75,
       "route_count": 0,
       "known_violations": []
     },
@@ -3945,19 +3986,19 @@
       ]
     },
     "frontend/src/app/story-bibles/page.tsx": {
-      "effective_lines": 837,
-      "max_function_lines": 724,
+      "effective_lines": 834,
+      "max_function_lines": 718,
       "route_count": 0,
       "known_violations": [
         {
           "code": "react_component_too_long",
           "subject": "StoryBiblesPage",
-          "actual": 724
+          "actual": 718
         },
         {
           "code": "react_page_too_long",
           "subject": "frontend/src/app/story-bibles/page.tsx",
-          "actual": 837
+          "actual": 834
         }
       ]
     },
@@ -4445,8 +4486,8 @@
       "known_violations": []
     },
     "frontend/src/components/studio/studio-episode-sidebar.tsx": {
-      "effective_lines": 50,
-      "max_function_lines": 27,
+      "effective_lines": 54,
+      "max_function_lines": 25,
       "route_count": 0,
       "known_violations": []
     },
@@ -4505,8 +4546,8 @@
       "known_violations": []
     },
     "frontend/src/components/studio/studio-shell.tsx": {
-      "effective_lines": 738,
-      "max_function_lines": 467,
+      "effective_lines": 737,
+      "max_function_lines": 466,
       "route_count": 0,
       "known_violations": [
         {
@@ -4517,7 +4558,7 @@
         {
           "code": "react_component_too_long",
           "subject": "StudioShell",
-          "actual": 467
+          "actual": 466
         }
       ]
     },
@@ -4636,7 +4677,7 @@
       "known_violations": []
     },
     "frontend/src/contexts/AuthContext.tsx": {
-      "effective_lines": 205,
+      "effective_lines": 216,
       "max_function_lines": 140,
       "route_count": 0,
       "known_violations": []
@@ -4762,7 +4803,7 @@
       "known_violations": []
     },
     "frontend/src/features/model-center/api.ts": {
-      "effective_lines": 313,
+      "effective_lines": 314,
       "max_function_lines": 24,
       "route_count": 0,
       "known_violations": []
@@ -4804,8 +4845,8 @@
       "known_violations": []
     },
     "frontend/src/features/model-center/components/model-center-catalog-panel.tsx": {
-      "effective_lines": 47,
-      "max_function_lines": 29,
+      "effective_lines": 49,
+      "max_function_lines": 30,
       "route_count": 0,
       "known_violations": []
     },
@@ -4906,8 +4947,8 @@
       "known_violations": []
     },
     "frontend/src/features/model-center/components/prompt-profile-workbench.tsx": {
-      "effective_lines": 33,
-      "max_function_lines": 23,
+      "effective_lines": 34,
+      "max_function_lines": 24,
       "route_count": 0,
       "known_violations": []
     },
@@ -5104,7 +5145,7 @@
       "known_violations": []
     },
     "frontend/src/features/model-center/model-center-labels.ts": {
-      "effective_lines": 61,
+      "effective_lines": 62,
       "max_function_lines": 12,
       "route_count": 0,
       "known_violations": []
@@ -5128,7 +5169,7 @@
       "known_violations": []
     },
     "frontend/src/features/model-center/types.ts": {
-      "effective_lines": 361,
+      "effective_lines": 365,
       "max_function_lines": 0,
       "route_count": 0,
       "known_violations": []
@@ -5238,6 +5279,18 @@
     "frontend/src/features/series-story-locks/use-story-lock-preparation.ts": {
       "effective_lines": 65,
       "max_function_lines": 61,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/story-bibles/story-bible-list-panel.tsx": {
+      "effective_lines": 94,
+      "max_function_lines": 74,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/features/story-bibles/use-story-bible-request-context.ts": {
+      "effective_lines": 23,
+      "max_function_lines": 16,
       "route_count": 0,
       "known_violations": []
     },
@@ -5356,8 +5409,14 @@
       "known_violations": []
     },
     "frontend/src/lib/studio-quick-actions.ts": {
-      "effective_lines": 27,
+      "effective_lines": 30,
       "max_function_lines": 3,
+      "route_count": 0,
+      "known_violations": []
+    },
+    "frontend/src/lib/studio-repair-options.ts": {
+      "effective_lines": 64,
+      "max_function_lines": 16,
       "route_count": 0,
       "known_violations": []
     },

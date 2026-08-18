@@ -395,6 +395,7 @@ def test_separate_batch_locks_completed_and_no_tts_contract(
 def test_separate_batch_locks_prompt_fallback_and_local_reference_omission(
     client: TestClient, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("LIVE_CANARY_PROVIDER_RETRIES", "1")
     seed = asyncio.run(_seed_workflow(image_url="/static/generated/contract-local.png"))
     config_id = asyncio.run(_seed_video_config(str(seed["user"])))
     calls: list[dict[str, object]] = []

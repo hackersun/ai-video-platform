@@ -1,6 +1,42 @@
 import pytest
+from types import SimpleNamespace
 
 from app.core import api_key_utils
+
+
+@pytest.mark.asyncio
+async def test_structured_legacy_text_generation_reserves_enough_output_tokens(monkeypatch) -> None:
+    from app.features.model_drivers.adapters import legacy_text
+    from app.features.model_drivers.domain import TextCommand
+    from app.features.model_drivers import text_execution
+
+    captured = {}
+
+    class FakeService:
+        async def safe_chat_completion(self, **kwargs):
+            captured.update(kwargs)
+            return {"choices": [{"message": {"content": "[]"}}]}
+
+    monkeypatch.setattr(text_execution, "create_text_generation_service", lambda *args: FakeService())
+    context = SimpleNamespace(
+        api_key="not-a-real-key",
+        base_url="https://example.test",
+        connection_params={"provider_name": "deepseek"},
+        profile=SimpleNamespace(provider_id="deepseek", api_model_id="deepseek-v4-flash"),
+    )
+
+    await legacy_text.LegacyTextDriver().submit(
+        TextCommand(prompt="extract", output_contract="json_array"), context,
+    )
+
+    assert captured["max_tokens"] == 12000
+    assert captured["thinking"] == {"type": "disabled"}
+
+
+def test_deepseek_connection_success_message_is_chinese_and_provider_specific() -> None:
+    from app.features.model_drivers.adapters.legacy_text import _SUCCESS_MESSAGES
+
+    assert _SUCCESS_MESSAGES["deepseek"] == "DeepSeek 官方 API 连接成功！"
 
 
 @pytest.mark.asyncio
@@ -24,6 +60,7 @@ from app.core import api_key_utils
             "https://agent.example.test/v1",
         ),
         ("openai", "OpenAIService", "https://openai.example.test/v1/", "https://openai.example.test/v1"),
+        ("deepseek", "OpenAIService", None, "https://api.deepseek.com"),
         ("baidu", "OpenAIService", "https://baidu.example.test/v1/", "https://baidu.example.test/v1"),
     ],
 )

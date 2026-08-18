@@ -154,12 +154,14 @@ async def _legacy_video_model_config(
 def _generation_context_payload(context: GenerationContext) -> dict[str, Any]:
     profile = context.profile
     provider_name = context.connection_params.get("provider_name") or profile.provider_id
+    legacy_config_id = context.binding.connection_id if context.binding.binding_version == 0 else None
     return {
         "provider_id": provider_name,
         "provider_name": provider_name,
         "api_model_id": profile.api_model_id,
         "config_model_id": profile.profile_version_id,
-        "model_config_id": context.binding.connection_id,
+        "model_config_id": legacy_config_id,
+        "provider_connection_id": context.binding.connection_id,
         "model_name": profile.api_model_id,
         "model_type": "video-generation",
         "base_url": context.base_url,

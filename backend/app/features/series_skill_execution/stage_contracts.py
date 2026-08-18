@@ -7,6 +7,17 @@ from typing import Any
 
 
 ENTITY_TYPES = frozenset({"character", "scene", "prop", "event"})
+EVENT_FIELDS = ("actor", "action", "object", "outcome")
+
+
+def _normalize_confidence(value: Any) -> int:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 80
+    if 0 <= score <= 1:
+        score *= 100
+    return max(0, min(100, round(score)))
 
 
 def validate_entity_candidates(
@@ -27,12 +38,14 @@ def validate_entity_candidates(
             continue
         if not name or (name not in source_text and evidence not in source_text):
             continue
+        if entity_type == "event" and not all(str(raw.get(field) or "").strip() for field in EVENT_FIELDS):
+            continue
         accepted.append({
             **raw, "entity_type": entity_type, "name": name[:200],
             "description": raw.get("description") or evidence,
             "aliases": raw.get("aliases") if isinstance(raw.get("aliases"), list) else [],
             "attributes": raw.get("attributes") if isinstance(raw.get("attributes"), dict) else {},
-            "evidence": evidence or name, "confidence": raw.get("confidence") or 80,
+            "evidence": evidence or name, "confidence": _normalize_confidence(raw.get("confidence")),
             "source": "provider_model",
         })
     if not accepted:

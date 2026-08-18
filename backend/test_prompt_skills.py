@@ -66,12 +66,12 @@ def test_builtin_prompt_skills_cover_core_ai_flow(client: TestClient) -> None:
     assert EXPECTED_STANDARD_TASKS.issubset(builtin_tasks)
     for task in EXPECTED_STANDARD_TASKS:
         task_items = [item for item in builtin_items if item["task"] == task]
-        assert len(task_items) == 1
-        skill = task_items[0]
-        assert skill["name"].strip()
-        assert skill["content"].strip()
-        assert skill["is_active"] is True
-        assert "标准" in skill["tags"]
+        assert task_items
+        for skill in task_items:
+            assert skill["name"].strip()
+            assert skill["content"].strip()
+            assert "标准" in skill["tags"]
+        assert len([skill for skill in task_items if skill["is_active"]]) == 1
 
     preview_response = client.post(
         "/api/v1/prompt-skills/preview",
@@ -156,6 +156,7 @@ def test_prompt_skill_variable_guides_cover_entity_asset_extraction(client: Test
         "/api/v1/prompt-skills/preview",
         json={
             "task": "entity_extraction",
+            "skill_ids": ["builtin-entity_extraction-standard"],
             "context": guide["sample_context"],
         },
         headers=_auth_headers(user_id),

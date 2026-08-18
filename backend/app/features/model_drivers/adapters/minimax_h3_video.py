@@ -57,6 +57,14 @@ def _references(command: VideoCommand) -> tuple[VideoReference, ...]:
     return command.references or _legacy_references(command)
 
 
+def _provider_params(command: VideoCommand) -> dict[str, Any]:
+    return {
+        key: command.params[key]
+        for key in ("duration", "resolution", "ratio")
+        if key in command.params
+    }
+
+
 async def _response_json(response) -> Mapping[str, Any]:
     if response.status < 200 or response.status >= 300:
         raise DriverResultError("MiniMax H3 request was rejected")
@@ -118,7 +126,7 @@ class MiniMaxH3VideoDriver:
                 {"type": "text", "text": command.prompt},
                 *(_reference_content(item) for item in references),
             ],
-            **dict(command.params),
+            **_provider_params(command),
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(

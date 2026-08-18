@@ -33,7 +33,10 @@ from app.services.entity_evidence_contract import (
     build_chapter_evidence_contract,
 )
 from app.services.entity_quality_service import AUTO_APPROVE, REJECT_NOISE, score_entity_candidate
-from app.features.series_skill_execution.entity_stage import resolve_entity_candidates
+from app.features.series_skill_execution.entity_stage import (
+    build_entity_stage_input,
+    resolve_entity_candidates,
+)
 from app.features.series_skill_execution.public import bind_series_stage_skill
 from app.services.story_entity_lifecycle import (
     APPROVED,
@@ -325,7 +328,11 @@ async def run_candidate_entity_extraction(
             "source_content": (text or "")[:30000],
             "output_format": "JSON 数组",
         },
-        internal_prompt="抽取小说动漫制作实体候选，必须保留证据，并由质量门禁决定候选/拒绝/批准状态。",
+        internal_prompt=build_entity_stage_input(
+            source_type=source_type,
+            source_text=text,
+            requested_types=requested,
+        ),
         artifact_type="entity_extraction_run", artifact_id=run_id,
         execution_mode="deterministic_skill_contract",
     )

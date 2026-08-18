@@ -6,6 +6,48 @@ import asyncio
 import pytest
 
 
+def test_entity_candidate_contract_normalizes_fractional_confidence():
+    from app.features.series_skill_execution.stage_contracts import validate_entity_candidates
+
+    result = validate_entity_candidates(
+        [{
+            "entity_type": "character",
+            "name": "沈砚",
+            "evidence": "沈砚立于山门前",
+            "confidence": 0.95,
+        }],
+        source_text="沈砚立于山门前",
+        requested_types={"character"},
+    )
+
+    assert result[0]["confidence"] == 95
+
+
+def test_entity_candidate_contract_rejects_incomplete_events():
+    from app.features.series_skill_execution.stage_contracts import validate_entity_candidates
+
+    result = validate_entity_candidates(
+        [
+            {
+                "entity_type": "event",
+                "name": "山门遇袭",
+                "evidence": "山门遇袭",
+                "confidence": 0.9,
+            },
+            {
+                "entity_type": "character",
+                "name": "沈砚",
+                "evidence": "沈砚",
+                "confidence": 90,
+            },
+        ],
+        source_text="山门遇袭，沈砚拔剑迎敌",
+        requested_types={"character", "event"},
+    )
+
+    assert [item["name"] for item in result] == ["沈砚"]
+
+
 def _validate_items(value):
     if not isinstance(value, list) or not value or not isinstance(value[0], dict):
         raise ValueError("items_required")
@@ -124,7 +166,7 @@ async def _async(value):
 
 
 @pytest.mark.asyncio
-async def test_entity_stage_merges_deterministic_source_facts_into_valid_model_output(monkeypatch):
+async def test_entity_stage_only_enriches_matching_model_entities(monkeypatch):
     from app.features.series_skill_execution import entity_stage
     from app.features.series_skill_execution.model_pipeline import SeriesStageModelResult
 
@@ -152,7 +194,7 @@ async def test_entity_stage_merges_deterministic_source_facts_into_valid_model_o
 
     character = next(item for item in items if item["name"] == "顾清霜")
     assert character["attributes"]["visual_dna"] == {"gender": "女性", "hair": "黑发高马尾"}
-    assert any(item["name"] == "星墟古城" for item in items)
+    assert not any(item["name"] == "星墟古城" for item in items)
     assert evidence["deterministic_enrichment"] == {
-        "merged_entities": 1, "added_entities": 1,
+        "merged_entities": 1, "added_entities": 0,
     }

@@ -28,7 +28,7 @@ export const defaultNotificationPreferences: NotificationPreferences = {
 };
 
 export const defaultAppearancePreferences: AppearancePreferences = {
-  theme: 'dark',
+  theme: 'light',
   compactMode: false,
   reduceMotion: false,
   accentColor: 'violet',

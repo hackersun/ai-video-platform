@@ -1,15 +1,4 @@
-"""
-视频生成 API 端点
-支持火山引擎豆包视频模型
-
-使用官方SDK: volcengine-python-sdk[ark]
-模型: doubao-seedance-1-5-pro-251215 (Doubao-Seedance-1.5-pro)
-
-完整异步流程:
-1. POST /video/generate -> 提交任务，返回 task_id
-2. GET /video/status/{task_id} -> 查询任务状态
-3. GET /video/jobs -> 获取历史任务
-"""
+"""统一视频生成、轮询和任务查询 API。"""
 
 from app.core.time_utils import utc_now
 from typing import Any, List, Optional
@@ -90,6 +79,7 @@ from app.features.video_generation.public import (
     video_model_metadata,
     video_prompt_parameters,
 )
+from app.features.video_generation.application.driver_poll import poll_bound_video_job
 
 router = APIRouter(tags=["视频生成"])
 
@@ -534,13 +524,16 @@ async def generate_video(
         reference_package, manual_reference_counts = merge_request_references(
             reference_package, request, video_reference_limits,
         )
+        image_delivery = await resolve_provider_image_delivery(db, user_id, effective_image_url)
+        provider_image_url = image_delivery["provider_image_url"]
+        image_url_omitted_reason = image_delivery["image_url_omitted_reason"]
         if not is_dev_mode():
             preflight_package = await build_generation_context_package(
                 db,
                 user_id,
                 task_type="shot_video",
                 model_config_id=video_model_config.get("model_config_id"),
-                image_url=effective_image_url,
+                image_url=provider_image_url,
                 production_mode=True,
                 require_public_reference_image=bool(effective_image_url),
                 novel_id=request.novel_id,
@@ -561,9 +554,6 @@ async def generate_video(
                     },
                 )
         video_seed = resolve_video_seed(request, lineage, consistency_metadata)
-        image_delivery = await resolve_provider_image_delivery(db, user_id, effective_image_url)
-        provider_image_url = image_delivery["provider_image_url"]
-        image_url_omitted_reason = image_delivery["image_url_omitted_reason"]
         if image_url_omitted_reason:
             final_prompt = append_provider_image_note(final_prompt, image_url_omitted_reason)
         provider_prompt = sanitize_provider_video_prompt(final_prompt)
@@ -715,7 +705,7 @@ async def generate_video(
         try:
             create_result = await submit_bound_video_task(
                 video_model_config.get("generation_context"), provider_final_prompt, create_kwargs, client,
-                execution_snapshot_id,
+                execution_snapshot_id, request.ratio,
             )
         except Exception as exc:
             image_error = provider_image_url_error_message(exc, provider_image_url)
@@ -740,7 +730,7 @@ async def generate_video(
                 try:
                     create_result = await submit_bound_video_task(
                         video_model_config.get("generation_context"), fallback_prompt["prompt"], retry_kwargs,
-                        client, execution_snapshot_id,
+                        client, execution_snapshot_id, request.ratio,
                     )
                 except Exception as retry_exc:
                     retry_image_error = provider_image_url_error_message(retry_exc, provider_image_url)
@@ -858,6 +848,10 @@ async def get_video_status(
             duration=existing_job.duration,
             resolution=existing_job.resolution
         )
+
+    bound_status = await poll_bound_video_job(db, user_id, existing_job) if existing_job else None
+    if bound_status:
+        return VideoStatusResponse(**bound_status)
 
     provider_for_status = "volcano"
     if existing_job:

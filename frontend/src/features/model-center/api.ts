@@ -207,7 +207,7 @@ function modelCenterOverview(value: unknown): ModelCenterOverview {
   return {
     blocking_issues: arrayValue(input, 'blocking_issues', '概览').map((issue) => {
       const item = record(issue, '概览问题');
-      const capability = item.capability === undefined ? undefined : modelCapability(item.capability, '概览问题');
+      const capability = item.capability == null ? undefined : modelCapability(item.capability, '概览问题');
       const section = typeof item.section === 'string' ? item.section as ModelCenterOverview['blocking_issues'][number]['section'] : 'catalog';
       return {
         code: stringValue(item, 'code', '概览问题'), message: stringValue(item, 'message', '概览问题'),

@@ -293,3 +293,27 @@ test('studio bootstrap requests the workflow catalog once', async ({ page }) => 
   await expect(page.getByRole('heading', { name: '第二章 暗潮 制作看板' })).toBeVisible();
   expect(snapshotRequestCounts.get('wf-002')).toBe(1);
 });
+
+test('studio workflow load failure is shown in Chinese and can be retried', async ({ page }) => {
+  let requestCount = 0;
+  await page.route('**/api/v1/workflow', async (route) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      await route.abort('failed');
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: '[]',
+    });
+  });
+
+  await page.goto('/studio');
+
+  await expect(page.getByText('本集工程列表加载失败，请检查网络后重试。')).toBeVisible();
+  await expect(page.getByText('Load failed')).toHaveCount(0);
+  await page.getByRole('button', { name: '重新加载工程列表' }).click();
+  await expect(page.getByText('本集工程列表加载失败，请检查网络后重试。')).toHaveCount(0);
+  expect(requestCount).toBe(2);
+});

@@ -121,6 +121,28 @@ def test_text_catalog_limits_are_normalized_to_driver_command_contract() -> None
     assert normalized.profile.limits == {"max_prompt_chars": 256000}
 
 
+def test_backfilled_image_profile_is_normalized_to_driver_command_contract() -> None:
+    from app.features.model_config.generation_context import _runtime_execution_binding
+
+    profile = ModelProfileContract(
+        profile_version_id="image-v1", provider_id="volcano", api_model_id="seedream",
+        driver_key="volcano_ark_image_v3", capabilities=frozenset({"image_generation"}),
+        input_contract={}, output_contract={}, parameter_schema={}, default_params={},
+        limits={"context_window": 0, "max_tokens": 0}, pricing={},
+        prompt_profile_key=None, contract_version="legacy-backfill-v1",
+    )
+    binding = ResolvedModelBinding(
+        task="shot_image", capability="image_generation", profile=profile,
+        connection_id="connection-1", binding_version=1, source_scope="user",
+    )
+
+    normalized = _runtime_execution_binding(binding)
+
+    assert normalized.profile.parameter_schema["properties"]["size"] == {"type": "string"}
+    assert normalized.profile.parameter_schema["properties"]["num"] == {"type": "integer"}
+    assert normalized.profile.limits["max_prompt_chars"] == 12000
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("scopes", "explicit", "expected_scope"),
@@ -267,6 +289,8 @@ async def test_video_model_config_forwards_explicit_profile_selection(
     )
 
     assert resolved["config_model_id"] == profile.id
+    assert resolved["model_config_id"] is None
+    assert resolved["provider_connection_id"] == connection.id
     assert resolved["api_model_id"] == profile.api_model_id
     assert resolved["api_key"] == "selected-profile-key"
 
@@ -465,12 +489,12 @@ async def test_direct_video_submitter_executes_selected_non_ark_driver_context(
     result = await driver_submission.submit_bound_video_task(
         generation, "driver selected",
         {"content": [{"type": "text", "text": "driver selected"}], "duration": 4, "resolution": "720p"},
-        object(),
+        object(), ratio="16:9",
     )
 
     assert result.id == "direct-non-ark-task"
     assert captured["context"] is generation.driver_context
-    assert captured["command"].params == {"duration": 4, "resolution": "720p"}
+    assert captured["command"].params == {"duration": 4, "resolution": "720p", "ratio": "16:9"}
 
 
 @pytest.mark.asyncio
@@ -539,6 +563,96 @@ async def test_asset_generation_routes_through_binding_aware_image_submitter(
     assert captured["db"] is service.db
     assert captured["user_id"] == "asset-user"
     assert captured["config_id"] == "explicit-asset-image-config"
+    assert captured["job_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_asset_generation_configures_published_model_center_profile_when_legacy_config_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import asset_generation_service
+
+    service = asset_generation_service.AssetGenerationService(db=object(), user_id="asset-user")
+    generation = SimpleNamespace(
+        profile=SimpleNamespace(api_model_id="doubao-seedream-5-0"),
+        connection_params={"provider_name": "volcano"},
+    )
+    captured = {}
+
+    async def forbidden_legacy(*_args, **_kwargs):
+        raise AssertionError("published model-center profiles must not query the legacy table first")
+
+    async def resolve_profile(*_args, **kwargs):
+        captured.update(kwargs)
+        return generation
+
+    monkeypatch.setattr(asset_generation_service, "get_user_image_model_config", forbidden_legacy)
+    monkeypatch.setattr(asset_generation_service, "resolve_generation_context", resolve_profile)
+
+    await service.configure_image_model("published-profile-version")
+
+    assert service.image_generation_context is generation
+    assert service.provider_name == "volcano"
+    assert service.model_id == "doubao-seedream-5-0"
+    assert captured["explicit_profile_version_id"] == "published-profile-version"
+
+
+@pytest.mark.asyncio
+async def test_asset_generation_falls_back_to_legacy_image_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.features.model_config.public import ModelBindingError
+    from app.services import asset_generation_service
+
+    service = asset_generation_service.AssetGenerationService(db=object(), user_id="asset-user")
+
+    async def missing_profile(*_args, **_kwargs):
+        raise ModelBindingError("profile_version_not_found")
+
+    async def legacy_config(*_args, **_kwargs):
+        return "secret", "volcano", "seedream", "https://example.test"
+
+    legacy_service = object()
+    monkeypatch.setattr(asset_generation_service, "resolve_generation_context", missing_profile)
+    monkeypatch.setattr(asset_generation_service, "get_user_image_model_config", legacy_config)
+    monkeypatch.setattr(asset_generation_service, "create_image_generation_service", lambda *_args: legacy_service)
+
+    await service.configure_image_model("legacy-config")
+
+    assert service.image_service is legacy_service
+    assert service.image_generation_context is None
+    assert service.provider_name == "volcano"
+    assert service.model_id == "seedream"
+
+
+@pytest.mark.asyncio
+async def test_asset_generation_submits_resolved_model_center_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import asset_generation_service
+
+    service = asset_generation_service.AssetGenerationService(db=object(), user_id="asset-user")
+    generation = SimpleNamespace()
+    service.image_generation_context = generation
+    service.provider_name = "volcano"
+    service.model_id = "doubao-seedream-5-0"
+    service.image_model_config_id = "published-profile-version"
+    captured = {}
+
+    async def submit(_service, **kwargs):
+        captured.update(kwargs)
+        return {"image_urls": ["https://example.test/model-center-asset.png"]}
+
+    async def persist(url, **_kwargs):
+        return url
+
+    monkeypatch.setattr(asset_generation_service, "call_image_generation_provider", submit)
+    monkeypatch.setattr(asset_generation_service, "persist_remote_media_url", persist)
+
+    assert await service._generate_asset_image_url(
+        "asset prompt", size="3K", aspect_ratio="16:9", prefix="scene",
+    ) == "https://example.test/model-center-asset.png"
+    assert captured["generation_context"] is generation
 
 
 @pytest.mark.asyncio

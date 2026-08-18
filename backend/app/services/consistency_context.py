@@ -604,6 +604,7 @@ async def build_consistency_prompt(
     character_ids: Optional[List[str]] = None,
     fallback_character_id: Optional[str] = None,
     extra_context: Optional[Dict[str, Any]] = None,
+    include_existing_shot_prompt: bool = True,
 ) -> Dict[str, Any]:
     """Return composed prompt and resolved context metadata."""
     shot, storyboard, script = await get_shot_for_context(db, user_id, shot_id)
@@ -675,6 +676,7 @@ async def build_consistency_prompt(
         extra_context=context,
         locked_assets=locked_assets,
         skill_blocks=[entry["content"] for entry in prompt_skill_entries],
+        include_existing_shot_prompt=include_existing_shot_prompt,
     )
 
     task_default = get_task_default(task)

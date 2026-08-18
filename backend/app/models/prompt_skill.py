@@ -11,7 +11,7 @@ class PromptSkill(Base):
 
     __tablename__ = "prompt_skills"
 
-    id = Column(String(36), primary_key=True)
+    id = Column(String(80), primary_key=True)
     user_id = Column(String(36), nullable=False, index=True)
     name = Column(String(120), nullable=False)
     description = Column(Text, nullable=True)

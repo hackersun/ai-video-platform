@@ -1,0 +1,96 @@
+name: ai-video-platform
+
+services:
+  proxy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    ports:
+      - "${APP_HTTP_PORT:-8080}:80"
+    volumes:
+      - ./ops/deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/caddy/data:/data
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/caddy/config:/config
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: /api/v1
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    command: ["sh", "-c", "python init_db.py && python bootstrap_production.py && exec uvicorn main:app --host 0.0.0.0 --port 8000 --workers ${API_WORKERS:-2}"]
+    environment:
+      DATABASE_URL: postgresql://ai_video:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ai_video_platform
+      REDIS_URL: redis://redis:6379/0
+      DEV_MODE: "false"
+      MODEL_CENTER_READ_MODE: canonical
+      SERIES_STAGE_MODEL_TIMEOUT_SECONDS: ${SERIES_STAGE_MODEL_TIMEOUT_SECONDS:-90}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/media:/app/static
+      - ${AI_VIDEO_RUNTIME_ROOT:-/srv/ai-video-platform/runtime}/api-tmp:/tmp/ai-video-platform
+      - ${AI_VIDEO_FONT_ROOT:-/usr/share/fonts/opentype/noto}:/usr/share/fonts/opentype/noto:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_video_platform
+      POSTGRES_USER: ai_video
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_video -d ai_video_platform"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12

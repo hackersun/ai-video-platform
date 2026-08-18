@@ -10,6 +10,22 @@ from app.models import PromptSkill
 from tests.model_binding_test_support import db_session as db_session
 
 
+def test_entity_stage_input_contains_source_and_strict_json_contract() -> None:
+    from app.features.series_skill_execution.entity_stage import build_entity_stage_input
+
+    prompt = build_entity_stage_input(
+        source_type="chapter",
+        source_text="沈砚在青岚宗山门举起玄天镜。",
+        requested_types={"character", "scene", "prop"},
+    )
+
+    assert "沈砚在青岚宗山门举起玄天镜。" in prompt
+    assert "character、prop、scene" in prompt
+    assert "entity_type" in prompt
+    assert "evidence" in prompt
+    assert "只输出 JSON 数组" in prompt
+
+
 @pytest.mark.asyncio
 async def test_series_stage_binding_returns_rendered_prompt_and_artifact_evidence(db_session):
     from app.features.series_skill_execution.public import bind_series_stage_skill

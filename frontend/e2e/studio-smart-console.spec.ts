@@ -173,8 +173,9 @@ test('studio resolves a generated relative novel cover through the backend media
 
   const cover = page.getByRole('img', { name: '星港追光 系列封面' });
   await expect(cover).toBeVisible();
-  await expect.poll(() => requestedCoverUrl).toMatch(
-    /^http:\/\/(?:localhost|127\.0\.0\.1):8000\/static\/generated\/images\/novel-cover-test\.jpg$/,
+  const pageOrigin = new URL(page.url()).origin;
+  await expect.poll(() => requestedCoverUrl).toBe(
+    `${pageOrigin}/static/generated/images/novel-cover-test.jpg`,
   );
   await expect.poll(() => cover.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
 });
@@ -368,7 +369,7 @@ test('novels production entry opens studio command flow and confirms production 
   await expect(episodeWorkspace.getByRole('heading', { name: '本集概览' })).toBeVisible();
   await expect(episodeWorkspace.getByRole('heading', { name: '模型就绪度' })).toBeVisible();
   await expect(episodeWorkspace.getByText('1/1 模型就绪')).toBeVisible();
-  await expect(episodeWorkspace.getByRole('heading', { name: '失败任务' })).toBeVisible();
+  await expect(episodeWorkspace.getByRole('heading', { name: '待处理事项' })).toBeVisible();
   await expect(episodeWorkspace.getByTestId('studio-shot-generation-summary')).toContainText('镜头生成（已完成 1/5）');
   await expect(episodeWorkspace.getByTestId('studio-shot-generation-summary')).toContainText('PixelWave v2.1');
   await expect(episodeWorkspace.locator('[data-testid^="studio-quick-action-"]')).toHaveCount(12);

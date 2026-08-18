@@ -19,7 +19,7 @@ from app.models.model_center import ModelExecutionSnapshot
 _FORBIDDEN_KEYS = frozenset({"api_key", "api_secret", "authorization", "prompt", "text", "token", "secret"})
 _CREDENTIAL_VALUE_PREFIXES = ("bearer ", "basic ", "sk-", "ak", "gaaaaa")
 _SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
-_SAFE_RESOLUTION = re.compile(r"^(?:[1-9][0-9]{2,3}p|[1248]K)$")
+_SAFE_RESOLUTION = re.compile(r"^(?:[1-9][0-9]{2,3}[pP]|[1248]K)$")
 _SAFE_IMAGE_SIZE = re.compile(r"^(?:[1-9][0-9]{2,4}[xX][1-9][0-9]{2,4}|[1-8][kK](?:_[wh])?)$")
 _SAFE_ASPECT_RATIO = re.compile(r"^[1-9][0-9]?:[1-9][0-9]?$")
 SNAPSHOT_PARAM_ALLOWLIST = frozenset({
@@ -131,7 +131,8 @@ def sanitize_snapshot_params(params: Mapping[str, Any] | None) -> dict[str, Any]
 
 
 def _binding_id(binding: ResolvedModelBinding) -> str:
-    return binding.binding_id or f"legacy:{binding.connection_id or binding.profile.profile_version_id}"
+    value = binding.binding_id or f"legacy:{binding.connection_id or binding.profile.profile_version_id}"
+    return value if len(value) <= 36 else sha256(value.encode("utf-8")).hexdigest()[:36]
 
 
 def _snapshot_params(command: ExecutionSnapshotCommand) -> dict[str, Any]:

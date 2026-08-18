@@ -17,6 +17,7 @@ export const modelTaskOptions: Array<{
   capability: ModelCapability;
 }> = [
   { key: 'script_generation', label: '小说理解与分镜', capability: 'text_generation' },
+  { key: 'entity_extraction', label: '角色、场景与道具提取', capability: 'text_generation' },
   { key: 'shot_vision', label: '镜头视觉分析', capability: 'vision_analysis' },
   { key: 'shot_image', label: '参考资产生成', capability: 'image_generation' },
   { key: 'shot_video', label: '镜头视频生成', capability: 'video_generation' },

@@ -101,6 +101,14 @@ def _legacy_driver(binding: ResolvedModelBinding, connection: RuntimeConnectionR
 
 def _runtime_execution_binding(binding: ResolvedModelBinding) -> ResolvedModelBinding:
     """Translate catalog-oriented limits into the strict driver command contract."""
+    if (
+        binding.capability != "text_generation"
+        and binding.profile.contract_version == "legacy-backfill-v1"
+    ):
+        return replace(
+            binding,
+            profile=_legacy_execution_profile(binding.profile, binding.profile.driver_key),
+        )
     if binding.capability != "text_generation":
         return binding
     limits = dict(binding.profile.limits or {})
@@ -124,7 +132,7 @@ def _legacy_execution_profile(profile, driver_key: str):
         "video_generation": (
             {"max_prompt_chars": 12000, "max_reference_images": video_refs["images"],
              "max_reference_videos": video_refs["videos"], "max_reference_audios": video_refs["audios"]},
-            {"duration": {"type": "integer"}, "resolution": {"type": "string"}, "camera_fixed": {"type": "boolean"}, "watermark": {"type": "boolean"}, "seed": {"type": "integer"}},
+            {"duration": {"type": "integer"}, "resolution": {"type": "string"}, "ratio": {"type": "string"}, "camera_fixed": {"type": "boolean"}, "watermark": {"type": "boolean"}, "seed": {"type": "integer"}},
         ),
         "image_generation": (
             {"max_prompt_chars": 12000,

@@ -182,6 +182,33 @@ test('redacts raw secrets from overview and connection write responses', async (
   }
 });
 
+test('accepts readiness issues that are not tied to a single model capability', async () => {
+  const requests = recordFetch(() => jsonResponse({
+    blocking_issues: [{
+      code: 'connection_missing',
+      message: '尚未保存模型连接。',
+      severity: 'blocker',
+      section: 'connections',
+      capability: null,
+      resource_id: '',
+      action_label: '新增模型连接',
+    }],
+    connections: [],
+    recipes: [],
+    can_manage_catalog: false,
+  }));
+  try {
+    const overview = await modelCenterApi.getOverview();
+    expect(overview.blocking_issues[0]).toMatchObject({
+      code: 'connection_missing',
+      capability: undefined,
+      section: 'connections',
+    });
+  } finally {
+    requests.restore();
+  }
+});
+
 test('preserves the shared transport error mapping', async () => {
   const requests = recordFetch(() => jsonResponse({
     detail: { code: 'revision_conflict', message: '配置已被其他操作更新，请刷新后重新提交。' },
