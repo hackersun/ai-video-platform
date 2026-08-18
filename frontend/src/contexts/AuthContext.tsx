@@ -35,6 +35,18 @@ type AuthContextValue = {
   refreshUser: () => Promise<void>;
 };
 
+async function readAuthResponse(response: Response, fallbackMessage: string): Promise<AuthResponse> {
+  const contentType = response.headers.get('content-type')?.toLowerCase() || '';
+  if (!contentType.includes('application/json')) {
+    return { success: false, message: fallbackMessage };
+  }
+  try {
+    return await response.json();
+  } catch {
+    return { success: false, message: fallbackMessage };
+  }
+}
+
 const TOKEN_KEY = 'auth_token';
 const USER_KEY = 'user';
 const PUBLIC_PATHS = ['/', '/login', '/register', '/forgot-password', '/reset-password'];
@@ -173,7 +185,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    const data = await response.json();
+    const data = await readAuthResponse(response, '登录服务暂时不可用，请稍后重试');
 
     if (data.success && data.access_token && data.user) {
       localStorage.setItem(TOKEN_KEY, data.access_token);
@@ -202,7 +214,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, email, password }),
       });
-      const data = await response.json();
+      const data = await readAuthResponse(response, '注册服务暂时不可用，请稍后重试');
 
       if (data.success && data.access_token && data.user) {
         localStorage.setItem(TOKEN_KEY, data.access_token);

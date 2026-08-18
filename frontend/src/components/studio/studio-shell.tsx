@@ -328,6 +328,7 @@ export function StudioShell() {
     : [];
 
   const loadWorkflows = useCallback(async () => {
+    setError('');
     try {
       const data = await getStudioWorkflows();
       const list = Array.isArray(data) ? data : [];
@@ -338,7 +339,7 @@ export function StudioShell() {
         router.replace(`/studio?workflow_id=${firstId}`);
       }
     } catch (err: any) {
-      setError(err.message || '加载工作流失败');
+      setError('本集工程列表加载失败，请检查网络后重试。');
     }
   }, [router, workflowId]);
 
@@ -677,17 +678,15 @@ export function StudioShell() {
             <AlertCircle className="mt-0.5 h-4 w-4" />
             <span>{error}</span>
           </div>
-          {workflowId ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="shrink-0 border-red-200/30 text-red-50"
-              onClick={() => loadSnapshot(workflowId, mode)}
-            >
-              重新加载工作台
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-red-200/30 text-red-50"
+            onClick={() => workflowId ? loadSnapshot(workflowId, mode) : loadWorkflows()}
+          >
+            {workflowId ? '重新加载工作台' : '重新加载工程列表'}
+          </Button>
         </div>
       )}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -11,6 +11,9 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/toast';
 import { ExpertToolBanner } from '@/components/layout/main-layout';
+import { StudioReturnDock } from '@/components/studio/studio-return-dock';
+import { StoryBibleListPanel } from '@/features/story-bibles/story-bible-list-panel';
+import { useStoryBibleRequestContext } from '@/features/story-bibles/use-story-bible-request-context';
 import {
   Dialog,
   DialogContent,
@@ -123,6 +126,8 @@ const resolveNovelStyle = (novel?: NovelOption | null) => {
 
 export default function StoryBiblesPage() {
   const { toast } = useToast();
+  const { ready: requestContextReady, novelId: contextualNovelId, createRequested } = useStoryBibleRequestContext();
+  const autoOpenedNovelRef = useRef('');
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
   const [novels, setNovels] = useState<NovelOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,15 +178,34 @@ export default function StoryBiblesPage() {
   } | null>(null);
 
   useEffect(() => {
-    loadStoryBibles();
+    if (!requestContextReady) return;
+    loadStoryBibles(contextualNovelId);
+  }, [contextualNovelId, requestContextReady]);
+  useEffect(() => {
     loadNovels();
   }, []);
-
-  const loadStoryBibles = async () => {
+  useEffect(() => {
+    if (!requestContextReady || !contextualNovelId || loading || loadingNovels) return;
+    const novel = novels.find((item) => item.id === contextualNovelId);
+    if (novel && generateForm.novel_id !== contextualNovelId) {
+      setGenerateForm((current) => ({ ...current, novel_id: contextualNovelId, title: `${novel.title || '未命名小说'} Story Bible` }));
+    }
+    if (createRequested && storyBibles.length === 0 && autoOpenedNovelRef.current !== contextualNovelId) {
+      autoOpenedNovelRef.current = contextualNovelId;
+      setGenerateDialogOpen(true);
+    }
+  }, [contextualNovelId, createRequested, generateForm.novel_id, loading, loadingNovels, novels, requestContextReady, storyBibles.length]);
+  const loadStoryBibles = async (novelId = contextualNovelId) => {
     setLoading(true);
     try {
-      const data = await apiClient.getStoryBibles();
-      setStoryBibles(Array.isArray(data) ? data : []);
+      const data = await apiClient.getStoryBibles({ novel_id: novelId || undefined });
+      const items = Array.isArray(data) ? data : [];
+      setStoryBibles(items);
+      if (novelId) {
+        const nextSelected = items.find((item) => item.id === selectedBible?.id) || items[0] || null;
+        setSelectedBible(nextSelected);
+        if (nextSelected) setEditForm(storyBibleToEditForm(nextSelected));
+      }
     } catch (error) {
       console.error('加载 Story Bible 失败:', error);
     } finally {
@@ -232,7 +256,7 @@ export default function StoryBiblesPage() {
       });
       setGenerateDialogOpen(false);
       setGenerateForm({ novel_id: '', title: '', negative_prompt: '' });
-      loadStoryBibles();
+      loadStoryBibles(novelId);
       if (result?.id) {
         handleSelectBible(result);
       }
@@ -436,7 +460,7 @@ export default function StoryBiblesPage() {
               variant="outline"
               size="sm"
               className="border-white/20 text-white hover:bg-white/10"
-              onClick={loadStoryBibles}
+              onClick={() => loadStoryBibles()}
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               刷新
@@ -453,48 +477,15 @@ export default function StoryBiblesPage() {
         </div>
 
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-          {/* Sidebar: Story Bible List */}
-          <div className="space-y-4 lg:col-span-1">
-            <h3 className="text-sm font-medium text-white/60 uppercase tracking-wider">Story Bibles</h3>
-            <div className="space-y-2">
-              {storyBibles.length === 0 ? (
-                <Card className="bg-white/5 border-white/10">
-                  <CardContent className="p-4 text-center">
-                    <p className="text-white/40 text-sm">还没有 Story Bible</p>
-                    <Button
-                      size="sm"
-                      variant="link"
-                      className="mt-2 text-violet-400"
-                      onClick={() => setGenerateDialogOpen(true)}
-                    >
-                      从小说生成
-                    </Button>
-                  </CardContent>
-                </Card>
-              ) : (
-                storyBibles.map((bible) => (
-                  <Card
-                    key={bible.id}
-                    className={`bg-white/5 border-white/10 cursor-pointer transition-colors hover:border-white/20 ${
-                      selectedBible?.id === bible.id ? 'border-violet-500 bg-violet-500/10' : ''
-                    }`}
-                    onClick={() => handleSelectBible(bible)}
-                  >
-                    <CardContent className="p-4">
-                      <h4 className="text-white font-medium truncate">{bible.title}</h4>
-                      <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-white/40">
-                        <span>角色 {bible.character_rules?.length || 0}</span>
-                        <span>|</span>
-                        <span>场景 {bible.scene_rules?.length || 0}</span>
-                      </div>
-                      <div className="text-xs text-white/30 mt-1">
-                        {new Date(bible.updated_at).toLocaleDateString()}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))
-              )}
-            </div>
+          <div className="lg:col-span-1">
+            <StoryBibleListPanel
+              items={storyBibles}
+              novels={novels}
+              selectedId={selectedBible?.id}
+              contextualNovelId={contextualNovelId}
+              onSelect={handleSelectBible}
+              onGenerate={() => setGenerateDialogOpen(true)}
+            />
           </div>
 
           {/* Main Content: Selected Bible */}
@@ -771,9 +762,13 @@ export default function StoryBiblesPage() {
                   <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-white/5 flex items-center justify-center">
                     <BookOpen className="w-8 h-8 text-white/40" />
                   </div>
-                  <h3 className="text-lg font-medium text-white mb-2">选择或创建一个 Story Bible</h3>
+                  <h3 className="text-lg font-medium text-white mb-2">
+                    {contextualNovelId ? '当前小说还没有统一设定' : '选择或创建一个 Story Bible'}
+                  </h3>
                   <p className="text-white/60 mb-4">
-                    Story Bible 用于保持角色、场景、道具和事件在跨章节中的一致性
+                    {contextualNovelId
+                      ? '点击下方按钮，系统会从当前小说提取角色、场景、道具和事件。'
+                      : 'Story Bible 用于保持角色、场景、道具和事件在跨章节中的一致性'}
                   </p>
                   <Button
                     className="bg-violet-600 hover:bg-violet-700"
@@ -874,6 +869,7 @@ export default function StoryBiblesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <StudioReturnDock />
     </div>
   );
 }

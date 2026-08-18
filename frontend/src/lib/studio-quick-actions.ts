@@ -10,6 +10,8 @@ function modelCenterQuickAction(actionId: string, label: string, section: 'conne
 
 export const STUDIO_QUICK_ACTIONS = {
   entities: quickAction('entities', '角色与道具设定', '/studio/cards', 'entities'),
+  storyBible: quickAction('story-bible', '小说设定与一致性', '/story-bibles', 'story-bible'),
+  episodeSetup: quickAction('episode-setup', '本集小说与章节关联', '/workflow', 'episode-setup'),
   sceneAssets: quickAction('scene-assets', '场景资产准备', '/assets', 'scene-assets'),
   referenceLocks: quickAction('reference-locks', '素材与引用锁定', '/studio/cards', 'reference-locks'),
   storyboard: quickAction('storyboard', '剧本与分镜', '/storyboards', 'storyboard'),
@@ -21,6 +23,7 @@ export const STUDIO_QUICK_ACTIONS = {
   continuityReview: quickAction('continuity-review', '一致性评审', '/studio/continuity-review', 'findings'),
   timeline: quickAction('timeline', '时间线与精修', '/workflow', 'timeline'),
   output: quickAction('output', '成片输出', '/workflow', 'output'),
+  jobs: quickAction('jobs', '失败任务处理', '/jobs', 'jobs'),
   modelCatalog: modelCenterQuickAction('model-catalog', '模型能力配置', 'catalog'),
   videoModels: modelCenterQuickAction('video-models', '视频模型配置', 'catalog', 'video_generation'),
   productionRecipes: modelCenterQuickAction('production-recipes', '生产组合预设', 'recipes'),

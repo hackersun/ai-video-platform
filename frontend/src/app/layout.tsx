@@ -15,7 +15,7 @@ const themeBootstrapScript = `
     const scopedKey = user?.id ? 'settings.appearance:' + user.id : 'settings.appearance';
     const raw = localStorage.getItem(scopedKey) || localStorage.getItem('settings.appearance');
     const saved = raw ? JSON.parse(raw) : {};
-    const preference = ['dark', 'light', 'system'].includes(saved.theme) ? saved.theme : 'dark';
+    const preference = ['dark', 'light', 'system'].includes(saved.theme) ? saved.theme : 'light';
     const resolved = preference === 'system'
       ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')
       : preference;
@@ -23,8 +23,8 @@ const themeBootstrapScript = `
     document.documentElement.dataset.theme = resolved;
     document.documentElement.style.colorScheme = resolved;
   } catch {
-    document.documentElement.dataset.themePreference = 'dark';
-    document.documentElement.dataset.theme = 'dark';
+    document.documentElement.dataset.themePreference = 'light';
+    document.documentElement.dataset.theme = 'light';
   }
 })();
 `;
