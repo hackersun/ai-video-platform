@@ -85,6 +85,20 @@ def test_execution_snapshot_rejects_secrets_and_prompt_content() -> None:
         sanitize_snapshot_params({"prompt": "private full prompt"})
 
 
+@pytest.mark.parametrize("resolution", ["720p", "768P", "1080P", "2K"])
+def test_execution_snapshot_accepts_provider_resolution_labels(resolution: str) -> None:
+    assert sanitize_snapshot_params({"resolution": resolution}) == {"resolution": resolution}
+
+
+def test_execution_snapshot_compacts_request_scoped_binding_identifier() -> None:
+    from app.features.model_config.snapshots import _binding_id
+
+    binding = replace(_binding(), binding_id="request:" + "a" * 72)
+
+    assert len(_binding_id(binding)) == 36
+    assert _binding_id(binding) == _binding_id(binding)
+
+
 @pytest.mark.parametrize("image_size", ["1k", "2k", "3k", "2k_w", "2K", "1024x1024"])
 def test_execution_snapshot_accepts_supported_image_generation_sizes(image_size: str) -> None:
     assert sanitize_snapshot_params({"image_size": image_size}) == {"image_size": image_size}
@@ -240,6 +254,8 @@ async def test_workflow_ark_prompt_retry_keeps_execution_snapshot_context(
 
     from app.features.model_drivers.public import DriverExecutionError
     from app.features.workflow_media.adapters import video_submission
+
+    monkeypatch.setenv("LIVE_CANARY_PROVIDER_RETRIES", "1")
 
     binding = _binding()
     generation = SimpleNamespace(

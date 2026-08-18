@@ -178,3 +178,12 @@ test('默认模型页直接说明当前生产选择并可更换', async ({ page 
   await expect(page.getByRole('button', { name: '更换小说理解与分镜默认模型' })).toBeEnabled();
   await expect(page.getByRole('button', { name: '设置默认模型' })).toBeEnabled();
 });
+
+test('默认模型可单独配置角色场景与道具提取', async ({ page }) => {
+  await page.goto('/llm-config?section=bindings');
+  await page.getByRole('button', { name: '设置默认模型' }).click();
+
+  await expect(page.getByLabel('使用场景').locator('option[value="entity_extraction"]')).toHaveText(
+    '角色、场景与道具提取',
+  );
+});

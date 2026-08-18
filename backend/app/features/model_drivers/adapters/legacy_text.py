@@ -5,11 +5,13 @@ from app.features.model_drivers.domain import DriverSubmission, TextCommand
 
 
 _SUCCESS_MESSAGES = {
-    "baidu": "百度API连接成功！", "dashscope": "千问API连接成功！",
+    "baidu": "百度API连接成功！", "dashscope": "千问API连接成功！", "deepseek": "DeepSeek 官方 API 连接成功！",
     "openai": "OpenAI API连接成功！", "qianlian": "千链API连接成功！",
     "qwen": "千问API连接成功！", "volcano": "火山引擎API连接成功！",
     "volcano_agent_plan": "火山方舟 API 连接成功！",
 }
+_STRUCTURED_OUTPUT_CONTRACTS = frozenset({"json", "json_array", "json_object", "json_schema"})
+_STRUCTURED_OUTPUT_MAX_TOKENS = 12000
 
 
 class LegacyTextDriver:
@@ -29,9 +31,16 @@ class LegacyTextDriver:
 
         provider = str(context.connection_params.get("provider_name") or context.profile.provider_id)
         service = create_text_generation_service(context.api_key, provider, context.base_url)
+        structured_options = (
+            {"max_tokens": _STRUCTURED_OUTPUT_MAX_TOKENS}
+            if command.output_contract in _STRUCTURED_OUTPUT_CONTRACTS else {}
+        )
+        if provider == "deepseek" and structured_options:
+            structured_options["thinking"] = {"type": "disabled"}
         response = await service.safe_chat_completion(
             model=context.profile.api_model_id,
             messages=[{"role": "user", "content": command.prompt}],
+            **structured_options,
             **dict(command.params),
         )
         usage = response.get("usage", {}) if isinstance(response, dict) else {}

@@ -16,6 +16,7 @@ from sqlalchemy import select, update, and_, desc
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
+from app.core.deepseek_catalog import DEEPSEEK_MODEL_SEEDS, DEEPSEEK_PROVIDER
 from app.core.model_registry import (
     get_registry,
     get_task_default,
@@ -23,10 +24,7 @@ from app.core.model_registry import (
 )
 from app.core.security import get_current_user_id
 from app.core.volcano_image_catalog import VOLCANO_IMAGE_MODEL_SEEDS
-from app.core.volcano_agent_plan_config import (
-    VOLCANO_AGENT_PLAN_MODELS,
-    VOLCANO_AGENT_PLAN_PROVIDER,
-)
+from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_MODELS, VOLCANO_AGENT_PLAN_PROVIDER
 from app.features.model_config.credential_persistence import (
     apply_config_update,
     apply_create_or_upsert_config,
@@ -315,7 +313,7 @@ def _video_catalog_model_seeds() -> list[dict]:
     return seeds
 
 
-DEFAULT_PROVIDERS = [
+DEFAULT_PROVIDERS = [DEEPSEEK_PROVIDER,
     {
         "id": "volcano",
         "name": "volcano",
@@ -423,7 +421,7 @@ DEFAULT_PROVIDERS = [
     }
 ]
 
-DEFAULT_MODELS = [
+DEFAULT_MODELS = [*DEEPSEEK_MODEL_SEEDS,
     *VOLCANO_AGENT_PLAN_MODELS,
     *_video_catalog_model_seeds(),
     # 火山引擎模型

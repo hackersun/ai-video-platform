@@ -4,11 +4,11 @@ LLM服务商和模型配置初始化脚本
 运行此脚本初始化LLM服务商和模型配置到数据库
 """
 import sys
-import uuid
 sys.path.insert(0, '.')
 
 from app.core.database import sync_engine
 from sqlalchemy.orm import Session
+from app.core.deepseek_catalog import DEEPSEEK_MODEL_SEEDS, DEEPSEEK_PROVIDER
 from app.core.volcano_agent_plan_config import VOLCANO_AGENT_PLAN_MODELS, VOLCANO_AGENT_PLAN_PROVIDER
 from app.core.volcano_image_catalog import VOLCANO_IMAGE_MODEL_SEEDS
 from app.models.llm_config import LLMProvider, LLMModel
@@ -18,7 +18,7 @@ def init_llm_providers_and_models():
     """初始化LLM服务商和模型"""
     
     # 服务商配置
-    providers = [
+    providers = [DEEPSEEK_PROVIDER,
         {
             "id": "volcano",
             "name": "volcano",
@@ -93,7 +93,7 @@ def init_llm_providers_and_models():
     ]
     
     # 模型配置
-    models = [
+    models = [*DEEPSEEK_MODEL_SEEDS,
         *VOLCANO_AGENT_PLAN_MODELS,
         # 火山引擎 - 文本模型
         {
@@ -635,7 +635,7 @@ def init_llm_providers_and_models():
         
         # 插入模型
         for m in models:
-            existing = session.query(LLMModel).filter_by(model_id=m["model_id"]).first()
+            existing = session.get(LLMModel, m["id"]) or session.query(LLMModel).filter_by(model_id=m["model_id"]).first()
             if not existing:
                 model = LLMModel(**m)
                 session.add(model)

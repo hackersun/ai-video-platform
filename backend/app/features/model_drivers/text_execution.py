@@ -303,14 +303,10 @@ def create_text_generation_service(
             VolcanoService(api_key, base_url or VOLCANO_CODING_PLAN_BASE_URL),
             execution_snapshot_id, snapshot_factory,
         )
-    if provider_name == "openai":
-        from app.services.openai_service import OpenAIService
-
-        return TextGenerationServiceAdapter(OpenAIService(api_key, base_url), execution_snapshot_id, snapshot_factory)
-    if provider_name == "baidu":
-        from app.services.openai_service import OpenAIService
-
-        return TextGenerationServiceAdapter(OpenAIService(api_key, base_url), execution_snapshot_id, snapshot_factory)
+    if provider_name in ("openai", "deepseek", "baidu"):
+        from app.features.model_drivers.openai_compatible import create_openai_compatible_service
+        service = create_openai_compatible_service(api_key, provider_name, base_url)
+        return TextGenerationServiceAdapter(service, execution_snapshot_id, snapshot_factory)
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=f"不支持的文本模型服务商: {provider_name}",
