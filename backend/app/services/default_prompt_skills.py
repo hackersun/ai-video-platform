@@ -15,6 +15,7 @@ SYSTEM_PROMPT_SKILL_USER_ID = "system"
 def _skill(
     *,
     task: str,
+    skill_id: str | None = None,
     name: str,
     description: str,
     stage: str,
@@ -24,7 +25,7 @@ def _skill(
     version: int = 1,
 ) -> Dict[str, Any]:
     return {
-        "id": f"builtin-{task}-standard",
+        "id": skill_id or f"builtin-{task}-standard",
         "user_id": SYSTEM_PROMPT_SKILL_USER_ID,
         "name": name,
         "description": description,
@@ -111,6 +112,44 @@ STANDARD_PROMPT_SKILLS: List[Dict[str, Any]] = [
 姓名与动作相邻时只保留姓名主体，例如“季衡伸手”应抽取“季衡”；虚构身份个体（如“影潮使”）有持续行动证据时可以保留。
 场景必须是可复用空间；道具必须是可见且需要前后一致的物件；事件必须是剧情变化，不要和人物、场景、道具混淆。
 每个实体都要带 evidence 和 confidence；没有证据就不要凭题材臆造资产。
+""",
+    ),
+    _skill(
+        task="entity_extraction",
+        skill_id="builtin-entity-extraction-character-standard",
+        name="标准角色提取技能",
+        description="从小说与章节中提取有原文证据、可跨章追踪的真实角色。",
+        stage="character",
+        priority=46,
+        version=1,
+        variables={"minimum_confidence": "0.72"},
+        content="""
+标准角色提取技能：从当前小说、章节或剧本中识别需要跨章保持一致的角色。
+只输出 JSON 数组，不要输出 Markdown、解释文字或代码块；没有合格角色时输出空数组。
+每个角色必须包含规范名称、别名、原文证据、身份/关系、外观线索、性格与行动证据、置信度。
+仅保留明确姓名、稳定称谓或具有持续行动和对白证据的单一个体，置信度不得低于 {minimum_confidence}。
+合并同一角色的别名和不同称呼，不得重复创建；无法确认时保留证据并降低置信度，不要编造设定。
+禁止把群体背景、身体部位、动作短语、地点、时间、情绪、判断句或无持续证据的泛称识别为角色。
+输出前逐项核对：名称能在原文定位、证据与名称一致、类型只能是 character、后续可用于角色定稿图和镜头一致性。
+""",
+    ),
+    _skill(
+        task="entity_extraction",
+        skill_id="builtin-entity-extraction-scene-prop-standard",
+        name="标准场景/道具提取技能",
+        description="从小说与章节中区分可复用场景和需要连续追踪的关键道具。",
+        stage="scene_prop",
+        priority=47,
+        version=1,
+        variables={"minimum_confidence": "0.70"},
+        content="""
+标准场景/道具提取技能：从当前小说、章节或剧本中分别识别可复用场景与关键道具。
+只输出 JSON 数组，不要输出 Markdown、解释文字或代码块；没有合格对象时输出空数组。
+场景必须是角色能够进入、停留或发生动作的连续空间，并包含规范名称、别名、原文证据、时代/空间结构、光线天气和置信度。
+道具必须是画面可见、参与剧情或需要前后保持状态一致的物件，并包含规范名称、别名、原文证据、材质外观、持有人/位置、状态变化和置信度。
+置信度不得低于 {minimum_confidence}；同一地点或物件的不同称呼必须合并，状态变化记录到同一对象，不得重复创建。
+禁止把人物、动作、情绪、时间短语、抽象概念、普通背景杂物或没有原文证据的题材想象识别为场景/道具。
+输出前逐项核对：类型只能是 scene 或 prop、证据可定位、场景可复用、道具确有连续性价值，不能凭空补全。
 """,
     ),
     _skill(
