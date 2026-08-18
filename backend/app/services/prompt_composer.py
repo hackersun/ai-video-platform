@@ -39,6 +39,7 @@ def compose_generation_prompt(
     extra_context: Optional[Dict[str, Any]] = None,
     locked_assets: Optional[List[Dict]] = None,
     skill_blocks: Optional[List[str]] = None,
+    include_existing_shot_prompt: bool = True,
 ) -> str:
     """Compose a deterministic prompt from consistency sources."""
     sections: List[str] = [f"任务: {task}"]
@@ -107,8 +108,9 @@ def compose_generation_prompt(
 
     if shot is not None:
         shot_parts = []
-        for label, attr in (
-            ("镜头描述", "prompt"),
+        shot_fields = (
+            (("镜头描述", "prompt"),) if include_existing_shot_prompt else ()
+        ) + (
             ("视觉描述", "visual_description"),
             ("对白", "dialogue"),
             ("机位", "camera_angle"),
@@ -116,7 +118,8 @@ def compose_generation_prompt(
             ("情绪", "emotion"),
             ("光影", "lighting"),
             ("色彩", "color_grading"),
-        ):
+        )
+        for label, attr in shot_fields:
             value = getattr(shot, attr, None)
             if value:
                 shot_parts.append(f"{label}: {value}")

@@ -1466,7 +1466,7 @@ async def batch_rebuild_consistency_prompts(
             if use_entity_refs:
                 from app.services.consistency_context import auto_fill_shot_entity_refs
                 await auto_fill_shot_entity_refs(
-                    db, shot, storyboard.novel_id, storyboard.chapter_id
+                    db, shot, storyboard.novel_id, _json_dict(storyboard.content).get("chapter_id")
                 )
 
             # 锁定资产
@@ -1480,9 +1480,10 @@ async def batch_rebuild_consistency_prompts(
                 db=db,
                 user_id=user_id,
                 task="shot_video",
-                story_bible_id=storyboard.story_bible_id,
+                story_bible_id=_json_dict(_json_dict(storyboard.content).get("novel_continuity")).get("story_bible_id"),
                 novel_id=storyboard.novel_id,
-                shot_id=shot.id
+                shot_id=shot.id,
+                include_existing_shot_prompt=False,
             )
             new_prompt = context.get("prompt", "")
 
@@ -1544,9 +1545,12 @@ async def rebuild_shot_prompt(
         db=db,
         user_id=user_id,
         task="shot_video",
-        story_bible_id=storyboard.story_bible_id,
+        story_bible_id=_json_dict(
+            _json_dict(storyboard.content).get("novel_continuity")
+        ).get("story_bible_id"),
         novel_id=storyboard.novel_id,
-        shot_id=shot.id
+        shot_id=shot.id,
+        include_existing_shot_prompt=False,
     )
     new_prompt = context.get("prompt", "")
 

@@ -67,7 +67,7 @@ def has_video_generation_driver(generation_context: Any) -> bool:
 
 async def submit_bound_video_task(
     generation_context: Any, prompt: str, create_kwargs: dict[str, Any], client: Any,
-    execution_snapshot_id: str | None = None,
+    execution_snapshot_id: str | None = None, ratio: str | None = None,
 ) -> Any:
     if generation_context is None:
         return submit_ark_video_task(create_kwargs=create_kwargs, client=client)
@@ -75,6 +75,8 @@ async def submit_bound_video_task(
         **dict(generation_context.profile.default_params),
         **{key: create_kwargs[key] for key in ("duration", "resolution", "ratio", "camera_fixed", "watermark", "seed") if key in create_kwargs},
     }
+    if ratio is not None:
+        params["ratio"] = ratio
     try:
         submission = await execute_generation(
             build_builtin_driver_registry(),

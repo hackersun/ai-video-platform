@@ -7,11 +7,16 @@ from app.models.prompt_skill import PromptSkill
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = ROOT / "compose.production.yml"
+DEVELOPMENT_COMPOSE_PATH = ROOT / "docker-compose.yml"
 DEPLOY_ROOT = ROOT / "ops" / "deploy"
 
 
 def _compose() -> dict:
     return yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
+
+
+def _development_compose() -> dict:
+    return yaml.safe_load(DEVELOPMENT_COMPOSE_PATH.read_text(encoding="utf-8"))
 
 
 def test_production_compose_has_one_public_entry_and_private_stateful_services() -> None:
@@ -25,6 +30,7 @@ def test_production_compose_has_one_public_entry_and_private_stateful_services()
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/postgres:/var/lib/postgresql/data"
     ]
     assert "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/media:/app/static" in services["api"]["volumes"]
+    assert "${AI_VIDEO_FONT_ROOT:-/usr/share/fonts/opentype/noto}:/usr/share/fonts/opentype/noto:ro" in services["api"]["volumes"]
     assert services["redis"]["volumes"] == [
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/redis:/data"
     ]
@@ -43,8 +49,19 @@ def test_production_compose_rejects_development_mounts_commands_and_weak_passwor
     assert "DEV_MODE: \"false\"" in text
     assert "JWT_SECRET_KEY: ${JWT_SECRET_KEY:?" in text
     assert "FERNET_KEY: ${FERNET_KEY:?" in text
+    assert _compose()["services"]["api"]["environment"]["MODEL_CENTER_READ_MODE"] == "canonical"
+    assert (
+        _compose()["services"]["api"]["environment"]["SERIES_STAGE_MODEL_TIMEOUT_SECONDS"]
+        == "${SERIES_STAGE_MODEL_TIMEOUT_SECONDS:-90}"
+    )
     api_command = " ".join(_compose()["services"]["api"]["command"])
     assert "python bootstrap_production.py" in api_command
+
+
+def test_development_backend_processes_share_the_persistent_fernet_key() -> None:
+    services = _development_compose()["services"]
+    for service_name in ("api", "worker"):
+        assert services[service_name]["env_file"] == ["./backend/.env"]
 
 
 def test_proxy_and_frontend_use_same_origin_api_contract() -> None:
@@ -89,6 +106,12 @@ def test_production_bootstrap_seeds_only_shared_catalogs() -> None:
     assert "apply_prompt_recovery" in bootstrap
     for private_model in ("Novel", "Chapter", "Script", "Storyboard", "Shot", "LLMConfig"):
         assert private_model not in bootstrap
+
+
+def test_production_bootstrap_projects_supported_direct_providers() -> None:
+    bootstrap = (ROOT / "backend" / "bootstrap_production.py").read_text(encoding="utf-8")
+    for provider_id in ("deepseek", "minimax", "volcano"):
+        assert f'"{provider_id}"' in bootstrap
 
 
 def test_prompt_skill_primary_key_can_store_builtin_catalog_ids() -> None:

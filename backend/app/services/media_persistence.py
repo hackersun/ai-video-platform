@@ -12,6 +12,7 @@ import base64
 from io import BytesIO
 import mimetypes
 import re
+import shutil
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -186,6 +187,25 @@ def persist_uploaded_media_bytes(
     target_path = _safe_static_path(safe_subdir, filename)
     target_path.write_bytes(data)
     return f"/static/generated/{safe_subdir}/{filename}"
+
+
+def persist_local_media_file(
+    source: str | Path,
+    *,
+    media_type: str,
+    subdir: str,
+    prefix: str = "media",
+) -> str:
+    """Copy a generated local artifact into persistent static storage."""
+    if media_type not in ALLOWED_CONTENT_TYPES:
+        raise ValueError(f"不支持的媒体类型: {media_type}")
+    source_path = Path(source)
+    if not source_path.is_file():
+        raise ValueError("本地媒体文件不存在")
+    suffix = source_path.suffix.lower() or DEFAULT_EXTENSIONS[media_type]
+    target_path = _safe_static_path(subdir.strip("/"), f"{prefix}-{uuid4().hex}{suffix}")
+    shutil.copy2(source_path, target_path)
+    return f"/static/generated/{subdir.strip('/')}/{target_path.name}"
 
 
 def _persist_data_url(

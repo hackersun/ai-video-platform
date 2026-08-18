@@ -46,6 +46,8 @@ services:
       DATABASE_URL: postgresql://ai_video:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ai_video_platform
       REDIS_URL: redis://redis:6379/0
       DEV_MODE: "false"
+      MODEL_CENTER_READ_MODE: canonical
+      SERIES_STAGE_MODEL_TIMEOUT_SECONDS: ${SERIES_STAGE_MODEL_TIMEOUT_SECONDS:-90}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
       VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
@@ -53,6 +55,7 @@ services:
     volumes:
       - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/media:/app/static
       - ${AI_VIDEO_RUNTIME_ROOT:-/srv/ai-video-platform/runtime}/api-tmp:/tmp/ai-video-platform
+      - ${AI_VIDEO_FONT_ROOT:-/usr/share/fonts/opentype/noto}:/usr/share/fonts/opentype/noto:ro
     depends_on:
       postgres:
         condition: service_healthy

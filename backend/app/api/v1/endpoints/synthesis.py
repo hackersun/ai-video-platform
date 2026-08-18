@@ -956,6 +956,9 @@ async def execute_synthesis(
             "quality": request.quality,
             "source_video_urls": request.video_urls,
             "source_audio_urls": request.audio_urls or [],
+            "render_status": "rendered" if result["status"] == "succeeded" and result.get("video_url") else "failed",
+            "render_backend": "ffmpeg_local",
+            "output_kind": "final_video" if result["status"] == "succeeded" and result.get("video_url") else "missing_final_video",
         }
     )
     db.add(synthesis_job)
@@ -1033,6 +1036,9 @@ async def synthesize_video(
             "quality": request.quality,
             "video_urls": request.video_urls,
             "audio_urls": request.audio_urls,
+            "render_status": "rendered" if result["status"] == "succeeded" and result.get("video_url") else "failed",
+            "render_backend": "ffmpeg_local",
+            "output_kind": "final_video" if result["status"] == "succeeded" and result.get("video_url") else "missing_final_video",
         }
     )
     db.add(synthesis_job)

@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from app.core.dev_generation import dev_synthesis_url, is_dev_mode
 from app.core.time_utils import utc_now
+from app.services import media_persistence
 from pydantic import BaseModel
 
 
@@ -58,6 +59,18 @@ class SynthesisExecutor:
         if not self.ffmpeg_available:
             raise RuntimeError("FFmpeg不可用，请安装FFmpeg或启用DEV_MODE")
         return subprocess.run(args, capture_output=True, timeout=timeout, text=True)
+
+    def _probe_duration(self, video_path: str) -> float:
+        result = self._run_ffmpeg([
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", video_path,
+        ])
+        if result.returncode != 0:
+            return 0.0
+        try:
+            return round(float(result.stdout.strip()), 3)
+        except (TypeError, ValueError):
+            return 0.0
 
     async def concatenate_videos(
         self,
@@ -274,7 +287,7 @@ class SynthesisExecutor:
         style: Optional[Dict[str, Any]] = None
     ) -> None:
         """生成ASS格式字幕文件"""
-        font_name = style.get("font", "Arial") if style else "Arial"
+        font_name = style.get("font", "Noto Sans CJK SC") if style else "Noto Sans CJK SC"
         font_size = style.get("font_size", 48) if style else 48
         primary_color = style.get("primary_color", "&H00FFFFFF") if style else "&H00FFFFFF"
         outline_color = style.get("outline_color", "&H00000000") if style else "&H00000000"
@@ -397,13 +410,30 @@ class SynthesisExecutor:
             # 5. 生成封面
             cover_path = await self.generate_cover(final_video)
 
+            # 6. 持久化到 /static，避免把容器临时目录作为成片地址。
+            final_path = Path(final_video)
+            if final_path.is_file():
+                stable_video_url = media_persistence.persist_local_media_file(
+                    final_path, media_type="video", subdir="synthesis", prefix="final"
+                )
+                duration_seconds = self._probe_duration(str(final_path))
+            else:
+                stable_video_url = await media_persistence.persist_remote_media_url(
+                    final_video, media_type="video", subdir="synthesis", prefix="final"
+                )
+                stable_path = media_persistence.local_static_path_for_url(stable_video_url)
+                duration_seconds = self._probe_duration(str(stable_path)) if stable_path else 0.0
+            stable_cover_url = media_persistence.persist_local_media_file(
+                cover_path, media_type="image", subdir="synthesis", prefix="cover"
+            )
+
             return {
                 "job_id": job_id,
                 "status": "succeeded",
-                "video_url": final_video,
-                "cover_url": cover_path,
-                "duration_seconds": 0,  # TODO: 从视频获取实际时长
-                "output_path": str(output_path),
+                "video_url": stable_video_url,
+                "cover_url": stable_cover_url,
+                "duration_seconds": duration_seconds,
+                "output_path": str(final_path) if final_path.is_file() else None,
             }
 
         except Exception as e:

@@ -289,6 +289,31 @@ def test_auto_fill_shot_entity_refs_has_single_definition():
     assert source.count("async def auto_fill_shot_entity_refs(") == 1
 
 
+def test_batch_prompt_rebuild_reads_chapter_from_storyboard_content():
+    import inspect
+    import app.api.v1.endpoints.shots as shots_endpoint
+
+    source = inspect.getsource(shots_endpoint.batch_rebuild_consistency_prompts)
+
+    assert "storyboard.chapter_id" not in source
+    assert "storyboard.story_bible_id" not in source
+    assert '_json_dict(storyboard.content).get("chapter_id")' in source
+
+
+def test_prompt_rebuild_does_not_feed_the_previous_generated_prompt_back_in():
+    import inspect
+    import app.api.v1.endpoints.shots as shots_endpoint
+
+    batch_source = inspect.getsource(shots_endpoint.batch_rebuild_consistency_prompts)
+    single_source = inspect.getsource(shots_endpoint.rebuild_shot_prompt)
+
+    assert "include_existing_shot_prompt=False" in batch_source
+    assert "include_existing_shot_prompt=False" in single_source
+    assert "storyboard.story_bible_id" not in single_source
+    assert 'storyboard.content).get("novel_continuity")' in single_source
+    assert '.get("story_bible_id")' in single_source
+
+
 @pytest.mark.asyncio
 async def test_asset_lock_service_handles_normalized_refs_without_unlocking_shared_assets():
     from app.services.asset_lock_service import AssetLockService

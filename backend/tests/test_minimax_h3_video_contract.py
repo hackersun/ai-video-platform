@@ -6,6 +6,8 @@ from app.services.minimax_h3_video_contract import (
     h3_reference_limits,
     validate_h3_generation,
 )
+from app.features.model_drivers.adapters.minimax_h3_video import _provider_params
+from app.features.model_drivers.domain import VideoCommand
 
 
 def test_h3_contract_accepts_official_boundary_values() -> None:
@@ -72,6 +74,17 @@ def test_h3_parameter_schema_matches_driver_kernel_shape() -> None:
     }
     assert schema["properties"]["resolution"]["enum"] == ["768P", "2K"]
     assert "adaptive" in schema["properties"]["ratio"]["enum"]
+
+
+def test_h3_provider_payload_omits_ark_only_parameters() -> None:
+    command = VideoCommand(params={
+        "duration": 4, "resolution": "768P", "ratio": "16:9",
+        "camera_fixed": False, "watermark": False, "seed": 42,
+    })
+
+    assert _provider_params(command) == {
+        "duration": 4, "resolution": "768P", "ratio": "16:9",
+    }
 
 
 def test_canonical_catalog_exposes_h3_without_replacing_shot_video_default() -> None:

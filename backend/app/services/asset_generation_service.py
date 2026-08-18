@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.api_key_utils import create_image_generation_service, get_user_image_model_config
 from app.core.dev_generation import dev_image_url, is_dev_mode
 from app.core.time_utils import utc_now
+from app.features.model_config.public import ModelBindingError, resolve_generation_context
 from app.models.asset import Asset
 from app.models.series_production_run import SeriesProductionRun
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
@@ -742,6 +743,7 @@ class AssetGenerationService:
         self.image_service: Optional[Any] = None
         self.provider_name = ""
         self.model_id, self.image_model_config_id = "", None
+        self.image_generation_context: Optional[Any] = None
         self.last_prompt_routing: Dict[str, Any] = {}
         self.last_generation_failures: List[Asset] = []
         self.live_novel_id: Optional[str] = None
@@ -778,14 +780,30 @@ class AssetGenerationService:
 
     async def configure_image_model(self, model_config_id: Optional[str] = None):
         """Use the user's configured image-generation model."""
-        api_key, provider_name, model_id, base_url = await get_user_image_model_config(
-            self.db,
-            self.user_id,
-            config_id=model_config_id,
-        )
-        self.image_service = create_image_generation_service(api_key or "", provider_name or "", base_url)
-        self.provider_name = provider_name or ""
-        self.model_id = model_id or ""
+        try:
+            generation_context = await resolve_generation_context(
+                self.db,
+                user_id=self.user_id,
+                stage="image",
+                explicit_profile_version_id=model_config_id,
+                prefer_canonical_binding=True,
+            )
+        except ModelBindingError:
+            api_key, provider_name, model_id, base_url = await get_user_image_model_config(
+                self.db,
+                self.user_id,
+                config_id=model_config_id,
+            )
+            self.image_service = create_image_generation_service(api_key or "", provider_name or "", base_url)
+            self.provider_name = provider_name or ""
+            self.model_id = model_id or ""
+            self.image_model_config_id = model_config_id
+            self.image_generation_context = None
+            return
+        self.image_generation_context = generation_context
+        self.image_service = None
+        self.provider_name = str(generation_context.connection_params.get("provider_name") or "")
+        self.model_id = generation_context.profile.api_model_id
         self.image_model_config_id = model_config_id
 
     async def _generate_asset_image_url(
@@ -796,7 +814,7 @@ class AssetGenerationService:
         aspect_ratio: str,
         prefix: str,
     ) -> str:
-        if not self.image_service:
+        if not self.image_service and self.image_generation_context is None:
             try:
                 await self.configure_image_model()
             except Exception:
@@ -844,9 +862,10 @@ class AssetGenerationService:
             size=size,
             aspect_ratio=aspect_ratio,
             openai_size="1024x1024", db=self.db, user_id=self.user_id, config_id=self.image_model_config_id,
-            job_id=f"asset:{prefix}", run_id=live_run.id if live_run else None,
+            job_id=None, run_id=live_run.id if live_run else None,
             recipe_version_id=(live_run.run_metadata or {}).get("recipe_version_id") if live_run else None,
             prompt_profile_version_id=self.last_prompt_routing.get("prompt_profile_version_id"),
+            generation_context=self.image_generation_context,
         )
         image_urls = extract_image_urls_from_provider_result(result)
         self.last_execution_snapshot_id = result.get("execution_snapshot_id")
