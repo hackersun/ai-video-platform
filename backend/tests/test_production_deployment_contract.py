@@ -22,9 +22,9 @@ def _development_compose() -> dict:
 def test_production_compose_has_one_public_entry_and_private_stateful_services() -> None:
     compose = _compose()
     services = compose["services"]
-    assert set(services) == {"proxy", "frontend", "api", "postgres", "redis"}
+    assert set(services) == {"proxy", "frontend", "api", "postgres", "redis", "series-run-worker"}
     assert services["proxy"]["ports"] == ["${APP_HTTP_PORT:-8080}:80"]
-    for name in ("frontend", "api", "postgres", "redis"):
+    for name in ("frontend", "api", "postgres", "redis", "series-run-worker"):
         assert not services[name].get("ports"), name
     assert services["postgres"]["volumes"] == [
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/postgres:/var/lib/postgresql/data"
@@ -35,6 +35,16 @@ def test_production_compose_has_one_public_entry_and_private_stateful_services()
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/redis:/data"
     ]
     assert all("healthcheck" in service for service in services.values())
+    worker = services["series-run-worker"]
+    assert worker["command"] == ["python", "-m", "app.services.series_run_worker"]
+    assert worker["environment"]["REDIS_URL"] == "redis://redis:6379/0"
+    assert worker["environment"]["DATABASE_URL"].startswith("postgresql://")
+    assert worker["environment"]["DEV_MODE"] == "false"
+    assert "redis" in worker["depends_on"]
+    assert "postgres" in worker["depends_on"]
+    assert services["api"]["environment"]["REDIS_URL"] == "redis://redis:6379/0"
+    assert "--appendonly" in " ".join(services["redis"].get("command") or [])
+
 
 
 def test_production_compose_rejects_development_mounts_commands_and_weak_passwords() -> None:
