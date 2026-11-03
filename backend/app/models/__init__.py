@@ -20,6 +20,7 @@ from app.models.workflow import Workflow
 from app.models.image_job import ImageJob
 from app.models.project import Project, ProjectMember
 from app.models.publication import Publication
+from app.models.publication_pipeline import NovelPublicationPipeline
 from app.models.asset import Asset, AssetCategory
 from app.models.timeline import Timeline, Track, Clip
 from app.models.story_bible import StoryBible
@@ -77,6 +78,7 @@ __all__ = [
     "Project",
     "ProjectMember",
     "Publication",
+    "NovelPublicationPipeline",
     "Asset",
     "AssetCategory",
     "Timeline",

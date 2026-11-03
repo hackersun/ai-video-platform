@@ -31,6 +31,7 @@ def register_production_models() -> None:
     from app.models.provider_asset_binding import ProviderAssetBinding
     from app.models.quality_evaluation import QualityEvaluation
     from app.models.series_production_run import SeriesProductionRun
+    from app.models.publication_pipeline import NovelPublicationPipeline
     from app.models.story_entity_mention import StoryEntityMention
 
     _ = (
@@ -52,6 +53,7 @@ def register_production_models() -> None:
         ProviderAssetBinding,
         QualityEvaluation,
         SeriesProductionRun,
+        NovelPublicationPipeline,
         StoryEntityMention,
     )
 

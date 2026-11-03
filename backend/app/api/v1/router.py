@@ -13,6 +13,7 @@ from app.api.v1.endpoints import (
     consistency, studio, prompt_skills,
     production_cards, costs,
     series_runs,
+    publication_pipelines,
 )
 from app.features.series_anchor_generation.api import router as series_anchor_generation_router
 from app.features.series_run_recovery.api import router as series_run_recovery_router
@@ -142,3 +143,5 @@ api_router.include_router(series_runs.router, prefix="", tags=["整书生产运�
 api_router.include_router(series_anchor_generation_router, prefix="", tags=["整书生产运行"])
 api_router.include_router(series_run_recovery_router, prefix="", tags=["整书生产恢复"])
 api_router.include_router(series_story_lock_router, prefix="", tags=["整书生产资产修复"])
+
+api_router.include_router(publication_pipelines.router, prefix="", tags=["发布流水线"])
