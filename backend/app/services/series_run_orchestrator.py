@@ -107,8 +107,13 @@ StageBuilder = Callable[[AsyncSession, SeriesProductionRun, dict[str, Any], str]
 
 
 class SeriesRunOrchestrator:
-    def __init__(self, stage_builder: StageBuilder = build_production_stage) -> None:
+    def __init__(
+        self,
+        stage_builder: StageBuilder = build_production_stage,
+        should_stop: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
         self._stage_builder = stage_builder
+        self._should_stop = should_stop
 
     async def validate_live_model_bindings(self, db: AsyncSession, run: SeriesProductionRun, bindings, **constraints):
         constraints.setdefault("persist", True)
@@ -195,6 +200,8 @@ class SeriesRunOrchestrator:
         for index, stored in enumerate(list(run.episodes or [])):
             if stored.get("stage") == "shots_ready":
                 continue
+            if await self._stop_requested(db, run):
+                return run
             episode = dict(stored)
             episode["attempt_count"] = int(episode.get("attempt_count") or 0) + 1
             episode["blocker"] = None
@@ -203,6 +210,8 @@ class SeriesRunOrchestrator:
             await db.commit()
             current_stage = episode.get("stage") or "created"
             for stage in EPISODE_STAGES[EPISODE_STAGES.index(current_stage) + 1:]:
+                if await self._stop_requested(db, run):
+                    return run
                 try:
                     async with db.begin_nested():
                         additions = await self._stage_builder(db, run, dict(episode), stage)
@@ -221,10 +230,21 @@ class SeriesRunOrchestrator:
                 episode.update(stage=stage, canonical_ids=canonical, blocker=None)
                 self._replace_episode(run, index, episode)
                 await db.commit()
+                if await self._stop_requested(db, run):
+                    return run
         transition_run(run, "shots_ready")
         run.current_episode_number = int((run.episodes or [])[-1]["episode_number"])
         await db.commit()
         return run
+
+    async def _stop_requested(self, db: AsyncSession, run: SeriesProductionRun) -> bool:
+        await db.refresh(run)
+        if run.status == "paused":
+            return True
+        if self._should_stop is not None and await self._should_stop():
+            await db.refresh(run)
+            return True
+        return False
 
     @staticmethod
     def _replace_episode(run: SeriesProductionRun, index: int, episode: dict[str, Any]) -> None:
