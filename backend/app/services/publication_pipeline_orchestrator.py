@@ -1,4 +1,4 @@
-"""Layer-B NovelPublicationPipeline FSM — P1 post-tail publish glue."""
+"""Layer-B NovelPublicationPipeline FSM — P1 post-tail + P2/P3/P4 one-click."""
 
 from __future__ import annotations
 
@@ -15,6 +15,21 @@ from app.models.publication_pipeline import NovelPublicationPipeline
 from app.models.series_production_run import SeriesProductionRun
 from app.models.synthesis_job import SynthesisJob
 from app.services.publication_export import PublicationNotReadyError, create_platform_publication
+from app.services.publication_pipeline_front import (
+    PipelineFrontBlocked,
+    ensure_series_plan_for_pipeline,
+    ensure_series_run_for_pipeline,
+    run_front_to_shots,
+)
+from app.services.publication_pipeline_gates import (
+    commercial_gates_env_enabled,
+    commercial_gates_required,
+    evaluate_commercial_gates,
+)
+from app.services.publication_pipeline_media import (
+    PipelineMediaBlocked,
+    run_media_quality_for_pipeline,
+)
 from app.services.publication_pipeline_render import (
     PipelineRenderBlocked,
     assemble_whole_book_mp4,
@@ -24,6 +39,20 @@ from app.services.publication_readiness import evaluate_publication_readiness, i
 
 logger = logging.getLogger(__name__)
 
+FORWARD_STAGES = (
+    "accepted",
+    "ensuring_plan",
+    "ensuring_run",
+    "run_front_to_shots",
+    "run_media_quality",
+    "episode_rendering",
+    "book_assembling",
+    "publication_gating",
+    "publishing",
+    "succeeded",
+)
+
+# Back-compat alias for P1 imports/tests
 P1_FORWARD_STAGES = (
     "accepted",
     "episode_rendering",
@@ -34,6 +63,8 @@ P1_FORWARD_STAGES = (
 )
 
 TERMINAL_STATUSES = {"succeeded", "failed", "blocked", "cancelled"}
+
+FRONT_STAGES = {"accepted", "ensuring_plan", "ensuring_run", "run_front_to_shots", "run_media_quality"}
 
 
 class InvalidPipelineTransition(ValueError):
@@ -48,11 +79,19 @@ class PublicationPipelineOrchestrator:
         ensure_episode_fn=ensure_episode_ffmpeg_local,
         assemble_fn=assemble_whole_book_mp4,
         create_publication_fn=create_platform_publication,
+        ensure_plan_fn=ensure_series_plan_for_pipeline,
+        ensure_run_fn=ensure_series_run_for_pipeline,
+        run_front_fn=run_front_to_shots,
+        run_media_fn=run_media_quality_for_pipeline,
     ):
         self._should_stop = should_stop
         self._ensure_episode = ensure_episode_fn
         self._assemble = assemble_fn
         self._create_publication = create_publication_fn
+        self._ensure_plan = ensure_plan_fn
+        self._ensure_run = ensure_run_fn
+        self._run_front = run_front_fn
+        self._run_media = run_media_fn
 
     async def _stop_requested(self) -> bool:
         if self._should_stop is None:
@@ -82,6 +121,9 @@ class PublicationPipelineOrchestrator:
         pipeline.blocker_code = code
         pipeline.blocker_detail = detail or code
         return pipeline
+
+    def _meta(self, pipeline: NovelPublicationPipeline) -> Dict[str, Any]:
+        return dict(pipeline.pipeline_metadata or {})
 
     async def resolve_completed_run(
         self,
@@ -113,6 +155,15 @@ class PublicationPipelineOrchestrator:
                 pipeline.series_run_id = run.id
         return run
 
+    def _run_ready_for_render(self, run: Optional[SeriesProductionRun]) -> bool:
+        if run is None or run.status != "completed":
+            return False
+        media_tail = ((run.gate_summary or {}).get("media_tail") or {})
+        # Allow completed runs without media_tail for P1 back-compat fixtures that only set completed.
+        if media_tail and media_tail.get("result") not in {None, "passed"}:
+            return False
+        return True
+
     async def execute(
         self,
         db: AsyncSession,
@@ -128,11 +179,27 @@ class PublicationPipelineOrchestrator:
             self._mark_stage(pipeline, "accepted", result="passed")
 
         run = await self.resolve_completed_run(db, pipeline)
+        needs_front = not self._run_ready_for_render(run)
+
+        if needs_front and pipeline.stage in FRONT_STAGES | {"accepted"}:
+            pipeline = await self._execute_front_and_media(db, pipeline)
+            if pipeline.status in TERMINAL_STATUSES or pipeline.status == "paused":
+                return pipeline
+            run = await self.resolve_completed_run(db, pipeline)
+            if not self._run_ready_for_render(run):
+                self._block(
+                    pipeline,
+                    "series_run_not_completed",
+                    "front/media 阶段结束后仍无 completed SeriesProductionRun",
+                )
+                await db.commit()
+                return pipeline
+
         if run is None or run.status != "completed":
             self._block(
                 pipeline,
                 "series_run_not_completed",
-                "P1 requires a completed SeriesProductionRun; front/media automation is P2/P3",
+                "需要 completed SeriesProductionRun 才能进入渲染发布",
             )
             await db.commit()
             return pipeline
@@ -152,7 +219,10 @@ class PublicationPipelineOrchestrator:
             return pipeline
 
         # --- episode_rendering ---
-        if pipeline.stage in {"accepted", "episode_rendering"}:
+        if pipeline.stage in {"accepted", "ensuring_plan", "ensuring_run", "run_front_to_shots", "run_media_quality", "episode_rendering"}:
+            # After front/media, stage may still be run_media_quality — advance into rendering.
+            if pipeline.stage != "episode_rendering":
+                pipeline.stage = "episode_rendering"
             self._mark_stage(pipeline, "episode_rendering")
             await db.commit()
             try:
@@ -197,7 +267,6 @@ class PublicationPipelineOrchestrator:
                         raise PipelineRenderBlocked("book_assemble_empty", "No episode urls for primary_episode_only")
                     final_url = urls[0]
                 elif mode == "per_episode_publications":
-                    # P1 still produces a primary final from first/all concat for contract field.
                     final_url = self._assemble(urls, book_id=pipeline.id) if len(urls) > 1 else urls[0]
                 else:
                     final_url = self._assemble(urls, book_id=pipeline.id)
@@ -238,11 +307,32 @@ class PublicationPipelineOrchestrator:
                 )
                 await db.commit()
                 return pipeline
-            # Reject preview packages even if somehow assembled.
             if not is_final_video_url(pipeline.final_video_url):
                 self._block(pipeline, "final_video_missing", "final_video_url is not mp4/mov/webm")
                 await db.commit()
                 return pipeline
+
+            if commercial_gates_required(pipeline):
+                gate_result = evaluate_commercial_gates(
+                    pipeline,
+                    run=run,
+                    readiness=readiness,
+                    queue_evidence=(pipeline.gate_summary or {}).get("queue"),
+                )
+                summary = dict(pipeline.gate_summary or {})
+                summary["commercial_gates"] = gate_result
+                summary["evidence_summary"] = gate_result.get("evidence_summary")
+                pipeline.gate_summary = summary
+                if not gate_result.get("passed"):
+                    first = (gate_result.get("blockers") or [{}])[0]
+                    self._block(
+                        pipeline,
+                        first.get("code") or "commercial_gate_failed",
+                        first.get("message") or "commercial gates failed",
+                    )
+                    await db.commit()
+                    return pipeline
+
             self._mark_stage(pipeline, "publication_gating", result="passed")
             pipeline.stage = "publishing"
             await db.commit()
@@ -329,10 +419,188 @@ class PublicationPipelineOrchestrator:
             await db.commit()
             return pipeline
 
-        # Resume mid-flight after succeeded stage already set
         if pipeline.stage == "succeeded":
             pipeline.status = "succeeded"
             await db.commit()
+        return pipeline
+
+    async def _load_bound_run(
+        self, db: AsyncSession, pipeline: NovelPublicationPipeline
+    ) -> Optional[SeriesProductionRun]:
+        if not pipeline.series_run_id:
+            return None
+        return await db.scalar(
+            select(SeriesProductionRun).where(
+                SeriesProductionRun.id == pipeline.series_run_id,
+                SeriesProductionRun.user_id == pipeline.user_id,
+                SeriesProductionRun.novel_id == pipeline.novel_id,
+            )
+        )
+
+    async def _execute_front_and_media(
+        self,
+        db: AsyncSession,
+        pipeline: NovelPublicationPipeline,
+    ) -> NovelPublicationPipeline:
+        meta = self._meta(pipeline)
+        ensure_plan = bool(meta.get("ensure_series_plan"))
+
+        # Fast-forward when a Series Run is already bound past plan/create.
+        bound = await self._load_bound_run(db, pipeline)
+        if bound is not None and pipeline.stage in {"accepted", "ensuring_plan", "ensuring_run", "run_front_to_shots", "run_media_quality"}:
+            summary = dict(pipeline.gate_summary or {})
+            summary["series_run_ref"] = {
+                "id": bound.id,
+                "status": bound.status,
+                "media_tail": (bound.gate_summary or {}).get("media_tail"),
+            }
+            pipeline.gate_summary = summary
+            if bound.status in {"shots_ready", "anchor_ready", "media_running", "evaluating"}:
+                if pipeline.stage in {"accepted", "ensuring_plan", "ensuring_run", "run_front_to_shots"}:
+                    self._mark_stage(pipeline, "run_front_to_shots", result="passed")
+                    pipeline.stage = "run_media_quality"
+                    await db.commit()
+            elif bound.status == "completed":
+                # Incomplete media_tail handled by outer gate; treat as ready for media stage skip.
+                self._mark_stage(pipeline, "run_media_quality", result="passed")
+                await db.commit()
+                return pipeline
+            elif pipeline.stage in {"accepted", "ensuring_plan", "ensuring_run"}:
+                # Existing early-stage run: skip plan/create, execute front on this run.
+                self._mark_stage(pipeline, "ensuring_run", result="passed")
+                pipeline.stage = "run_front_to_shots"
+                await db.commit()
+
+        # ensuring_plan
+        if pipeline.stage in {"accepted", "ensuring_plan"}:
+            self._mark_stage(pipeline, "ensuring_plan")
+            await db.commit()
+            try:
+                plan_info = await self._ensure_plan(
+                    db,
+                    user_id=pipeline.user_id,
+                    novel_id=pipeline.novel_id,
+                    ensure=ensure_plan,
+                    series_plan_version=pipeline.series_plan_version
+                    if pipeline.series_plan_version != "unspecified"
+                    else None,
+                )
+            except PipelineFrontBlocked as exc:
+                self._block(pipeline, exc.code, exc.detail)
+                await db.commit()
+                return pipeline
+            pipeline.series_plan_version = str(plan_info["series_plan_version"])
+            meta["plan_episodes"] = plan_info["episodes"]
+            pipeline.pipeline_metadata = meta
+            self._mark_stage(pipeline, "ensuring_plan", result="passed")
+            pipeline.stage = "ensuring_run"
+            await db.commit()
+
+        if await self._stop_requested():
+            pipeline.status = "paused"
+            await db.commit()
+            return pipeline
+
+        # ensuring_run
+        if pipeline.stage == "ensuring_run":
+            self._mark_stage(pipeline, "ensuring_run")
+            await db.commit()
+            episodes = list((pipeline.pipeline_metadata or {}).get("plan_episodes") or [])
+            if not episodes:
+                self._block(pipeline, "series_plan_episodes_missing", "ensuring_run 缺少 plan episodes")
+                await db.commit()
+                return pipeline
+            try:
+                run = await self._ensure_run(
+                    db,
+                    user_id=pipeline.user_id,
+                    novel_id=pipeline.novel_id,
+                    series_plan_version=pipeline.series_plan_version,
+                    idempotency_key=pipeline.idempotency_key,
+                    episodes=episodes,
+                    model_bindings=meta.get("model_bindings") or {},
+                    budget_policy=meta.get("budget_policy") or {},
+                    requested_stages=meta.get("requested_stages"),
+                )
+            except PipelineFrontBlocked as exc:
+                self._block(pipeline, exc.code, exc.detail)
+                await db.commit()
+                return pipeline
+            pipeline.series_run_id = run.id
+            summary = dict(pipeline.gate_summary or {})
+            summary["series_run_ref"] = {"id": run.id, "status": run.status}
+            pipeline.gate_summary = summary
+            self._mark_stage(pipeline, "ensuring_run", result="passed")
+            pipeline.stage = "run_front_to_shots"
+            await db.commit()
+
+        if await self._stop_requested():
+            pipeline.status = "paused"
+            await db.commit()
+            return pipeline
+
+        # run_front_to_shots
+        if pipeline.stage == "run_front_to_shots":
+            self._mark_stage(pipeline, "run_front_to_shots")
+            await db.commit()
+            run = await db.scalar(
+                select(SeriesProductionRun).where(SeriesProductionRun.id == pipeline.series_run_id)
+            )
+            if run is None:
+                self._block(pipeline, "series_run_missing", "ensuring_run 未绑定 series_run_id")
+                await db.commit()
+                return pipeline
+            try:
+                run = await self._run_front(db, run)
+            except PipelineFrontBlocked as exc:
+                self._block(pipeline, exc.code, exc.detail)
+                await db.commit()
+                return pipeline
+            summary = dict(pipeline.gate_summary or {})
+            summary["series_run_ref"] = {"id": run.id, "status": run.status}
+            pipeline.gate_summary = summary
+            self._mark_stage(pipeline, "run_front_to_shots", result="passed")
+            pipeline.stage = "run_media_quality"
+            await db.commit()
+
+        if await self._stop_requested():
+            pipeline.status = "paused"
+            await db.commit()
+            return pipeline
+
+        # run_media_quality
+        if pipeline.stage == "run_media_quality":
+            self._mark_stage(pipeline, "run_media_quality")
+            await db.commit()
+            run = await db.scalar(
+                select(SeriesProductionRun).where(SeriesProductionRun.id == pipeline.series_run_id)
+            )
+            if run is None:
+                self._block(pipeline, "series_run_missing", "缺少 series run")
+                await db.commit()
+                return pipeline
+            try:
+                run = await self._run_media(
+                    db,
+                    run,
+                    pipeline,
+                    env_commercial=commercial_gates_env_enabled(),
+                )
+            except PipelineMediaBlocked as exc:
+                self._block(pipeline, exc.code, exc.detail)
+                await db.commit()
+                return pipeline
+            summary = dict(pipeline.gate_summary or {})
+            summary["series_run_ref"] = {
+                "id": run.id,
+                "status": run.status,
+                "media_tail": (run.gate_summary or {}).get("media_tail"),
+            }
+            pipeline.gate_summary = summary
+            self._mark_stage(pipeline, "run_media_quality", result="passed")
+            # Leave stage as run_media_quality; outer execute advances to episode_rendering.
+            await db.commit()
+
         return pipeline
 
     async def _render_episodes(
@@ -390,6 +658,7 @@ class PublicationPipelineOrchestrator:
 
 __all__ = [
     "InvalidPipelineTransition",
+    "FORWARD_STAGES",
     "P1_FORWARD_STAGES",
     "PublicationPipelineOrchestrator",
     "TERMINAL_STATUSES",

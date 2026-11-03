@@ -262,7 +262,8 @@ async def test_orchestrator_idempotent_publication(client: TestClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_blocks_when_series_run_not_completed(client: TestClient) -> None:
+async def test_blocks_when_bound_run_media_incomplete(client: TestClient) -> None:
+    """P2/P3: bound shots_ready run without media completion fails closed in run_media_quality."""
     user_id = f"pubpipe-{uuid4()}"
     novel = client.post(
         "/api/v1/novels",
@@ -272,6 +273,12 @@ async def test_blocks_when_series_run_not_completed(client: TestClient) -> None:
     assert novel.status_code == 201
     novel_id = novel.json()["id"]
     run_id = str(uuid4())
+
+    async def fake_media(db, run, pipeline, **kwargs):
+        from app.services.publication_pipeline_media import PipelineMediaBlocked
+
+        raise PipelineMediaBlocked("quality_gate_incomplete", "no ready reports")
+
     async with AsyncSessionLocal() as db:
         db.add(
             SeriesProductionRun(
@@ -281,7 +288,13 @@ async def test_blocks_when_series_run_not_completed(client: TestClient) -> None:
                 series_plan_version="plan-v1",
                 idempotency_key=f"run-{uuid4()}",
                 status="shots_ready",
-                episodes=[],
+                episodes=[
+                    {
+                        "episode_number": 1,
+                        "stage": "shots_ready",
+                        "canonical_ids": {"workflow_id": "wf-x", "shot_ids": ["s1"]},
+                    }
+                ],
             )
         )
         pipeline = NovelPublicationPipeline(
@@ -300,9 +313,9 @@ async def test_blocks_when_series_run_not_completed(client: TestClient) -> None:
         )
         db.add(pipeline)
         await db.commit()
-        result = await PublicationPipelineOrchestrator().execute(db, pipeline)
+        result = await PublicationPipelineOrchestrator(run_media_fn=fake_media).execute(db, pipeline)
         assert result.status == "blocked"
-        assert result.blocker_code == "series_run_not_completed"
+        assert result.blocker_code == "quality_gate_incomplete"
 
 
 def test_reject_external_platform_fields():
@@ -323,7 +336,8 @@ def test_create_platform_publication_rejects_preview(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_api_create_blocks_without_completed_run(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_api_create_queues_without_completed_run(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """P2+: missing completed run still queues for front/media automation."""
     user_id = f"pubpipe-api-{uuid4()}"
     novel = client.post(
         "/api/v1/novels",
@@ -332,24 +346,27 @@ async def test_api_create_blocks_without_completed_run(client: TestClient, monke
     )
     assert novel.status_code == 201
     novel_id = novel.json()["id"]
+    enqueues: list[str] = []
 
-    async def boom(*_a, **_k):
-        raise RuntimeError("should not enqueue")
+    async def fake_start(pipeline_id: str, uid: str) -> bool:
+        enqueues.append(pipeline_id)
+        return True
 
     monkeypatch.setattr(
         "app.api.v1.endpoints.publication_pipelines.start_publication_pipeline_execution",
-        boom,
+        fake_start,
     )
     resp = client.post(
         f"/api/v1/novels/{novel_id}/publication-pipelines",
-        json={"idempotency_key": f"k-{uuid4()}", "series_plan_version": "plan-v1"},
+        json={"idempotency_key": f"k-{uuid4()}", "series_plan_version": "plan-v1", "ensure_series_plan": True},
         headers=_headers(user_id),
     )
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["status"] == "blocked"
-    assert body["blocker_code"] == "series_run_not_completed"
-    assert body["execution_status"] == "not_required"
+    assert body["status"] == "queued"
+    assert body["blocker_code"] is None
+    assert body["execution_status"] == "queued"
+    assert enqueues == [body["pipeline_id"]]
 
 
 @pytest.mark.asyncio

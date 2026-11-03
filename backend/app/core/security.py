@@ -10,6 +10,8 @@ import json
 import re
 from jose import JWTError, jwt
 
+from app.core.runtime_env import is_dev_mode
+
 security = HTTPBearer(auto_error=False)  # auto_error=False allows optional auth
 
 _JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret-change-in-production")
@@ -53,8 +55,8 @@ async def get_current_user_id(
     生产模式：
     - 从JWT的sub claim中提取用户ID
     """
-    # 检查是否是开发模式
-    dev_mode = os.getenv("DEV_MODE", "true").lower() in ("true", "1", "yes")
+    # 检查是否是开发模式（生产 APP_ENV 下默认关闭）
+    dev_mode = is_dev_mode()
     dev_user_id = os.getenv("DEV_USER_ID", "dev-user-001")
 
     # 开发模式：无凭证时使用默认用户

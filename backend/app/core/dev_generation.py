@@ -274,7 +274,9 @@ def _ensure_dev_image_file(filename: str, label: str) -> None:
 
 
 def is_dev_mode() -> bool:
-    return os.getenv("DEV_MODE", "true").lower() in {"true", "1", "yes"}
+    from app.core.runtime_env import is_dev_mode as _runtime_is_dev_mode
+
+    return _runtime_is_dev_mode()
 
 
 def dev_image_url(job_id: str, label: str = "AI Video") -> str:

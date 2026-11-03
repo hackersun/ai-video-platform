@@ -236,9 +236,7 @@ async def create_publication_pipeline(
         execution_status = "not_required" if existing.status == "succeeded" else "already_running"
         if existing.status in {"queued", "blocked", "failed"} and existing.status != "succeeded":
             # Re-enqueue runnable / retryable pipelines.
-            if existing.status in {"queued", "failed"} or (
-                existing.status == "blocked" and existing.blocker_code != "series_run_not_completed"
-            ):
+            if existing.status in {"queued", "failed", "blocked"}:
                 try:
                     started = await start_publication_pipeline_execution(existing.id, user_id)
                     execution_status = "queued" if started else "already_running"
@@ -256,6 +254,10 @@ async def create_publication_pipeline(
         series_run_id=request.series_run_id,
     )
 
+    delivery = request.delivery.model_dump() if hasattr(request.delivery, "model_dump") else request.delivery.dict()
+    if not delivery.get("visibility"):
+        delivery["visibility"] = "private"
+
     pipeline = NovelPublicationPipeline(
         id=str(uuid4()),
         user_id=user_id,
@@ -265,7 +267,7 @@ async def create_publication_pipeline(
         idempotency_key=request.idempotency_key,
         status="queued",
         stage="accepted",
-        delivery=request.delivery.model_dump() if hasattr(request.delivery, "model_dump") else request.delivery.dict(),
+        delivery=delivery,
         media_policy=request.media_policy or {"shot_scope": "all_episode_shots"},
         quality_policy=request.quality_policy or {},
         gates=request.gates or {"require_commercial_gates": False},
@@ -274,19 +276,14 @@ async def create_publication_pipeline(
         pipeline_metadata={
             "project_id": request.project_id,
             "ensure_series_plan": request.ensure_series_plan,
+            "model_bindings": request.model_bindings or {},
+            "budget_policy": request.budget_policy or {},
         },
     )
 
     execution_status = "queued"
-    if run is None or run.status != "completed":
-        pipeline.status = "blocked"
-        pipeline.blocker_code = "series_run_not_completed"
-        pipeline.blocker_detail = (
-            "P1 requires a completed SeriesProductionRun; provide series_run_id "
-            "or complete a matching run first (P2 automates front-to-shots)"
-        )
-        execution_status = "not_required"
-    else:
+    # P2+: queue even without a completed run — worker ensures plan/run/front/media.
+    if run is not None and run.status == "completed":
         pipeline.series_run_id = run.id
 
     db.add(pipeline)
@@ -402,14 +399,7 @@ async def resume_publication_pipeline(
         body = _serialize_pipeline(pipeline)
         body["execution_status"] = "not_required"
         return body
-    if pipeline.blocker_code == "series_run_not_completed":
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "series_run_not_completed",
-                "message": "仍缺少已完成的 Series Run；P2 才会自动推进到 shots",
-            },
-        )
+    # P2+: clear prior series_run_not_completed and re-queue for front automation.
     pipeline.status = "queued"
     pipeline.blocker_code = None
     pipeline.blocker_detail = None

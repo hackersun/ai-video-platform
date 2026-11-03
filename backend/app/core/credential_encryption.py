@@ -4,6 +4,7 @@ import os
 import warnings
 from pathlib import Path
 from typing import Optional
+from app.core.runtime_env import is_dev_mode
 
 
 def _configured_encryption_key() -> Optional[bytes]:
@@ -50,7 +51,7 @@ _fernet_cache: Optional[tuple[Optional[bytes], "Fernet"]] = None
 
 def require_stable_encryption_key() -> None:
     """Validate and install the production Fernet instance before startup."""
-    if os.getenv("DEV_MODE", "true").lower() in {"true", "1", "yes"}:
+    if is_dev_mode():
         return
     key = _configured_encryption_key()
     if not key:
