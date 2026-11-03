@@ -39,7 +39,13 @@ def pause_key(run_id: str) -> str:
 
 @lru_cache(maxsize=1)
 def _client_for(url: str) -> Redis:
-    return Redis.from_url(url, decode_responses=True)
+    # socket_timeout must exceed worker BLMOVE block time; None lets command timeouts win.
+    return Redis.from_url(
+        url,
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=None,
+    )
 
 
 async def get_redis() -> Redis:

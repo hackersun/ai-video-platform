@@ -9,6 +9,7 @@ import os
 import signal
 import socket
 import uuid
+from redis.exceptions import TimeoutError as RedisTimeoutError
 from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.core.redis_client import get_redis, processing_key, queue_key
@@ -64,7 +65,11 @@ async def _execute_run(run_id: str, user_id: str, *, worker_id: str, lease_token
 
 async def process_one(redis, worker_id: str) -> bool:
     """Claim one queue item. Returns False when the queue was empty (timeout)."""
-    raw = await redis.blmove(queue_key(), processing_key(), BLMOVE_TIMEOUT_SECONDS, src="LEFT", dest="RIGHT")
+    try:
+        raw = await redis.blmove(queue_key(), processing_key(), BLMOVE_TIMEOUT_SECONDS, src="LEFT", dest="RIGHT")
+    except RedisTimeoutError:
+        # Defense: client socket timeout must not abort empty-queue waits.
+        return False
     if raw is None:
         return False
     try:

@@ -17,3 +17,10 @@ def test_get_redis_url_fail_closed_when_missing(monkeypatch):
     monkeypatch.delenv("REDIS_URL", raising=False)
     with pytest.raises(RuntimeError, match="REDIS_URL"):
         redis_client.get_redis_url()
+
+
+def test_redis_client_disables_socket_timeout_for_blocking_commands(monkeypatch):
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    redis_client.reset_redis_client_cache()
+    client = redis_client._client_for(redis_client.get_redis_url())
+    assert client.connection_pool.connection_kwargs.get("socket_timeout") is None
