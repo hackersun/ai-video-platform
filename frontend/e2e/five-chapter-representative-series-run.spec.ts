@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test';
 
 import { fiveChapter3dNovel } from './helpers/five-chapter-3d-fixture';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 test.setTimeout(180_000);
 
 async function register(page: any) {
@@ -13,7 +17,7 @@ async function register(page: any) {
   await page.getByPlaceholder('请输入密码（至少6位）').fill(password);
   await page.getByPlaceholder('请再次输入密码').fill(password);
   await page.getByRole('button', { name: '注册' }).click();
-  await page.waitForURL(/\/dashboard/);
+  await page.waitForURL(/\/(dashboard|novels)/);
 }
 
 test('five chapters can start whole-book production and expose representative mode', async ({ page }) => {

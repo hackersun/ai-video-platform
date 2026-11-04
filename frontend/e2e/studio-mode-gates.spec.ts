@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fulfillStudioFallback } from './support/studio-fallbacks';
 
 function devToken(userId: string) {
   const payload = Buffer.from(
@@ -137,6 +138,7 @@ test('test mode requires a reason and records temporary skip audit', async ({ pa
       });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 
@@ -189,6 +191,7 @@ test('production mode blocks temporary skip and keeps repair action visible', as
       });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 
@@ -227,6 +230,7 @@ test('final quality snapshot shows blocking asset and voice lock requirements', 
       });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 

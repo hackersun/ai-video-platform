@@ -63,7 +63,7 @@ export default function RegisterPage() {
       if (result.success) {
         setSuccess('注册成功！正在跳转...');
         setTimeout(() => {
-          router.push('/dashboard');
+          router.push('/novels');
         }, 1500);
       } else {
         setError(result.detail || result.message || '注册失败');

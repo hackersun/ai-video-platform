@@ -1,6 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { devToken } from './helpers/production-os-fixture';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 const userId = process.env.FOUR_CHAPTER_CANARY_USER_ID || '';
 const novelId = process.env.FOUR_CHAPTER_CONTINUE_NOVEL_ID || '';
 const runId = process.env.FOUR_CHAPTER_CONTINUE_RUN_ID || '';

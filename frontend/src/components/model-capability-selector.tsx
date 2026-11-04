@@ -23,6 +23,8 @@ type ModelCapabilitySelectorProps = {
   requireVerified?: boolean;
   compact?: boolean;
   className?: string;
+  /** When set, shows a link to this novel's per-novel model override. */
+  novelId?: string;
 };
 
 export function ModelCapabilitySelector({
@@ -36,7 +38,10 @@ export function ModelCapabilitySelector({
   requireVerified = false,
   compact = false,
   className,
+  novelId,
 }: ModelCapabilitySelectorProps) {
+  void onChange;
+  void disabled;
   const scopedConfigs = getConfigsByCapability(configs, capability);
   const defaultConfig = getDefaultConfigForCapability(configs, capability);
   const selectedConfig = scopedConfigs.find((config) => config.id === value) || defaultConfig;
@@ -89,7 +94,7 @@ export function ModelCapabilitySelector({
             </span>
           </div>
           <p className="mt-1 break-words text-xs leading-5 text-white/55">
-            {description || '生成时会优先使用该能力的默认模型，也可切换到其他已保存配置。'}
+            {description || '生成时使用该能力的全局默认模型；如需更换，请在模型设置或本小说设置中修改。'}
           </p>
           <p className="mt-1 truncate text-xs text-white/40">{configLabel}</p>
           {failed && selectedConfig?.test_message && (
@@ -97,40 +102,27 @@ export function ModelCapabilitySelector({
           )}
         </div>
 
-        <div className="flex min-w-0 flex-col gap-2">
-          {hasConfiguredModel ? (
-            <select
-              value={selectedConfig?.id || ''}
-              onChange={(event) => onChange?.(event.target.value)}
-              disabled={disabled || selectableConfigs.length === 0}
-              aria-label={`${MODEL_CAPABILITY_LABELS[capability]}模型配置`}
-              className="min-h-10 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-xs text-white disabled:opacity-50"
-              title={`${MODEL_CAPABILITY_LABELS[capability]}模型配置`}
-            >
-              {selectableConfigs.length === 0 ? (
-                <option value="">暂无已验证配置</option>
-              ) : (
-                selectableConfigs.map((config) => (
-                  <option key={config.id} value={config.id}>
-                    {config.is_default ? '默认 · ' : ''}
-                    {config.name} · {modelStatusLabel(config.test_status)}
-                  </option>
-                ))
-              )}
-            </select>
-          ) : (
+        <div className="flex min-w-0 flex-wrap items-center gap-2" data-testid={`model-default-line-${capability}`}>
+          {/* One entry rule: models are chosen once in 模型设置 (global) or per novel; pages only show what is used. */}
+          <Link
+            href="/llm-config"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-violet-400/40 px-3 py-2 text-xs text-violet-100 hover:bg-violet-500/10"
+          >
+            <Settings className="h-3.5 w-3.5" aria-hidden="true" />
+            {hasConfiguredModel ? '更改全局默认' : '前往配置'}
+          </Link>
+          {novelId && (
             <Link
-              href="/llm-config"
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-violet-400/40 px-3 py-2 text-xs text-violet-100 hover:bg-violet-500/10"
+              href={`/novels/${novelId}#novel-model-overrides`}
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-white/15 px-3 py-2 text-xs text-white/75 hover:bg-white/5"
             >
-              <Settings className="h-3.5 w-3.5" />
-              前往配置
+              本小说单独设置
             </Link>
           )}
-          {requireVerified && hasConfiguredModel && selectableConfigs.length === 0 && (
-            <div className="text-xs text-yellow-100/80">当前能力没有已验证通过的配置。</div>
-          )}
         </div>
+        {requireVerified && hasConfiguredModel && selectableConfigs.length === 0 && (
+          <div className="text-xs text-yellow-100/80">当前能力没有已验证通过的配置。</div>
+        )}
       </div>
     </div>
   );

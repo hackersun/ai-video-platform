@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fulfillStudioFallback } from './support/studio-fallbacks';
 
 function devToken(userId: string) {
   const payload = Buffer.from(
@@ -173,9 +174,10 @@ test('studio resolves a generated relative novel cover through the backend media
 
   const cover = page.getByRole('img', { name: '星港追光 系列封面' });
   await expect(cover).toBeVisible();
-  const pageOrigin = new URL(page.url()).origin;
+  // Next has no /static rewrite: relative media must resolve against the backend origin.
+  const backendOrigin = new URL(process.env.E2E_API_URL || 'http://localhost:8000/api/v1').origin;
   await expect.poll(() => requestedCoverUrl).toBe(
-    `${pageOrigin}/static/generated/images/novel-cover-test.jpg`,
+    `${backendOrigin}/static/generated/images/novel-cover-test.jpg`,
   );
   await expect.poll(() => cover.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
 });
@@ -328,6 +330,7 @@ test('novels production entry opens studio command flow and confirms production 
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 

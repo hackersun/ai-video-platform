@@ -21,6 +21,8 @@ import {
   LogOut,
   Shield,
   Users,
+  Film,
+  LayoutDashboard,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -48,6 +50,8 @@ const expertNav = [
   { href: '/workflow', label: '工作流' },
   { href: '/video-generation', label: '视频生成' },
   { href: '/tts', label: '配音' },
+  { href: '/timelines', label: '时间线' },
+  { href: '/dashboard', label: '数据概览' },
 ];
 
 type NavigationItem = {
@@ -70,6 +74,8 @@ const iconByHref: Record<string, typeof BookOpen> = {
   '/synthesis': Video,
   '/prompt-skills': BrainCircuit,
   '/llm-config': Cpu,
+  '/timelines': Film,
+  '/dashboard': LayoutDashboard,
 };
 
 const primaryNavItems = primaryNav.map((item) => ({

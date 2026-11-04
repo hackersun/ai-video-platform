@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 const userId = '56ae84de-951f-4e74-ac79-3550d6f6f3b2';
 const apiBase = 'http://127.0.0.1:8000/api/v1';
 

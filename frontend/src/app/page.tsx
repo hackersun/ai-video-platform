@@ -45,7 +45,7 @@ const highlights = [
 
 export default function HomePage() {
   const { isAuthenticated } = useAuth();
-  const startHref = isAuthenticated ? "/quick-start" : "/login";
+  const startHref = isAuthenticated ? "/novels" : "/login";
 
   return (
     <div className="min-h-screen">

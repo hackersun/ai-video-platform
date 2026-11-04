@@ -22,7 +22,7 @@ test.beforeEach(async ({ page }) => {
   }, { authToken: token, authUserId: userId });
 });
 
-test('顶部导航突出工作室主线，并把专业工具收进专家菜单', async ({ page }) => {
+test('顶部导航只保留主线入口，并把专业工具收进高级工具菜单', async ({ page }) => {
   await page.route('**/api/v1/**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) });
   });
@@ -31,17 +31,18 @@ test('顶部导航突出工作室主线，并把专业工具收进专家菜单',
   await page.waitForLoadState('networkidle');
 
   const navigation = page.getByRole('navigation').first();
-  await expect(navigation.getByText('工作室')).toBeVisible();
-  await expect(navigation.getByText('快速开始')).toBeVisible();
-  await expect(navigation.getByText('小说')).toBeVisible();
-  await expect(navigation.getByText('资产')).toBeVisible();
+  for (const label of ['小说', '任务中心', '资产', '成片', '模型设置']) {
+    await expect(navigation.getByRole('link', { name: label })).toBeVisible();
+  }
+  // one-entry rule: expert pages are not primary entries
+  await expect(navigation.getByRole('link', { name: '快速开始' })).toHaveCount(0);
 
-  await page.getByRole('button', { name: /专家工具|更多/ }).click();
-  await expect(page.getByRole('menuitem', { name: '工作流' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: '视频生成' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: '提示词管理' })).toBeVisible();
-  await page.getByRole('menuitem', { name: '提示词管理' }).click();
-  await expect(page).toHaveURL(/\/llm-config\?section=prompts$/);
+  await page.getByRole('button', { name: '高级工具' }).click();
+  for (const label of ['工作室', '快速开始', '故事设定', 'AI 制片', '工作流', '视频生成', '配音', '时间线', '数据概览']) {
+    await expect(page.getByRole('menuitem', { name: label })).toBeVisible();
+  }
+  await page.getByRole('menuitem', { name: '工作流' }).click();
+  await expect(page).toHaveURL(/\/workflow$/);
 });
 
 test('登录后顶部导航提供账户设置和退出入口', async ({ page }) => {
@@ -74,6 +75,6 @@ test('专家工具页面提示回到工作室统一管控', async ({ page }) => 
   });
 
   await page.goto('/workflow');
-  await expect(page.getByText('这是专家工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
+  await expect(page.getByText('这是高级工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
   await expect(page.getByRole('button', { name: '回到工作室' })).toBeVisible();
 });

@@ -373,6 +373,7 @@ export default function ChapterDetailPage() {
                   title="目标字数"
                 />
                 <ModelCapabilitySelector
+ novelId={novelId}
                   capability="text"
                   configs={modelConfigs}
                   value={textModelConfigId}

@@ -53,7 +53,7 @@ export function NovelModelOverrides({ novelId, onEffectiveChange }: Props) {
 
   const overridden = SIMPLE_CAPABILITIES.filter((c) => state.novel_overrides?.[c]);
   return (
-    <section className="rounded-xl border border-slate-200 bg-white px-4 py-3" data-testid="novel-model-line">
+    <section id="novel-model-overrides" className="rounded-xl border border-slate-200 bg-white px-4 py-3" data-testid="novel-model-line">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <span className="inline-flex items-center gap-1.5 font-medium text-slate-700"><Cpu className="h-4 w-4 text-violet-600" />
           {overridden.length ? `本小说覆盖了 ${overridden.length} 项模型` : '使用全局模型设置'}

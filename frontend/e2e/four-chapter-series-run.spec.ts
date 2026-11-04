@@ -141,7 +141,7 @@ async function register(page: any, suffix: string) {
   await page.getByPlaceholder('请再次输入密码').fill(password);
   await page.getByRole('button', { name: '注册' }).click();
   await expect(page.getByText('注册成功！正在跳转...')).toBeVisible();
-  await page.waitForURL(/\/dashboard/);
+  await page.waitForURL(/\/(dashboard|novels)/);
   return { username, user: JSON.parse(await page.evaluate(() => localStorage.getItem('user') || '{}')) };
 }
 
@@ -297,14 +297,17 @@ async function generateAndVerify(page: any, mode: 'smoke' | 'full') {
 }
 
 test('real isolated workbench persists exact two-shot smoke jobs and report lineage', async ({ page }) => {
+  test.skip(!manifestPath, 'requires FOUR_CHAPTER_E2E_MANIFEST and an isolated real backend');
   await generateAndVerify(page, 'smoke');
 });
 
 test('real isolated workbench independently persists six-shot full jobs and report lineage', async ({ page }) => {
+  test.skip(!manifestPath, 'requires FOUR_CHAPTER_E2E_MANIFEST and an isolated real backend');
   await generateAndVerify(page, 'full');
 });
 
 test('recovery card preserves completed work and displays truthful spent cost', async ({ page }) => {
+  test.skip(!manifestPath, 'requires FOUR_CHAPTER_E2E_MANIFEST and an isolated real backend');
   await register(page, 'recovery');
   const { novelId, runId } = await createNovelAndChapters(page, 'smoke');
   let operationStatus = 'confirmed_rejected_before_acceptance';
@@ -353,6 +356,7 @@ test('recovery card preserves completed work and displays truthful spent cost', 
 });
 
 test('real workbench safely blocks ambiguous required entity with zero Story Lock writes', async ({ page }) => {
+  test.skip(!manifestPath, 'requires FOUR_CHAPTER_E2E_MANIFEST and an isolated real backend');
   await register(page, 'negative');
   const { novelId, runId } = await createNovelAndChapters(page, 'smoke');
   const entitiesResponse = await browserApi(page, `/story-bibles/entities?novel_id=${novelId}&limit=200`);

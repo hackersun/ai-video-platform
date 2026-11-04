@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fulfillStudioFallback } from './support/studio-fallbacks';
 
 function devToken(userId: string) {
   const payload = Buffer.from(
@@ -202,6 +203,7 @@ test('studio supports repair, test bypass audit, production gate, and active pro
       });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 

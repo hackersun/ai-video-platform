@@ -13,7 +13,7 @@ test('未登录用户点击首页开始创作进入登录页', async ({ page }) 
   });
 
   await page.goto('/');
-  const startLink = page.getByRole('link', { name: /开始创作/ });
+  const startLink = page.getByRole('link', { name: /开始连续动漫向导/ });
 
   await expect(startLink).toHaveAttribute('href', '/login');
   await startLink.click();
@@ -33,9 +33,9 @@ test('已登录用户点击首页开始创作进入极速向导', async ({ page 
   }, { authToken: token, authUserId: userId });
 
   await page.goto('/');
-  const startLink = page.getByRole('link', { name: /开始创作/ });
+  const startLink = page.getByRole('link', { name: /开始连续动漫向导/ });
 
-  await expect(startLink).toHaveAttribute('href', '/quick-start');
+  await expect(startLink).toHaveAttribute('href', '/novels');
   await startLink.click();
-  await expect(page).toHaveURL(/\/quick-start$/);
+  await expect(page).toHaveURL(/\/novels$/);
 });

@@ -252,6 +252,7 @@ function ChaptersContent() {
         </div>
 
         <ModelCapabilitySelector
+ novelId={novelId}
           capability="text"
           configs={modelConfigs}
           value={textModelConfigId}

@@ -3,6 +3,10 @@ import { writeFile } from 'node:fs/promises';
 
 import { devToken } from './helpers/production-os-fixture';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 const userId = process.env.FOUR_CHAPTER_RECOVERY_USER_ID || '';
 const novelId = process.env.FOUR_CHAPTER_RECOVERY_NOVEL_ID || '';
 const runId = process.env.FOUR_CHAPTER_RECOVERY_RUN_ID || '';

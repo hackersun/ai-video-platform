@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fulfillStudioFallback } from './support/studio-fallbacks';
 
 function devToken(userId: string) {
   const payload = Buffer.from(
@@ -103,6 +104,7 @@ test('series studio overview shows global control state', async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], count: 0 }) });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 
