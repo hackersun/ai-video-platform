@@ -206,7 +206,7 @@ test('workflow shows continuous video evidence after synthesis manifest generati
     scriptId: 'script-001',
     storyboardId: 'storyboard-001',
     videoJobs: [{ id: 'video-job-001', script_id: 'script-001', novel_id: 'novel-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
-    ttsJobs: [{ id: 'tts-job-001', script_id: 'script-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001' }],
+    ttsJobs: [{ id: 'tts-job-001', script_id: 'script-001', chapter_id: 'chapter-001', storyboard_id: 'storyboard-001', status: 'succeeded', audio_url: '/static/tts/tts-job-001.mp3' }],
     extraRoute: async (route, path, request) => {
       if (path === '/api/v1/workflow/concatenate/wf-269') {
         const body = request.postData() ? JSON.parse(request.postData() || '{}') : {};
