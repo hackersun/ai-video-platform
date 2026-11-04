@@ -2,10 +2,10 @@
 export interface BlockerInfo { title: string; hint: string; href?: string; action?: string }
 
 const MAP: Record<string, BlockerInfo> = {
-  models_not_configured: { title: '还没有配置可用的模型', hint: '请先在模型中心配置并测试文本、图片、配音、视频模型。', href: '/llm-config', action: '去模型中心' },
-  model_bindings_not_fresh: { title: '模型配置需要重新验证', hint: '模型配置已变化或过期，请在模型中心重新测试。', href: '/llm-config', action: '去模型中心' },
-  model_bindings_missing: { title: '还没有配置可用的模型', hint: '请先在模型中心配置模型。', href: '/llm-config', action: '去模型中心' },
-  provider_binding_not_ready: { title: '模型服务暂不可用', hint: '请在模型中心检查服务状态。', href: '/llm-config', action: '去模型中心' },
+  models_not_configured: { title: '还没有配置可用的模型', hint: '请到「模型设置」填写 API Key 并测试连接。', href: '/llm-config#model-settings-key', action: '去模型设置' },
+  model_bindings_not_fresh: { title: '模型配置需要重新验证', hint: '模型配置已变化或过期，请在「模型设置」重新测试。', href: '/llm-config', action: '去模型设置' },
+  model_bindings_missing: { title: '还没有配置可用的模型', hint: '请先在「模型设置」配置模型。', href: '/llm-config', action: '去模型设置' },
+  provider_binding_not_ready: { title: '模型服务暂不可用', hint: '请在「模型设置」检查服务状态。', href: '/llm-config', action: '去模型设置' },
   chapters_missing: { title: '章节不足', hint: '至少需要 2 章内容才能生成整书视频。', href: '?tab=chapters', action: '去添加章节' },
   series_plan_episodes_missing: { title: '整书计划为空', hint: '请先检查章节内容后重新生成整书计划。', href: '?tab=series-plan', action: '查看整书计划' },
   series_plan_build_failed: { title: '整书计划生成失败', hint: '请检查章节内容或稍后重试。', href: '?tab=series-plan', action: '查看整书计划' },
@@ -20,7 +20,7 @@ const MAP: Record<string, BlockerInfo> = {
   story_lock_preparation_blocked: { title: '故事设定锁定失败', hint: '人物或剧情证据需要人工确认。', href: '?tab=characters', action: '去确认' },
   story_lock_source_invalid: { title: '章节内容与设定不一致', hint: '章节修改后设定需要重新确认。', href: '?tab=characters', action: '去确认' },
   story_lock_stale: { title: '章节已修改', hint: '请重新开始以使用最新章节。' },
-  reference_preparation_blocked: { title: '参考图生成失败', hint: '请检查图片模型配置后重试。', href: '/llm-config', action: '去模型中心' },
+  reference_preparation_blocked: { title: '参考图生成失败', hint: '请检查图片模型配置后重试。', href: '/llm-config#model-settings-image', action: '去模型设置' },
   live_canary_unavailable: { title: '预算策略不可用', hint: '请检查费用预算设置。', href: '/settings', action: '去设置' },
   projected_budget_exceeded: { title: '预计费用超过上限', hint: '请提高预算上限或减少镜头。', href: '/settings', action: '去设置' },
   trusted_budget_policy_missing: { title: '未设置费用预算', hint: '请先设置预算。', href: '/settings', action: '去设置' },

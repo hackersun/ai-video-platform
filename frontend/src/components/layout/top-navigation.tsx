@@ -37,6 +37,7 @@ const primaryNav = [
   { href: '/jobs', label: '任务中心' },
   { href: '/assets', label: '资产' },
   { href: '/synthesis', label: '成片' },
+  { href: '/llm-config', label: '模型设置' },
 ];
 
 const expertNav = [
@@ -47,8 +48,6 @@ const expertNav = [
   { href: '/workflow', label: '工作流' },
   { href: '/video-generation', label: '视频生成' },
   { href: '/tts', label: '配音' },
-  { href: '/prompt-skills', label: '提示词管理' },
-  { href: '/llm-config', label: '模型中心' },
 ];
 
 type NavigationItem = {
@@ -164,7 +163,7 @@ export function TopNavigation() {
           </DropdownMenuItem>
           <DropdownMenuItem
             className="flex items-center gap-2 px-3 py-2 text-sm text-white/75 transition-colors hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
-            onSelect={() => router.push('/teams')}
+            onSelect={() => router.push('/settings/team')}
           >
             <Users className="h-4 w-4" />
             团队管理
@@ -187,7 +186,7 @@ export function TopNavigation() {
     <header className="app-top-navigation fixed top-0 left-0 right-0 z-50 h-16 bg-[#0f172a]/95 backdrop-blur-md border-b border-white/10">
       <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between gap-3 min-w-0">
         {/* Logo */}
-        <Link href="/dashboard" className="flex items-center gap-2 flex-shrink-0">
+        <Link href="/novels" className="flex items-center gap-2 flex-shrink-0">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center">
             <Sparkles className="w-5 h-5 text-white" />
           </div>

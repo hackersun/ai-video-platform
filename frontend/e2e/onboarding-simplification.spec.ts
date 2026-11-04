@@ -152,7 +152,7 @@ test('quick start keeps partial work and can skip audio after MiniMax voice fail
   await page.getByRole('button', { name: '填入示例故事' }).click();
   await page.getByRole('button', { name: '生成第一集' }).click();
 
-  await expect(page.getByText('配音音色不可用，已暂停在音视频草稿阶段')).toBeVisible();
+  await expect(page.getByText('配音音色不可用，已暂停在音视频草稿阶段').first()).toBeVisible();
   await expect(page.getByText('错误摘要：MiniMax TTS失败 [2054]: voice id not exist')).toBeVisible();
   await expect(page.getByText('已创建')).toBeVisible();
   await expect(page.getByRole('button', { name: /重试生产阶段/ })).toBeVisible();
@@ -166,7 +166,7 @@ test('quick start keeps partial work and can skip audio after MiniMax voice fail
 
   await page.reload();
   await expect(page.getByText(/已恢复上次执行记录/)).toBeVisible();
-  await expect(page.getByText('配音音色不可用，已暂停在音视频草稿阶段')).toBeVisible();
+  await expect(page.getByText('配音音色不可用，已暂停在音视频草稿阶段').first()).toBeVisible();
   await expect(page.getByText('已创建')).toBeVisible();
 
   await page.getByRole('button', { name: /跳过配音继续生成/ }).click();
@@ -213,112 +213,104 @@ test('quick start treats pending cloud media as waiting instead of failed', asyn
   await expect(mediaStep.getByText('tts-pending-1').first()).toBeVisible();
 });
 
-test('model config keeps test and noisy TTS models hidden until advanced mode is opened', async ({ page }) => {
-  await page.route('**/api/v1/llm/providers', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([
-        {
-          id: 'volcano',
-          name: 'volcano',
-          name_cn: '火山引擎',
-          base_url: 'https://ark.cn-beijing.volces.com/api/v3',
-          description: '测试用火山提供商',
-        },
-      ]),
-    });
-  });
+const SECRET = 'sk-e2e-never-shown-123456';
 
-  await page.route('**/api/v1/llm/models**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify([
-        {
-          id: 'volcano-seedance-recommended',
-          provider_id: 'volcano',
-          model_id: 'doubao-seedance-2-0-fast',
-          model_name: 'Doubao Seedance 2.0 Fast',
-          model_name_cn: '常用视频模型',
-          model_type: 'video',
-          capabilities: ['text-to-video', 'image-to-video'],
-          context_window: 0,
-          max_tokens: 0,
-          input_cost_per_1k: 0,
-          output_cost_per_1k: 0,
-          is_recommended: true,
-        },
-        {
-          id: 'test-video-chaos',
-          provider_id: 'volcano',
-          model_id: 'test-video-chaos',
-          model_name: 'test-video-chaos',
-          model_name_cn: '测试视频模型',
-          model_type: 'video',
-          capabilities: ['text-to-video'],
-          context_window: 0,
-          max_tokens: 0,
-          input_cost_per_1k: 0,
-          output_cost_per_1k: 0,
-        },
-        {
-          id: 'tts-noisy-voice',
-          provider_id: 'volcano',
-          model_id: 'speech-voice-preview',
-          model_name: 'speech-voice-preview',
-          model_name_cn: '普通 TTS 声音模型',
-          model_type: 'tts',
-          capabilities: ['text-to-speech'],
-          context_window: 0,
-          max_tokens: 0,
-          input_cost_per_1k: 0,
-          output_cost_per_1k: 0,
-        },
-      ]),
-    });
-  });
+function simpleCard(capability: string, label: string, configured: boolean) {
+  return {
+    capability, label,
+    config_id: configured ? `cfg-${capability}` : null,
+    provider_id: configured ? 'volcano' : null,
+    provider_name: configured ? '火山引擎' : null,
+    model_id: configured ? `m-${capability}` : null,
+    model_name: configured ? `${label}推荐模型` : null,
+    api_model_id: null, has_key: configured,
+    test_status: configured ? 'pending' : null, test_message: null, tested_at: null, fresh: false,
+    extra_params: {},
+    options: [{ model_id: `m-${capability}`, api_model_id: capability, name: `${label}推荐模型`, provider_id: 'volcano', provider_name: '火山引擎' }],
+  };
+}
 
-  await page.route('**/api/v1/llm/configs', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+function simpleState(configured: boolean, verified = false) {
+  const caps = { text: '文本', image: '图像', video: '视频', tts: '语音' } as const;
+  const capabilities = Object.fromEntries(Object.entries(caps).map(([c, l]) => {
+    const card = simpleCard(c, l, configured);
+    if (verified) Object.assign(card, { test_status: 'success', fresh: true });
+    return [c, card];
+  }));
+  return {
+    providers: [{ id: 'volcano', code: 'volcano', name: '火山引擎', recommended: true,
+      presets: { text: 'm-text', image: 'm-image', video: 'm-video', tts: 'm-tts' } }],
+    capabilities, primary_provider_id: configured ? 'volcano' : null, configured, verified,
+  };
+}
+
+test('model settings: one API key, four capability cards, test connection, secret never shown', async ({ page }) => {
+  let saved: any = null;
+  let configured = false;
+  let verified = false;
+  await page.route('**/api/v1/model-center/simple-setup/test', async (route) => {
+    verified = true;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      results: Object.fromEntries(['text', 'image', 'video', 'tts'].map((c) => [c, { success: true, message: '连接成功', response_time_ms: 120 }])),
+      state: simpleState(true, true),
+    }) });
+  });
+  await page.route('**/api/v1/model-center/simple-setup', async (route) => {
+    if (route.request().method() === 'PUT') {
+      saved = route.request().postDataJSON();
+      configured = true;
+    }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(simpleState(configured, verified)) });
   });
 
   await page.goto('/llm-config');
-  await expect(page.getByText('新手模式：只显示推荐和常用模型')).toBeVisible();
-  await expect(page.getByText('常用视频模型').first()).toBeVisible();
-  await expect(page.getByText('测试视频模型')).toHaveCount(0);
-  await expect(page.getByText('普通 TTS 声音模型')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: '模型设置' })).toBeVisible();
+  for (const label of ['文本', '图像', '视频', '语音']) {
+    await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
+  }
+  await expect(page.getByText('尚未完成设置')).toBeVisible();
 
-  await page.getByRole('button', { name: /显示测试\/高级模型/ }).click();
-  await expect(page.getByText('测试视频模型').first()).toBeVisible();
-  await expect(page.getByText('普通 TTS 声音模型').first()).toBeVisible();
+  await page.getByLabel('API Key', { exact: true }).fill(SECRET);
+  await page.getByRole('button', { name: '保存' }).click();
+  await expect(page.getByText('已保存。建议点击「测试连接」确认可用。')).toBeVisible();
+  expect(saved.provider_id).toBe('volcano');
+  expect(saved.api_key).toBe(SECRET);
+  expect(Object.keys(saved.capabilities).sort()).toEqual(['image', 'text', 'tts', 'video']);
+  await expect(page.getByLabel('API Key', { exact: true })).toHaveValue('');
+  await expect(page.getByLabel('API Key', { exact: true })).toHaveAttribute('placeholder', /已保存/);
+
+  await page.getByRole('button', { name: '测试连接' }).click();
+  await expect(page.getByText('测试完成：4/4 项可用')).toBeVisible();
+  await expect(page.getByTestId('model-test-video')).toContainText('连接成功');
+  await expect(page.getByText('全部就绪')).toBeVisible();
+  expect(await page.content()).not.toContain(SECRET);
+
+  await page.getByRole('link', { name: '高级设置' }).click();
+  await expect(page).toHaveURL(/section=overview/);
 });
 
-test('top navigation keeps production path primary and expert tools grouped', async ({ page }) => {
-  await page.route('**/api/v1/novels**', async (route) => {
+test('top navigation has one canonical entry per function and legacy entries redirect', async ({ page }) => {
+  await page.route('**/api/v1/**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
   });
-  await page.route('**/api/v1/video/jobs**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
-  });
-  await page.route('**/api/v1/tts/jobs**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
-  });
-  await page.route('**/api/v1/scripts**', async (route) => {
-    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
-  });
-
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/dashboard');
+  await page.goto('/novels');
 
   const navigation = page.getByRole('navigation').first();
-  await expect(navigation.getByText('工作室')).toBeVisible();
-  await expect(navigation.getByText('快速开始')).toBeVisible();
-  await expect(navigation.getByText('小说')).toBeVisible();
-  await expect(navigation.getByText('资产')).toBeVisible();
+  for (const label of ['小说', '任务中心', '资产', '成片', '模型设置']) {
+    await expect(navigation.getByRole('link', { name: label })).toBeVisible();
+  }
+  await expect(navigation.getByRole('link', { name: '模型设置' })).toHaveAttribute('href', '/llm-config');
+  await expect(page.getByRole('link', { name: /AI视频平台/ }).first()).toHaveAttribute('href', '/novels');
 
-  await page.getByRole('button', { name: '专家工具' }).click();
-  await expect(page.getByRole('menuitem', { name: 'Story Bible' })).toBeVisible();
+  await page.getByRole('button', { name: '高级工具' }).click();
   await expect(page.getByRole('menuitem', { name: '工作流' })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: '视频生成' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: '模型中心' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.goto('/teams');
+  await expect(page).toHaveURL(/\/settings\/team$/);
+  await page.goto('/prompt-skills');
+  await expect(page).toHaveURL(/section=prompts/);
 });

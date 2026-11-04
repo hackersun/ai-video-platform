@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +18,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { MainLayout } from '@/components/layout/main-layout';
-import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { NovelModelOverrides } from '@/features/model-settings/novel-model-overrides';
 import {
   DEFAULT_IMAGE_STYLE_TEMPLATES,
   ImageStyleTemplatePicker,
@@ -550,6 +550,12 @@ export default function NovelDetailPage() {
       setStyleTemplates(FALLBACK_IMAGE_STYLES);
     }
   };
+
+  // 模型设置：本小说覆盖优先，否则继承全局默认（由「模型设置」统一管理）。
+  const handleEffectiveModels = useCallback((effective: Partial<Record<'text' | 'image' | 'video' | 'tts', string | null>>) => {
+    if (effective.text) setTextModelConfigId(effective.text);
+    if (effective.image) setImageModelConfigId(effective.image);
+  }, []);
 
   const loadModelConfigs = async () => {
     try {
@@ -1414,26 +1420,7 @@ export default function NovelDetailPage() {
           </DialogContent>
         </Dialog>
 
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <ModelCapabilitySelector
-            capability="text"
-            configs={modelConfigs}
-            value={textModelConfigId}
-            onChange={setTextModelConfigId}
-            disabled={extractingEntities || generatingBible}
-            title="文本生成默认"
-            description="实体提取和 Story Bible 生成会读取小说、章节、角色、场景、道具和事件上下文。"
-          />
-          <ModelCapabilitySelector
-            capability="image"
-            configs={modelConfigs}
-            value={imageModelConfigId}
-            onChange={setImageModelConfigId}
-            disabled={generatingCover}
-            title="图像生成默认"
-            description="小说封面会优先使用该图像模型，并绑定当前小说的题材和核心内容。"
-          />
-        </div>
+        <NovelModelOverrides novelId={novelId} onEffectiveChange={handleEffectiveModels} />
 
         {/* 标签页 */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">

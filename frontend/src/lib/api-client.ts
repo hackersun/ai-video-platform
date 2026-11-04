@@ -663,6 +663,32 @@ class ApiClient {
     return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}`);
   }
 
+  async getSimpleModelSetup(novelId?: string) {
+    const qs = novelId ? `?novel_id=${encodeURIComponent(novelId)}` : '';
+    return this.request<SimpleModelSetupState>(`/model-center/simple-setup${qs}`);
+  }
+
+  async saveSimpleModelSetup(payload: SimpleModelSetupSavePayload) {
+    return this.request<SimpleModelSetupState>('/model-center/simple-setup', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async testSimpleModelSetup(capabilities?: SimpleCapability[]) {
+    return this.request<SimpleModelSetupTestResult>('/model-center/simple-setup/test', {
+      method: 'POST',
+      body: JSON.stringify({ capabilities: capabilities || null }),
+    });
+  }
+
+  async setNovelModelOverrides(novelId: string, overrides: Partial<Record<SimpleCapability, string | null>>) {
+    return this.request<SimpleModelSetupState>(`/model-center/simple-setup/novels/${encodeURIComponent(novelId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ overrides }),
+    });
+  }
+
   async listPublicationPipelines(novelId: string, limit = 20) {
     return this.request<PublicationPipeline[]>(`/novels/${novelId}/publication-pipelines?limit=${limit}`);
   }
@@ -3423,6 +3449,73 @@ export interface PublicationPipelineEpisode {
   shots_ready?: boolean;
   media_completed?: boolean;
   blocker_code?: string | null;
+}
+
+export type SimpleCapability = 'text' | 'image' | 'video' | 'tts';
+
+export interface SimpleModelOption {
+  model_id: string;
+  api_model_id: string;
+  name: string;
+  provider_id: string;
+  provider_name: string;
+}
+
+export interface SimpleModelCard {
+  capability: SimpleCapability;
+  label: string;
+  config_id: string | null;
+  provider_id: string | null;
+  provider_name: string | null;
+  model_id: string | null;
+  model_name: string | null;
+  api_model_id: string | null;
+  has_key: boolean;
+  test_status: string | null;
+  test_message: string | null;
+  tested_at: string | null;
+  fresh: boolean;
+  extra_params: Record<string, string>;
+  options: SimpleModelOption[];
+}
+
+export interface SimpleModelProvider {
+  id: string;
+  code: string;
+  name: string;
+  presets: Partial<Record<SimpleCapability, string | null>>;
+  recommended: boolean;
+}
+
+export interface SimpleNovelChoice {
+  config_id: string;
+  name: string;
+  model_name: string;
+  provider_name: string | null;
+  test_status: string | null;
+}
+
+export interface SimpleModelSetupState {
+  providers: SimpleModelProvider[];
+  capabilities: Record<SimpleCapability, SimpleModelCard>;
+  primary_provider_id: string | null;
+  configured: boolean;
+  verified: boolean;
+  novel_id?: string;
+  novel_overrides?: Record<SimpleCapability, string | null>;
+  novel_effective?: Record<SimpleCapability, SimpleModelCard>;
+  novel_choices?: Record<SimpleCapability, SimpleNovelChoice[]>;
+}
+
+export interface SimpleModelSetupSavePayload {
+  provider_id?: string | null;
+  api_key?: string | null;
+  capabilities: Partial<Record<SimpleCapability, { model_id?: string | null; api_key?: string | null; extra_params?: Record<string, string> }>>;
+}
+
+export interface SimpleModelSetupTestResult {
+  results: Partial<Record<SimpleCapability, { success: boolean; code?: string | null; message: string; response_time_ms?: number | null }>>;
+  state: SimpleModelSetupState;
 }
 
 export interface PublicationPipeline {

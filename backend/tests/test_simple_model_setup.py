@@ -165,6 +165,9 @@ def test_novel_override_wins_over_global_default(env):
     assert _run(svc.resolve_effective_configs(db, "u1", None))["text"][0].id != alt.id
     state = _run(svc.get_simple_setup(db, "u1", novel_id=novel.id))
     assert state["novel_overrides"]["text"] == alt.id
+    choice_ids = {c["config_id"] for c in state["novel_choices"]["text"]}
+    assert alt.id in choice_ids and len(choice_ids) == 2
+    assert all(SECRET not in str(c) and "api_key" not in c for c in state["novel_choices"]["text"])
     _run(svc.set_novel_overrides(db, "u1", novel.id, {"text": None}))
     assert _run(svc.resolve_effective_configs(db, "u1", novel.id))["text"][0].id != alt.id
     with pytest.raises(svc.SimpleSetupError):

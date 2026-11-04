@@ -189,6 +189,11 @@ test('studio supports repair, test bypass audit, production gate, and active pro
       });
       return;
     }
+    if (path === '/api/v1/novels/novel-full') {
+      await route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ id: 'novel-full', title: '雾港铜铃', status: 'draft', extra_data: {} }) });
+      return;
+    }
     if (path === '/api/v1/production-cards/novel/novel-full') {
       await route.fulfill({
         status: 200,

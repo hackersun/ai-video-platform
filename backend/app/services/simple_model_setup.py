@@ -209,6 +209,14 @@ async def get_simple_setup(db: AsyncSession, user_id: str, *, novel_id: str | No
         state["novel_id"] = novel_id
         state["novel_overrides"] = {cap: overrides.get(cap) for cap in CAPABILITY_ORDER}
         state["novel_effective"] = {cap: _card(cap, effective[cap], by_pid, []) for cap in CAPABILITY_ORDER}
+        rows = await _user_configs(db, user_id)
+        state["novel_choices"] = {
+            cap: [{"config_id": c.id, "name": c.name, "model_name": m.model_name_cn or m.model_name or m.model_id,
+                   "provider_name": (by_pid[m.provider_id].name_cn or by_pid[m.provider_id].name)
+                   if m.provider_id in by_pid else None, "test_status": c.test_status}
+                  for c, m in rows if cap in model_capabilities(m)]
+            for cap in CAPABILITY_ORDER
+        }
     return state
 
 
