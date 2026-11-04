@@ -127,7 +127,7 @@ test('chapter edit page can continue an empty next chapter from previous context
 
   await page.goto(`/novels/${novel.id}/chapters/${nextChapter.id}/edit`);
   await expect(page.getByRole('heading', { name: '编辑章节' })).toBeVisible();
-  await expect(page.getByText('0 字')).toBeVisible();
+  await expect(page.getByRole('complementary').getByText('0 字')).toBeVisible();
 
   await page.getByPlaceholder(/补充要求/).fill('承接上一章脚步声，写出谭云发现追兵并保护祖传玉简');
   await page.getByRole('button', { name: /续写内容|生成本章内容/ }).click();
@@ -247,7 +247,7 @@ test('chapter content page exposes AI writing controls and persists generated co
   });
 
   await page.goto(`/novels/${novel.id}/chapters/${chapter.id}`);
-  await expect(page.getByText('AI智能编写')).toBeVisible();
+  await expect(page.getByText('章节阅读预览')).toBeVisible();
   await expect(page.getByRole('button', { name: /智能编写/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /续写内容/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /润色内容/ })).toBeVisible();

@@ -49,12 +49,11 @@ test('资产库页面可创建、编辑和归档资产', async ({ page }) => {
   await page.goto('/assets');
   await expect(page.getByRole('heading', { name: '资产库' })).toBeVisible();
 
-  await page.getByRole('textbox', { name: '搜索资产名称、描述、标签' }).fill(name);
-  await page.getByRole('button', { name: '搜索' }).click();
+  await page.getByRole('textbox', { name: '搜索资产' }).fill(name);
   await page.getByRole('button', { name: '新建资产' }).click();
   await expect(page.getByPlaceholder(/变量配置 JSON/)).toBeHidden();
   await expect(page.getByPlaceholder(/生成参数 JSON/)).toBeHidden();
-  await page.getByRole('button', { name: /高级设置/ }).click();
+  await page.getByRole('button', { name: '展开' }).click();
   await expect(page.getByPlaceholder(/变量配置 JSON/)).toBeVisible();
   await expect(page.getByPlaceholder(/生成参数 JSON/)).toBeVisible();
   await page.getByRole('textbox', { name: '资产名称', exact: true }).fill(name);
@@ -64,16 +63,19 @@ test('资产库页面可创建、编辑和归档资产', async ({ page }) => {
   await page.getByRole('button', { name: '保存资产' }).click();
 
   await expect(page.getByText('资产已保存')).toBeVisible();
-  await expect(page.getByText(name)).toBeVisible();
+  const createdCard = page.getByTestId('asset-card').filter({ hasText: name });
+  await expect(createdCard).toBeVisible();
 
-  await page.getByTitle('编辑资产').filter({ hasText: '编辑' }).first().click();
+  await createdCard.getByRole('button', { name: '编辑' }).click();
   await page.getByRole('textbox', { name: '资产名称', exact: true }).fill(editedName);
   await page.getByRole('button', { name: '保存资产' }).click();
 
   await expect(page.getByText('资产已更新')).toBeVisible();
-  await expect(page.getByText(editedName)).toBeVisible();
+  await page.getByRole('textbox', { name: '搜索资产' }).fill(editedName);
+  const editedCard = page.getByTestId('asset-card').filter({ hasText: editedName });
+  await expect(editedCard).toBeVisible();
 
-  await page.getByTitle('归档资产').filter({ hasText: '归档' }).first().click();
+  await editedCard.getByRole('button', { name: '归档' }).click();
   await expect(page.getByText('资产已归档')).toBeVisible();
 });
 
@@ -91,12 +93,14 @@ test('资产库选中资产后展示批量范围和标签入口', async ({ page 
   });
 
   await page.goto('/assets');
+  await page.getByRole('textbox', { name: '搜索资产' }).fill(name);
   const card = page.getByTestId('asset-card').filter({ hasText: name });
   await expect(card).toBeVisible();
   await card.locator('input[type="checkbox"]').check();
 
-  await expect(page.getByRole('button', { name: '批量设为当前范围' })).toBeVisible();
-  await expect(page.getByRole('button', { name: '批量标签' })).toBeVisible();
+  const bulkBar = page.getByTestId('asset-bulk-bar');
+  await expect(bulkBar.getByRole('button', { name: '改作用域' })).toBeVisible();
+  await expect(bulkBar.getByRole('button', { name: '改标签' })).toBeVisible();
   await expect(page.getByRole('button', { name: '重建资产包', exact: true })).toBeVisible();
 });
 
@@ -143,6 +147,7 @@ test('资产库可按选中资产绑定实体重建资产包', async ({ page }) 
   });
 
   await page.goto('/assets');
+  await page.getByRole('textbox', { name: '搜索资产' }).fill(asset.name);
   const card = page.getByTestId('asset-card').filter({ hasText: asset.name });
   await expect(card).toBeVisible();
   await card.locator('input[type="checkbox"]').check();
@@ -179,7 +184,7 @@ test('资产库提供小说实体多视图 AI 制片向导', async ({ page }) =>
 
   await page.reload();
   await expect(page.getByRole('heading', { name: '资产库' })).toBeVisible();
-  await expect(page.getByText('AI 资产制片向导')).toBeVisible();
+  await expect(page.getByTestId('asset-wizard').getByRole('heading', { name: '补齐资产' })).toBeVisible();
 
   await page.getByLabel('向导小说').selectOption(novel.id);
   await page.getByLabel('资产对象类型').selectOption('character');
@@ -187,24 +192,10 @@ test('资产库提供小说实体多视图 AI 制片向导', async ({ page }) =>
 
   const wizard = page.getByTestId('asset-wizard');
   await expect(wizard.getByRole('heading', { name: '角色三视图' })).toBeVisible();
-  await expect(wizard.getByText('画面风格样例')).toBeVisible();
-  await wizard.getByTestId('image-style-template').filter({ hasText: '修仙仙侠' }).click();
-  await expect(wizard.getByTestId('image-style-template').filter({ hasText: '修仙仙侠' })).toHaveAttribute('aria-pressed', 'true');
-  expect(await wizard.getByTestId('image-style-template').locator('img').evaluateAll((imgs) => (
-    imgs.length > 0 && imgs.every((img) => {
-      const element = img as HTMLImageElement;
-      return element.complete && element.naturalWidth > 0;
-    })
-  ))).toBeTruthy();
-  await expect(wizard.getByText('题材模板示例')).toBeVisible();
-  await expect(wizard.getByTestId('asset-style-example').filter({ hasText: '修仙仙侠' })).toBeVisible();
-  expect(await wizard.getByTestId('asset-style-example').locator('img').evaluateAll((imgs) => (
-    imgs.length > 0 && imgs.every((img) => {
-      const element = img as HTMLImageElement;
-      return element.complete && element.naturalWidth > 0;
-    })
-  ))).toBeTruthy();
-  await expect(wizard.getByText('推荐比例：9:16')).toBeVisible();
+  await wizard.getByRole('button', { name: '生成设置' }).click();
+  await expect(wizard.getByText('画面风格').first()).toBeVisible();
+  await wizard.locator('#asset-wizard-style').selectOption({ label: '修仙仙侠' });
+  await expect(wizard.locator('#asset-wizard-style')).toHaveValue('xianxia');
   await expect(page.getByTestId('asset-wizard-view-front').getByText('正面', { exact: true })).toBeVisible();
   await expect(page.getByTestId('asset-wizard-view-side').getByText('侧面', { exact: true })).toBeVisible();
   await expect(page.getByTestId('asset-wizard-view-back').getByText('背面', { exact: true })).toBeVisible();
@@ -343,7 +334,7 @@ test('资产制片向导阻止复合角色生成单角色三视图并精确过�
 
   await entitySelect.selectOption(single.id);
   await expect(page.getByRole('button', { name: /生成.*缺失视图/ })).toBeEnabled();
-  await expect(page.getByText(`孙剑正面参考-${stamp}`)).toBeVisible();
+  await expect(page.getByTestId('asset-card').filter({ hasText: `孙剑正面参考-${stamp}` })).toBeVisible();
   await expect(page.getByText(`全局角色参考-${stamp}`)).toHaveCount(0);
 
   const singleCard = page.getByTestId('asset-card').filter({ hasText: `孙剑正面参考-${stamp}` });
@@ -416,11 +407,14 @@ test('资产库展示多视图失败记录、重试入口和视觉一致性分�
   const failedCard = page.getByTestId('asset-card').filter({ hasText: `洛云 正面生成失败-${stamp}` });
   await expect(failedCard.getByText('生成失败', { exact: true }).first()).toBeVisible();
   await expect(failedCard.getByText('图像模型超时')).toBeVisible();
-  await expect(failedCard.getByRole('button', { name: '重试生成' })).toBeVisible();
+  const inspector = page.getByTestId('asset-inspector');
+  await failedCard.getByText(`洛云 正面生成失败-${stamp}`).click();
+  await expect(inspector.getByRole('button', { name: '重试' })).toBeVisible();
   const imageCard = page.getByTestId('asset-card').filter({ hasText: `洛云 侧面-${stamp}` });
-  await expect(imageCard.getByText('一致性 88')).toBeVisible();
-  await expect(imageCard.getByText(`视觉契约 contract-${stamp}`)).toBeVisible();
-  await expect(imageCard.getByText('继承正面参考')).toBeVisible();
+  await imageCard.getByText(`洛云 侧面-${stamp}`).click();
+  await expect(inspector.getByText('88 分')).toBeVisible();
+  await expect(inspector.getByText(`视觉契约 contract-${stamp}`)).toBeVisible();
+  await expect(inspector.getByText('继承正面参考')).toBeVisible();
 });
 
 test('资产图片默认显示缩略图并在当前页预览', async ({ page }) => {
@@ -443,10 +437,12 @@ test('资产图片默认显示缩略图并在当前页预览', async ({ page }) 
 
   await page.goto(`/assets?novel_id=${novel.id}&category=character`);
   await expect(page.getByRole('heading', { name: '资产库' })).toBeVisible();
+  await page.getByRole('textbox', { name: '搜索资产' }).fill(`孙剑背面参考-${stamp}`);
   const card = page.getByTestId('asset-card').filter({ hasText: `孙剑背面参考-${stamp}` });
   await expect(card.getByRole('img', { name: `孙剑背面参考-${stamp}` })).toBeVisible();
 
-  await card.getByRole('button', { name: '预览' }).click();
+  await card.getByText(`孙剑背面参考-${stamp}`).click();
+  await page.getByTestId('asset-inspector').getByRole('button', { name: '预览' }).click();
   const dialog = page.getByRole('dialog', { name: '资产预览' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(`孙剑背面参考-${stamp}`)).toBeVisible();

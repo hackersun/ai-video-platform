@@ -92,6 +92,6 @@ test('chapter list script action preserves novel and chapter context', async ({ 
   await page.getByRole('link', { name: /剧本/ }).nth(1).click();
 
   await expect(page).toHaveURL(/\/scripts\?novel_id=novel-001&chapter_id=chapter-002$/);
-  await expect(page.getByText('第二章剧本')).toBeVisible();
+  await expect(page.getByText('第二章剧本').first()).toBeVisible();
   await expect(page.getByText('第一章剧本')).toHaveCount(0);
 });

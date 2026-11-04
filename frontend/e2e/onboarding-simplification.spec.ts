@@ -155,11 +155,11 @@ test('quick start keeps partial work and can skip audio after MiniMax voice fail
   await expect(page.getByText('配音音色不可用，已暂停在音视频草稿阶段').first()).toBeVisible();
   await expect(page.getByText('错误摘要：MiniMax TTS失败 [2054]: voice id not exist')).toBeVisible();
   await expect(page.getByText('已创建')).toBeVisible();
-  await expect(page.getByRole('button', { name: /重试生产阶段/ })).toBeVisible();
+  await expect(page.locator('#quick-start-form').getByRole('button', { name: /重试生产阶段/ }).first()).toBeVisible();
   await expect(page.getByRole('link', { name: /进入工作室处理/ })).toBeVisible();
   await expect(page.getByText('视频任务 ID')).toHaveCount(0);
 
-  const mediaStep = page.getByText('批量生成音视频草稿').locator('xpath=ancestor::div[contains(@class,"rounded")][1]');
+  const mediaStep = page.getByTestId('quick-start-progress-step-media');
   await mediaStep.getByRole('button', { name: '查看任务明细' }).click();
   await expect(mediaStep.getByText('环节状态')).toBeVisible();
   await expect(mediaStep.getByText('错误：MiniMax TTS失败 [2054]: voice id not exist')).toBeVisible();
@@ -197,17 +197,30 @@ test('quick start treats pending cloud media as waiting instead of failed', asyn
     });
   });
 
+  await page.route('**/api/v1/video/jobs/*/refresh', async (route) => {
+    const id = route.request().url().split('/video/jobs/')[1].split('/')[0];
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id, job_id: id, status: 'processing' }) });
+  });
+  await page.route('**/api/v1/tts/jobs/*', async (route) => {
+    const id = route.request().url().split('/tts/jobs/')[1].split('?')[0];
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id, status: 'processing' }) });
+  });
+  await page.clock.install();
+
   await page.goto('/quick-start');
   await page.getByRole('button', { name: '填入示例故事' }).click();
   await page.getByRole('button', { name: '生成第一集' }).click();
 
-  const concatenateStep = page.getByText('编排连续成片').locator('xpath=ancestor::div[contains(@class,"rounded")][1]');
+  const concatenateStep = page.getByTestId('quick-start-progress-step-concatenate');
+  await expect(concatenateStep.getByText('等待云端')).toBeVisible();
+  // Fast-forward past the cloud-wait window so the run returns its waiting result.
+  await page.clock.runFor(13 * 60 * 1000);
   await expect(concatenateStep.getByText('等待云端')).toBeVisible();
   await expect(concatenateStep.getByText('失败')).toHaveCount(0);
   await concatenateStep.getByRole('button', { name: '查看任务明细' }).click();
   await expect(concatenateStep.getByText('等待视频/声音任务完成')).toBeVisible();
 
-  const mediaStep = page.getByText('批量生成音视频草稿').locator('xpath=ancestor::div[contains(@class,"rounded")][1]');
+  const mediaStep = page.getByTestId('quick-start-progress-step-media');
   await mediaStep.getByRole('button', { name: '查看任务明细' }).click();
   await expect(mediaStep.getByText('video-pending-1、video-pending-2').first()).toBeVisible();
   await expect(mediaStep.getByText('tts-pending-1').first()).toBeVisible();

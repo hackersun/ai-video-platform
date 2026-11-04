@@ -322,9 +322,10 @@ test('quick start auto preview uses canonical episode production pipeline with a
   expect(mediaRequests[0]).toMatchObject({
     production_strategy: 'draft_fast',
     strategy: 'separate_video_tts',
-    model_config_id: 'video-model-e2e',
-    audio_model_config_id: 'audio-model-e2e',
   });
+  // model_config is the single runtime source: the backend resolves the global default / per-novel override.
+  expect(mediaRequests[0].model_config_id).toBeUndefined();
+  expect(mediaRequests[0].audio_model_config_id).toBeUndefined();
   expect(preflightRequests.length).toBe(1);
   await expect(page.getByRole('link', { name: '播放预览包' })).toBeVisible();
 });

@@ -76,14 +76,17 @@ export default function ChapterEditPage() {
       // 加载章节
       const chapterData = await apiClient.getChapter(chapterId);
       setChapter(chapterData);
-      setFormData({
-        title: chapterData.title || '',
-        content: chapterData.content || ''
-      });
-      lastSavedRef.current = {
+      const loaded = {
         title: chapterData.title || '',
         content: chapterData.content || ''
       };
+      const previousSaved = lastSavedRef.current;
+      // A repeated load (e.g. remount) must not clobber edits the user typed meanwhile.
+      setFormData((prev) => {
+        const userEdited = prev.title !== previousSaved.title || prev.content !== previousSaved.content;
+        return userEdited ? prev : loaded;
+      });
+      lastSavedRef.current = loaded;
     } catch (err) {
       console.error('加载失败:', err);
       toast({ title: '加载失败', description: '将返回小说详情页。', type: 'error' });
