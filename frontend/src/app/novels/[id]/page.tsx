@@ -26,6 +26,7 @@ import {
 } from '@/components/media/image-style-template-picker';
 import { useToast } from '@/components/ui/toast';
 import { 
+  ChevronDown,
   BookOpen, 
   Plus, 
   Trash2,
@@ -53,7 +54,9 @@ import {
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
-import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
+import { PipelineStatusCard } from '@/features/publication-pipelines/pipeline-status-card';
+import { usePublicationPipeline, isPipelineActive } from '@/features/publication-pipelines/use-publication-pipeline';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { SeriesRunPanel } from '@/components/novels/series-run-panel';
 import { SeriesPlanSetupCard } from '@/components/novels/series-plan-setup-card';
 import { getStoryExcerpt } from '@/components/novels/story-workbench-panel';
@@ -448,6 +451,7 @@ export default function NovelDetailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const novelId = params.id as string;
+  const publicationPipeline = usePublicationPipeline(novelId);
   const tabParam = searchParams.get('tab');
   
   const [novel, setNovel] = useState<Novel | null>(null);
@@ -1157,54 +1161,61 @@ export default function NovelDetailPage() {
             </div>
           </div>
           
-          {/* 快捷操作 */}
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            <Button asChild className="bg-cyan-600 hover:bg-cyan-700">
-              <Link href={`/novels/${novelId}/asset-analysis`}>
-                <Sparkles className="w-4 h-4 mr-2" />
-                AI 分析制作资产
-              </Link>
-            </Button>
-            <Button 
-              variant="outline" 
-              className="border-violet-500/50"
-              onClick={() => setCoverStyleDialogOpen(true)}
-              disabled={generatingCover}
-            >
-              {generatingCover ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <ImageIcon className="w-4 h-4 mr-2" />
-              )}
-              生成封面
-            </Button>
-            <Button asChild className="bg-violet-600 hover:bg-violet-700">
-              <Link href={`/video-generation?novel_id=${novelId}`}>
-                <Film className="w-4 h-4 mr-2" />
-                开始视频
-              </Link>
-            </Button>
-            <Button
-              variant="outline"
-              className="border-blue-500/50"
-              onClick={handleGenerateSeriesPlan}
-              disabled={generatingSeriesPlan || chapters.length === 0}
-            >
-              {generatingSeriesPlan ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <ListChecks className="w-4 h-4 mr-2" />
-              )}
-              整书计划
-            </Button>
+          {/* 快捷操作：一个主按钮 + 更多 */}
+          <div className="flex flex-col items-stretch gap-1 sm:items-end">
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <Button
+                data-testid="one-click-generate"
+                className="bg-violet-600 hover:bg-violet-700"
+                onClick={async () => {
+                  const next = await publicationPipeline.start();
+                  if (next) toast({ title: '已开始一键生成视频', description: '可在下方查看进度，完成后可直接播放。', type: 'success' });
+                }}
+                disabled={chapters.length < 2 || publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline)}
+              >
+                {publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline) ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Film className="w-4 h-4 mr-2" />
+                )}
+                {isPipelineActive(publicationPipeline.pipeline) ? '生成中…' : '一键生成视频'}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" data-testid="novel-more-actions">
+                    更多
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => router.push(`/novels/${novelId}/asset-analysis`)}>
+                    <Sparkles className="w-4 h-4 mr-2" />AI 分析制作资产
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setCoverStyleDialogOpen(true)} disabled={generatingCover}>
+                    <ImageIcon className="w-4 h-4 mr-2" />生成封面
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => router.push(`/video-generation?novel_id=${novelId}`)}>
+                    <Film className="w-4 h-4 mr-2" />单集视频制作
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleGenerateSeriesPlan} disabled={generatingSeriesPlan || chapters.length === 0}>
+                    <ListChecks className="w-4 h-4 mr-2" />{generatingSeriesPlan ? '整书计划生成中…' : '重新生成整书计划'}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            {chapters.length < 2 && <span className="text-xs text-amber-200 sm:text-right">至少需要 2 章</span>}
           </div>
         </div>
 
-        <NovelProductionEntryCard
-          entry={productionEntry}
-          fallbackHref={`/novels/${novelId}?tab=chapters`}
-          fallbackLabel="继续处理章节"
+        <PipelineStatusCard
           novelId={novelId}
+          pipeline={publicationPipeline.pipeline}
+          loading={publicationPipeline.loading}
+          busy={publicationPipeline.busy}
+          error={publicationPipeline.error}
+          onPause={() => { publicationPipeline.pause(); }}
+          onResume={() => { publicationPipeline.resume(); }}
+          onCancel={() => { if (window.confirm('确定取消本次生成吗？')) publicationPipeline.cancel(); }}
         />
 
         {/* 作品概览 */}
@@ -1674,13 +1685,21 @@ export default function NovelDetailPage() {
                     onGenerate={handleGenerateSeriesPlan} generating={generatingSeriesPlan} toMediaUrl={toMediaUrl} />
                 ) : (
                   <>
-                    <SeriesRunPanel
-                      novelId={novelId}
-                      chapters={chapters}
-                      seriesPlan={seriesPlan}
-                      modelConfigs={modelConfigs}
-                      visualStyle={seriesPlan.style || imageStyle}
-                    />
+                    <details data-testid="advanced-step-control" className="group rounded-xl border border-white/10 bg-white/[0.03]">
+                      <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-white/80 hover:text-white">
+                        高级：分步控制
+                        <span className="ml-2 text-xs font-normal text-white/40">一般无需展开，「一键生成视频」会自动完成以下步骤</span>
+                      </summary>
+                      <div className="p-4 pt-0">
+                        <SeriesRunPanel
+                          novelId={novelId}
+                          chapters={chapters}
+                          seriesPlan={seriesPlan}
+                          modelConfigs={modelConfigs}
+                          visualStyle={seriesPlan.style || imageStyle}
+                        />
+                      </div>
+                    </details>
                     <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>

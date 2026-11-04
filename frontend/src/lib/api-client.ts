@@ -651,6 +651,34 @@ class ApiClient {
     });
   }
 
+  // ---- 一键生成视频（整书发布流水线）----
+  async createPublicationPipeline(novelId: string, payload: { idempotency_key?: string; ensure_series_plan?: boolean } = {}) {
+    return this.request<PublicationPipeline>(`/novels/${novelId}/publication-pipelines`, {
+      method: 'POST',
+      body: JSON.stringify({ ensure_series_plan: true, idempotency_key: `ui-${novelId}-${Date.now()}`, ...payload }),
+    });
+  }
+
+  async getPublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}`);
+  }
+
+  async listPublicationPipelines(novelId: string, limit = 20) {
+    return this.request<PublicationPipeline[]>(`/novels/${novelId}/publication-pipelines?limit=${limit}`);
+  }
+
+  async pausePublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}/pause`, { method: 'POST' });
+  }
+
+  async resumePublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}/resume`, { method: 'POST' });
+  }
+
+  async cancelPublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}/cancel`, { method: 'POST' });
+  }
+
   async createSeriesRun(payload: Record<string, any>) {
     return this.request<SeriesProductionRun>('/series-runs', { method: 'POST', body: JSON.stringify(payload) });
   }
@@ -3387,5 +3415,40 @@ class ApiClient {
 }
 
 // 导出单例
+
+export interface PublicationPipelineEpisode {
+  episode_number: number;
+  render_status?: string | null;
+  output_url?: string | null;
+  shots_ready?: boolean;
+  media_completed?: boolean;
+  blocker_code?: string | null;
+}
+
+export interface PublicationPipeline {
+  pipeline_id: string;
+  novel_id: string;
+  series_run_id?: string | null;
+  status: 'accepted' | 'running' | 'paused' | 'blocked' | 'failed' | 'cancelled' | 'succeeded' | string;
+  stage: string;
+  idempotency_key?: string | null;
+  episodes: PublicationPipelineEpisode[];
+  final_video_url?: string | null;
+  publication_id?: string | null;
+  publication_url?: string | null;
+  gate_summary?: Record<string, any>;
+  blocker_code?: string | null;
+  blocker_detail?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+}
+
+/** Turn a backend-relative media path (/static/...) into an absolute URL. */
+export function resolveMediaUrl(url?: string | null): string | null {
+  if (!url) return null;
+  if (/^https?:\/\//.test(url)) return url;
+  return `${API_BASE_URL.replace(/\/api\/v1\/?$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 export const apiClient = new ApiClient(API_BASE_URL);
 export default apiClient;
