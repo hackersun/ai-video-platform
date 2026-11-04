@@ -132,6 +132,23 @@ async def _novel_overrides(db: AsyncSession, user_id: str, novel_id: str | None)
     return {k: str(v) for k, v in raw.items() if k in CAPABILITY_ORDER and v}
 
 
+async def novel_override_config_id(
+    db: AsyncSession, user_id: str, novel_id: str | None, cap: str,
+) -> str | None:
+    """Return the per-novel override config id for ``cap`` when it is active and capable."""
+    if not novel_id or cap not in CAPABILITY_ORDER:
+        return None
+    try:
+        overrides = await _novel_overrides(db, user_id, novel_id)
+    except SimpleSetupError:
+        return None
+    config_id = overrides.get(cap)
+    if not config_id:
+        return None
+    pick = {c.id: (c, m) for c, m in await _user_configs(db, user_id)}.get(config_id)
+    return config_id if pick and cap in model_capabilities(pick[1]) else None
+
+
 async def resolve_effective_configs(
     db: AsyncSession, user_id: str, novel_id: str | None,
 ) -> dict[str, tuple[LLMConfig, LLMModel] | None]:
@@ -428,6 +445,6 @@ async def ensure_fresh(
 
 __all__ = [
     "CAPABILITY_ORDER", "SimpleSetupError", "ensure_fresh", "get_simple_setup", "is_fresh",
-    "resolve_effective_configs", "save_simple_setup", "set_novel_overrides", "sync_model_center",
+    "novel_override_config_id", "resolve_effective_configs", "save_simple_setup", "set_novel_overrides", "sync_model_center",
     "test_simple_setup",
 ]

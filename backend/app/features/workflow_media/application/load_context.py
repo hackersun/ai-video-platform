@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from app.services.simple_model_setup import novel_override_config_id
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
@@ -88,8 +90,11 @@ async def load_workflow_media_context(
     )
     if not shots:
         raise WorkflowMediaError(422, "没有可生成的镜头")
+    explicit_video_config_id = request.model_config_id or await novel_override_config_id(
+        db, user_id, getattr(workflow, "novel_id", None), "video",
+    )
     routing = await resolve_strategy_video_config_id(
-        db, user_id, request.production_strategy, request.model_config_id,
+        db, user_id, request.production_strategy, explicit_video_config_id,
     )
     return WorkflowMediaContext(
         db=db,
@@ -98,5 +103,5 @@ async def load_workflow_media_context(
         series_run=series_run,
         shots=shots,
         strategy_video_routing=routing,
-        effective_video_config_id=routing["model_config_id"] or request.model_config_id,
+        effective_video_config_id=routing["model_config_id"] or explicit_video_config_id,
     )

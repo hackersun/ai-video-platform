@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from app.services.simple_model_setup import novel_override_config_id
+
 from app.core.dev_generation import is_dev_mode
 from app.core.model_registry import get_model_reference_limits, get_task_default
 from app.features.model_config.public import (
@@ -312,7 +314,10 @@ async def _model_inputs(command: PrepareSeparateMediaCommand) -> dict:
         get_model_reference_limits(video.get("api_model_id") or video.get("config_model_id") or ""),
         model_id=model_id, provider=provider,
     )
-    audio = None if request.native_audio else await _resolve_saved_tts_model(context, request.audio_model_config_id)
+    audio_config_id = request.audio_model_config_id or await novel_override_config_id(
+        context.db, context.user_id, getattr(context.workflow, "novel_id", None), "tts",
+    )
+    audio = None if request.native_audio else await _resolve_saved_tts_model(context, audio_config_id)
     if not audio and request.audio_mode != "none" and not request.native_audio:
         audio = await _resolve_default_tts_model(context)
     return {"video": video, "model_id": model_id, "provider": provider, "limits": limits, "audio": audio}
