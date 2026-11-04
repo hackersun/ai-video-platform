@@ -19,7 +19,10 @@ export function PromptUsageMap({ location }: { location: ModelCenterLocation }) 
   const [assigningStageId, setAssigningStageId] = useState<string | null>(null);
   if (view === 'library') return <div><div className="flex justify-end border-b border-white/10 p-3"><button type="button" onClick={() => setView('map')} className="model-center-quiet"><Map className="h-4 w-4" />返回使用地图</button></div><PromptProfileList location={location} initialSelectedId={initialProfileId} onPublished={initialProfileId ? () => { setView('map'); void query.refresh(); } : undefined} /></div>;
   if (query.loading && !query.data) return <ModelCenterLoading label="正在核对各生产环节实际使用的提示词…" />;
-  if (query.error && !query.data) return <ModelCenterError error={query.error} onRetry={() => void query.refresh()} />;
+  if (query.error && !query.data) return <div>
+    <div className="flex justify-end border-b border-white/10 p-3"><button type="button" onClick={() => setView('library')} className="model-center-quiet"><Library className="h-4 w-4" />模板库</button></div>
+    <ModelCenterError error={query.error} onRetry={() => void query.refresh()} />
+  </div>;
   if (!query.data || !query.selectedStage) return null;
   const openLibrary = (profileId?: string) => {
     setInitialProfileId(profileId || null);

@@ -52,6 +52,8 @@ test('legacy prompt entry keeps optimize preview clone and return flow', async (
 
   await page.goto('/prompt-skills?returnTo=%2Fstudio');
   await expect(page).toHaveURL(/section=prompts/);
+  // 提示词入口默认展示使用地图；模板编辑在「模板库」中。
+  await page.getByRole('button', { name: '模板库', exact: true }).click();
   await expect(page.getByLabel('任务模板')).toHaveValue(head.task_template);
   await expect(page.getByLabel('优化模型')).toHaveValue('text-1');
   await expect(page.getByText('{tone} 已识别')).toBeVisible();
