@@ -17,6 +17,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.redis_client import get_redis
 from app.models.publication_pipeline import NovelPublicationPipeline
 from app.services.publication_pipeline_orchestrator import PublicationPipelineOrchestrator
+from app.services.publication_pipeline_media_hooks import run_media_quality_with_default_hooks
 from app.services.publication_pipeline_queue import (
     MAX_ATTEMPTS,
     ack_processing,
@@ -78,12 +79,38 @@ async def _execute_pipeline(
             return False
 
         try:
-            await PublicationPipelineOrchestrator(should_stop=should_stop).execute(db, pipeline)
-        except Exception:
+            await PublicationPipelineOrchestrator(should_stop=should_stop, run_media_fn=run_media_quality_with_default_hooks).execute(db, pipeline)
+        except Exception as exc:
             logger.exception(
                 "publication pipeline worker execution failed",
                 extra={"pipeline_id": pipeline_id},
             )
+            await _fail_closed(db, pipeline_id, user_id, exc)
+
+
+async def _fail_closed(db, pipeline_id: str, user_id: str, exc: Exception) -> None:
+    """Unhandled errors must not leave a pipeline stuck in ``running``."""
+    try:
+        await db.rollback()
+        pipeline = await db.scalar(
+            select(NovelPublicationPipeline).where(
+                NovelPublicationPipeline.id == pipeline_id,
+                NovelPublicationPipeline.user_id == user_id,
+            )
+        )
+        if pipeline is None or pipeline.status in {"succeeded", "cancelled", "failed", "blocked", "paused"}:
+            return
+        detail = f"{type(exc).__name__}: {exc}"[:1000]
+        pipeline.status = "failed"
+        pipeline.blocker_code = "worker_unhandled_exception"
+        pipeline.blocker_detail = detail
+        summary = dict(pipeline.gate_summary or {})
+        summary["blocker_code"] = "worker_unhandled_exception"
+        summary["blocker_detail"] = detail
+        pipeline.gate_summary = summary
+        await db.commit()
+    except Exception:
+        logger.exception("publication pipeline fail-closed update failed", extra={"pipeline_id": pipeline_id})
 
 
 async def process_one(redis, worker_id: str) -> bool:
