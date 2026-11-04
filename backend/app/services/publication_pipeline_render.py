@@ -327,3 +327,35 @@ __all__ = [
     "assemble_whole_book_mp4",
     "ensure_episode_ffmpeg_local",
 ]
+
+
+def probe_final_video_metadata(url: Optional[str]) -> Dict[str, Any]:
+    """ffprobe a local final mp4 → duration_seconds / resolution / orientation (best effort)."""
+    import json as _json
+    import subprocess as _sp
+
+    ffprobe = shutil.which("ffprobe")
+    if not url or not ffprobe:
+        return {}
+    try:
+        path = _resolve_local_media(str(url))
+        out = _sp.run([ffprobe, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", str(path)],
+                      check=True, capture_output=True, text=True, timeout=30)
+        payload = _json.loads(out.stdout)
+    except Exception:
+        return {}
+    video = next((st for st in payload.get("streams", []) if st.get("codec_type") == "video"), {})
+    width, height = int(video.get("width") or 0), int(video.get("height") or 0)
+    result: Dict[str, Any] = {}
+    try:
+        duration = float(payload.get("format", {}).get("duration") or video.get("duration") or 0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration > 0:
+        result["duration_seconds"] = round(duration, 3)
+    if width and height:
+        result["resolution"] = f"{min(width, height)}p"
+        result["width"], result["height"] = width, height
+        result["orientation"] = "portrait" if height > width else ("square" if height == width else "landscape")
+    return result
+
