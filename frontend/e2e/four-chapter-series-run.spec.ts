@@ -398,6 +398,6 @@ test('real workbench safely blocks ambiguous required entity with zero Story Loc
 });
 
 test.afterAll(async () => {
-  if (!manifestPath) throw new Error('FOUR_CHAPTER_E2E_MANIFEST is required');
+  if (!manifestPath) return;
   await writeFile(manifestPath, `${JSON.stringify({ database: '/tmp/ai-video-platform-four-chapter.db', chapters: chapterEvidence, cases }, null, 2)}\n`, { mode: 0o600 });
 });

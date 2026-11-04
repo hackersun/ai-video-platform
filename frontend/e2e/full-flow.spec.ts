@@ -238,7 +238,7 @@ test('jobs page can cancel and archive a video task', async ({ page }) => {
   await expect(taskRow).toBeVisible({ timeout: 10_000 });
   await page.getByLabel(`取消${taskTitle}`).click();
   const cancelledJobCard = page.locator('div').filter({ hasText: taskTitle }).filter({ has: page.getByLabel(`删除归档${taskTitle}`) }).first();
-  await expect(cancelledJobCard.locator('span').filter({ hasText: /^已取消$/ })).toBeVisible({ timeout: 10_000 });
+  await expect(cancelledJobCard.locator('span').filter({ hasText: /^已取消$/ }).first()).toBeVisible({ timeout: 10_000 });
 
   await page.getByLabel(`删除归档${taskTitle}`).click();
   await expect(taskRow).toHaveCount(0, { timeout: 10_000 });
@@ -304,17 +304,17 @@ test('quick start creates an editable first episode workspace', async ({ page })
 
   await page.getByRole('button', { name: '生成第一集' }).click();
   await expect(page.getByText(/请先补齐：/)).toBeVisible();
-  await page.getByPlaceholder('作品名').fill(`E2E极速向导-${stamp}`);
-  await page.getByPlaceholder('故事梗概').fill('雨夜旧城中，少年追查一封会发光的密信，并发现自己能听见星辰回声。');
-  await page.getByPlaceholder('首章正文').fill('雨水敲打霓虹招牌，林澈在旧城巷口捡起密信。纸面亮起星光，远处钟声回应他的心跳。');
-  await page.locator('input[type="number"]').fill('3');
+  await page.getByLabel('作品名').fill(`E2E极速向导-${stamp}`);
+  await page.getByLabel('故事梗概').fill('雨夜旧城中，少年追查一封会发光的密信，并发现自己能听见星辰回声。');
+  await page.getByLabel('首章正文').fill('雨水敲打霓虹招牌，林澈在旧城巷口捡起密信。纸面亮起星光，远处钟声回应他的心跳。');
+  await page.getByLabel('首集镜头数').fill('3');
   await page.getByRole('button', { name: '保存草稿' }).click();
   await expect(page.getByText(/草稿会自动保存在本机/)).toBeVisible();
   await page.getByRole('button', { name: '生成第一集' }).click();
 
   await expect(page.getByRole('heading', { name: '已创建' })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText('审核分镜')).toBeVisible();
-  await expect(page.getByText('进入工作室')).toBeVisible();
+  await expect(page.getByRole('link', { name: '进入工作室' }).first()).toBeVisible();
   await expect(page.getByText('查看脚本')).toBeVisible();
 });
 
@@ -542,6 +542,12 @@ test('video generation page preserves novel chapter script storyboard shot linea
     content: '角色：沈砚。场景：旧城雨巷。道具：铜铃。事件：密信被黑影夺走。沈砚在旧城雨巷听见铜铃声，密信被黑影夺走。',
   });
 
+  // Extracted events stay review candidates by policy; approve the labeled event so production may bind it.
+  const events = await apiGet(page, `/story-bibles/entities?novel_id=${novel.id}&entity_type=event`);
+  const plotEvent = (events || []).find((item: any) => item.name === '密信被黑影夺走');
+  expect(plotEvent).toBeTruthy();
+  await apiPost(page, `/story-bibles/entities/${plotEvent.id}/approve`, { approved: true, approval_note: 'e2e lineage' });
+
   const storyboard = await apiPost(page, '/storyboards/generate-smart', {
     novel_id: novel.id,
     chapter_id: chapter.id,
@@ -549,7 +555,10 @@ test('video generation page preserves novel chapter script storyboard shot linea
     style: 'anime',
     use_ai_refine: false,
   });
-  const shot = storyboard.shots[0];
+  // The event can be bound to whichever shot depicts it; use that shot for the lineage check.
+  const eventRefsOf = (item: any) => item?.extra_data?.event_refs || item?.extra_data?.entity_refs?.events || [];
+  const shot = storyboard.shots.find((item: any) => eventRefsOf(item).length > 0) || storyboard.shots[0];
+  expect(eventRefsOf(shot).length).toBeGreaterThan(0);
 
   await page.goto(`/storyboards?storyboard_id=${storyboard.id}`);
   await expect(page.getByText('上游链路')).toBeVisible({ timeout: 10_000 });
@@ -797,9 +806,9 @@ test('workflow page shows multi-shot continuous final video manifest', async ({ 
   await expect(synthesisRow.getByText(`E2E连续成片-${stamp}`, { exact: true })).toBeVisible({ timeout: 10_000 });
   await synthesisRow.getByRole('button', { name: `预览 E2E连续成片-${stamp}` }).click();
   await expect(page.getByTestId('synthesis-history-preview')).toBeVisible();
-  await expect(page.getByRole('link', { name: '字幕 SRT' })).toBeVisible();
-  await expect(page.getByRole('link', { name: '时间线' })).toBeVisible();
-  await expect(page.getByRole('link', { name: '渲染清单' })).toBeVisible();
+  await expect(page.getByTestId('synthesis-history-preview').getByRole('link', { name: '字幕 SRT' })).toBeVisible();
+  await expect(page.getByTestId('synthesis-history-preview').getByRole('link', { name: '时间线' })).toBeVisible();
+  await expect(page.getByTestId('synthesis-history-preview').getByRole('link', { name: '渲染清单' })).toBeVisible();
 });
 
 test('workflow page can batch generate direct audio video and render package', async ({ page }) => {

@@ -443,11 +443,11 @@ test.describe('视频生成完整流程', () => {
     await expect(h1).toBeVisible({ timeout: 5000 });
 
     // 验证视频描述输入框存在
-    const descInput = page.getByPlaceholder(/描述你想要生成的视频内容/);
+    const descInput = page.getByPlaceholder(/银发少女在雨夜屋檐下回头|描述你想要生成的视频内容/);
     await expect(descInput).toBeVisible({ timeout: 3000 });
 
     // 验证参数配置区域存在
-    await expect(page.locator('text=参数配置')).toBeVisible({ timeout: 3000 });
+    await expect(page.getByRole('heading', { name: '参数配置' })).toBeVisible({ timeout: 3000 });
 
     console.log('✅ 视频生成页面加载成功');
   });
