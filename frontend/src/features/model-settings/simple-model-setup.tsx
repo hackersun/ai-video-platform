@@ -58,7 +58,14 @@ export function SimpleModelSetup() {
   });
   const [results, setResults] = useState<SimpleModelSetupTestResult['results']>({});
 
-  const hydrate = useCallback((next: SimpleModelSetupState) => {
+  const hydrate = useCallback((raw: SimpleModelSetupState) => {
+    // Tolerate partial/malformed payloads (old backend, proxies) instead of crashing the page.
+    const value = (raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}) as Partial<SimpleModelSetupState>;
+    const next = {
+      ...value,
+      providers: Array.isArray(value.providers) ? value.providers : [],
+      capabilities: value.capabilities && typeof value.capabilities === 'object' ? value.capabilities : {},
+    } as SimpleModelSetupState;
     setState(next);
     const primary = next.primary_provider_id || next.providers[0]?.id || '';
     setProviderId((current) => current || primary);
