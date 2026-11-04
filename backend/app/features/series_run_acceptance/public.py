@@ -57,6 +57,17 @@ def _new_protagonist(user_id: str, novel_id: str, chapter: Chapter) -> StoryEnti
     return entity
 
 
+def _refresh_stale_evidence(entity: StoryEntity, chapter: Chapter) -> None:
+    """Re-anchor fixture evidence when its source chapter was edited (rerun after edit)."""
+    attrs = dict(entity.attributes or {})
+    current = deterministic_evidence_contract(chapter)
+    evidence = dict(attrs.get("evidence_contract") or {})
+    if evidence.get("chapter_id") == current.get("chapter_id") and evidence.get("content_hash") == current.get("content_hash"):
+        return
+    attrs["evidence_contract"] = current
+    entity.attributes = attrs
+
+
 async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_ids: list[str], chapters: dict[str, Chapter]):
     protagonist = await db.scalar(select(StoryEntity).where(
         StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
@@ -83,6 +94,9 @@ async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_id
         attrs.setdefault("source_chapter_index", 1)
         attrs.setdefault("introduced_at", {"chapter_id": attrs["source_chapter_id"], "chapter_number": 1})
         attrs.setdefault("evidence_contract", deterministic_evidence_contract(chapters[str(attrs["source_chapter_id"])]))
+        source_chapter = chapters.get(str((attrs.get("evidence_contract") or {}).get("chapter_id") or attrs["source_chapter_id"]))
+        if source_chapter is not None and (attrs["evidence_contract"] or {}).get("content_hash") != deterministic_evidence_contract(source_chapter).get("content_hash"):
+            attrs["evidence_contract"] = deterministic_evidence_contract(source_chapter)
         attrs.setdefault("visual_dna", {"costume": "深色长衣", "line_style": "统一二维动漫线稿"})
         attrs.setdefault("reference_requirements", {"character_multiview": ["front", "three_quarter", "full_body"]})
         attrs.update(speaking=True, voice_binding={"voice_id": "deterministic-protagonist-voice", "version": 1, "status": "locked"})
@@ -117,6 +131,8 @@ async def _fixture_entities(db: AsyncSession, user_id: str, novel_id: str, chapt
                     "evidence_contract": deterministic_evidence_contract(chapters[chapter_id])})
             set_entity_review_status(existing, CANDIDATE, changed_by=user_id, reason="deterministic_acceptance_fixture")
             db.add(existing)
+        else:
+            _refresh_stale_evidence(existing, chapters[chapter_id])
         entities[name] = existing
     await db.flush()
     return entities

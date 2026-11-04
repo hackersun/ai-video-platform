@@ -199,7 +199,10 @@ def _accept_existing(
     fixture_evidence = dict(attrs.get("evidence_contract") or {})
     if (deterministic_provider_fake_enabled() and entity.source == "deterministic" and status == CANDIDATE
             and fixture_evidence.get("parser_version") in {
-                "deterministic-acceptance-v1", "deterministic-extraction-v2"}):
+                "deterministic-acceptance-v1", "deterministic-extraction-v2",
+                # A prior Series Run's story lock rewrites the fixture evidence to the
+                # explicit-dialogue parser; reruns on the same novel must still accept it.
+                "explicit-dialogue-v1"}):
         expected = {"voice_id": voice.selection["voice_id"], "config_id": voice.config.id,
                     "provider_id": voice.provider_id, "tested_at": snapshot["tested_at"]}
         if any(existing_voice.get(k) != v for k, v in expected.items()):

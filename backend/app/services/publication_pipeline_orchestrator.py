@@ -34,6 +34,7 @@ from app.services.publication_pipeline_render import (
     PipelineRenderBlocked,
     assemble_whole_book_mp4,
     ensure_episode_ffmpeg_local,
+    probe_final_video_metadata,
 )
 from app.services.publication_readiness import evaluate_publication_readiness, is_final_video_url
 
@@ -83,6 +84,7 @@ class PublicationPipelineOrchestrator:
         ensure_run_fn=ensure_series_run_for_pipeline,
         run_front_fn=run_front_to_shots,
         run_media_fn=run_media_quality_for_pipeline,
+        probe_fn=probe_final_video_metadata,
     ):
         self._should_stop = should_stop
         self._ensure_episode = ensure_episode_fn
@@ -92,6 +94,7 @@ class PublicationPipelineOrchestrator:
         self._ensure_run = ensure_run_fn
         self._run_front = run_front_fn
         self._run_media = run_media_fn
+        self._probe = probe_fn
 
     async def _stop_requested(self) -> bool:
         if self._should_stop is None:
@@ -150,10 +153,33 @@ class PublicationPipelineOrchestrator:
                     )
                 )
             ).scalars().all()
-            if len(rows) == 1:
-                run = rows[0]
+            fresh = [row for row in rows if await self._run_inputs_fresh(db, row)]
+            fresh.sort(key=lambda row: row.updated_at or row.created_at, reverse=True)
+            if fresh:
+                run = fresh[0]
                 pipeline.series_run_id = run.id
         return run
+
+    async def _run_inputs_fresh(self, db: AsyncSession, run: SeriesProductionRun) -> bool:
+        """A completed run may be reused only if its chapters are unchanged since it was built."""
+        from app.models.chapter import Chapter
+        from app.services.publication_pipeline_front import _chapter_input_hash
+
+        episodes = list(run.episodes or [])
+        if not episodes:
+            return False
+        wanted = {str(cid) for ep in episodes for cid in (ep.get("chapter_ids") or [])}
+        chapters = {
+            str(row.id): row
+            for row in (await db.scalars(select(Chapter).where(Chapter.id.in_(wanted)))).all()
+        }
+        for ep in episodes:
+            ids = [str(cid) for cid in (ep.get("chapter_ids") or [])]
+            if not ids or any(cid not in chapters for cid in ids):
+                return False
+            if ep.get("input_hash") and ep["input_hash"] != _chapter_input_hash([chapters[cid] for cid in ids]):
+                return False
+        return True
 
     def _run_ready_for_render(self, run: Optional[SeriesProductionRun]) -> bool:
         if run is None or run.status != "completed":
@@ -376,6 +402,7 @@ class PublicationPipelineOrchestrator:
                 "source_output_url": pipeline.final_video_url,
                 "format": "mp4",
             }
+            meta.update(self._probe(pipeline.final_video_url))
             synthesis_job = None
             refs = list(pipeline.episodes or [])
             if len(refs) == 1 and refs[0].get("synthesis_job_id"):

@@ -79,6 +79,7 @@ async def run_media_quality_for_pipeline(
     enter_media_fn: Optional[EnterMediaFn] = None,
     list_shots_fn: Optional[ListShotsFn] = None,
     generate_fn: Optional[GenerateFn] = None,
+    prepare_fn: Optional[EnterMediaFn] = None,
     env_commercial: bool = False,
 ) -> SeriesProductionRun:
     """Drive shots_ready → media → quality → completed (or raise PipelineMediaBlocked)."""
@@ -96,6 +97,9 @@ async def run_media_quality_for_pipeline(
             return await orch.enter_media_running(db_session, current)
 
         enter_media_fn = _enter
+
+    if prepare_fn is not None and run.status in {"shots_ready", "anchor_ready"}:
+        run = await prepare_fn(db, run, pipeline)
 
     if run.status in {"shots_ready", "anchor_ready"}:
         try:

@@ -76,4 +76,7 @@ async def run_media_quality_with_default_hooks(
 ) -> SeriesProductionRun:
     kwargs.setdefault("list_shots_fn", list_run_shots)
     kwargs.setdefault("generate_fn", generate_selected_for_pipeline)
+    from app.services.publication_pipeline_prepare import prepare_run_for_media
+
+    kwargs.setdefault("prepare_fn", prepare_run_for_media)
     return await run_media_quality_for_pipeline(db, run, pipeline, **kwargs)

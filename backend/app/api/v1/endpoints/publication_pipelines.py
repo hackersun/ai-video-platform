@@ -200,9 +200,12 @@ async def _resolve_completed_run(
             )
         )
     ).scalars().all()
-    if len(rows) == 1:
-        return rows[0]
-    return None
+    from app.services.publication_pipeline_orchestrator import PublicationPipelineOrchestrator
+
+    checker = PublicationPipelineOrchestrator()
+    fresh = [row for row in rows if await checker._run_inputs_fresh(db, row)]
+    fresh.sort(key=lambda row: row.updated_at or row.created_at, reverse=True)
+    return fresh[0] if fresh else None
 
 
 @router.post("/novels/{novel_id}/publication-pipelines", status_code=status.HTTP_202_ACCEPTED)
