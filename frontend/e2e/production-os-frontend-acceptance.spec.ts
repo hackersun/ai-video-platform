@@ -23,6 +23,7 @@ test.describe('Production OS deterministic frontend contracts', () => {
       return fulfillJson(route, {});
     });
     await page.goto('/studio?workflow_id=wf-os');
+    await page.getByRole('tab', { name: '设定' }).click();
     await expect(page.getByTestId('production-bible-panel')).toContainText('林澈');
     await expect(page.getByTestId('production-bible-panel')).toContainText('已确认');
     await expect(page.getByTestId('production-bible-panel')).toContainText('证据：第二章第3段');
@@ -68,9 +69,9 @@ test.describe('Production OS deterministic frontend contracts', () => {
     await page.route('**/api/v1/workflow/wf-os/quality/evaluate', async (route) => { evaluated = true; await fulfillJson(route, { ready: false, blockers: [{ code: 'wrong_speaker' }] }); });
     await page.route('**/api/v1/workflow/wf-os/quality/repair', async (route) => { repaired = true; await fulfillJson(route, { unchanged_artifact_ids: ['video-1', 'video-2', 'tts-2'], evaluation_ready: true }); });
     await page.goto('/studio/shot-review?workflow_id=wf-os');
-    await page.getByRole('button', { name: '评估镜头 1 六维质量' }).click();
+    await page.getByRole('button', { name: /(开始|重新)检查镜头 1/ }).click();
     await page.getByRole('button', { name: '重新生成镜头 1 配音并重跑口型' }).click();
-    await expect(page.getByTestId('quality-gate-shot-1')).toContainText('可交付');
+    await expect(page.getByTestId('quality-gate-shot-1')).toContainText('全部通过');
     expect(requests.filter((item) => item.path.includes('/quality/')).map((item) => item.path)).toEqual(['/api/v1/workflow/wf-os/quality/evaluate', '/api/v1/workflow/wf-os/quality/repair']);
   });
 

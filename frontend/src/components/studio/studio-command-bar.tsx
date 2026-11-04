@@ -15,7 +15,7 @@ export function StudioCommandBar({ snapshot, mode, loading, onModeChange, onPrim
 }) {
   const guidance = getStudioGuidance(snapshot);
   const action = guidance.recommended_action || guidance.next_action || null;
-  const secondary = guidance.secondary_actions?.[0] || null;
+  const secondary = (guidance.secondary_actions || []).find((item) => item && item.code !== action?.code && item.label !== action?.label) || null;
   const novelTitle = snapshot?.story_context?.novel?.title || snapshot?.workflow?.title || '未命名小说';
   const chapterTitle = snapshot?.series_plan?.current_episode?.title || snapshot?.story_context?.chapter?.title || '当前集';
   const readiness = Math.round(guidance.readiness_score ?? snapshot?.production_bible_summary?.readiness_score ?? 0);

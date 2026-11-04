@@ -499,6 +499,7 @@ export function StudioShell() {
       setLoading(true);
       try {
         await apiClient.lockEpisodeContract(workflowId);
+        toast({ title: '剧集合约已锁定', description: '本集连续性快照已刷新。', type: 'success' });
         await loadSnapshot(workflowId, mode);
       } catch (err: any) {
         setError(err.message || '锁定剧集合约失败');
