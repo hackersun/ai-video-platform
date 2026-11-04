@@ -12,7 +12,8 @@ export async function fulfillStudioFallback(route: Route, path: string): Promise
 
   const cards = path.match(/^\/api\/v1\/production-cards\/novel\/([^/]+)$/);
   if (cards) {
-    await json({ novel_id: cards[1], cards: [], summary: { ready: 0, incomplete: 0 } });
+    // No production cards unless a spec mocks them explicitly.
+    await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'not found' }) });
     return true;
   }
   if (path === '/api/v1/video/models') {

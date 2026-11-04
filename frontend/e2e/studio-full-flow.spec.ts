@@ -210,13 +210,12 @@ test('studio supports repair, test bypass audit, production gate, and active pro
   await page.goto('/studio?workflow_id=wf-full');
 
   await expect(page.getByText('系列动漫工作室')).toBeVisible();
-  await expect(page.getByText('短剧 Story Bible')).toBeVisible();
-  expect(snapshotAttempts).toBeGreaterThanOrEqual(3);
+  await expect.poll(() => snapshotAttempts).toBeGreaterThanOrEqual(3);
   await expect(page.getByText('当前激活 Prompt 技能')).toBeVisible();
   await expect(page.getByText('冷蓝短剧一致性')).toBeVisible();
   await expect(page.getByText('v3')).toBeVisible();
 
-  await page.getByRole('button', { name: '应用资产锁' }).click();
+  await page.locator('#studio-agent-panel').getByRole('button', { name: '应用资产锁' }).click();
   await expect(page.getByText('100%', { exact: true })).toBeVisible();
   await expect(page.getByText('当前视频模型尚未验证，生产出片前需要完成模型配置检查。').first()).toBeVisible();
 

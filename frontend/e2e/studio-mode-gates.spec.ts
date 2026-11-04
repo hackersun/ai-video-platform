@@ -198,7 +198,7 @@ test('production mode blocks temporary skip and keeps repair action visible', as
   await page.goto('/studio?workflow_id=wf-gates');
 
   await expect(page.getByText('生产出片模式会强制执行资产锁、模型验证、公开素材地址和一致性要求。')).toBeVisible();
-  await expect(page.getByRole('button', { name: '应用资产锁' })).toBeVisible();
+  await expect(page.locator('#studio-agent-panel').getByRole('button', { name: '应用资产锁' })).toBeVisible();
   await expect(page.getByRole('button', { name: '确认临时跳过并继续验证' })).toHaveCount(0);
 });
 
@@ -235,6 +235,7 @@ test('final quality snapshot shows blocking asset and voice lock requirements', 
   });
 
   await page.goto('/studio?workflow_id=wf-gates');
+  await page.getByRole('tab', { name: '设定' }).click();
 
   await expect(page.getByText('终稿门禁：缺少定稿参考图、资产锁覆盖或角色声线时会阻断终稿生产。')).toBeVisible();
   await expect(page.getByText('缺失 · 定稿参考图')).toBeVisible();

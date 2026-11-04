@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { StudioIssueCard } from './studio-issue-card';
+import { studioModeDescriptions } from '@/lib/studio-mode';
 import type { StudioAction, StudioActionResult, StudioIssue, StudioRunMode, StudioSnapshot } from '@/lib/studio-types';
 
 export function StudioAgentPanel({
@@ -38,7 +39,7 @@ export function StudioAgentPanel({
               Agent 监督返修
             </CardTitle>
             <div className="mt-1 text-sm text-white/55">
-              {mode === 'production' ? '生产模式会阻断硬性缺失项，并给出修复入口。' : '测试模式可临时跳过部分限制，但会保留审计记录。'}
+              {studioModeDescriptions[mode]}
             </div>
           </div>
           <Button size="sm" variant="outline" className="border-white/20 text-white" onClick={onRefresh} disabled={loading}>

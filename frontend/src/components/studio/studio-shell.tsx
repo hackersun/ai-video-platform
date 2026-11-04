@@ -386,8 +386,12 @@ export function StudioShell() {
     loadWorkflows();
   }, [loadWorkflows]);
 
+  const lastQueryWorkflowIdRef = useRef(searchParams.get('workflow_id') || '');
   useEffect(() => {
     const queryWorkflowId = searchParams.get('workflow_id') || '';
+    // Only react to URL changes; an in-page switch updates state first and the URL catches up.
+    if (queryWorkflowId === lastQueryWorkflowIdRef.current) return;
+    lastQueryWorkflowIdRef.current = queryWorkflowId;
     if (queryWorkflowId && queryWorkflowId !== workflowId) {
       setSnapshot(null);
       setProductionCards(null);

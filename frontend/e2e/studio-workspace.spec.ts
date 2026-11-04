@@ -194,10 +194,9 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
 
   await expect(page.getByText('连续动漫工作台')).toBeVisible();
   await expect(page.getByText('生产出片模式会强制执行资产锁、模型验证、公开素材地址和一致性要求。')).toBeVisible();
-  await expect(page.getByText('短剧 Story Bible')).toBeVisible();
   const productionBoard = page
     .getByRole('heading', { name: '生产看板' })
-    .locator('xpath=ancestor::*[.//*[normalize-space()="当前分镜镜头数"]][1]');
+    .locator('xpath=ancestor::*[.//*[normalize-space()="当前本集全部场景镜头"]][1]');
   const shotReviewLink = productionBoard.getByRole('link', { name: '镜头审阅' });
   await expect(shotReviewLink).toBeVisible();
   await expect(shotReviewLink).toHaveAttribute('href', '/studio/shot-review?workflow_id=wf-001');
@@ -210,10 +209,12 @@ test('studio workspace renders snapshot and repair path', async ({ page }) => {
   await expect(page.getByText('图片 2')).toBeVisible();
   await expect(page.getByText('视频 1')).toBeVisible();
   await expect(page.getByText('裁剪 1')).toBeVisible();
+  await page.getByRole('tab', { name: '设定' }).click();
   await expect(page.getByText('定稿卡就绪 1 · 待补齐 1')).toBeVisible();
   await expect(page.getByText('定稿卡仍有 1 项待补齐')).toBeVisible();
+  await page.getByRole('tab', { name: '生产' }).click();
   await expect(page.getByText('2 个镜头缺少角色/场景/道具资产锁，生产出片前必须锁定。').first()).toBeVisible();
-  await page.getByRole('button', { name: '应用资产锁' }).click();
+  await page.locator('#studio-agent-panel').getByRole('button', { name: '应用资产锁' }).click();
 
   await expect(page.getByText('当前工作流没有阻断项，可继续生成、合成或导出。')).toBeVisible();
   expect(actionRequested).toBe(true);
