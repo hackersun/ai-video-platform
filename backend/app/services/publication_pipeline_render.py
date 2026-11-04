@@ -74,6 +74,48 @@ async def _latest_synthesis_job(
     return result.scalars().first()
 
 
+async def _synthesize_from_succeeded_media(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    workflow_id: str,
+) -> Optional[SynthesisJob]:
+    """Create the episode SynthesisJob from real succeeded media jobs.
+
+    Uses the same ``/workflow/concatenate`` logic the editor uses, so the
+    one-click pipeline does not require a manual "合成" click per episode.
+    Fails closed (returns None) when no succeeded media exists.
+    """
+    from app.api.v1.endpoints.workflow import ConcatenateRequest, concatenate_videos
+    from app.models.media_generation_job import MediaGenerationJob
+    from app.models.shot import Shot
+
+    rows = (
+        await db.execute(
+            select(MediaGenerationJob, Shot.shot_number)
+            .outerjoin(Shot, Shot.id == MediaGenerationJob.shot_id)
+            .where(
+                MediaGenerationJob.user_id == user_id,
+                MediaGenerationJob.workflow_id == workflow_id,
+                MediaGenerationJob.status == "succeeded",
+                MediaGenerationJob.output_video_url.isnot(None),
+                MediaGenerationJob.is_active.isnot(False),
+            )
+            .order_by(MediaGenerationJob.created_at.desc())
+        )
+    ).all()
+    latest_per_shot: Dict[str, Any] = {}
+    for job, shot_number in rows:
+        key = str(job.shot_id or job.id)
+        if key not in latest_per_shot:
+            latest_per_shot[key] = (shot_number if shot_number is not None else 10**6, job)
+    if not latest_per_shot:
+        return None
+    ordered = [job.id for _, job in sorted(latest_per_shot.values(), key=lambda item: (item[0], str(item[1].created_at)))]
+    await concatenate_videos(workflow_id, ConcatenateRequest(media_job_ids=ordered), db, user_id)
+    return await _latest_synthesis_job(db, user_id=user_id, workflow_id=workflow_id)
+
+
 def _extract_segments(extra_data: Dict[str, Any]) -> List[dict]:
     if isinstance(extra_data.get("segments"), list) and extra_data["segments"]:
         return list(extra_data["segments"])
@@ -110,9 +152,11 @@ async def ensure_episode_ffmpeg_local(
 
     job = await _latest_synthesis_job(db, user_id=user_id, workflow_id=workflow_id)
     if job is None:
+        job = await _synthesize_from_succeeded_media(db, user_id=user_id, workflow_id=workflow_id)
+    if job is None:
         raise PipelineRenderBlocked(
             "synthesis_job_missing",
-            "Episode has no synthesis job to render",
+            "Episode has no synthesis job and no succeeded media to synthesize",
             workflow_id=workflow_id,
         )
 
