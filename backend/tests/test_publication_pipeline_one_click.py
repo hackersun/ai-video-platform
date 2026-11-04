@@ -28,6 +28,10 @@ def test_prepare_skips_runs_not_waiting_for_media():
 
 def test_prepare_fails_closed_without_models_in_real_mode(monkeypatch):
     monkeypatch.setattr("app.services.deterministic_provider_fake.deterministic_provider_fake_enabled", lambda: False)
+
+    async def resolve(db, user_id, novel_id):
+        return {c: None for c in prep.REQUIRED_CAPABILITIES}
+    monkeypatch.setattr(prep, "resolve_effective_configs", resolve)
     with pytest.raises(PipelineMediaBlocked) as exc:
         asyncio.run(prep.prepare_run_for_media(None, _run(), None))
     assert exc.value.code == "models_not_configured"
@@ -80,3 +84,67 @@ def test_completed_run_reused_only_when_chapter_inputs_unchanged():
     ch.updated_at = ch.updated_at + timedelta(minutes=5)  # chapter edited
     assert not asyncio.run(orch._run_inputs_fresh(_FakeDB([ch]), run))
     assert not asyncio.run(orch._run_inputs_fresh(_FakeDB([]), run))
+
+
+# ---- P2: real-mode auto binding from the user's model settings ----
+from datetime import datetime as _dt
+
+
+def _pair(cid):
+    return (SimpleNamespace(id=cid, extra_params={}, test_message=None), SimpleNamespace(id="m" + cid))
+
+
+def test_auto_bind_reports_missing_capabilities(monkeypatch):
+    async def resolve(db, user_id, novel_id):
+        return {"text": _pair("t"), "image": None, "tts": None, "video": _pair("v")}
+    monkeypatch.setattr(prep, "resolve_effective_configs", resolve)
+    with pytest.raises(PipelineMediaBlocked) as exc:
+        asyncio.run(prep.auto_bind_models(None, _run(created_at=_dt(2026, 1, 1))))
+    assert exc.value.code == "models_not_configured"
+    assert "图像" in str(exc.value) and "语音" in str(exc.value)
+
+
+def test_auto_bind_retests_then_persists_bindings(monkeypatch):
+    calls = {}
+
+    async def resolve(db, user_id, novel_id):
+        calls["novel"] = novel_id
+        return {c: _pair(c) for c in prep.REQUIRED_CAPABILITIES}
+
+    async def ensure(db, resolved, *, not_before):
+        calls["ensure"] = sorted(resolved)
+        return {}
+
+    async def validate(db, run, bindings, *, required_tested_at, persist):
+        calls["bindings"] = bindings
+        assert persist is True
+        return {}
+    monkeypatch.setattr(prep, "resolve_effective_configs", resolve)
+    monkeypatch.setattr(prep, "ensure_fresh", ensure)
+    monkeypatch.setattr(prep, "validate_required_model_bindings", validate)
+    asyncio.run(prep.auto_bind_models(None, _run(created_at=_dt(2026, 1, 1))))
+    assert calls["novel"] == "n"
+    assert calls["ensure"] == sorted(prep.REQUIRED_CAPABILITIES)
+    assert calls["bindings"] == {c: c for c in prep.REQUIRED_CAPABILITIES}
+
+
+def test_auto_bind_fails_closed_when_retest_fails(monkeypatch):
+    async def resolve(db, user_id, novel_id):
+        return {c: _pair(c) for c in prep.REQUIRED_CAPABILITIES}
+
+    async def ensure(db, resolved, *, not_before):
+        return {"video": "视频模型连接测试失败：401"}
+    monkeypatch.setattr(prep, "resolve_effective_configs", resolve)
+    monkeypatch.setattr(prep, "ensure_fresh", ensure)
+    with pytest.raises(PipelineMediaBlocked) as exc:
+        asyncio.run(prep.auto_bind_models(None, _run(created_at=_dt(2026, 1, 1))))
+    assert exc.value.code == "models_not_configured" and "401" in str(exc.value)
+
+
+def test_preferred_voice_uses_saved_default_then_first_option():
+    run = _run(model_bindings={"capabilities": {"tts": {"config_id": "c"}}})
+    assert prep._preferred_voice(["a", "b"], fake=False, saved="b") == "b"
+    assert prep._preferred_voice(["a", "b"], fake=False, saved="zzz") == "a"
+    assert prep._preferred_voice([], fake=False, saved=None) is None
+    assert prep._preferred_voice(["x", "deterministic-protagonist-voice"], fake=True, saved=None) == "deterministic-protagonist-voice"
+    assert run

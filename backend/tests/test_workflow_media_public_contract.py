@@ -123,9 +123,12 @@ async def _attach_live_run(seed: dict[str, object], video_config_id: str) -> str
             ("tts", "tts", ["text-to-speech"]),
         ):
             provider_id, model_id, config_id = (str(uuid4()) for _ in range(3))
-            db.add(LLMProvider(id=provider_id, name=f"contract-{capability}", is_active=True))
+            provider = await db.scalar(select(LLMProvider).where(LLMProvider.name == f"contract-{capability}"))
+            if provider is None:
+                provider = LLMProvider(id=provider_id, name=f"contract-{capability}", is_active=True)
+                db.add(provider)
             db.add(LLMModel(
-                id=model_id, provider_id=provider_id, model_id=f"contract-{capability}-api",
+                id=model_id, provider_id=provider.id, model_id=f"contract-{capability}-api-{uuid4()}",
                 model_name=capability, model_type=model_type, capabilities=capabilities, is_active=True,
             ))
             db.add(LLMConfig(

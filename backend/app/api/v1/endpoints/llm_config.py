@@ -1369,53 +1369,9 @@ async def test_config(
             detail="配置不存在"
         )
     config, model = row
-    # 获取provider信息
-    provider_result = await db.execute(
-        select(LLMProvider).where(LLMProvider.id == model.provider_id)
-    )
-    provider = provider_result.scalar_one_or_none()
-    provider_id = provider.id if provider else model.provider_id
-    if deterministic_provider_fake_enabled():
-        test_result = deterministic_config_test_result(model.model_id)
-        config.test_status = "success"
-        config.test_message = test_result["message"]
-        config.tested_at = utc_now()
-        await db.commit()
-        return test_result
+    from app.services.model_config_test_runner import run_saved_config_test
 
-    api_key = config.get_api_key_decrypted()
-    if not api_key:
-        test_result = {
-            "success": False,
-            "message": "API Key 为空或无法解密，请重新保存并验证该配置",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0,
-        }
-        config.test_status = "failed"
-        config.test_message = test_result["message"]
-        config.tested_at = utc_now()
-        await db.commit()
-        return test_result
-
-    category = "speech" if model.model_type in ("tts", "audio", "speech") else "default"
-    extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-    configured_base_url = configure_volcano_speech_endpoint(
-        extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra,
-    ) if category == "speech" else ""
-    driver_key = str(extra.get("driver_key") or "").strip() or await resolve_published_driver_key(db, model.id)
-    test_result = await _execute_config_test(
-        provider_id, api_key, model.model_id, request.message,
-        category=category, model_type=model.model_type, driver_key=driver_key,
-        base_url=configured_base_url or model.base_url or (provider.base_url if provider else "") or "",
-        connection_params=extra,
-    )
-    # 更新测试状态
-    config.test_status = "success" if test_result["success"] else "failed"
-    config.test_message = test_result["message"]
-    config.tested_at = utc_now()
-    await db.commit()
-    return test_result
+    return await run_saved_config_test(db, config, model, request.message)
 
 
 @router.put("/configs/{config_id}", response_model=LLMConfigResponse)

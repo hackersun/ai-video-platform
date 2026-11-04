@@ -16,7 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.publication_pipeline import NovelPublicationPipeline
 from app.models.series_production_run import SeriesProductionRun
+from app.services.live_canary_bindings import (
+    BindingValidationError, required_tested_at_for_run, validate_required_model_bindings,
+)
 from app.services.publication_pipeline_media import PipelineMediaBlocked
+from app.services.simple_model_setup import CAPABILITY_LABELS, ensure_fresh, resolve_effective_configs
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +48,48 @@ def _bindings_complete(run: SeriesProductionRun) -> bool:
     return all(isinstance(caps.get(c), dict) and caps[c].get("config_id") for c in REQUIRED_CAPABILITIES)
 
 
+MODELS_HINT = "请到「模型设置」填写 API Key 并测试连接"
+
+
+async def auto_bind_models(db: AsyncSession, run: SeriesProductionRun) -> None:
+    """Bind the user's effective defaults (novel override > global default), re-testing stale ones."""
+    resolved = await resolve_effective_configs(db, run.user_id, run.novel_id)
+    missing = [CAPABILITY_LABELS[c] for c in REQUIRED_CAPABILITIES if not resolved.get(c)]
+    if missing:
+        raise PipelineMediaBlocked("models_not_configured", f"尚未配置{'、'.join(missing)}模型，{MODELS_HINT}")
+    required_at = required_tested_at_for_run(run)
+    wanted = {c: resolved[c] for c in REQUIRED_CAPABILITIES}
+    failures = await ensure_fresh(db, wanted, not_before=required_at)
+    if failures:
+        raise PipelineMediaBlocked("models_not_configured", "；".join(failures.values()) + f"。{MODELS_HINT}")
+    try:
+        await validate_required_model_bindings(
+            db, run, {c: wanted[c][0].id for c in REQUIRED_CAPABILITIES},
+            required_tested_at=required_at, persist=True,
+        )
+    except BindingValidationError as exc:
+        raise PipelineMediaBlocked("models_not_configured", f"模型绑定校验失败：{exc}。{MODELS_HINT}") from exc
+    _record(run, "auto_bind", "passed")
+
+
+def _preferred_voice(options: List[str], *, fake: bool, saved: str | None) -> str | None:
+    if fake and "deterministic-protagonist-voice" in options:
+        return "deterministic-protagonist-voice"
+    if saved and saved in options:
+        return saved
+    return options[0] if options else None
+
+
+async def _saved_default_voice(db: AsyncSession, config_id: str | None) -> str | None:
+    if not config_id or db is None:
+        return None
+    from app.models.llm_config import LLMConfig
+
+    config = await db.get(LLMConfig, config_id)
+    extra = (config.extra_params if config is not None and isinstance(config.extra_params, dict) else {})
+    return str(extra.get("default_voice_id") or "") or None
+
+
 async def prepare_run_for_media(
     db: AsyncSession, run: SeriesProductionRun, pipeline: NovelPublicationPipeline,
 ) -> SeriesProductionRun:
@@ -55,7 +101,7 @@ async def prepare_run_for_media(
     )
     from app.services.anchor_shot_service import anchor_coverage_blocker, recommend_anchor_shots
     from app.services.deterministic_provider_fake import deterministic_provider_fake_enabled
-    from app.services.live_canary_budget import BindingValidationError, InvalidAccountingInput, trusted_live_canary_policy
+    from app.services.live_canary_budget import InvalidAccountingInput, trusted_live_canary_policy
     from app.services.series_run_live_preflight import build_live_preflight_plan, persist_voice_selection
     from app.services.series_run_reference_preparation import (
         ReferencePreparationBlocked, default_reference_adapter, prepare_series_reference,
@@ -65,21 +111,25 @@ async def prepare_run_for_media(
         return run
     fake = deterministic_provider_fake_enabled()
 
-    # 1. model bindings (deterministic fixture in fake mode; must pre-exist otherwise)
+    # 1. model bindings: deterministic fixture in fake mode; otherwise the user's
+    #    model settings are bound automatically (stale tests are re-run server-side)
     if fake:
         if not (run.run_metadata or {}).get("deterministic_acceptance") or not _bindings_complete(run):
             await setup_acceptance_fixture(db, user_id=run.user_id, novel_id=run.novel_id)
             await db.refresh(run)
         _record(run, "setup", "passed")
     elif not _bindings_complete(run):
-        raise PipelineMediaBlocked("models_not_configured", "尚未配置并测试文本/图片/配音/视频模型，请先到模型中心完成配置")
+        await auto_bind_models(db, run)
+        await db.refresh(run)
 
-    # 2. budget profile
-    if fake and ((run.budget_policy or {}).get("profile") != "isolated_live_canary"):
+    # 2. live-call switch: server-owned budget policy, enabled automatically
+    if (run.budget_policy or {}).get("profile") != "isolated_live_canary":
         try:
             run.budget_policy = trusted_live_canary_policy({"profile": "isolated_live_canary"})
         except InvalidAccountingInput as exc:
-            raise PipelineMediaBlocked("live_canary_unavailable", str(exc)) from exc
+            raise PipelineMediaBlocked(
+                "live_canary_unavailable", f"服务端未配置真实调用预算上限，请联系管理员（{exc}）",
+            ) from exc
     await db.commit()
     await db.refresh(run)
 
@@ -88,8 +138,8 @@ async def prepare_run_for_media(
     voice = plan.get("voice_options") or {}
     if voice and not voice.get("selection"):
         options = [o.get("voice_id") for o in voice.get("options") or [] if o.get("voice_id")]
-        preferred = "deterministic-protagonist-voice" if fake else None
-        voice_id = preferred if preferred in options else (options[0] if fake and options else None)
+        saved = None if fake else await _saved_default_voice(db, voice.get("config_id"))
+        voice_id = _preferred_voice(options, fake=fake, saved=saved)
         if not voice_id:
             raise PipelineMediaBlocked("voice_selection_required", "需要为主角选择配音声线")
         try:
@@ -137,8 +187,12 @@ async def prepare_run_for_media(
         raise PipelineMediaBlocked("reference_preparation_blocked", str(exc)) from exc
     await db.refresh(run)
 
-    # 7. preflight
+    # 7. preflight (real mode: one automatic re-bind when bindings went stale)
     preflight = await evaluate_media_preflight(db, run)
+    if not preflight.get("ready") and not fake and "model_bindings_not_fresh" in (preflight.get("codes") or []):
+        await auto_bind_models(db, run)
+        await db.refresh(run)
+        preflight = await evaluate_media_preflight(db, run)
     if not preflight.get("ready"):
         codes = [str(c) for c in preflight.get("codes") or []]
         first = codes[0] if codes else "series_run_media_preflight_failed"
@@ -149,4 +203,4 @@ async def prepare_run_for_media(
     return run
 
 
-__all__ = ["prepare_run_for_media", "PREFLIGHT_CODE_MAP"]
+__all__ = ["auto_bind_models", "prepare_run_for_media", "PREFLIGHT_CODE_MAP"]

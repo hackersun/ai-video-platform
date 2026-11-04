@@ -5,12 +5,14 @@ from fastapi import APIRouter, Depends
 from app.core.security import get_current_user_id
 from app.features.model_config.api import (
     bindings, catalog, certifications, connections, profiles, prompt_usage, prompts, recipes,
+    simple_setup,
 )
 
 
 router = APIRouter(
     prefix="/model-center", dependencies=[Depends(get_current_user_id)],
 )
+router.include_router(simple_setup.router, tags=["模型设置"])
 router.include_router(connections.router, tags=["模型中心-连接"])
 router.include_router(catalog.router, tags=["模型中心-目录"])
 router.include_router(profiles.router, tags=["模型中心-模型档案"])

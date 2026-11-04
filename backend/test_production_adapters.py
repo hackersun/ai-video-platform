@@ -147,7 +147,8 @@ def test_external_providers_and_config_lifecycle(client: TestClient) -> None:
 
     test_resp = client.post(f"/api/v1/external/configs/{config['id']}/test", headers=_auth_headers(user_id))
     assert test_resp.status_code == 200
-    assert test_resp.json()["status"] in {"configured", "success"}
+    # 127.0.0.1:9 不可达：连接测试必须如实报告失败，而不是假装成功。
+    assert test_resp.json()["status"] == "failed"
 
     status_resp = client.get("/api/v1/external/capability-status", headers=_auth_headers(user_id))
     assert status_resp.status_code == 200

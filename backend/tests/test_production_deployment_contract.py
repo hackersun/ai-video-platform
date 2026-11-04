@@ -22,9 +22,9 @@ def _development_compose() -> dict:
 def test_production_compose_has_one_public_entry_and_private_stateful_services() -> None:
     compose = _compose()
     services = compose["services"]
-    assert set(services) == {"proxy", "frontend", "api", "postgres", "redis", "series-run-worker"}
+    assert set(services) == {"proxy", "frontend", "api", "postgres", "redis", "series-run-worker", "publication-pipeline-worker"}
     assert services["proxy"]["ports"] == ["${APP_HTTP_PORT:-8080}:80"]
-    for name in ("frontend", "api", "postgres", "redis", "series-run-worker"):
+    for name in ("frontend", "api", "postgres", "redis", "series-run-worker", "publication-pipeline-worker"):
         assert not services[name].get("ports"), name
     assert services["postgres"]["volumes"] == [
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/postgres:/var/lib/postgresql/data"

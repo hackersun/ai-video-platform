@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -527,6 +527,19 @@ export default function NovelDetailPage() {
       loadStyleTemplates();
     }
   }, [novelId]);
+
+  // 一键生成推进时（阶段/状态变化）刷新章节/剧本/分镜统计，避免完成后仍显示 0。
+  const pipelineProgressKey = publicationPipeline.pipeline
+    ? `${publicationPipeline.pipeline.pipeline_id}:${publicationPipeline.pipeline.status}:${publicationPipeline.pipeline.stage}`
+    : '';
+  const lastPipelineKey = useRef('');
+  useEffect(() => {
+    if (!novelId || !pipelineProgressKey) return;
+    if (lastPipelineKey.current && lastPipelineKey.current !== pipelineProgressKey) {
+      loadNovelData();
+    }
+    lastPipelineKey.current = pipelineProgressKey;
+  }, [novelId, pipelineProgressKey]);
 
   const loadStyleTemplates = async () => {
     try {
@@ -1136,7 +1149,7 @@ export default function NovelDetailPage() {
     { label: '角色', value: characters.length },
     { label: '剧本', value: scripts.length },
     { label: '分镜', value: storyboardSummaries.length },
-    { label: '视频', value: videoSummaries.length },
+    { label: '视频', value: videoSummaries.length || (publicationPipeline.pipeline?.final_video_url ? 1 : 0) },
     { label: '设定', value: storyBibles.length },
   ];
 
