@@ -32,7 +32,7 @@ from app.features.model_config.repository import (
 )
 from app.features.model_config.settings import (
     ModelCenterReadMode,
-    legacy_canonical_fallback_enabled,
+    legacy_canonical_fallback_enabled, strict_canonical_enabled,
     model_center_read_mode,
 )
 from app.features.model_config.shadow_compare import compare_resolutions, record_shadow_difference
@@ -304,6 +304,11 @@ async def _resolve_by_read_mode(
             project_id=project_id, series_id=series_id,
         )
         if canonical is None:
+            if not strict_canonical_enabled():
+                # tasks without a dedicated binding inherit the legacy capability default
+                return await resolve_legacy_binding(
+                    db, user_id=user_id, task=task, capability=capability,
+                )
             raise ModelBindingError("model_binding_not_found")
         return canonical
     try:

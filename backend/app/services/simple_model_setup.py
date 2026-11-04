@@ -135,14 +135,25 @@ async def _novel_overrides(db: AsyncSession, user_id: str, novel_id: str | None)
 async def resolve_effective_configs(
     db: AsyncSession, user_id: str, novel_id: str | None,
 ) -> dict[str, tuple[LLMConfig, LLMModel] | None]:
+    from app.features.model_config import legacy_sync
+
     rows = await _user_configs(db, user_id)
     by_id = {c.id: (c, m) for c, m in rows}
     overrides = await _novel_overrides(db, user_id, novel_id) if novel_id else {}
+    canonical: dict[str, str] | None = None
+    if legacy_sync.canonical_reads_enabled():
+        # model_config is the runtime source of truth; migrate unmigrated users lazily.
+        if rows and not await legacy_sync.has_canonical_bindings(db, user_id):
+            await legacy_sync.reconcile_user_lazily(db, user_id)
+        canonical = await legacy_sync.canonical_default_config_ids(db, user_id)
     result: dict[str, Any] = {}
     for cap in CAPABILITY_ORDER:
         override = by_id.get(overrides.get(cap, ""))
         if override and cap in model_capabilities(override[1]):
             result[cap] = override
+        elif canonical is not None:
+            pick = by_id.get(canonical.get(cap, ""))
+            result[cap] = pick if pick and cap in model_capabilities(pick[1]) else None
         else:
             result[cap] = _pick_default(rows, cap)
     return result
@@ -317,17 +328,18 @@ async def save_simple_setup(db: AsyncSession, user_id: str, payload: dict[str, A
 
 
 async def sync_model_center(db: AsyncSession, user_id: str | None) -> bool:
-    """Project legacy configs into Model Center tables. Best effort, never blocks saves."""
-    from app.features.model_config.backfill import backfill_model_center
+    """Project legacy writes into model_config (the runtime source of truth)."""
+    from app.features.model_config import legacy_sync
 
-    try:
-        await backfill_model_center(db, apply=True, user_id=user_id)
-        await db.commit()
-        return True
-    except Exception as error:  # projection is additive; legacy rows remain authoritative
-        await db.rollback()
-        logger.warning("model center projection skipped: %s", type(error).__name__)
-        return False
+    if user_id is None:
+        try:
+            await legacy_sync.migrate_all(db)
+            return True
+        except Exception as error:
+            await db.rollback()
+            logger.warning("model center migration skipped: %s", type(error).__name__)
+            return False
+    return await legacy_sync.reconcile_user_safely(db, user_id)
 
 
 async def test_simple_setup(

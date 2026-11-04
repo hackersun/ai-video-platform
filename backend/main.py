@@ -45,7 +45,25 @@ ALLOWED_ORIGIN_REGEX = (
 @asynccontextmanager
 async def persistent_credential_encryption_lifespan(_: FastAPI):
     require_stable_encryption_key()
+    await _startup_model_center_migration()
     yield
+
+
+async def _startup_model_center_migration() -> None:
+    """Best-effort, idempotent legacy -> model_config migration (counts only are logged)."""
+    if os.getenv("MODEL_CENTER_STARTUP_SYNC", "1").strip().lower() in {"0", "false", "no", "off"}:
+        return
+    import logging
+
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.features.model_config.legacy_sync import migrate_all
+
+        async with AsyncSessionLocal() as session:
+            counts = await migrate_all(session)
+        logging.getLogger(__name__).info("model center migration: %s", counts)
+    except Exception as error:  # startup must not fail on migration; reads migrate lazily
+        logging.getLogger(__name__).warning("model center migration skipped: %s", type(error).__name__)
 
 
 app = FastAPI(

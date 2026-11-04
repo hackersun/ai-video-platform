@@ -42,7 +42,6 @@ import {
   Sparkles,
   Film,
   Volume2,
-  Image,
   Play,
   Settings,
   ImageIcon,
@@ -2289,7 +2288,7 @@ export default function NovelDetailPage() {
           </Card>
           <Card className="bg-gradient-to-br from-orange-600/20 to-amber-600/20 border-orange-500/30">
             <CardContent className="p-4 text-center">
-              <Image className="w-8 h-8 mx-auto mb-2 text-orange-400" />
+              <ImageIcon className="w-8 h-8 mx-auto mb-2 text-orange-400" />
               <div className="text-white font-medium">封面生成</div>
               <div className="text-white/60 text-sm">AI生成小说封面</div>
             </CardContent>

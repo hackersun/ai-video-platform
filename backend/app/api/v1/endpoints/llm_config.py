@@ -272,7 +272,6 @@ async def clear_default_configs_for_model_group(
             and_(
                 LLMConfig.user_id == user_id,
                 LLMConfig.is_active == True,
-                LLMConfig.is_default == True,
             )
         )
     )
@@ -281,6 +280,16 @@ async def clear_default_configs_for_model_group(
             continue
         if legacy_model_capability_group(existing_model) == group:
             config.is_default = False
+            extra = config.extra_params if isinstance(config.extra_params, dict) else None
+            if extra and "simple_setup_capability" in extra:
+                config.extra_params = {k: v for k, v in extra.items() if k != "simple_setup_capability"}
+
+
+async def _write_through(db: AsyncSession, user_id: str) -> None:
+    """Legacy endpoints are compat adapters: every write is projected into model_config."""
+    from app.features.model_config.legacy_sync import reconcile_user_safely
+
+    await reconcile_user_safely(db, user_id)
 
 
 # ============== 预设数据 ==============
@@ -1238,6 +1247,11 @@ async def list_configs(
         .order_by(desc(LLMConfig.is_default), desc(LLMConfig.created_at))
     )
     
+    from app.features.model_config import legacy_sync
+
+    canonical_ids: set[str] | None = None
+    if legacy_sync.canonical_reads_enabled():
+        canonical_ids = set((await legacy_sync.canonical_default_config_ids(db, user_id)).values())
     configs = []
     for row in result.all():
         config, model = row
@@ -1251,7 +1265,11 @@ async def list_configs(
         if provider is not None and not is_product_visible_provider(provider):
             continue
         
-        configs.append(build_llm_config_response(config, model, provider))
+        item = build_llm_config_response(config, model, provider)
+        if canonical_ids:
+            # default flag comes from model_config (single source of truth)
+            item["is_default"] = config.id in canonical_ids
+        configs.append(item)
     
     if include_model_center_defaults:
         bindings = await binding_page(db, user_id, 1, 100)
@@ -1305,7 +1323,9 @@ async def create_config(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    return build_llm_config_response(config, model, provider)
+    response = build_llm_config_response(config, model, provider)
+    await _write_through(db, user_id)
+    return response
 
 
 @router.post("/configs/test", response_model=LLMTestResponse)
@@ -1371,7 +1391,9 @@ async def test_config(
     config, model = row
     from app.services.model_config_test_runner import run_saved_config_test
 
-    return await run_saved_config_test(db, config, model, request.message)
+    outcome = await run_saved_config_test(db, config, model, request.message)
+    await _write_through(db, user_id)
+    return outcome
 
 
 @router.put("/configs/{config_id}", response_model=LLMConfigResponse)
@@ -1407,7 +1429,9 @@ async def update_config(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    return build_llm_config_response(config, model, provider)
+    response = build_llm_config_response(config, model, provider)
+    await _write_through(db, user_id)
+    return response
 
 
 @router.delete("/configs/{config_id}")
@@ -1435,6 +1459,7 @@ async def delete_config(
     
     config.is_active = False
     await db.commit()
+    await _write_through(db, user_id)
     
     return {"message": "配置已删除"}
 
@@ -1469,8 +1494,9 @@ async def set_default_config(
     
     config.is_default = True
     await db.commit()
-
-    return {"message": f"已设为{legacy_model_capability_group(model)}能力默认配置"}
+    message = f"已设为{legacy_model_capability_group(model)}能力默认配置"
+    await _write_through(db, user_id)
+    return {"message": message}
 
 
 @router.get("/api-key/{provider}", response_model=dict)
