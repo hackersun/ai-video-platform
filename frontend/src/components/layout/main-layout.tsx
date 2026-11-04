@@ -28,7 +28,7 @@ export function ExpertToolBanner() {
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-4 text-sm text-cyan-50 sm:flex-row sm:items-center sm:justify-between">
-      <div>这是专家工具。连续动漫制作建议从工作室统一管控。</div>
+      <div>这是高级工具。连续动漫制作建议从工作室统一管控。</div>
       <button
         type="button"
         onClick={() => router.push('/studio')}

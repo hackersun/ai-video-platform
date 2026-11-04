@@ -40,7 +40,7 @@ test('authenticated studio shell renders without backend', async ({ page }) => {
   await page.goto('/studio');
 
   const navigation = page.getByRole('navigation').first();
-  await expect(navigation.getByText('工作室')).toBeVisible();
-  await expect(navigation.getByText('快速开始')).toBeVisible();
+  await expect(navigation.getByText('小说')).toBeVisible();
+  await expect(navigation.getByText('成片')).toBeVisible();
   await expect(page.getByRole('heading', { name: '系列动漫工作室' })).toBeVisible();
 });

@@ -140,6 +140,17 @@ export default function SynthesisPage() {
   const [publishingJobId, setPublishingJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
+  // ?publication_id= 聚焦某条发布（一键生成视频完成后「查看发布」跳转至此）
+  const [focusPublicationId, setFocusPublicationId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFocusPublicationId(new URLSearchParams(window.location.search).get('publication_id'));
+  }, []);
+
+  useEffect(() => {
+    if (!focusPublicationId || !publications.some((item) => item.id === focusPublicationId)) return;
+    document.querySelector(`[data-testid="publication-row-${focusPublicationId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusPublicationId, publications]);
 
   useEffect(() => {
     loadVideos();
@@ -1002,17 +1013,22 @@ export default function SynthesisPage() {
                     <p>暂无发布记录</p>
                   </div>
                 ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {publications.map((publication) => {
+                  <div className="space-y-2 max-h-[36rem] overflow-y-auto">
+                    {[...publications].sort((a, b) => Number(b.id === focusPublicationId) - Number(a.id === focusPublicationId)).map((publication) => {
                       const artifactLinks = publicationArtifactLinks(publication);
+                      const focused = publication.id === focusPublicationId;
                       return (
                         <div
                           key={publication.id}
                           data-testid={`publication-row-${publication.id}`}
-                          className="flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between"
+                          data-focused={focused ? 'true' : undefined}
+                          className={`flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between ${focused ? 'ring-2 ring-emerald-400' : ''}`}
                         >
                           <div className="min-w-0 flex-1">
-                            <div className="text-white font-medium truncate">{publication.title}</div>
+                            {focused && artifactLinks.preview_url && (
+                              <video data-testid="focused-publication-video" src={toMediaUrl(artifactLinks.preview_url)} controls className="mb-3 w-full max-w-xl rounded-lg bg-black" />
+                            )}
+                            <div className="text-white font-medium truncate">{focused && <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-xs text-emerald-300">本次成片</span>}{publication.title}</div>
                             <div className="text-white/50 text-sm">
                               {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
                             </div>

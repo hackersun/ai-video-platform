@@ -395,11 +395,11 @@ test('expert workflow page links back to studio', async ({ page }) => {
   await installSeriesStudioRoutes(page, { entityApproved: true, contractLocked: true });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
-  await page.getByRole('button', { name: /专家工具|更多/ }).click();
+  await page.getByRole('button', { name: /高级工具|更多/ }).click();
   await page.getByRole('menuitem', { name: '工作流' }).click();
 
   await expect(page).toHaveURL(/\/workflow/);
-  await expect(page.getByText('这是专家工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
+  await expect(page.getByText('这是高级工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
   await page.getByRole('button', { name: '回到工作室' }).click();
   await expect(page).toHaveURL(/\/studio/);
 });
@@ -408,7 +408,7 @@ test('video generation history shows strategy and fallback badges', async ({ pag
   await installSeriesStudioRoutes(page, { entityApproved: true, contractLocked: true });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
-  await page.getByRole('button', { name: /专家工具|更多/ }).click();
+  await page.getByRole('button', { name: /高级工具|更多/ }).click();
   await page.getByRole('menuitem', { name: '视频生成' }).click();
   await expect(page).toHaveURL(/\/video-generation/);
 

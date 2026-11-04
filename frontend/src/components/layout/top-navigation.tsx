@@ -33,20 +33,20 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 
 const primaryNav = [
-  { href: '/studio', label: '工作室' },
-  { href: '/quick-start', label: '快速开始' },
   { href: '/novels', label: '小说' },
-  { href: '/assets', label: '资产' },
   { href: '/jobs', label: '任务中心' },
+  { href: '/assets', label: '资产' },
+  { href: '/synthesis', label: '成片' },
 ];
 
 const expertNav = [
-  { href: '/story-bibles', label: 'Story Bible' },
+  { href: '/studio', label: '工作室' },
+  { href: '/quick-start', label: '快速开始' },
+  { href: '/story-bibles', label: '故事设定' },
   { href: '/producer', label: 'AI 制片' },
   { href: '/workflow', label: '工作流' },
   { href: '/video-generation', label: '视频生成' },
   { href: '/tts', label: '配音' },
-  { href: '/synthesis', label: '合成' },
   { href: '/prompt-skills', label: '提示词管理' },
   { href: '/llm-config', label: '模型中心' },
 ];
@@ -220,8 +220,8 @@ export function TopNavigation() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="专家工具"
-                title="专家工具"
+                aria-label="高级工具"
+                title="高级工具"
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
                   ${expertActive
                     ? 'text-white bg-white/10'
@@ -229,7 +229,7 @@ export function TopNavigation() {
                   }`}
               >
                 <Settings className="w-4 h-4" />
-                <span className="hidden md:inline">专家工具</span>
+                <span className="hidden md:inline">高级工具</span>
                 <ChevronDown className="w-3 h-3" />
               </button>
             </DropdownMenuTrigger>
@@ -269,7 +269,7 @@ export function TopNavigation() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="更多专家工具"
+                aria-label="更多高级工具"
                 title="更多"
                 className={`flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
                   ${expertActive

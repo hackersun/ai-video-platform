@@ -110,6 +110,25 @@ function NovelsContent() {
   const searchParams = useSearchParams();
   const highlightId = searchParams.get('highlight');
   const productionEntriesRequestRef = useRef(0);
+  const [videoStatus, setVideoStatus] = useState<Record<string, 'running' | 'done' | 'attention'>>({});
+
+  useEffect(() => {
+    if (!novels.length) return;
+    let alive = true;
+    Promise.all(novels.map(async (item) => {
+      try {
+        const [latest] = await apiClient.listPublicationPipelines(item.id, 1);
+        if (!latest) return null;
+        const state = latest.status === 'succeeded' ? 'done'
+          : ['blocked', 'failed'].includes(latest.status) ? 'attention'
+          : ['accepted', 'queued', 'running', 'paused'].includes(latest.status) ? 'running' : null;
+        return state ? [item.id, state] as const : null;
+      } catch { return null; }
+    })).then((rows) => {
+      if (alive) setVideoStatus(Object.fromEntries(rows.filter(Boolean) as Array<readonly [string, 'running' | 'done' | 'attention']>));
+    });
+    return () => { alive = false; };
+  }, [novels]);
 
   // 从后端API加载小说
   const loadNovelsFromAPI = async () => {
@@ -476,6 +495,15 @@ function NovelsContent() {
                                     }`}>
                                       {STATUS_LABELS[novel.status]}
                                     </span>
+                                    {videoStatus[novel.id] && (
+                                      <span data-testid="novel-video-status" className={`px-2 py-0.5 rounded text-xs ${
+                                        videoStatus[novel.id] === 'done' ? 'bg-emerald-500/20 text-emerald-300' :
+                                        videoStatus[novel.id] === 'running' ? 'bg-violet-500/20 text-violet-300' :
+                                        'bg-amber-500/20 text-amber-300'
+                                      }`}>
+                                        {videoStatus[novel.id] === 'done' ? '已完成' : videoStatus[novel.id] === 'running' ? '生成中' : '需处理'}
+                                      </span>
+                                    )}
                                   </div>
                                   <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-white/60">{novel.description || '暂无简介'}</p>
                                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-white/40">
