@@ -228,7 +228,7 @@ export function SeriesRunPanel({ novelId, chapters, seriesPlan, modelConfigs, vi
       setRun(current);
       await refreshPreflightPlan(current.id, nativeAudio);
     }
-    catch (reason: any) { setLiveBlocker(reason?.message || '服务端未配置受信实模预算，当前只能进行确定性整书编排'); }
+    catch (reason: any) { setLiveBlocker(reason?.message || '服务端未配置真实模型预算，当前只能进行确定性整书编排'); }
     finally { setBusy(false); }
   };
   const qualityReports = Object.values(run?.run_metadata?.anchor_quality_reports || {}) as any[];

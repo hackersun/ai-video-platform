@@ -5,15 +5,8 @@ import { AlertCircle, ArrowRight, CheckCircle2, Film, ListChecks } from 'lucide-
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { NovelProductionEntry } from '@/lib/studio-types';
+import { STAGE_LABELS } from '@/lib/stage-labels';
 
-const STAGE_LABELS: Record<string, string> = {
-  content_prepare: '内容准备',
-  series_plan: '整书计划',
-  workflow_create: '本集工程',
-  studio_fix: '工作室处理',
-  studio_ready: '可继续生产',
-  not_found: '不可用',
-};
 
 function tone(entry?: NovelProductionEntry | null, failed = false) {
   if (!entry || failed) {
