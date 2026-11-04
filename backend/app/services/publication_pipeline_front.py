@@ -54,6 +54,35 @@ def _episodes_from_plan(plan: Dict[str, Any]) -> List[Dict[str, Any]]:
     return episodes
 
 
+def _chapter_input_hash(chapters: Sequence[Chapter]) -> str:
+    """Same lineage format as the Series Run panel / acceptance path: ``id:updated_at`` joined by ``|``."""
+    return "|".join(
+        f"{chapter.id}:{chapter.updated_at.isoformat() if chapter.updated_at else ''}" for chapter in chapters
+    )
+
+
+async def _attach_episode_input_hashes(
+    db: AsyncSession, *, user_id: str, novel_id: str, episodes: List[Dict[str, Any]]
+) -> None:
+    """Series Run episode stages require ``input_hash``; derive it from the owned chapters."""
+    wanted = {cid for episode in episodes for cid in episode["chapter_ids"]}
+    rows = (
+        await db.scalars(
+            select(Chapter).where(
+                Chapter.id.in_(wanted), Chapter.user_id == user_id, Chapter.novel_id == novel_id
+            )
+        )
+    ).all()
+    by_id = {str(row.id): row for row in rows}
+    for episode in episodes:
+        missing = [cid for cid in episode["chapter_ids"] if cid not in by_id]
+        if missing:
+            raise PipelineFrontBlocked(
+                "series_plan_chapters_invalid", f"series_plan 引用了不存在的章节: {missing}"
+            )
+        episode["input_hash"] = _chapter_input_hash([by_id[cid] for cid in episode["chapter_ids"]])
+
+
 async def ensure_series_plan_for_pipeline(
     db: AsyncSession,
     *,
@@ -87,6 +116,9 @@ async def ensure_series_plan_for_pipeline(
         )
 
     episodes = _episodes_from_plan(plan)
+    if not episodes:
+        raise PipelineFrontBlocked("series_plan_episodes_missing", "series_plan 没有可用集/章节映射")
+    await _attach_episode_input_hashes(db, user_id=user_id, novel_id=novel_id, episodes=episodes)
     if not episodes:
         raise PipelineFrontBlocked("series_plan_episodes_missing", "series_plan 没有可用集/章节映射")
 
