@@ -587,9 +587,14 @@ class PublicationPipelineOrchestrator:
                     env_commercial=commercial_gates_env_enabled(),
                 )
             except PipelineMediaBlocked as exc:
+                # Media generation commits/rolls back the shared session, which
+                # expires ORM objects; reload before touching attributes.
+                await db.refresh(pipeline)
                 self._block(pipeline, exc.code, exc.detail)
                 await db.commit()
                 return pipeline
+            await db.refresh(pipeline)
+            await db.refresh(run)
             summary = dict(pipeline.gate_summary or {})
             summary["series_run_ref"] = {
                 "id": run.id,

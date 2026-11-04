@@ -75,7 +75,7 @@ async def test_run_media_blocks_on_trusted_multimodal(monkeypatch: pytest.Monkey
             }
         ],
         gate_summary={},
-        run_metadata={},
+        run_metadata={"selected_anchor_shot_ids": [shot_id], "selected_anchor_mode": "full"},
     )
     pipeline = _pipeline(user_id="u-media", novel_id="n-media")
 
@@ -129,7 +129,7 @@ async def test_run_media_passes_when_completed_with_ready_tail() -> None:
             }
         ],
         gate_summary={},
-        run_metadata={},
+        run_metadata={"selected_anchor_shot_ids": [shot_id], "selected_anchor_mode": "full"},
     )
     pipeline = _pipeline(user_id="u-media2", novel_id="n-media2")
 
@@ -160,3 +160,38 @@ async def test_run_media_passes_when_completed_with_ready_tail() -> None:
         )
         assert updated.status == "completed"
         assert (updated.gate_summary or {}).get("media_tail", {}).get("result") == "passed"
+
+
+@pytest.mark.asyncio
+async def test_run_media_all_shots_requires_full_selection() -> None:
+    from app.core.database import AsyncSessionLocal
+    from init_db import init_db
+
+    init_db()
+    shot_ids = [f"shot-{uuid4()}", f"shot-{uuid4()}"]
+    run = SeriesProductionRun(
+        id=str(uuid4()),
+        user_id="u-media3",
+        novel_id="n-media3",
+        series_plan_version="v1",
+        idempotency_key=f"r-{uuid4()}",
+        status="media_running",
+        episodes=[{"episode_number": 1, "stage": "shots_ready",
+                   "canonical_ids": {"workflow_id": "wf-1", "shot_ids": shot_ids}}],
+        gate_summary={},
+        run_metadata={"selected_anchor_shot_ids": shot_ids[:1], "selected_anchor_mode": "smoke"},
+    )
+    pipeline = _pipeline(user_id="u-media3", novel_id="n-media3")
+    called = []
+
+    async def generate(db, **kwargs):
+        called.append(kwargs)
+        return {}
+
+    async with AsyncSessionLocal() as db:
+        db.add(run)
+        await db.commit()
+        with pytest.raises(PipelineMediaBlocked) as exc:
+            await run_media_quality_for_pipeline(db, run, pipeline, generate_fn=generate)
+        assert exc.value.code == "full_shot_selection_required"
+        assert called == []

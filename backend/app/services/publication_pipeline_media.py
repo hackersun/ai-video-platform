@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.publication_pipeline import NovelPublicationPipeline
 from app.models.series_production_run import SeriesProductionRun
-from app.services.series_run_orchestrator import SeriesRunOrchestrator
+from app.services.series_run_orchestrator import SeriesRunOrchestrator, SeriesRunPreflightBlocked
 
 EnterMediaFn = Callable[[AsyncSession, SeriesProductionRun], Awaitable[SeriesProductionRun]]
 ListShotsFn = Callable[[AsyncSession, SeriesProductionRun], Awaitable[Tuple[list, Dict[str, str]]]]
@@ -98,7 +98,15 @@ async def run_media_quality_for_pipeline(
         enter_media_fn = _enter
 
     if run.status in {"shots_ready", "anchor_ready"}:
-        run = await enter_media_fn(db, run)
+        try:
+            run = await enter_media_fn(db, run)
+        except SeriesRunPreflightBlocked as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            codes = ",".join(str(code) for code in (detail.get("codes") or []))
+            raise PipelineMediaBlocked(
+                str(detail.get("code") or "series_run_media_preflight_failed"),
+                f"{detail.get('message') or exc}" + (f"（{codes}）" if codes else ""),
+            ) from exc
         await db.refresh(run)
 
     if generate_fn is None:
@@ -113,8 +121,20 @@ async def run_media_quality_for_pipeline(
         shots, workflow_for_shot = await list_shots_fn(db, run)
 
     if scope == "all_episode_shots":
-        requested = _all_shot_ids(run) or [str(getattr(s, "id", s)) for s in shots]
+        all_ids = _all_shot_ids(run) or [str(getattr(s, "id", s)) for s in shots]
+        meta = run.run_metadata or {}
+        persisted = [str(item) for item in (meta.get("selected_anchor_shot_ids") or [])]
         mode = "full"
+        # generate_selected requires the persisted selection (mode + order);
+        # all-shot scope is only satisfiable by a "full" selection covering
+        # exactly every episode shot. Anything else fails closed.
+        if meta.get("selected_anchor_mode") != "full" or not all_ids or set(persisted) != set(all_ids):
+            raise PipelineMediaBlocked(
+                "full_shot_selection_required",
+                "全量镜头生成需要先锁定覆盖全部镜头的 full 选择"
+                f"（当前 mode={meta.get('selected_anchor_mode')}, 已选 {len(persisted)}/{len(all_ids)}）",
+            )
+        requested = persisted
     else:
         # Non-commercial anchor smoke only (already validated by resolve_shot_scope).
         meta = run.run_metadata or {}
