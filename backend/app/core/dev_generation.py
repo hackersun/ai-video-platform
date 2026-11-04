@@ -186,10 +186,34 @@ def _ensure_dev_video_file(filename: str, duration_seconds: float | int | str | 
 def _ensure_dev_audio_file(filename: str) -> None:
     DEV_DIR.mkdir(parents=True, exist_ok=True)
     audio_path = DEV_DIR / filename
+    if audio_path.exists() and audio_path.stat().st_size > 1024:
+        return
+    # Dev/fake placeholder only, never presented as generated speech. Prefer a
+    # real decodable mp3 so downstream real-FFmpeg renders can consume it; fall
+    # back to the tiny ID3 stub when FFmpeg is unavailable.
+    if _write_dev_mp3_with_ffmpeg(audio_path):
+        return
     if not audio_path.exists():
-        # A tiny placeholder payload is enough for local artifact/link tests. It is
-        # intentionally not presented as production-quality generated speech.
         audio_path.write_bytes(b"ID3\x04\x00\x00\x00\x00\x00\x00")
+
+
+def _write_dev_mp3_with_ffmpeg(audio_path: Path, duration_seconds: float = 2.0) -> bool:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    tmp_path = audio_path.with_suffix(".tmp.mp3")
+    try:
+        subprocess.run(
+            [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
+             "-i", f"sine=frequency=440:sample_rate=44100:duration={duration_seconds}",
+             "-c:a", "libmp3lame", "-b:a", "64k", str(tmp_path)],
+            check=True, capture_output=True, timeout=30,
+        )
+        tmp_path.replace(audio_path)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        tmp_path.unlink(missing_ok=True)
+        return False
 
 
 def _ensure_dev_wav_file(filename: str, frequency: int = 440, duration_seconds: float = 1.0) -> None:
