@@ -245,3 +245,18 @@ def test_save_projects_into_model_center(env):
     assert _run(svc.sync_model_center(db, "u1")) is True
     connections = _run(db.scalars(select(ModelConnection))).all()
     assert connections, "legacy config must be projected into model_config connections"
+
+
+def test_save_accepts_model_outside_recommended_presets(env):
+    db, p, _, _ = env
+    custom = LLMModel(id=str(uuid4()), provider_id=p.id, model_id="custom-chat-not-in-presets", model_name="Custom",
+                      model_type="chat", capabilities=["chat"], is_active=True)
+    db.add(custom)
+    _run(db.commit())
+    assert "custom-chat-not-in-presets" not in repr(svc.PROVIDER_PRESETS)
+    state = _run(svc.save_simple_setup(db, "u1", {"provider_id": p.id, "api_key": SECRET,
+                                                  "capabilities": {"text": {"model_id": custom.id}}}))
+    assert state["capabilities"]["text"]["has_key"] is True
+    row = _run(db.scalars(select(LLMConfig).where(LLMConfig.user_id == "u1"))).one()
+    assert row.model_id == custom.id and row.is_default
+    assert SECRET not in repr(state)
