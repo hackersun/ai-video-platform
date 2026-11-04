@@ -200,7 +200,11 @@ async def get_simple_setup(db: AsyncSession, user_id: str, *, novel_id: str | No
     primary = next((cards[c]["provider_id"] for c in CAPABILITY_ORDER if cards[c]["provider_id"]), None)
     state: dict[str, Any] = {
         "providers": provider_items, "capabilities": cards, "primary_provider_id": primary,
-        "configured": all(cards[c]["config_id"] and cards[c]["has_key"] for c in CAPABILITY_ORDER),
+        # Keyless providers (local/self-hosted) count as configured once a test passed.
+        "configured": all(
+            cards[c]["config_id"] and (cards[c]["has_key"] or cards[c]["test_status"] == "success")
+            for c in CAPABILITY_ORDER
+        ),
         "verified": all(cards[c]["test_status"] == "success" for c in CAPABILITY_ORDER),
     }
     if novel_id:

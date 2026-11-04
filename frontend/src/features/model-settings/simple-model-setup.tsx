@@ -25,9 +25,9 @@ type Draft = { model_id: string; api_key: string; voice: string };
 
 export function statusOf(card?: SimpleModelCard | null) {
   if (!card || !card.config_id) return { tone: 'empty', text: '未配置' } as const;
-  if (!card.has_key) return { tone: 'warn', text: '缺少 API Key' } as const;
   if (card.test_status === 'success') return { tone: 'ok', text: card.fresh ? '连接正常' : '已验证（生成前自动复测）' } as const;
   if (card.test_status === 'failed') return { tone: 'bad', text: '连接失败' } as const;
+  if (!card.has_key) return { tone: 'warn', text: '缺少 API Key' } as const;
   return { tone: 'warn', text: '待测试' } as const;
 }
 
@@ -216,6 +216,7 @@ export function SimpleModelSetup() {
                   onChange={(e) => setDrafts((c) => ({ ...c, [cap]: { ...c[cap], model_id: e.target.value } }))}
                   className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm text-slate-900">
                   <option value="">不使用</option>
+                  {card?.model_id && !card.options.some((o) => o.model_id === card.model_id) && <option value={card.model_id}>{card.model_name || card.model_id}{card.provider_name ? ` · ${card.provider_name}` : ''}（当前）</option>}
                   {card?.options.map((o) => <option key={o.model_id} value={o.model_id}>{o.name} · {o.provider_name}</option>)}
                 </select>
               </label>
