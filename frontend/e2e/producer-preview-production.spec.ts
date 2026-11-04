@@ -258,12 +258,23 @@ test('producer preview production uses audio model, contract refresh, render pre
       return;
     }
 
+    if (path === '/api/v1/shots/storyboard/storyboard-preview') {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+        { id: 'shot-1', storyboard_id: 'storyboard-preview', shot_number: 1, description: '雾港码头', dialogue: '' },
+        { id: 'shot-2', storyboard_id: 'storyboard-preview', shot_number: 2, description: '铜铃特写', dialogue: '' },
+      ]) });
+      return;
+    }
+
     await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
 
   await page.goto('/producer?workflow_id=wf-preview');
   await expect(page.getByText('生产策略', { exact: true })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText('可选声音配置')).toBeVisible();
+  // 生产安全护栏：必须先加载并明确选择镜头，才会提交云端音视频任务。
+  await page.getByRole('button', { name: /加载镜头/ }).click();
+  await page.getByRole('button', { name: '全选' }).click();
   await page.getByRole('button', { name: '一键生成本集草片' }).click();
 
   await expect(page.getByRole('link', { name: /打开草片预览/ })).toBeVisible({ timeout: 10_000 });

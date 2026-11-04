@@ -481,8 +481,8 @@ function ProducerCenterContent() {
         setPublicationResult(null);
       }
     } else {
-      setPreviewResult(null);
-      setPublicationResult(null);
+      // Status may not list the just-rendered synthesis yet; keep a fresh result for the same workflow.
+      setPreviewResult((prev) => (prev && prev.workflowId === id && prev.previewUrl ? prev : null));
     }
     return data;
   }, []);
