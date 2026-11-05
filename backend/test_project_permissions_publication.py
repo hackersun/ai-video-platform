@@ -508,7 +508,7 @@ def test_publish_export_delivers_local_final_artifacts_to_qiniu(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.api.v1.endpoints import synthesis as synthesis_endpoint
+    from app.services import publication_export
 
     owner_id = "publish-qiniu-owner"
     synthesis_job_id = f"publish-qiniu-{uuid4()}"
@@ -534,11 +534,12 @@ def test_publish_export_delivers_local_final_artifacts_to_qiniu(
             "omitted_reason": None,
         }
 
+    # Delivery moved to app.services.publication_export (P1 publication pipeline);
+    # patch where it is looked up, not the legacy endpoint module.
     monkeypatch.setattr(
-        synthesis_endpoint,
+        publication_export,
         "resolve_provider_media_url",
         fake_resolve_provider_media_url,
-        raising=False,
     )
     _insert_synthesis_job(
         SynthesisJob(
