@@ -25,6 +25,11 @@ def test_non_production_allows_dev_mode(monkeypatch):
 
 def test_production_defaults_are_safe(monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("STORAGE_PROVIDER", raising=False)
+    # G4: local media storage in production needs an explicit opt-in.
+    with pytest.raises(RuntimeError, match="STORAGE_PROVIDER=local"):
+        assert_production_safe()
+    monkeypatch.setenv("ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "1")
     assert_production_safe()
 
 

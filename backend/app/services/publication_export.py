@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.time_utils import utc_now
 from app.models.publication import Publication
 from app.models.synthesis_job import SynthesisJob
+from app.core.object_storage import persist_private_media_in_obj
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.publication_readiness import evaluate_publication_readiness
 
@@ -258,6 +259,8 @@ async def create_platform_publication(
         json.dumps(artifact_payload, ensure_ascii=False, sort_keys=True, indent=2),
         encoding="utf-8",
     )
+    # G4: mirror final video/artifacts + export manifest into the private bucket.
+    await persist_private_media_in_obj(artifact_payload)
 
     publication = Publication(
         id=export_id,

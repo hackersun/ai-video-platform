@@ -49,6 +49,9 @@ def assert_production_safe() -> None:
             problems.append(f"{name} set")
     if (os.getenv("DETERMINISTIC_PROVIDER_FAKE") or "").strip() == "1":
         problems.append("DETERMINISTIC_PROVIDER_FAKE enabled")
+    from app.core.object_storage import storage_production_problems
+
+    problems.extend(storage_production_problems())
     if problems:
         raise RuntimeError(
             f"Refusing to start: APP_ENV={app_environment()} but " + ", ".join(problems)

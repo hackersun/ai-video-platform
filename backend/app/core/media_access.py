@@ -53,6 +53,12 @@ def sign_media_url(url: Optional[str], ttl_seconds: Optional[int] = None) -> Opt
         return url
     if not is_private_media_path(parsed.path):
         return url
+    # G4: uploaded objects get a provider-signed private-bucket URL.
+    from app.core.object_storage import signed_url_for
+
+    cloud_url = signed_url_for(parsed.path, ttl_seconds)
+    if cloud_url:
+        return cloud_url
     # Bucket expiry to 5 minutes so repeated polls yield cache-friendly URLs.
     ttl = _ttl() if ttl_seconds is None else ttl_seconds
     exp = str((int(time.time()) + ttl) // 300 * 300 if ttl > 0 else int(time.time()) + ttl)
