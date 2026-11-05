@@ -86,6 +86,34 @@ def test_completed_run_reused_only_when_chapter_inputs_unchanged():
     assert not asyncio.run(orch._run_inputs_fresh(_FakeDB([]), run))
 
 
+class _SeqDB:
+    def __init__(self, *results):
+        self._results = list(results)
+
+    async def scalars(self, _stmt):
+        rows = self._results.pop(0)
+        return SimpleNamespace(all=lambda: rows)
+
+
+def test_completed_run_not_reused_after_new_chapter_added():
+    from datetime import datetime
+    from app.services.publication_pipeline_front import _chapter_input_hash
+
+    ch = SimpleNamespace(id="c1", updated_at=datetime(2026, 1, 1))
+    run = _run(episodes=[{"chapter_ids": ["c1"], "input_hash": _chapter_input_hash([ch])}])
+    orch = PublicationPipelineOrchestrator()
+    assert asyncio.run(orch._run_inputs_fresh(_SeqDB(["c1"], [ch]), run))
+    assert not asyncio.run(orch._run_inputs_fresh(_SeqDB(["c1", "c2"], [ch]), run))
+
+
+def test_anchor_contract_caps_to_available_episodes():
+    from app.services.anchor_shot_service import anchor_contract
+
+    eps = [{"canonical_ids": {"shot_ids": ["a", "b", "c"]}}, {"canonical_ids": {"shot_ids": ["d", "e"]}}]
+    assert anchor_contract("full", eps) == {**anchor_contract("full"), "required_episodes": 2, "target_count": 5}
+    assert anchor_contract("smoke", eps) == anchor_contract("smoke")
+
+
 # ---- P2: real-mode auto binding from the user's model settings ----
 from datetime import datetime as _dt
 

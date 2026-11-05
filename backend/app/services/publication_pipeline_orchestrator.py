@@ -169,6 +169,14 @@ class PublicationPipelineOrchestrator:
         if not episodes:
             return False
         wanted = {str(cid) for ep in episodes for cid in (ep.get("chapter_ids") or [])}
+        # Chapters added to (or removed from) the novel since the run was built make it stale too.
+        novel_chapter_ids = {
+            str(getattr(cid, "id", cid)) for cid in (await db.scalars(select(Chapter.id).where(
+                Chapter.novel_id == run.novel_id, Chapter.user_id == run.user_id,
+            ))).all()
+        }
+        if novel_chapter_ids != wanted:
+            return False
         chapters = {
             str(row.id): row
             for row in (await db.scalars(select(Chapter).where(Chapter.id.in_(wanted)))).all()
