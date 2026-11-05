@@ -49,6 +49,8 @@ class NovelCreate(BaseModel):
     genre: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     cover_url: Optional[str] = None
+    intro: Optional[str] = Field(None, max_length=20000, description="详细简介/世界观/人物设定")
+    style: Optional[str] = Field(None, max_length=100, description="小说风格")
 
 
 class NovelUpdate(BaseModel):
@@ -781,7 +783,8 @@ async def create_novel(
         genre=novel.genre,
         tags=novel.tags or [],
         cover_url=novel.cover_url,
-        status="draft"
+        status="draft",
+        extra_data={k: v for k, v in {"intro": (novel.intro or "").strip(), "novel_style": (novel.style or "").strip()}.items() if v},
     )
     db.add(db_novel)
     await db.commit()

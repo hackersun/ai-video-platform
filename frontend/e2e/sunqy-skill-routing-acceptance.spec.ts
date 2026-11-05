@@ -36,7 +36,7 @@ test('sunqy starts a four-chapter Skill-routed production from the workbench', a
     await page.getByRole('button', { name: '新建章节' }).click();
     await page.getByPlaceholder(/章节标题，可留空/).fill(chapterTitle);
     await page.getByPlaceholder(/章节内容或创作方向/).fill(content);
-    await page.getByRole('button', { name: '手动创建' }).click();
+    await page.getByTestId('chapter-create-submit').click();
     await expect.poll(async () => {
       const response = await page.request.get(`${apiBase}/chapters/novel/${novelId}`, {
         headers: { Authorization: `Bearer ${userId}` },

@@ -444,6 +444,8 @@ const getEpisodeContinuitySummary = (episode: SeriesEpisode) => {
   return parts.join('；');
 };
 
+type ChapterCreateMode = 'manual' | 'continue' | 'expand' | 'polish';
+
 export default function NovelDetailPage() {
   const { toast } = useToast();
   const params = useParams();
@@ -471,6 +473,7 @@ export default function NovelDetailPage() {
   // 新章节表单
   const [showChapterForm, setShowChapterForm] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState('');
+  const [chapterCreateMode, setChapterCreateMode] = useState<ChapterCreateMode>('manual');
   const [newChapterContent, setNewChapterContent] = useState('');
   const [newChapterInstruction, setNewChapterInstruction] = useState('');
   const [newChapterTargetWordCount, setNewChapterTargetWordCount] = useState(1800);
@@ -720,7 +723,7 @@ export default function NovelDetailPage() {
 
   const createChapter = async () => {
     if (!newChapterTitle.trim() && !newChapterContent.trim()) {
-      toast({ title: '请填写标题或正文', description: '也可以直接点击 AI 续写下一章。', type: 'info' });
+      toast({ title: '请填写标题或正文', description: '也可以在「创建方式」中选择 AI 续写下一章。', type: 'info' });
       return;
     }
 
@@ -1146,7 +1149,7 @@ export default function NovelDetailPage() {
   const firstReadableChapter = chapters.find((chapter) => chapter.content?.trim()) || chapters[0];
   const readingPreview = getStoryExcerpt(
     firstReadableChapter?.content || novel.description,
-    '暂无可预览正文。可以先创建章节，或用 AI 续写下一章生成可改编内容。',
+    '暂无可预览正文。可以先创建章节（创建方式可选 AI 续写下一章）。',
     280
   );
   const overviewStats = [
@@ -1187,8 +1190,14 @@ export default function NovelDetailPage() {
                 className="bg-violet-600 hover:bg-violet-700"
                 onClick={async () => {
                   try {
-                    const billing = await apiClient.getBillingSettings();
-                    if (!billing.live_calls_opt_in) {
+                    const [billing, modelSetup] = await Promise.all([
+                      apiClient.getBillingSettings(),
+                      apiClient.getSimpleModelSetup().catch(() => null),
+                    ]);
+                    if (modelSetup?.simulation_enabled) {
+                      const ok = window.confirm('模拟模式确认\n\n当前为模拟模式、不扣费：不会调用付费接口，生成的是演示素材。\n确认开始一键生成？');
+                      if (!ok) return;
+                    } else if (!billing.live_calls_opt_in) {
                       const ok = window.confirm(
                         `首次付费运行确认\n\n一键生成会调用真实模型，费用计入账户上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。\n确认开启真实调用并开始？\n\n也可先到「模型设置」调整上限。`,
                       );
@@ -1525,44 +1534,36 @@ export default function NovelDetailPage() {
                     <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-3 text-sm text-violet-100">
                       AI 辅助会优先使用上方“文本生成默认”模型，并自动带入本小说已有章节、Story Bible、人物、场景、道具和事件上下文，尽量保持下一章剧情承接。
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        onClick={handleAIContinueChapter}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        aria-label="创建方式"
+                        data-testid="chapter-create-mode"
+                        value={chapterCreateMode}
+                        onChange={(e) => setChapterCreateMode(e.target.value as ChapterCreateMode)}
                         disabled={creatingChapter || chapterAiAction !== null}
-                        className="bg-violet-600 hover:bg-violet-700"
+                        className="h-9 rounded-md border border-white/20 bg-white/10 px-2 text-sm text-white"
                       >
-                        {chapterAiAction === 'continue' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                        AI 续写下一章
-                      </Button>
+                        <option value="manual">直接保存正文</option>
+                        <option value="continue">AI 续写下一章</option>
+                        <option value="expand">AI 扩写成章</option>
+                        <option value="polish">AI 润色后保存</option>
+                      </select>
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => handleCreateChapterWithAI('expand')}
-                        disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
-                        className="border-blue-500/50 text-blue-200 hover:bg-blue-500/10"
-                      >
-                        {chapterAiAction === 'expand' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                        扩写成章
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleCreateChapterWithAI('polish')}
-                        disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
-                        className="light-readable-disabled border-green-500/50 text-green-200 hover:bg-green-500/10"
-                      >
-                        {chapterAiAction === 'polish' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                        润色后创建
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        onClick={createChapter}
-                        disabled={creatingChapter || chapterAiAction !== null || (!newChapterTitle.trim() && !newChapterContent.trim())}
+                        data-testid="chapter-create-submit"
+                        onClick={() => {
+                          if (chapterCreateMode === 'continue') return handleAIContinueChapter();
+                          if (chapterCreateMode === 'expand' || chapterCreateMode === 'polish') return handleCreateChapterWithAI(chapterCreateMode);
+                          return createChapter();
+                        }}
+                        disabled={creatingChapter || chapterAiAction !== null || (
+                          chapterCreateMode === 'manual' ? (!newChapterTitle.trim() && !newChapterContent.trim())
+                            : chapterCreateMode !== 'continue' && !newChapterContent.trim()
+                        )}
                         className="bg-violet-600 hover:bg-violet-700"
                       >
-                        {creatingChapter && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                        手动创建
+                        {(creatingChapter || chapterAiAction !== null) ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
+                        创建章节
                       </Button>
                       <Button 
                         size="sm" 

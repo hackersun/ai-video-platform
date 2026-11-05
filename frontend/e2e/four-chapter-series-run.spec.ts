@@ -165,7 +165,7 @@ async function createNovelAndChapters(page: any, mode: 'smoke' | 'full') {
     await page.getByRole('button', { name: '新建章节' }).click();
     await page.getByPlaceholder(/章节标题，可留空/).fill(source.title);
     await page.getByPlaceholder(/章节内容或创作方向/).fill(source.content);
-    await page.getByRole('button', { name: '手动创建' }).click();
+    await page.getByTestId('chapter-create-submit').click();
     let snapshot: Array<{ id: string; title: string }> | null = null;
     const expectedTitles = fourChapterNovel.chapters.slice(0, index + 1).map((chapter) => chapter.title);
     await expect.poll(async () => {
