@@ -322,7 +322,6 @@ export function StudioShell() {
         { href: '/studio/continuity-review', label: '连续性复审' },
         { href: '/studio/shot-review', label: '镜头审阅' },
         { href: '/workflow', label: '工作流' },
-        { href: '/producer', label: 'AI 制片' },
         { href: '/video-generation', label: '视频生成' },
       ]
     : [];
@@ -706,8 +705,8 @@ export function StudioShell() {
               <Button className="bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/quick-start')}>
                 连续动漫向导：小说到第一集
               </Button>
-              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/producer')}>
-                一键成片：创建本集工程
+              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/novels')}>
+                一键成片：从小说开始
               </Button>
             </div>
           </CardContent>
