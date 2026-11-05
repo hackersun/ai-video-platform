@@ -232,3 +232,39 @@ async def test_create_api_queues_without_completed_run(client: TestClient, monke
     body = resp.json()
     assert body["status"] == "queued"
     assert body["blocker_code"] is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_plan_rebuilds_when_chapters_change(client: TestClient) -> None:
+    user_id, novel_id, chapter_id = await _seed_novel_with_chapter(client)
+    async with AsyncSessionLocal() as db:
+        db.add(Chapter(id=str(uuid4()), user_id=user_id, novel_id=novel_id, title="第2章", content="二", chapter_number=2))
+        await db.commit()
+    async with AsyncSessionLocal() as db:
+        first = await ensure_series_plan_for_pipeline(db, user_id=user_id, novel_id=novel_id, ensure=True)
+        await db.commit()
+    assert sum(len(e["chapter_ids"]) for e in first["episodes"]) == 2
+    async with AsyncSessionLocal() as db:
+        again = await ensure_series_plan_for_pipeline(
+            db, user_id=user_id, novel_id=novel_id, ensure=True, series_plan_version=first["series_plan_version"])
+        await db.commit()
+    assert again["series_plan_version"] == first["series_plan_version"]  # unchanged chapters reuse plan
+    third_id = str(uuid4())
+    async with AsyncSessionLocal() as db:
+        db.add(Chapter(id=third_id, user_id=user_id, novel_id=novel_id, title="第3章", content="三", chapter_number=3))
+        await db.commit()
+    async with AsyncSessionLocal() as db:
+        rebuilt = await ensure_series_plan_for_pipeline(
+            db, user_id=user_id, novel_id=novel_id, ensure=True, series_plan_version=first["series_plan_version"])
+        await db.commit()
+    ids = [cid for e in rebuilt["episodes"] for cid in e["chapter_ids"]]
+    assert third_id in ids and len(ids) == 3
+    assert rebuilt["series_plan_version"] != first["series_plan_version"]
+    async with AsyncSessionLocal() as db:
+        chapter = await db.get(Chapter, chapter_id)
+        chapter.content = "改写后的正文"
+        await db.commit()
+    async with AsyncSessionLocal() as db:
+        edited = await ensure_series_plan_for_pipeline(db, user_id=user_id, novel_id=novel_id, ensure=True)
+        await db.commit()
+    assert edited["series_plan_version"] != rebuilt["series_plan_version"]

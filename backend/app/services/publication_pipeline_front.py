@@ -13,7 +13,7 @@ from app.features.series_anchor_generation.run_creation import create_run as cre
 from app.models.chapter import Chapter
 from app.models.novel import Novel
 from app.models.series_production_run import SeriesProductionRun
-from app.services.series_production import build_series_plan, get_series_plan
+from app.services.series_production import build_series_plan, current_chapter_fingerprint, get_series_plan
 from app.services.series_run_orchestrator import SeriesRunOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,17 @@ async def ensure_series_plan_for_pipeline(
         raise PipelineFrontBlocked("chapters_missing", "请先为小说创建或导入章节")
 
     plan = await get_series_plan(db, user_id, novel_id)
+    rebuilt = False
+    stale = bool(plan and plan.get("episodes")) and (
+        plan.get("chapter_fingerprint") != await current_chapter_fingerprint(db, user_id, novel_id)
+    )
+    if stale and ensure:
+        # Chapters were added/removed/edited since the plan was built: rebuild a new plan version.
+        # Existing runs keep their own pinned version and are not touched.
+        logger.info("series_plan stale for novel %s; rebuilding", novel_id)
+        plan = None
     if (not plan or not plan.get("episodes")) and ensure:
+        rebuilt = True
         try:
             plan = await build_series_plan(db, user_id, novel_id=novel_id, persist=True)
         except Exception as exc:  # HTTPException or validation
@@ -122,7 +132,7 @@ async def ensure_series_plan_for_pipeline(
     if not episodes:
         raise PipelineFrontBlocked("series_plan_episodes_missing", "series_plan 没有可用集/章节映射")
 
-    version = series_plan_version or str(plan.get("version") or plan.get("series_plan_version") or "1")
+    version = (None if rebuilt else series_plan_version) or str(plan.get("version") or plan.get("series_plan_version") or "1")
     return {
         "series_plan_version": version,
         "episodes": episodes,
