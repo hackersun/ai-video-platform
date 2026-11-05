@@ -56,6 +56,17 @@ def _source(path: Path) -> bytes:
     return secret
 
 
+def _subprocess_env() -> dict[str, str]:
+    # Ambient e2e/harness exports must not leak into isolated script subprocesses.
+    env = {k: v for k, v in os.environ.items() if k not in {
+        "E2E_REQUIRE_ISOLATED_DB",
+        "DETERMINISTIC_PROVIDER_FAKE",
+        "DETERMINISTIC_REFERENCE_URL",
+    }}
+    env.pop("DATABASE_URL", None)
+    return env
+
+
 def _run(
     source: Path, target: Path, *config_ids: str, storage_config_id: str | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
@@ -73,6 +84,7 @@ def _run(
         ],
         capture_output=True,
         check=False,
+        env=_subprocess_env(),
     )
 
 

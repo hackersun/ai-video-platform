@@ -1266,9 +1266,12 @@ async def list_configs(
             continue
         
         item = build_llm_config_response(config, model, provider)
-        if canonical_ids:
-            # default flag comes from model_config (single source of truth)
-            item["is_default"] = config.id in canonical_ids
+        if canonical_ids is not None:
+            # Canonical bindings currently cover text/image/video/tts only.
+            # Preserve legacy is_default for groups like vision until they are mapped.
+            group = legacy_model_capability_group(model)
+            if group in legacy_sync.SIMPLE_TO_CANONICAL:
+                item["is_default"] = config.id in canonical_ids
         configs.append(item)
     
     if include_model_center_defaults:

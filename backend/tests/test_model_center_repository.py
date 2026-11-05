@@ -537,7 +537,16 @@ print(comparison.sanitized_summary()['comparison_fingerprint'])
 """
     outputs = []
     for seed in ("1", "2"):
-        environment = {**os.environ, "PYTHONHASHSEED": seed}
+        environment = {
+            k: v for k, v in os.environ.items()
+            if k not in {
+                "E2E_REQUIRE_ISOLATED_DB",
+                "DETERMINISTIC_PROVIDER_FAKE",
+                "DETERMINISTIC_REFERENCE_URL",
+                "DATABASE_URL",
+            }
+        }
+        environment["PYTHONHASHSEED"] = seed
         outputs.append(subprocess.check_output([sys.executable, "-c", code], env=environment, text=True).strip())
 
     canonical_payload = {
