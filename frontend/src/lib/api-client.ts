@@ -3546,6 +3546,10 @@ export interface SimpleModelSetupState {
   primary_provider_id: string | null;
   configured: boolean;
   verified: boolean;
+  /** 非生产环境且启用本地确定性假模型时为 true */
+  simulation_available?: boolean;
+  /** 四项能力都指向模拟模式 */
+  simulation_enabled?: boolean;
   novel_id?: string;
   novel_overrides?: Record<SimpleCapability, string | null>;
   novel_effective?: Record<SimpleCapability, SimpleModelCard>;
@@ -3555,6 +3559,7 @@ export interface SimpleModelSetupState {
 export interface SimpleModelSetupSavePayload {
   provider_id?: string | null;
   api_key?: string | null;
+  simulation?: boolean;
   capabilities: Partial<Record<SimpleCapability, { model_id?: string | null; api_key?: string | null; extra_params?: Record<string, string> }>>;
 }
 

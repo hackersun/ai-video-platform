@@ -23,7 +23,8 @@ class SimpleCard(BaseModel):
 class SimpleSetupSaveRequest(BaseModel):
     provider_id: Optional[str] = None
     api_key: Optional[str] = Field(None, max_length=4096, description="主供应商 API Key，仅写入")
-    capabilities: dict[Capability, SimpleCard]
+    capabilities: dict[Capability, SimpleCard] = Field(default_factory=dict)
+    simulation: bool = Field(False, description="模拟模式：四项能力指向本地确定性假模型，不调用付费接口（生产环境不可用）")
 
 
 class SimpleSetupTestRequest(BaseModel):

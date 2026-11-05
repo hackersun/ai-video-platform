@@ -260,3 +260,46 @@ def test_save_accepts_model_outside_recommended_presets(env):
     row = _run(db.scalars(select(LLMConfig).where(LLMConfig.user_id == "u1"))).one()
     assert row.model_id == custom.id and row.is_default
     assert SECRET not in repr(state)
+
+
+def test_simulation_mode_hidden_in_production(monkeypatch):
+    monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    monkeypatch.setenv("APP_ENV", "production")
+
+    async def go():
+        engine, maker = await _session()
+        async with maker() as db:
+            await _seed(db)
+            state = await svc.get_simple_setup(db, "u-prod")
+            assert state["simulation_available"] is False
+            with pytest.raises(svc.SimpleSetupError) as exc:
+                await svc.save_simple_setup(db, "u-prod", {"simulation": True})
+            assert exc.value.code == "simulation_unavailable"
+        await engine.dispose()
+    _run(go())
+
+
+def test_simulation_mode_configures_all_cards(monkeypatch):
+    monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+
+    async def go():
+        engine, maker = await _session()
+        async with maker() as db:
+            _, _, models = await _seed(db)
+            state = await svc.get_simple_setup(db, "u-sim")
+            assert state["simulation_available"] is True and state["simulation_enabled"] is False
+            state = await svc.save_simple_setup(db, "u-sim", {"simulation": True})
+            assert state["simulation_enabled"] and state["configured"] and state["verified"]
+            assert all(state["capabilities"][c]["provider_name"] == "模拟模式" for c in svc.CAPABILITY_ORDER)
+            # idempotent
+            state = await svc.save_simple_setup(db, "u-sim", {"simulation": True})
+            assert state["simulation_enabled"]
+            # switching back to a real model leaves simulation
+            state = await svc.save_simple_setup(db, "u-sim", {"api_key": SECRET, "capabilities": {
+                "text": {"model_id": models["text"].id, "api_key": SECRET}}})
+            assert state["simulation_enabled"] is False
+            assert state["capabilities"]["text"]["model_id"] == models["text"].id
+        await engine.dispose()
+    _run(go())

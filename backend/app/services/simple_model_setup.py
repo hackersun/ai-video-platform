@@ -51,6 +51,19 @@ PROVIDER_PRESETS: dict[str, dict[str, list[str]]] = {
     "openai": {"text": ["gpt-4o-mini", "gpt-4o"], "image": ["dall-e-3"], "video": ["sora"], "tts": []},
 }
 HIDDEN_PROVIDERS = {"deterministic-acceptance"}
+SIMULATION_PROVIDER_ID = "deterministic-acceptance"
+# Canonical model-center tags (text must be "chat" for text_generation).
+SIMULATION_MODEL_TAGS = {"text": ("chat", ["chat", "text"]), "image": ("image-generation", ["image", "text-to-image"]),
+                         "video": ("video-generation", ["video", "text-to-video"]), "tts": ("tts", ["tts", "text-to-speech"])}
+SIMULATION_TEST_MESSAGE = "模拟模式（不调用付费接口）"
+
+
+def simulation_available() -> bool:
+    """Simulation mode = deterministic local fake; never offered in production."""
+    from app.core.runtime_env import is_production_environment
+    from app.services.deterministic_provider_fake import deterministic_provider_fake_enabled
+
+    return (not is_production_environment()) and deterministic_provider_fake_enabled()
 ALLOWED_EXTRA_KEYS = {"app_id", "appid", "resource_id", "group_id", "cluster", "base_url", "region", "default_voice_id"}
 FRESH_SECONDS = 900
 
@@ -164,10 +177,16 @@ async def resolve_effective_configs(
             await legacy_sync.reconcile_user_lazily(db, user_id)
         canonical = await legacy_sync.canonical_default_config_ids(db, user_id)
     result: dict[str, Any] = {}
+    simulation_on = simulation_available()
     for cap in CAPABILITY_ORDER:
         override = by_id.get(overrides.get(cap, ""))
+        simulated = _pick_default(rows, cap) if simulation_on else None
         if override and cap in model_capabilities(override[1]):
             result[cap] = override
+        elif simulated is not None and simulated[1].provider_id == SIMULATION_PROVIDER_ID \
+                and (simulated[0].extra_params or {}).get("simple_setup_capability") == cap:
+            # Simulation configs live outside the model center (hidden provider); honour the explicit choice.
+            result[cap] = simulated
         elif canonical is not None:
             pick = by_id.get(canonical.get(cap, ""))
             result[cap] = pick if pick and cap in model_capabilities(pick[1]) else None
@@ -189,7 +208,8 @@ def _card(cap: str, pair, providers_by_id, options) -> dict[str, Any]:
         extra = config.extra_params if isinstance(config.extra_params, dict) else {}
         card.update({
             "config_id": config.id, "provider_id": model.provider_id,
-            "provider_name": (provider.name_cn or provider.name) if provider else None,
+            "provider_name": (provider.name_cn or provider.name) if provider
+            else ("模拟模式" if model.provider_id == SIMULATION_PROVIDER_ID else None),
             "model_id": model.id, "model_name": model.model_name_cn or model.model_name or model.model_id, "api_model_id": model.model_id,
             "has_key": bool(config.api_key), "test_status": config.test_status,
             "test_message": config.test_message,
@@ -234,6 +254,8 @@ async def get_simple_setup(db: AsyncSession, user_id: str, *, novel_id: str | No
             for c in CAPABILITY_ORDER
         ),
         "verified": all(cards[c]["test_status"] == "success" for c in CAPABILITY_ORDER),
+        "simulation_available": simulation_available(),
+        "simulation_enabled": all(cards[c]["provider_id"] == SIMULATION_PROVIDER_ID for c in CAPABILITY_ORDER),
     }
     if novel_id:
         overrides = await _novel_overrides(db, user_id, novel_id)
@@ -268,6 +290,8 @@ def _clean_extra(extra: Any) -> dict[str, Any]:
 async def save_simple_setup(db: AsyncSession, user_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     from app.api.v1.endpoints.llm_config import clear_default_configs_for_model_group
 
+    if payload.get("simulation"):
+        return await enable_simulation_setup(db, user_id)
     primary_provider = str(payload.get("provider_id") or "")
     primary_key = str(payload.get("api_key") or "").strip()
     cards = payload.get("capabilities") or {}
@@ -341,6 +365,56 @@ async def save_simple_setup(db: AsyncSession, user_id: str, payload: dict[str, A
     await db.commit()
     await sync_model_center(db, user_id)
     logger.info("simple model setup saved", extra={"user_id": user_id, "capabilities": [p[0] for p in planned]})
+    return await get_simple_setup(db, user_id)
+
+
+async def enable_simulation_setup(db: AsyncSession, user_id: str) -> dict[str, Any]:
+    """Point all four capability cards at the local deterministic fake (no paid calls)."""
+    from app.api.v1.endpoints.llm_config import clear_default_configs_for_model_group
+
+    if not simulation_available():
+        raise SimpleSetupError("simulation_unavailable", "当前环境不支持模拟模式")
+    provider = await db.get(LLMProvider, SIMULATION_PROVIDER_ID)
+    if provider is None:
+        provider = LLMProvider(id=SIMULATION_PROVIDER_ID, name=SIMULATION_PROVIDER_ID, name_cn="确定性验收",
+                               name_en="Deterministic Acceptance", provider_type="local", is_active=True, is_builtin=True)
+        db.add(provider)
+        await db.flush()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    rows = await _user_configs(db, user_id)
+    for cap in CAPABILITY_ORDER:
+        model_id = f"deterministic-{cap}"
+        model = await db.get(LLMModel, model_id)
+        if model is None:
+            model = LLMModel(id=model_id, provider_id=provider.id, model_id=model_id, model_name=f"Deterministic {cap}",
+                             model_type=cap, capabilities=[cap], is_active=True)
+            db.add(model)
+        sim_type, sim_caps = SIMULATION_MODEL_TAGS[cap]
+        if model.model_type != sim_type or not set(sim_caps) <= set(model.capabilities or []):
+            model.model_type = sim_type
+            model.capabilities = list(dict.fromkeys([*(model.capabilities or []), *sim_caps]))
+        await db.flush()
+        config = next((c for c, m in rows if m.id == model_id), None)
+        if config is None:
+            config = LLMConfig(id=str(uuid4()), user_id=user_id, model_id=model_id, name=model_id, api_key="",
+                               is_active=True, extra_params={})
+            db.add(config)
+            await db.flush()
+        for other, _ in rows:
+            if other.id != config.id and (other.extra_params or {}).get("simple_setup_capability") == cap:
+                other_extra = dict(other.extra_params or {})
+                other_extra.pop("simple_setup_capability", None)
+                other.extra_params = other_extra
+                flag_modified(other, "extra_params")
+        config.extra_params = {**(config.extra_params or {}), "simple_setup_capability": cap,
+                               "test_audit": "deterministic_config_test_v1"}
+        flag_modified(config, "extra_params")
+        config.test_status, config.test_message, config.tested_at = "success", SIMULATION_TEST_MESSAGE, now
+        await clear_default_configs_for_model_group(db, user_id, model, exclude_config_id=config.id)
+        config.is_default = True
+    await db.commit()
+    await sync_model_center(db, user_id)
+    logger.info("simple model setup switched to simulation", extra={"user_id": user_id})
     return await get_simple_setup(db, user_id)
 
 

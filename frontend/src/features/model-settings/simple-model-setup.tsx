@@ -144,6 +144,19 @@ export function SimpleModelSetup() {
     }
   };
 
+  const enableSimulation = async () => {
+    setSaving(true); setError(''); setNotice('');
+    try {
+      const next = await apiClient.saveSimpleModelSetup({ simulation: true, capabilities: {} });
+      hydrate(next);
+      setNotice('已切换为模拟模式（不调用付费接口），不会扣费。');
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const testAll = async () => {
     setTesting(true); setError(''); setNotice('');
     try {
@@ -188,6 +201,32 @@ export function SimpleModelSetup() {
             ? '全部就绪：文本、图像、视频、语音均已连接，可以直接「一键生成视频」。'
             : state.configured ? '已填写，尚未全部测试通过。点击「测试连接」检查。' : '尚未完成设置：填写 API Key 并保存后即可开始生成。'}
         </div>
+      )}
+
+      {state?.configured && (
+        <div data-testid="model-setup-next-step" className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800">
+          <span>模型已就绪，下一步：创建一部小说并添加章节。</span>
+          <Link href="/novels/new" className="font-medium underline">下一步：创建小说 →</Link>
+        </div>
+      )}
+
+      {state?.simulation_available && (
+        <section data-testid="model-setup-simulation" className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="font-medium text-slate-800">模拟模式（不调用付费接口）</div>
+              <p className="mt-0.5 text-slate-500">
+                {state.simulation_enabled
+                  ? '当前四项能力均为模拟模式，生成结果为演示素材，不扣费。如需真实生成，在下方选择真实模型并保存即可。'
+                  : '仅测试环境可用：一键把四项能力切到本地模拟模型，无需 API Key，不扣费。'}
+              </p>
+            </div>
+            <button type="button" onClick={enableSimulation} disabled={saving || state.simulation_enabled}
+              className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 font-medium text-slate-700 hover:border-violet-400 disabled:opacity-60">
+              {state.simulation_enabled ? '已启用模拟模式' : '使用模拟模式'}
+            </button>
+          </div>
+        </section>
       )}
 
       <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm" id="model-settings-key">
