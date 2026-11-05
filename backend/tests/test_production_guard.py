@@ -5,7 +5,16 @@ from app.core.runtime_env import assert_production_safe
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
-    for name in ("APP_ENV", "ENVIRONMENT", "DEV_MODE", "DEV_USER_ID", "DEV_TOKEN", "DEV_AUTH_TOKEN", "ALLOW_DEV_TOKEN"):
+    for name in (
+        "APP_ENV",
+        "ENVIRONMENT",
+        "DEV_MODE",
+        "DEV_USER_ID",
+        "DEV_TOKEN",
+        "DEV_AUTH_TOKEN",
+        "ALLOW_DEV_TOKEN",
+        "DETERMINISTIC_PROVIDER_FAKE",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
