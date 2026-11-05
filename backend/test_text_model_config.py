@@ -773,7 +773,7 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
 
     create_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2.7", "name": "我的文本模型", "api_key": "sk-text", "is_default": True},
+        json={"model_id": "minimax-m2-7", "name": "我的文本模型", "api_key": "sk-text", "is_default": True},
         headers=headers,
     )
     assert create_resp.status_code == 201
@@ -792,16 +792,16 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
     owner_models_resp = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
     assert owner_models_resp.status_code == 200
     owner_models = {item["id"]: item for item in owner_models_resp.json()}
-    assert owner_models["minimax-m2.7"]["user_configured"] is True
-    assert owner_models["minimax-m2.7"]["user_config_id"] == config_id
-    assert owner_models["minimax-m2.7"]["user_is_default"] is True
-    assert owner_models["minimax-m2.7"]["user_test_status"] == "success"
+    assert owner_models["minimax-m2-7"]["user_configured"] is True
+    assert owner_models["minimax-m2-7"]["user_config_id"] == config_id
+    assert owner_models["minimax-m2-7"]["user_is_default"] is True
+    assert owner_models["minimax-m2-7"]["user_test_status"] == "success"
 
     other_models_resp = client.get("/api/v1/llm/models?provider=minimax", headers=other_headers)
     assert other_models_resp.status_code == 200
     other_models = {item["id"]: item for item in other_models_resp.json()}
-    assert other_models["minimax-m2.7"]["user_configured"] is False
-    assert other_models["minimax-m2.7"]["user_config_id"] is None
+    assert other_models["minimax-m2-7"]["user_configured"] is False
+    assert other_models["minimax-m2-7"]["user_config_id"] is None
 
 
 def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias_visible() -> None:
@@ -843,7 +843,7 @@ def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias
     keys = [(item["provider_id"], item["model_id"], item["model_type"]) for item in models]
     assert len(keys) == len(set(keys))
     ids = {item["id"] for item in models}
-    assert "minimax-m2.7" in ids
+    assert "minimax-m2-7" in ids
     assert "minimax-m2.7" not in ids
 
     create_resp = client.post(
