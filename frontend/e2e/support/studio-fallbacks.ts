@@ -20,6 +20,10 @@ export async function fulfillStudioFallback(route: Route, path: string): Promise
     await json({ models: [] });
     return true;
   }
+  if (path === '/api/v1/publication-pipeline-statuses') {
+    await json({ statuses: {} });
+    return true;
+  }
   if (/^\/api\/v1\/novels\/[^/]+\/publication-pipelines$/.test(path)) {
     await json([]);
     return true;

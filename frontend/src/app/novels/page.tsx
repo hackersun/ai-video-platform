@@ -115,18 +115,16 @@ function NovelsContent() {
   useEffect(() => {
     if (!novels.length) return;
     let alive = true;
-    Promise.all(novels.map(async (item) => {
-      try {
-        const [latest] = await apiClient.listPublicationPipelines(item.id, 1);
-        if (!latest) return null;
+    // 单次批量请求获取全部角标状态（原为每本小说一个请求）。
+    apiClient.getPublicationPipelineStatuses(novels.map((item) => item.id)).then(({ statuses }) => {
+      const rows = Object.entries(statuses || {}).map(([novelId, latest]) => {
         const state = latest.status === 'succeeded' ? 'done'
           : ['blocked', 'failed'].includes(latest.status) ? 'attention'
           : ['accepted', 'queued', 'running', 'paused'].includes(latest.status) ? 'running' : null;
-        return state ? [item.id, state] as const : null;
-      } catch { return null; }
-    })).then((rows) => {
+        return state ? [novelId, state] as const : null;
+      });
       if (alive) setVideoStatus(Object.fromEntries(rows.filter(Boolean) as Array<readonly [string, 'running' | 'done' | 'attention']>));
-    });
+    }).catch(() => undefined);
     return () => { alive = false; };
   }, [novels]);
 

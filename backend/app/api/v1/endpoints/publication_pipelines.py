@@ -365,6 +365,46 @@ async def get_publication_pipeline(
     return body
 
 
+@router.get("/publication-pipeline-statuses")
+async def batch_publication_pipeline_statuses(
+    novel_ids: str = "",
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+):
+    """Latest pipeline status per novel in one query (replaces per-novel N+1 list calls)."""
+    from sqlalchemy import func
+
+    ids = [item.strip() for item in (novel_ids or "").split(",") if item.strip()][:200]
+    if not ids:
+        return {"statuses": {}}
+    latest = (
+        select(
+            NovelPublicationPipeline.novel_id.label("novel_id"),
+            func.max(NovelPublicationPipeline.created_at).label("created_at"),
+        )
+        .where(NovelPublicationPipeline.user_id == user_id, NovelPublicationPipeline.novel_id.in_(ids))
+        .group_by(NovelPublicationPipeline.novel_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(NovelPublicationPipeline).join(
+                latest,
+                (NovelPublicationPipeline.novel_id == latest.c.novel_id)
+                & (NovelPublicationPipeline.created_at == latest.c.created_at),
+            ).where(NovelPublicationPipeline.user_id == user_id)
+        )
+    ).scalars().all()
+    statuses: Dict[str, Dict[str, Any]] = {}
+    for item in rows:
+        statuses[item.novel_id] = {
+            "pipeline_id": item.id,
+            "status": item.status,
+            "updated_at": item.updated_at.isoformat() if getattr(item, "updated_at", None) else None,
+        }
+    return {"statuses": statuses}
+
+
 @router.get("/novels/{novel_id}/publication-pipelines")
 async def list_publication_pipelines(
     novel_id: str,

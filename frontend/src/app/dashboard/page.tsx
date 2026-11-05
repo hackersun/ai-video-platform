@@ -257,7 +257,7 @@ export default function DashboardPage() {
                   { step: 1, label: '开始连续动漫', href: '/quick-start', icon: Wand2, color: 'from-violet-500 to-violet-600' },
                   { step: 2, label: '完善角色设定', href: '/characters', icon: Users, color: 'from-purple-500 to-purple-600' },
                   { step: 3, label: '生成分集计划', href: '/novels', icon: BookOpen, color: 'from-blue-500 to-blue-600' },
-                  { step: 4, label: '一键制作首集', href: '/producer', icon: Sparkles, color: 'from-cyan-500 to-cyan-600' },
+                  { step: 4, label: '一键生成视频', href: '/novels', icon: Sparkles, color: 'from-cyan-500 to-cyan-600' },
                   { step: 5, label: '审核分镜声音', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
                   { step: 6, label: '连续成片', href: '/studio', icon: Workflow, color: 'from-pink-500 to-pink-600' },
                 ].map((item, index) => (
@@ -379,12 +379,12 @@ export default function DashboardPage() {
                     </CardContent>
                   </Card>
                 </Link>
-                <Link href="/producer">
+                <Link href="/novels">
                   <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
                     <CardContent className="p-5">
                       <Sparkles className="w-6 h-6 text-cyan-300 mb-3" />
-                      <div className="text-white font-medium">一键成片中心</div>
-                      <div className="text-white/50 text-sm mt-1">查看状态机、定稿包、媒体巡检、质量检查和安全补齐</div>
+                      <div className="text-white font-medium">一键生成视频</div>
+                      <div className="text-white/50 text-sm mt-1">在作品列表选择小说，一键生成整本视频并查看进度</div>
                     </CardContent>
                   </Card>
                 </Link>

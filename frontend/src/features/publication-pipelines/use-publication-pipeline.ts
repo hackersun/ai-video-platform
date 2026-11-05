@@ -6,7 +6,7 @@ import { apiClient, type PublicationPipeline } from '@/lib/api-client';
 const ACTIVE = new Set(['accepted', 'running', 'queued']);
 export const isPipelineActive = (p?: PublicationPipeline | null) => Boolean(p && ACTIVE.has(p.status));
 
-/** 读取某小说最近一次「一键生成视频」流水线，运行中每 3 秒轮询。 */
+/** 读取某小说最近一次「一键生成视频」流水线；仅在运行中且页面可见时每 3 秒轮询。 */
 export function usePublicationPipeline(novelId: string, intervalMs = 3000) {
   const [pipeline, setPipeline] = useState<PublicationPipeline | null>(null);
   const [loading, setLoading] = useState(true);
@@ -34,9 +34,24 @@ export function usePublicationPipeline(novelId: string, intervalMs = 3000) {
 
   useEffect(() => {
     if (timer.current) clearTimeout(timer.current);
-    if (isPipelineActive(pipeline)) timer.current = setTimeout(refresh, intervalMs);
+    const hidden = typeof document !== 'undefined' && document.hidden;
+    if (isPipelineActive(pipeline) && !hidden) timer.current = setTimeout(refresh, intervalMs);
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [pipeline, refresh, intervalMs]);
+
+  // 标签页隐藏时停止轮询；重新可见且仍在运行时立即刷新一次以恢复轮询。
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const onVisibility = () => {
+      if (document.hidden) {
+        if (timer.current) clearTimeout(timer.current);
+      } else if (isPipelineActive(pipeline)) {
+        void refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [pipeline, refresh]);
 
   const run = useCallback(async (fn: () => Promise<PublicationPipeline>) => {
     if (inFlight.current) return null;

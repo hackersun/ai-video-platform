@@ -704,6 +704,13 @@ class ApiClient {
     });
   }
 
+  /** 一次请求返回多个小说的最近流水线状态（作品列表角标，替代逐本 N+1 请求）。 */
+  async getPublicationPipelineStatuses(novelIds: string[]) {
+    return this.request<{ statuses: Record<string, { pipeline_id: string; status: string; updated_at?: string | null }> }>(
+      `/publication-pipeline-statuses?novel_ids=${novelIds.map(encodeURIComponent).join(',')}`,
+    );
+  }
+
   async listPublicationPipelines(novelId: string, limit = 20) {
     return this.request<PublicationPipeline[]>(`/novels/${novelId}/publication-pipelines?limit=${limit}`);
   }
