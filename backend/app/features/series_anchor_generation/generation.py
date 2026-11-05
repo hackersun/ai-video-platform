@@ -78,7 +78,7 @@ def _selected_ids(run: SeriesProductionRun, shots: list, requested: list[str], m
     if selected != (metadata.get("selected_anchor_shot_ids") or []) or mode != metadata.get("selected_anchor_mode"):
         raise SeriesAnchorError(409, "generation selection must match the persisted anchor mode and order")
     recommendations = recommend_anchor_shots([shot for shot in shots if shot.id in set(selected)], mode=mode)
-    blocker = anchor_coverage_blocker(recommendations, mode=mode)
+    blocker = anchor_coverage_blocker(recommendations, mode=mode, episodes=shots)
     if blocker:
         raise SeriesAnchorError(409, blocker)
     if set(selected) != {item["shot_id"] for item in recommendations}:

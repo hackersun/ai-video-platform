@@ -173,7 +173,7 @@ async def prepare_run_for_media(
     # 4. full anchor selection covering every shot
     shots, _ = await _run_shots(db, run)
     full = recommend_anchor_shots(shots, mode="full")
-    blocker = anchor_coverage_blocker(full, mode="full")
+    blocker = anchor_coverage_blocker(full, mode="full", episodes=shots)
     if blocker:
         code = blocker.get("code") if isinstance(blocker, dict) else str(blocker)
         raise PipelineMediaBlocked("full_shot_selection_required", f"无法覆盖全部镜头：{code}")

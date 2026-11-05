@@ -477,9 +477,9 @@ async def get_series_run_anchor_shots(
         "representative": representative,
         "full": full,
         "blockers": {
-            "smoke": anchor_coverage_blocker(smoke, mode="smoke"),
-            "representative": anchor_coverage_blocker(representative, mode="representative"),
-            "full": anchor_coverage_blocker(full, mode="full"),
+            "smoke": anchor_coverage_blocker(smoke, mode="smoke", episodes=shots),
+            "representative": anchor_coverage_blocker(representative, mode="representative", episodes=shots),
+            "full": anchor_coverage_blocker(full, mode="full", episodes=shots),
         },
     }
 
@@ -498,7 +498,7 @@ async def put_series_run_anchor_shots(
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     recommendations = recommend_anchor_shots(shots, mode=request.mode)
-    blocker = anchor_coverage_blocker(recommendations, mode=request.mode)
+    blocker = anchor_coverage_blocker(recommendations, mode=request.mode, episodes=shots)
     if blocker:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=blocker)
     if set(selected) != {item["shot_id"] for item in recommendations}:

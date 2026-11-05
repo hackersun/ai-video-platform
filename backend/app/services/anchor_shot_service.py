@@ -174,11 +174,37 @@ def validate_anchor_selection(selected_ids: Iterable[str], allowed_ids: set[str]
     return selected
 
 
-def anchor_coverage_blocker(recommendations: list[dict[str, Any]], *, mode: str) -> dict[str, Any] | None:
+def anchor_contract(mode: str, episodes: Iterable[Any] | None = None) -> dict[str, int]:
+    """Mode contract capped to what the run actually has.
+
+    Novels shorter than four chapters (or with few shots) cannot satisfy the
+    nominal 4-episode / 6-shot contract; requiring it would block forever.
+    ``episodes`` may be run.episodes dicts (canonical_ids.shot_ids) or shots.
+    """
     if mode not in ANCHOR_MODE_CONTRACTS:
         raise ValueError("anchor mode must be smoke, representative or full")
-    required_count = ANCHOR_MODE_CONTRACTS[mode]["target_count"]
-    required_episodes = ANCHOR_MODE_CONTRACTS[mode]["required_episodes"]
+    contract = dict(ANCHOR_MODE_CONTRACTS[mode])
+    if episodes is None:
+        return contract
+    items = list(episodes)
+    if items and isinstance(items[0], dict):
+        per_episode = [len((item.get("canonical_ids") or {}).get("shot_ids") or []) for item in items]
+        episode_count = sum(1 for count in per_episode if count)
+        shot_count = sum(per_episode)
+    else:
+        episode_count = len({_episode_number(item) for item in items if _episode_number(item) > 0})
+        shot_count = sum(1 for item in items if _episode_number(item) > 0)
+    if episode_count:
+        contract["required_episodes"] = min(contract["required_episodes"], episode_count)
+    if shot_count:
+        contract["target_count"] = min(contract["target_count"], shot_count)
+    return contract
+
+
+def anchor_coverage_blocker(recommendations: list[dict[str, Any]], *, mode: str, episodes: Iterable[Any] | None = None) -> dict[str, Any] | None:
+    contract = anchor_contract(mode, episodes)
+    required_count = contract["target_count"]
+    required_episodes = contract["required_episodes"]
     covered_episodes = {item["episode_number"] for item in recommendations}
     covered_dimensions = set().union(*(set(item["dimensions"]) for item in recommendations)) if recommendations else set()
     dimensions_missing = [item for item in DIMENSIONS if item not in covered_dimensions] if mode == "full" else []
@@ -194,4 +220,4 @@ def anchor_coverage_blocker(recommendations: list[dict[str, Any]], *, mode: str)
     }
 
 
-__all__ = ["ANCHOR_MODE_CONTRACTS", "AnchorShotInput", "DIMENSIONS", "anchor_shot_input", "recommend_anchor_shots", "validate_anchor_selection", "anchor_coverage_blocker"]
+__all__ = ["ANCHOR_MODE_CONTRACTS", "AnchorShotInput", "DIMENSIONS", "anchor_shot_input", "recommend_anchor_shots", "validate_anchor_selection", "anchor_coverage_blocker", "anchor_contract"]
