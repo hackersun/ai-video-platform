@@ -771,9 +771,20 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
 
     asyncio.run(_cleanup())
 
+    # Create against the currently displayed MiniMax-M2.7 catalog row
+    # (dotted seed alone, or hyphen twin when both aliases exist).
+    preview_resp = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
+    assert preview_resp.status_code == 200
+    preview = [
+        item for item in preview_resp.json()
+        if item.get("model_id") == "MiniMax-M2.7" and item.get("model_type") == "chat"
+    ]
+    assert preview, "MiniMax-M2.7 chat catalog row missing"
+    listed_id = preview[0]["id"]
+
     create_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2-7", "name": "我的文本模型", "api_key": "sk-text", "is_default": True},
+        json={"model_id": listed_id, "name": "我的文本模型", "api_key": "sk-text", "is_default": True},
         headers=headers,
     )
     assert create_resp.status_code == 201
@@ -792,16 +803,18 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
     owner_models_resp = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
     assert owner_models_resp.status_code == 200
     owner_models = {item["id"]: item for item in owner_models_resp.json()}
-    assert owner_models["minimax-m2-7"]["user_configured"] is True
-    assert owner_models["minimax-m2-7"]["user_config_id"] == config_id
-    assert owner_models["minimax-m2-7"]["user_is_default"] is True
-    assert owner_models["minimax-m2-7"]["user_test_status"] == "success"
+    assert listed_id in owner_models
+    assert owner_models[listed_id]["user_configured"] is True
+    assert owner_models[listed_id]["user_config_id"] == config_id
+    assert owner_models[listed_id]["user_is_default"] is True
+    assert owner_models[listed_id]["user_test_status"] == "success"
+    assert owner_models[listed_id]["model_id"] == "MiniMax-M2.7"
 
     other_models_resp = client.get("/api/v1/llm/models?provider=minimax", headers=other_headers)
     assert other_models_resp.status_code == 200
     other_models = {item["id"]: item for item in other_models_resp.json()}
-    assert other_models["minimax-m2-7"]["user_configured"] is False
-    assert other_models["minimax-m2-7"]["user_config_id"] is None
+    assert other_models[listed_id]["user_configured"] is False
+    assert other_models[listed_id]["user_config_id"] is None
 
 
 def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias_visible() -> None:
@@ -819,9 +832,17 @@ def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias
                     id="minimax", name="minimax", name_cn="MiniMax",
                     base_url="https://api.minimaxi.com/v1", is_active=True,
                 ))
+            # Ensure both dotted seed and hyphen legacy alias exist so dedupe rank
+            # (prefer ids without '.') can be asserted.
             if await db.get(LLMModel, "minimax-m2.7") is None:
                 db.add(LLMModel(
                     id="minimax-m2.7", provider_id="minimax", model_id="MiniMax-M2.7",
+                    model_name="MiniMax-M2.7", model_type="chat", capabilities=["chat"],
+                    is_active=True,
+                ))
+            if await db.get(LLMModel, "minimax-m2-7") is None:
+                db.add(LLMModel(
+                    id="minimax-m2-7", provider_id="minimax", model_id="MiniMax-M2.7",
                     model_name="MiniMax-M2.7", model_type="chat", capabilities=["chat"],
                     is_active=True,
                 ))
