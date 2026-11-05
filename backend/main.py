@@ -54,11 +54,20 @@ async def persistent_credential_encryption_lifespan(_: FastAPI):
 
 
 async def _startup_user_terms_columns() -> None:
-    """Idempotently add users.terms_accepted_* so existing databases keep working (no Alembic)."""
-    from app.core.database import engine
-    from app.db_migrations.user_terms_acceptance import add_user_terms_columns_async
+    """Idempotent schema bootstrap (no Alembic): create_all + focused migrations.
 
-    await add_user_terms_columns_async(engine)
+    Existing databases otherwise miss newly added tables/columns (e.g. user_billing_settings,
+    users.terms_accepted_*). Disable with DB_AUTO_MIGRATE=false when schema is managed externally.
+    """
+    if os.getenv("DB_AUTO_MIGRATE", "true").strip().lower() in {"0", "false", "no", "off"}:
+        from app.core.database import engine
+        from app.db_migrations.user_terms_acceptance import add_user_terms_columns_async
+
+        await add_user_terms_columns_async(engine)
+        return
+    from init_db import init_db_async
+
+    await init_db_async()
 
 
 async def _startup_model_center_migration() -> None:
