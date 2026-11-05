@@ -37,3 +37,15 @@ def test_lifespan_refuses_start(monkeypatch):
     with pytest.raises(RuntimeError):
         with TestClient(app):
             pass
+
+
+def test_production_refuses_deterministic_provider_fake(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.delenv("DEV_USER_ID", raising=False)
+    for name in ("DEV_TOKEN", "DEV_AUTH_TOKEN", "ALLOW_DEV_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    with pytest.raises(RuntimeError, match="DETERMINISTIC_PROVIDER_FAKE"):
+        assert_production_safe()
+

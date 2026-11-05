@@ -23,6 +23,23 @@ class LiveCallsNotOptedIn(BudgetExceeded):
     """User has not opted into paid live provider calls."""
 
 
+def resolve_ledger_is_fake(explicit: bool = False) -> bool:
+    """Mark ledger rows fake (skip opt-in) only on the deterministic fake path.
+
+    Explicit is_fake always wins. DETERMINISTIC_PROVIDER_FAKE is honored outside
+    production. Production env never auto-skips, even if the env var is set.
+    """
+    if explicit:
+        return True
+    from app.core.runtime_env import is_production_environment
+    from app.services.deterministic_provider_fake import deterministic_provider_fake_enabled
+
+    if is_production_environment():
+        return False
+    return bool(deterministic_provider_fake_enabled())
+
+
+
 class SpendCapExceeded(BudgetExceeded):
     """Per-user or per-pipeline RMB cap would be exceeded."""
 

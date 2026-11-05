@@ -68,9 +68,11 @@ async def reserve_budget(
 ) -> dict[str, Any]:
     from app.services.billing_guard import (
         assert_may_reserve,
+        resolve_ledger_is_fake,
         write_reservation_ledger,
     )
 
+    is_fake = resolve_ledger_is_fake(is_fake)
     summary = _summary(run)
     reservations = summary["reservations"]
     reservation_id = _reservation_id(reservation_id)
@@ -135,8 +137,15 @@ async def prepare_provider_operation(
     estimate_rmb: Decimal,
 ) -> LiveCanaryProviderOperation:
     """Atomically persist reservation and recoverable operation before provider submission."""
+    from app.services.billing_guard import resolve_ledger_is_fake
+
     await reserve_budget(
-        db, run, reservation_id=reservation_id, estimate_rmb=estimate_rmb, commit=False
+        db,
+        run,
+        reservation_id=reservation_id,
+        estimate_rmb=estimate_rmb,
+        commit=False,
+        is_fake=resolve_ledger_is_fake(),
     )
     summary = _summary(run)
     reservation = summary["reservations"][_reservation_id(reservation_id)]

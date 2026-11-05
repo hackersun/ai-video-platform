@@ -124,13 +124,14 @@ async def credential_safe_validation_error_handler(request: Request, exc: Reques
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    """全局异常处理器，确保所有错误响应都带CORS头"""
-    import traceback
-    print(f"[ERROR] {request.method} {request.url.path}: {exc}")
-    traceback.print_exc()
+    """全局异常处理器，确保所有错误响应都带CORS头；不向客户端泄露 SQL/堆栈细节"""
+    import logging
+    logging.getLogger(__name__).exception(
+        "Unhandled error on %s %s: %s", request.method, request.url.path, type(exc).__name__
+    )
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc) or "Internal server error"},
+        content={"detail": "Internal server error"},
         headers={
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Methods": "*",

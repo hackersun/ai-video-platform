@@ -191,3 +191,72 @@ async def test_prepare_requires_opt_in_outside_fake(db: AsyncSession, monkeypatc
         await prep.prepare_run_for_media(db, run, pipeline)
     assert exc.value.code == "live_calls_not_opted_in"
     assert "模型设置" in exc.value.detail or "真实调用" in exc.value.detail
+
+@pytest.mark.asyncio
+async def test_reserve_skips_opt_in_when_deterministic_fake_active(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    run = await _run(db)
+    await ensure_user_billing_settings(db, run.user_id)  # not opted in
+    await reserve_budget(db, run, reservation_id="fake-auto", estimate_rmb=Decimal("1.25"))
+    rows = (await db.execute(
+        __import__("sqlalchemy", fromlist=["select"]).select(BillingLedgerEntry).where(
+            BillingLedgerEntry.user_id == run.user_id,
+            BillingLedgerEntry.reservation_id == "fake-auto",
+        )
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].is_fake is True
+    assert rows[0].status == "reserved"
+    totals = await ledger_totals_rmb(db, user_id=run.user_id)
+    assert totals["used_toward_cap"] == Decimal("0.00")
+
+
+@pytest.mark.asyncio
+async def test_reserve_requires_opt_in_in_production_even_if_fake_env_set(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    run = await _run(db)
+    await ensure_user_billing_settings(db, run.user_id)
+    with pytest.raises(LiveCallsNotOptedIn):
+        await reserve_budget(db, run, reservation_id="prod-block", estimate_rmb=Decimal("1.00"))
+    rows = (await db.execute(
+        __import__("sqlalchemy", fromlist=["select"]).select(BillingLedgerEntry).where(
+            BillingLedgerEntry.user_id == run.user_id,
+            BillingLedgerEntry.reservation_id == "prod-block",
+        )
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].is_fake is False
+    assert rows[0].status == "blocked_cap"
+
+
+@pytest.mark.asyncio
+async def test_prepare_provider_operation_marks_fake_under_deterministic(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.services.live_canary_budget import prepare_provider_operation
+
+    monkeypatch.delenv("APP_ENV", raising=False)
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("DETERMINISTIC_PROVIDER_FAKE", "1")
+    run = await _run(db, maximum="50.00")
+    await ensure_user_billing_settings(db, run.user_id)
+    op = await prepare_provider_operation(
+        db, run, capability="image", job_type="series_composite_reference",
+        job_id="job-fake", reservation_id="prep-fake-1", estimate_rmb=Decimal("0.10"),
+    )
+    assert op is not None
+    rows = (await db.execute(
+        __import__("sqlalchemy", fromlist=["select"]).select(BillingLedgerEntry).where(
+            BillingLedgerEntry.reservation_id == "prep-fake-1",
+        )
+    )).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].is_fake is True
+

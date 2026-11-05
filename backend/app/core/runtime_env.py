@@ -47,6 +47,8 @@ def assert_production_safe() -> None:
     for name in ("DEV_TOKEN", "DEV_AUTH_TOKEN", "ALLOW_DEV_TOKEN"):
         if (os.getenv(name) or "").strip().lower() not in {"", "0", "false", "no", "off"}:
             problems.append(f"{name} set")
+    if (os.getenv("DETERMINISTIC_PROVIDER_FAKE") or "").strip() == "1":
+        problems.append("DETERMINISTIC_PROVIDER_FAKE enabled")
     if problems:
         raise RuntimeError(
             f"Refusing to start: APP_ENV={app_environment()} but " + ", ".join(problems)
