@@ -252,7 +252,7 @@ function EntitiesPageContent() {
     setLoading(true);
     try {
       const data = await apiClient.getStoryEntities({
-        limit: 100,
+        limit: 500,
         ...scopeFilters,
         entity_type: activeTab !== 'all' ? activeTab : undefined,
       });

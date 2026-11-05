@@ -1893,7 +1893,15 @@ async def list_story_entities(
     )
     if entity_type:
         query = query.where(StoryEntity.entity_type == entity_type)
-    result = await db.execute(query.order_by(desc(StoryEntity.updated_at)).limit(limit))
+    # Keep user-authored entities ahead of starter library rows so fresh creates
+    # remain visible when ensure_default_story_entities inserts many starters.
+    result = await db.execute(
+        query.order_by(
+            (StoryEntity.source == "starter").asc(),
+            desc(StoryEntity.updated_at),
+            desc(StoryEntity.created_at),
+        ).limit(limit)
+    )
     return [build_story_entity_response(entity) for entity in result.scalars().all()]
 
 

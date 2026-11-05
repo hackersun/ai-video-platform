@@ -2345,7 +2345,13 @@ function VideoGenerationPageInner() {
             {/* 生成按钮 */}
             <Button
               onClick={generationMode === 'audio_video' ? handleGenerateAudioVideo : handleGenerate}
-              disabled={status === 'submitting' || status === 'generating' || apiConfigLoading || !videoModelReady}
+              disabled={
+                status === 'submitting'
+                || status === 'generating'
+                || apiConfigLoading
+                || !videoModelReady
+                || (generationMode === 'audio_video' && (!prompt.trim() || !currentShotId))
+              }
               className="w-full bg-violet-600 hover:bg-violet-700 h-12"
             >
               {status === 'submitting' && <><Loader2 className="w-5 h-5 mr-2 animate-spin" />提交中…</>}

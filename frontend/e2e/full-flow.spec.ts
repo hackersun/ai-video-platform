@@ -650,6 +650,8 @@ test('video generation page can create direct audio video with subtitle track', 
   );
   await expect(page.getByRole('heading', { name: '生成模式' })).toBeVisible({ timeout: 10_000 });
   await page.getByRole('button', { name: '直生音视频' }).click();
+  await expect(page.locator('textarea').first()).toHaveValue(/.+/, { timeout: 10_000 });
+  await expect(page.getByRole('button', { name: /生成音视频/ })).toBeEnabled({ timeout: 10_000 });
   await page.getByRole('button', { name: /生成音视频/ }).click();
   let mediaJobs: any[] = [];
   await expect.poll(async () => {
@@ -772,7 +774,7 @@ test('workflow page shows multi-shot continuous final video manifest', async ({ 
 
   const renderedJob = await apiGet(page, `/synthesis/jobs/${synthesis.job_id}`);
   expect(renderedJob.render_status).toBe('rendered');
-  expect(renderedJob.output_url).toMatch(/\/static\/exports\/.+\.mp4$/);
+  expect(renderedJob.output_url).toMatch(/\/static\/exports\/.+\.mp4(\?.*)?$/);
   expect(renderedJob.is_publishable).toBe(true);
   expect(renderedJob.srt_url).toContain('/static/exports/');
   expect(renderedJob.timeline_url).toContain('/static/exports/');
