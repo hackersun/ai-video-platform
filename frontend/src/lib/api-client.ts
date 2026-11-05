@@ -652,6 +652,21 @@ class ApiClient {
   }
 
   // ---- 一键生成视频（整书发布流水线）----
+  async getBillingSettings() {
+    return this.request<BillingSettings>('/billing/settings');
+  }
+
+  async updateBillingSettings(payload: Partial<Pick<BillingSettings, 'live_calls_opt_in' | 'per_user_cap_rmb' | 'per_pipeline_cap_rmb'>>) {
+    return this.request<BillingSettings>('/billing/settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getBillingLedgerSummary() {
+    return this.request<BillingLedgerSummary>('/billing/ledger/summary');
+  }
+
   async createPublicationPipeline(novelId: string, payload: { idempotency_key?: string; ensure_series_plan?: boolean } = {}) {
     return this.request<PublicationPipeline>(`/novels/${novelId}/publication-pipelines`, {
       method: 'POST',
@@ -3441,6 +3456,29 @@ class ApiClient {
 }
 
 // 导出单例
+
+export interface BillingSettings {
+  live_calls_opt_in: boolean;
+  opted_in_at?: string | null;
+  per_user_cap_rmb: string;
+  per_pipeline_cap_rmb: string;
+  used_rmb: string;
+  reserved_rmb: string;
+  settled_rmb: string;
+  released_rmb: string;
+  defaults?: { per_user_cap_rmb?: string; per_pipeline_cap_rmb?: string };
+}
+
+export interface BillingLedgerSummary {
+  used_rmb: string;
+  reserved_rmb: string;
+  settled_rmb: string;
+  released_rmb: string;
+  blocked_cap_rmb: string;
+  per_user_cap_rmb: string;
+  per_pipeline_cap_rmb: string;
+  live_calls_opt_in: boolean;
+}
 
 export interface PublicationPipelineEpisode {
   episode_number: number;

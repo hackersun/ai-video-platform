@@ -1186,6 +1186,23 @@ export default function NovelDetailPage() {
                 data-testid="one-click-generate"
                 className="bg-violet-600 hover:bg-violet-700"
                 onClick={async () => {
+                  try {
+                    const billing = await apiClient.getBillingSettings();
+                    if (!billing.live_calls_opt_in) {
+                      const ok = window.confirm(
+                        `首次付费运行确认\n\n一键生成会调用真实模型，费用计入账户上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。\n确认开启真实调用并开始？\n\n也可先到「模型设置」调整上限。`,
+                      );
+                      if (!ok) return;
+                      await apiClient.updateBillingSettings({ live_calls_opt_in: true });
+                    } else if (!billing.opted_in_at) {
+                      // belt-and-suspenders: settings say opted-in but no timestamp
+                      const ok = window.confirm(`将按上限 ¥${billing.per_user_cap_rmb} 发起真实调用（已用 ¥${billing.used_rmb}）。确认开始？`);
+                      if (!ok) return;
+                    }
+                  } catch (e: any) {
+                    toast({ title: '无法读取费用设置', description: e?.message || '请稍后重试或到模型设置检查', type: 'error' });
+                    return;
+                  }
                   const next = await publicationPipeline.start();
                   if (next) toast({ title: '已开始一键生成视频', description: '可在下方查看进度，完成后可直接播放。', type: 'success' });
                 }}

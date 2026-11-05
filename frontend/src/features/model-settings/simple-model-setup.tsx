@@ -11,6 +11,7 @@ import {
   type SimpleModelSetupState,
   type SimpleModelSetupTestResult,
 } from '@/lib/api-client';
+import { BillingSpendCard } from '@/features/model-settings/billing-spend-card';
 
 export const SIMPLE_CAPABILITIES: SimpleCapability[] = ['text', 'image', 'video', 'tts'];
 const ICONS = { text: BookText, image: ImageIcon, video: Clapperboard, tts: AudioLines } as const;
@@ -251,6 +252,8 @@ export function SimpleModelSetup() {
           );
         })}
       </div>
+
+      <BillingSpendCard />
 
       {error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
       {notice && <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">{notice}</div>}
