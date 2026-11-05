@@ -21,6 +21,7 @@ from app.models.novel import Novel
 from app.models.publication import Publication
 from app.models.publication_pipeline import NovelPublicationPipeline
 from app.models.series_production_run import SeriesProductionRun
+from app.services.publication_pipeline_admission import find_active_pipeline
 from app.services.publication_pipeline_queue import (
     publication_pipeline_execution_active,
     signal_publication_pipeline_pause,
@@ -126,6 +127,12 @@ def _serialize_pipeline(pipeline: NovelPublicationPipeline) -> Dict[str, Any]:
             ),
         },
     }
+
+
+def _already_active(pipeline: NovelPublicationPipeline) -> JSONResponse:
+    body = _serialize_pipeline(pipeline)
+    body["execution_status"] = "already_active"
+    return JSONResponse(status_code=202, content=body)
 
 
 async def _get_novel_or_404(db: AsyncSession, novel_id: str, user_id: str) -> Novel:
@@ -236,6 +243,9 @@ async def create_publication_pipeline(
         )
     )
     if existing is not None:
+        active = await find_active_pipeline(db, user_id=user_id, novel_id=novel_id)
+        if active is not None and active.id != existing.id:
+            return _already_active(active)
         execution_status = "not_required" if existing.status == "succeeded" else "already_running"
         if existing.status in {"queued", "blocked", "failed"} and existing.status != "succeeded":
             # Re-enqueue runnable / retryable pipelines.
@@ -248,6 +258,10 @@ async def create_publication_pipeline(
         body = _serialize_pipeline(existing)
         body["execution_status"] = execution_status
         return JSONResponse(status_code=202, content=body)
+
+    active = await find_active_pipeline(db, user_id=user_id, novel_id=novel_id)
+    if active is not None:
+        return _already_active(active)
 
     run = await _resolve_completed_run(
         db,
@@ -303,7 +317,10 @@ async def create_publication_pipeline(
             )
         )
         if existing is None:
-            raise
+            active = await find_active_pipeline(db, user_id=user_id, novel_id=novel_id)
+            if active is None:
+                raise
+            return _already_active(active)
         body = _serialize_pipeline(existing)
         body["execution_status"] = "already_running"
         return JSONResponse(status_code=202, content=body)

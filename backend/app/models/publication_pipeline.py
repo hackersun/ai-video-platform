@@ -1,6 +1,6 @@
 """Persistent state for novel → platform Publication pipelines (P1+)."""
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 
 from app.core.database import Base
 from app.core.time_utils import utc_now
@@ -15,6 +15,15 @@ class NovelPublicationPipeline(Base):
             "series_plan_version",
             "idempotency_key",
             name="uq_publication_pipeline_idempotency_scope",
+        ),
+        # R04: one active pipeline per (user, novel); mirrored in db_migrations.
+        Index(
+            "uq_publication_pipeline_active_novel",
+            "user_id",
+            "novel_id",
+            unique=True,
+            sqlite_where=text("status IN ('paused', 'queued', 'running')"),
+            postgresql_where=text("status IN ('paused', 'queued', 'running')"),
         ),
     )
 

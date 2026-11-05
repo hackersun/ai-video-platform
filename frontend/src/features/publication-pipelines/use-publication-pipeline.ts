@@ -13,6 +13,10 @@ export function usePublicationPipeline(novelId: string, intervalMs = 3000) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // R04: synchronous in-flight guard (state updates are async → double-click window)
+  const inFlight = useRef(false);
+  // Stable key per start intent: retries after a network error reuse it; reset once a pipeline is returned.
+  const startKey = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -35,6 +39,8 @@ export function usePublicationPipeline(novelId: string, intervalMs = 3000) {
   }, [pipeline, refresh, intervalMs]);
 
   const run = useCallback(async (fn: () => Promise<PublicationPipeline>) => {
+    if (inFlight.current) return null;
+    inFlight.current = true;
     setBusy(true);
     try {
       const next = await fn();
@@ -45,13 +51,21 @@ export function usePublicationPipeline(novelId: string, intervalMs = 3000) {
       setError(e?.message || '操作失败，请重试');
       return null;
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   }, []);
 
+  const start = useCallback(async () => {
+    if (!startKey.current) startKey.current = `ui-${novelId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const next = await run(() => apiClient.createPublicationPipeline(novelId, { idempotency_key: startKey.current! }));
+    if (next) startKey.current = null;
+    return next;
+  }, [novelId, run]);
+
   return {
     pipeline, loading, busy, error, refresh,
-    start: () => run(() => apiClient.createPublicationPipeline(novelId)),
+    start,
     pause: () => pipeline && run(() => apiClient.pausePublicationPipeline(pipeline.pipeline_id)),
     resume: () => pipeline && run(() => apiClient.resumePublicationPipeline(pipeline.pipeline_id)),
     cancel: () => pipeline && run(() => apiClient.cancelPublicationPipeline(pipeline.pipeline_id)),
