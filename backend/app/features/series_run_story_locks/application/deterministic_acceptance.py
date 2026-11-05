@@ -24,15 +24,32 @@ def deterministic_evidence_contract(chapter: object) -> dict[str, object]:
     }
 
 
+def fixture_chapter_position(slot: int, total: int) -> int:
+    """Map a 4-chapter reference slot (1..4) onto a story with ``total`` chapters.
+
+    Slot 1 is the first chapter, slot 4 the last, slot 2 the second (or last when
+    shorter) and slot 3 the penultimate chapter (never before slot 2).  The
+    result is always within ``[1, total]`` so 1-, 2-, 3- and 4+-chapter novels
+    all get a complete fixture.
+    """
+    total = max(1, int(total or 1))
+    second = min(2, total)
+    return {1: 1, 2: second, 3: max(second, total - 1), 4: total}.get(int(slot), total)
+
+
+FIXTURE_EVENTS = (("道具被发现", 2), ("道具发生变化", 3), ("主角完成最终事件", 4))
+
+
 def deterministic_anchor_entity_refs(
-    entities: dict[str, object], episode_number: int,
+    entities: dict[str, object], episode_number: int, total_episodes: int = 4,
 ) -> dict[str, list[dict[str, str]]]:
-    event = {2: "道具被发现", 3: "道具发生变化", 4: "主角完成最终事件"}.get(episode_number)
     ref = lambda name: {"entity_id": str(getattr(entities[name], "id"))}
+    events = [name for name, slot in FIXTURE_EVENTS
+              if fixture_chapter_position(slot, total_episodes) == int(episode_number) and name in entities]
     return {
         "characters": [ref("主角")], "scenes": [ref("连续场景")],
-        "props": ([ref("连续性道具")] if episode_number >= 2 else []),
-        "events": ([ref(event)] if event else []),
+        "props": ([ref("连续性道具")] if episode_number >= fixture_chapter_position(2, total_episodes) else []),
+        "events": [ref(name) for name in events],
     }
 
 
@@ -77,7 +94,7 @@ async def seed_deterministic_local_mentions(
     for episode in episodes:
         chapter_id = str((episode.get("chapter_ids") or [""])[0])
         number = int(episode.get("episode_number") or 0)
-        refs = deterministic_anchor_entity_refs(fixture_entities, number)
+        refs = deterministic_anchor_entity_refs(fixture_entities, number, len(episodes))
         for values in refs.values():
             for ref in values:
                 canonical = next(item for item in fixture_entities.values()
