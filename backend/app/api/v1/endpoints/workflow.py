@@ -22,7 +22,14 @@ from app.core.database import get_db
 from app.core.api_key_utils import get_user_api_key
 from app.core.dev_generation import dev_audio_url, dev_synthesis_url, dev_video_url, is_dev_mode
 from app.core.model_registry import get_model_reference_limits, get_task_default
-from app.core.media_access import SignedMediaUrl, sign_media_url
+from app.core.media_access import (
+    CLOUD_RENDER_TTL_SECONDS,
+    SignedMediaUrl,
+    sign_media_url,
+    sign_media_urls_in_obj,
+    unsigned_media_url,
+    unsigned_media_urls_in_obj,
+)
 from app.core.security import get_current_user_id
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models import Asset, Clip, Project, QualityEvaluation, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot, StoryBible, Storyboard
@@ -1121,17 +1128,22 @@ async def _submit_cloud_render_job(
     if api_key and provider.auth_type != "none":
         headers[provider.auth_header or "Authorization"] = f"Bearer {api_key}" if provider.auth_type == "bearer" else api_key
 
+    # External renderer is unauthenticated: give it longer-lived signed URLs.
+    # Persisted copies elsewhere must stay unsigned (see caller).
+    signed_payload = sign_media_urls_in_obj(payload, ttl_seconds=CLOUD_RENDER_TTL_SECONDS)
+    if not isinstance(signed_payload, dict):
+        signed_payload = dict(payload)
     request_body = {
         "render_id": render_id,
-        "workflow_id": payload.get("workflow_id"),
-        "synthesis_job_id": payload.get("synthesis_job_id"),
-        "manifest_url": payload.get("render_manifest_url"),
-        "timeline_url": payload.get("timeline_url"),
-        "srt_url": payload.get("srt_url"),
-        "burn_subtitles": payload.get("burn_subtitles"),
-        "quality_profile": payload.get("quality_profile"),
-        "segments": payload.get("segments") or [],
-        "metadata": payload,
+        "workflow_id": signed_payload.get("workflow_id"),
+        "synthesis_job_id": signed_payload.get("synthesis_job_id"),
+        "manifest_url": signed_payload.get("render_manifest_url"),
+        "timeline_url": signed_payload.get("timeline_url"),
+        "srt_url": signed_payload.get("srt_url"),
+        "burn_subtitles": signed_payload.get("burn_subtitles"),
+        "quality_profile": signed_payload.get("quality_profile"),
+        "segments": signed_payload.get("segments") or [],
+        "metadata": signed_payload,
     }
 
     async with httpx.AsyncClient(timeout=config.timeout or 60) as client:
@@ -3324,8 +3336,8 @@ async def render_workflow_package(
         extra_data["render_artifacts"] = render_artifacts
         extra_data["render_issues"] = []
         extra_data["media_sync_health"] = media_sync_health
-        extra_data["cloud_render_payload"] = cloud_payload
-        extra_data["cloud_render_result"] = adapter_result
+        extra_data["cloud_render_payload"] = unsigned_media_urls_in_obj(cloud_payload)
+        extra_data["cloud_render_result"] = unsigned_media_urls_in_obj(adapter_result)
         extra_data["cloud_render_task_id"] = provider_task_id
         extra_data["external_config_id"] = cloud_config.id if cloud_config else request.external_config_id
         extra_data["burn_subtitles"] = request.burn_subtitles
@@ -3340,7 +3352,7 @@ async def render_workflow_package(
         synthesis_job.task_id = provider_task_id or synthesis_job.task_id
         synthesis_job.status = "succeeded" if output_url else ("failed" if render_status == "failed" else "pending")
         synthesis_job.progress = 100 if output_url else (0 if render_status == "failed" else 20)
-        synthesis_job.output_url = output_url
+        synthesis_job.output_url = unsigned_media_url(output_url) if isinstance(output_url, str) else output_url
         synthesis_job.error_message = adapter_result.get("body") if render_status == "failed" else None
 
         workflow.current_step = max(workflow.current_step, 9)

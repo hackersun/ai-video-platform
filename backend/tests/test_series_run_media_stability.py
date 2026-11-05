@@ -145,7 +145,7 @@ async def test_persist_shot_image_uses_public_storage_delivery(monkeypatch) -> N
     result = await persist_shot_image_publicly(object(), user_id="user", source_url="https://provider/shot.jpg",
                                                shot_id="shot-1")
     assert result.public_url == "https://cdn.example.com/static/generated/images/shot.jpg"
-    assert result.storage_url == "/static/generated/images/shot.jpg"
+    assert result.storage_url.split("?")[0] == "/static/generated/images/shot.jpg"
     assert result.delivery["delivery_method"] == "qiniu_object_upload"
     assert persistence["image_max_dimension"] >= 1024
 

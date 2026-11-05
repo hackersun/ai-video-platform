@@ -440,7 +440,7 @@ def test_separate_batch_locks_prompt_fallback_and_local_reference_omission(
 
     job = asyncio.run(_job())
     parameters = job.extra_data["prompt_parameters"]
-    assert job.image_url == "/static/generated/contract-local.png"
+    assert job.image_url.split("?")[0] == "/static/generated/contract-local.png"
     assert parameters["image_url_sent"] is False
     assert "公网" in parameters["image_url_omitted_reason"]
     assert parameters["provider_prompt_safety_retry"] is True

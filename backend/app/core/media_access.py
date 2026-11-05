@@ -1,8 +1,9 @@
-"""R02: private media access for finished exports.
+"""R02/R02b: private media access for exports and generated intermediates.
 
 Files under PRIVATE_PREFIXES are never served anonymously from /static. API
 endpoints that already enforce owner authorization return short-lived HMAC
 signed URLs (``?exp=<unix>&sig=<hex>``); the static mount verifies them.
+Persisted DB values stay unsigned; signing happens at response / outbound time.
 """
 
 from __future__ import annotations
@@ -18,8 +19,9 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from starlette.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
 
-PRIVATE_PREFIXES = ("/static/exports/",)
+PRIVATE_PREFIXES = ("/static/exports/", "/static/generated/")
 DEFAULT_TTL_SECONDS = 3600
+CLOUD_RENDER_TTL_SECONDS = 86400  # external renderer needs longer fetch window
 
 
 def _secret() -> bytes:
@@ -43,7 +45,7 @@ def _signature(path: str, exp: str) -> str:
 
 
 def sign_media_url(url: Optional[str], ttl_seconds: Optional[int] = None) -> Optional[str]:
-    """Sign a private /static/exports URL; other URLs pass through unchanged."""
+    """Sign a private /static/exports or /static/generated URL; others pass through."""
     if not url:
         return url
     parsed = urlparse(url)
@@ -67,6 +69,37 @@ def verify_media_signature(path: str, exp: Optional[str], sig: Optional[str]) ->
     except ValueError:
         return False
     return hmac.compare_digest(_signature(path, exp), sig)
+
+
+def unsigned_media_url(url: Optional[str]) -> Optional[str]:
+    """Strip exp/sig query params so only the bare path (or foreign URL) is stored."""
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if not is_private_media_path(parsed.path):
+        return url
+    return parsed._replace(query="", fragment="").geturl()
+
+
+def sign_media_urls_in_obj(value: object, *, ttl_seconds: Optional[int] = None) -> object:
+    """Deep-copy dict/list structures, signing private media URL strings."""
+    if isinstance(value, str):
+        return sign_media_url(value, ttl_seconds=ttl_seconds)
+    if isinstance(value, list):
+        return [sign_media_urls_in_obj(item, ttl_seconds=ttl_seconds) for item in value]
+    if isinstance(value, dict):
+        return {key: sign_media_urls_in_obj(item, ttl_seconds=ttl_seconds) for key, item in value.items()}
+    return value
+
+
+def unsigned_media_urls_in_obj(value: object) -> object:
+    if isinstance(value, str):
+        return unsigned_media_url(value)
+    if isinstance(value, list):
+        return [unsigned_media_urls_in_obj(item) for item in value]
+    if isinstance(value, dict):
+        return {key: unsigned_media_urls_in_obj(item) for key, item in value.items()}
+    return value
 
 
 class PrivateAwareStaticFiles(StaticFiles):
@@ -103,14 +136,14 @@ SignedMediaUrl = Annotated[Optional[str], PlainSerializer(_serialize_signed, ret
 SignedMediaStr = Annotated[str, PlainSerializer(_serialize_signed, return_type=str)]
 
 
-_UNSIGNED_EXPORT_JSON = re.compile(rb'"(/static/exports/[^"?\\\s]+)"')
+_UNSIGNED_PRIVATE_JSON = re.compile(rb'"(/static/(?:exports|generated)/[^"?\\\s]+)"')
 
 
 def sign_export_urls_in_json(body: bytes) -> bytes:
-    """Sign every bare private export path embedded in a JSON body (nested artifacts, metadata)."""
-    if b"/static/exports/" not in body:
+    """Sign every bare private media path embedded in a JSON body (nested artifacts, metadata)."""
+    if b"/static/exports/" not in body and b"/static/generated/" not in body:
         return body
-    return _UNSIGNED_EXPORT_JSON.sub(
+    return _UNSIGNED_PRIVATE_JSON.sub(
         lambda m: b'"' + sign_media_url(m.group(1).decode()).encode() + b'"', body
     )
 

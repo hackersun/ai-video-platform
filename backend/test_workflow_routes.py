@@ -1242,7 +1242,7 @@ def test_video_generation_skips_local_reference_image_for_provider(
     job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
     assert job_resp.status_code == 200
     job = job_resp.json()
-    assert job["image_url"] == "/static/generated/images/local-ref.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/local-ref.png"
     assert job["prompt_parameters"]["image_url_sent"] is False
     assert job["prompt_parameters"]["provider_image_url"] is None
     assert "公网" in job["prompt_parameters"]["image_url_omitted_reason"]
@@ -1324,7 +1324,7 @@ def test_video_generation_maps_local_reference_image_through_public_storage(
     job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
     assert job_resp.status_code == 200
     job = job_resp.json()
-    assert job["image_url"] == "/static/generated/images/local-ref.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/local-ref.png"
     assert job["prompt_parameters"]["image_url_sent"] is True
     assert job["prompt_parameters"]["provider_image_url"] == "https://cdn.example.com/static/generated/images/local-ref.png"
     assert job["prompt_parameters"]["image_delivery_method"] == "public_static_base_url"
@@ -3030,7 +3030,7 @@ def test_video_consistency_package_uses_real_novel_character_and_shared_style_se
     assert jobs[0]["prompt_parameters"]["image_url_sent"] is False
     assert jobs[0]["prompt_parameters"]["reference_image_source"] == "character_avatar"
     assert "公网" in jobs[0]["prompt_parameters"]["image_url_omitted_reason"]
-    assert jobs[0]["image_url"] == "/static/generated/images/sunjian-reference.png"
+    assert jobs[0]["image_url"].split("?")[0] == "/static/generated/images/sunjian-reference.png"
     assert "孙剑" in jobs[0]["prompt"]
     assert "年轻瘦弱" in jobs[0]["prompt"]
     assert "眼神锐利" in jobs[0]["prompt"]
@@ -3650,7 +3650,7 @@ def test_workflow_media_batch_skips_local_reference_image_for_provider(
     assert all(item["type"] != "image_url" for item in captured_video[0]["content"])
 
     job = client.get(f"/api/v1/video/jobs/{payload['video_job_ids'][0]}", headers=_auth_headers(user_id)).json()
-    assert job["image_url"] == "/static/generated/images/linche-reference.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_url_sent"] is False
     assert job["prompt_parameters"]["reference_image_source"] == "character_avatar"
     assert "公网" in job["prompt_parameters"]["image_url_omitted_reason"]
@@ -3757,7 +3757,7 @@ def test_workflow_media_batch_maps_local_reference_image_through_public_storage(
     assert captured_video[0]["content"][0]["image_url"]["url"] == "https://cdn.example.com/static/generated/images/linche-reference.png"
 
     job = client.get(f"/api/v1/video/jobs/{payload['video_job_ids'][0]}", headers=_auth_headers(user_id)).json()
-    assert job["image_url"] == "/static/generated/images/linche-reference.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_url_sent"] is True
     assert job["prompt_parameters"]["provider_image_url"] == "https://cdn.example.com/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_delivery_method"] == "public_static_base_url"

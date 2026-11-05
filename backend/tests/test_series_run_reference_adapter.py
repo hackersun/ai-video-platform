@@ -82,7 +82,7 @@ async def test_minimax_reference_adapter_requests_url_then_reuploads_qiniu(
 
     async def deliver(db, user_id, url, **kwargs):
         assert user_id == "user-1"
-        assert url == "/static/generated/series-references/reference.png"
+        assert url.split("?")[0] == "/static/generated/series-references/reference.png"
         return {
             "provider_url": "https://qiniu.example.com/reference.png?e=4102444800&token=signed",
             "delivery_method": "qiniu_object_upload", "storage_config_id": "storage-qiniu",

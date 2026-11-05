@@ -41,7 +41,7 @@ async def test_locked_asset_is_refreshed_to_provider_accessible_reference(monkey
             return Result()
 
     async def resolve(_db, _user_id, source, **_kwargs):
-        assert source == "/static/generated/reference.jpg"
+        assert source.split("?")[0] == "/static/generated/reference.jpg"
         return {"provider_url": "https://cdn.example.test/fresh-reference.jpg"}
 
     monkeypatch.setattr("app.services.shot_reference_input_service.resolve_provider_media_url", resolve)

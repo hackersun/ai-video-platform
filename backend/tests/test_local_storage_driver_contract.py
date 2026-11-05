@@ -44,7 +44,7 @@ async def test_local_ffmpeg_driver_executes_production_renderer(monkeypatch, tmp
         "manifest": command.manifest, "output_dir": Path(tmp_path), "burn_subtitles": True,
     }
     assert submission.status == "completed"
-    assert submission.output["output_url"] == "/static/generated/final.mp4"
+    assert submission.output["output_url"].split("?")[0] == "/static/generated/final.mp4"
 
 
 @pytest.mark.asyncio
