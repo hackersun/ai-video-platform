@@ -147,6 +147,8 @@ async def _attach_live_run(seed: dict[str, object], video_config_id: str) -> str
         workflow = await db.get(Workflow, seed["workflow"])
         workflow.metadata_ = {"series_run_id": run_id}
         db.add(run)
+        from app.services.billing_guard import opt_in_live_billing
+        await opt_in_live_billing(db, str(seed["user"]), commit=False)
         await db.commit()
     return run_id
 

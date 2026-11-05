@@ -58,6 +58,30 @@ async def ensure_user_billing_settings(db: AsyncSession, user_id: str) -> UserBi
     return row
 
 
+async def opt_in_live_billing(
+    db: AsyncSession,
+    user_id: str,
+    *,
+    per_user_cap_rmb: str = "1000000.00",
+    per_pipeline_cap_rmb: str = "1000000.00",
+    commit: bool = True,
+) -> UserBillingSettings:
+    """Test/dev helper: enable paid live calls with generous caps."""
+    settings = await get_or_create_settings(db, user_id)
+    settings.live_calls_opt_in = True
+    if settings.opted_in_at is None:
+        settings.opted_in_at = utc_now()
+    settings.per_user_cap_rmb = str(per_user_cap_rmb)
+    settings.per_pipeline_cap_rmb = str(per_pipeline_cap_rmb)
+    if commit:
+        await db.commit()
+        await db.refresh(settings)
+    else:
+        await db.flush()
+    return settings
+
+
+
 def _live_statuses() -> tuple[str, ...]:
     return ("reserved", "settled")
 

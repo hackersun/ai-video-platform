@@ -100,6 +100,8 @@ def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
                 episodes=[{"episode_number": 1, "canonical_ids": {"workflow_id": workflow_id, "shot_ids": [shot_id]}}], version=1,
                 created_at=utc_now() - timedelta(seconds=1),
             ))
+            from app.services.billing_guard import opt_in_live_billing
+            await opt_in_live_billing(db, user_id, commit=False)
             await db.commit()
 
     asyncio.run(_seed())
