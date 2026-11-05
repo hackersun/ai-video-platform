@@ -19,7 +19,7 @@ from .public_errors import StoryLockPreparationBlocked
 from .application.voice_contract import provider_voice_allowlist, selection_hash, valid_voice_selection
 from .application.deterministic_acceptance import (
     apply_deterministic_voice_binding, deterministic_anchor_entity_refs, deterministic_evidence_contract,
-    seed_deterministic_local_mentions,
+    reactivate_reused_archived_characters, seed_deterministic_local_mentions,
 )
 from .application.invalidate_lineage import invalidate_lineage
 
@@ -143,6 +143,6 @@ __all__ = [
     "provider_voice_allowlist", "selection_hash", "valid_voice_selection",
     "deterministic_anchor_entity_refs", "deterministic_evidence_contract",
     "apply_deterministic_voice_binding",
-    "seed_deterministic_local_mentions",
+    "reactivate_reused_archived_characters", "seed_deterministic_local_mentions",
     "invalidate_story_lock_lineage",
 ]

@@ -1800,8 +1800,10 @@ async def test_deterministic_setup_seeds_normal_approved_facts_then_real_story_l
     assert all(((entity.extra_data or {}).get("lifecycle") or {}).get("status") == "approved" for entity in production_entities)
     await db_session.refresh(supporting_character)
     assert supporting_character.is_approved is False
-    assert supporting_character.extra_data["lifecycle"]["status"] == "archived"
-    assert supporting_character.extra_data["deterministic_merge"]["canonical_entity_id"]
+    # Distinct supporting cast must stay candidate — mass-archiving into 主角
+    # caused multi-character novels to fail with required_entity_state_invalid.
+    assert supporting_character.extra_data["lifecycle"]["status"] == "candidate"
+    assert "deterministic_merge" not in (supporting_character.extra_data or {})
     protagonist = next(entity for entity in entities if entity.entity_type == "character" and entity.name == "主角")
     assert protagonist.attributes["voice_binding"]["status"] == "locked"
     bible = await db_session.get(StoryBible, locked["story_bible_id"])

@@ -10,7 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import StoryEntity
-from app.services.story_entity_lifecycle import is_entity_production_visible
+from app.services.story_entity_lifecycle import (
+    get_entity_review_status,
+    is_entity_reviewable,
+)
 
 
 REF_KEYS = {
@@ -49,6 +52,12 @@ def _ref(entity: StoryEntity) -> dict[str, Any]:
 
 
 def _preferred_chapter_source(entities: list[StoryEntity]) -> StoryEntity | None:
+    """Prefer an active/reviewable row over an archived merged-local duplicate."""
+    reviewable = [entity for entity in entities if is_entity_reviewable(entity)]
+    if len(reviewable) == 1:
+        return reviewable[0]
+    if len(reviewable) > 1:
+        entities = reviewable
     if len(entities) == 1:
         return entities[0]
     entity_ids = {entity.id for entity in entities}
@@ -58,6 +67,22 @@ def _preferred_chapter_source(entities: list[StoryEntity]) -> StoryEntity | None
         in entity_ids
     )]
     return merged[0] if len(merged) == 1 else None
+
+
+def _ref_for_discovery(
+    entity: StoryEntity, canonical_by_id: dict[str, StoryEntity],
+) -> dict[str, object]:
+    """Emit the production/reviewable identity, never an archived merge local."""
+    merge = (entity.extra_data or {}).get("normalized_merge") or {}
+    canonical = canonical_by_id.get(str(merge.get("canonical_entity_id") or ""))
+    if (
+        merge.get("status") == "merged_superseded"
+        and canonical is not None
+        and is_entity_reviewable(canonical)
+        and get_entity_review_status(entity) == "archived"
+    ):
+        return _ref(canonical)
+    return _ref(entity)
 
 
 async def resolve_owned_shot_entity_context(
@@ -98,9 +123,11 @@ async def resolve_owned_shot_entity_context(
         is_merged_source = (
             normalized_merge.get("status") == "merged_superseded"
             and canonical is not None
-            and is_entity_production_visible(canonical)
+            and is_entity_reviewable(canonical)
         )
-        if not is_entity_production_visible(entity) and not is_merged_source:
+        # Include candidates so first-run multi-character novels can lock supporting cast.
+        # Archived same-identity locals are discoverable only via their reviewable canonical.
+        if not is_entity_reviewable(entity) and not is_merged_source:
             continue
         identity = _canonical_identity(entity)
         if entity.entity_type in REF_KEYS and identity:
@@ -114,11 +141,11 @@ async def resolve_owned_shot_entity_context(
             continue
         source_candidates[entity_type].append(entity)
         if _exact_identity_match(shot_text, identity):
-            refs[REF_KEYS[entity_type]].append(_ref(entity))
+            refs[REF_KEYS[entity_type]].append(_ref_for_discovery(entity, canonical_by_id))
     for entity_type, key in REF_KEYS.items():
         candidates = source_candidates.get(entity_type) or []
         if not refs[key] and len(candidates) == 1:
-            refs[key].append(_ref(candidates[0]))
+            refs[key].append(_ref_for_discovery(candidates[0], canonical_by_id))
             resolution["fallback_types"].append(entity_type)
     context = "；".join(
         f"{key}:{','.join(str(item['name']) for item in values)}"

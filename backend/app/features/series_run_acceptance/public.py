@@ -19,7 +19,7 @@ from app.features.series_run_story_locks.application.deterministic_acceptance im
 from app.models import Chapter, LLMConfig, LLMModel, LLMProvider, Novel, Shot, StoryEntity, Storyboard
 from app.models.series_production_run import SeriesProductionRun
 from app.services.deterministic_acceptance_lineage import sync_deterministic_episode_input_hash
-from app.services.story_entity_lifecycle import ARCHIVED, CANDIDATE, set_entity_review_status
+from app.services.story_entity_lifecycle import CANDIDATE, set_entity_review_status
 
 
 async def _context(db: AsyncSession, user_id: str, novel_id: str):
@@ -70,6 +70,13 @@ def _refresh_stale_evidence(entity: StoryEntity, chapter: Chapter) -> None:
 
 
 async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_ids: list[str], chapters: dict[str, Chapter]):
+    """Ensure the deterministic 主角 fixture row exists and is candidate.
+
+    Distinct supporting named characters must stay active. Mass-archiving every
+    non-主角 character into 主角 made multi-character novels fail story-lock with
+    required_entity_state_invalid once chapter text rediscovered those archived
+    locals. Same-identity alias merges happen later in seed_deterministic_local_mentions.
+    """
     protagonist = await db.scalar(select(StoryEntity).where(
         StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
         StoryEntity.source == "deterministic", StoryEntity.name == "主角"))
@@ -77,33 +84,22 @@ async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_id
         protagonist = _new_protagonist(user_id, novel_id, chapters[chapter_ids[0]])
         db.add(protagonist)
     await db.flush()
-    rows = list((await db.scalars(select(StoryEntity).where(
-        StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
-        StoryEntity.entity_type == "character"))).all())
-    approval_at = utc_now().isoformat()
-    for character in rows:
-        if character.id != protagonist.id:
-            protagonist.aliases = list(dict.fromkeys([*(protagonist.aliases or []), str(character.name or "")]))
-            merge = {"status": "merged_superseded", "canonical_entity_id": protagonist.id, "merged_at": approval_at}
-            character.extra_data = {**(character.extra_data or {}), "deterministic_merge": merge, "normalized_merge": dict(merge)}
-            character.attributes = {**(character.attributes or {}), "merged_into_entity_id": protagonist.id}
-            set_entity_review_status(character, ARCHIVED, changed_by=user_id, reason="merged_into_deterministic_protagonist")
-            continue
-        attrs = dict(character.attributes or {})
-        attrs.pop("approval_record", None)
-        attrs.setdefault("source_chapter_id", character.chapter_id or chapter_ids[0])
-        attrs.setdefault("source_chapter_index", 1)
-        attrs.setdefault("introduced_at", {"chapter_id": attrs["source_chapter_id"], "chapter_number": 1})
-        attrs.setdefault("evidence_contract", deterministic_evidence_contract(chapters[str(attrs["source_chapter_id"])]))
-        source_chapter = chapters.get(str((attrs.get("evidence_contract") or {}).get("chapter_id") or attrs["source_chapter_id"]))
-        if source_chapter is not None and (attrs["evidence_contract"] or {}).get("content_hash") != deterministic_evidence_contract(source_chapter).get("content_hash"):
-            attrs["evidence_contract"] = deterministic_evidence_contract(source_chapter)
-        attrs.setdefault("visual_dna", {"costume": "深色长衣", "line_style": "统一二维动漫线稿"})
-        attrs.setdefault("reference_requirements", {"character_multiview": ["front", "three_quarter", "full_body"]})
-        attrs.update(speaking=True, voice_binding={"voice_id": "deterministic-protagonist-voice", "version": 1, "status": "locked"})
-        character.chapter_id, character.first_seen_chapter_id = character.chapter_id or chapter_ids[0], character.first_seen_chapter_id or character.chapter_id
-        character.version, character.attributes = int(character.version or 1), attrs
-        set_entity_review_status(character, CANDIDATE, changed_by=user_id, reason="deterministic_acceptance_fixture")
+    character = protagonist
+    attrs = dict(character.attributes or {})
+    attrs.pop("approval_record", None)
+    attrs.setdefault("source_chapter_id", character.chapter_id or chapter_ids[0])
+    attrs.setdefault("source_chapter_index", 1)
+    attrs.setdefault("introduced_at", {"chapter_id": attrs["source_chapter_id"], "chapter_number": 1})
+    attrs.setdefault("evidence_contract", deterministic_evidence_contract(chapters[str(attrs["source_chapter_id"])]))
+    source_chapter = chapters.get(str((attrs.get("evidence_contract") or {}).get("chapter_id") or attrs["source_chapter_id"]))
+    if source_chapter is not None and (attrs["evidence_contract"] or {}).get("content_hash") != deterministic_evidence_contract(source_chapter).get("content_hash"):
+        attrs["evidence_contract"] = deterministic_evidence_contract(source_chapter)
+    attrs.setdefault("visual_dna", {"costume": "深色长衣", "line_style": "统一二维动漫线稿"})
+    attrs.setdefault("reference_requirements", {"character_multiview": ["front", "three_quarter", "full_body"]})
+    attrs.update(speaking=True, voice_binding={"voice_id": "deterministic-protagonist-voice", "version": 1, "status": "locked"})
+    character.chapter_id, character.first_seen_chapter_id = character.chapter_id or chapter_ids[0], character.first_seen_chapter_id or character.chapter_id
+    character.version, character.attributes = int(character.version or 1), attrs
+    set_entity_review_status(character, CANDIDATE, changed_by=user_id, reason="deterministic_acceptance_fixture")
     return protagonist
 
 
