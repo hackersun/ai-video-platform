@@ -22,6 +22,7 @@ from app.features.video_generation.public import (
     VideoGenerationError,
     resolve_video_lineage,
 )
+from app.core.media_access import SignedMediaUrl
 from app.core.database import get_db
 from app.core.dev_generation import dev_audio_url, dev_video_url, is_dev_mode
 from app.core.model_registry import get_model, get_task_default
@@ -95,7 +96,7 @@ class MediaJobResponse(BaseModel):
     seed: Optional[int] = None
     output_video_url: Optional[str] = None
     output_audio_url: Optional[str] = None
-    output_manifest_url: Optional[str] = None
+    output_manifest_url: SignedMediaUrl = None
     subtitle_track_id: Optional[str] = None
     timeline_id: Optional[str] = None
     cover_url: Optional[str] = None

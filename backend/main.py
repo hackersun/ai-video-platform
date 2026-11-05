@@ -30,7 +30,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from app.core.media_access import PrivateAwareStaticFiles, SignExportUrlsMiddleware
 
 from app.api.v1.router import api_router
 from app.core.credential_encryption import require_stable_encryption_key
@@ -73,6 +73,7 @@ app = FastAPI(
     lifespan=persistent_credential_encryption_lifespan,
 )
 
+app.add_middleware(SignExportUrlsMiddleware)
 # CORS配置
 app.add_middleware(
     CORSMiddleware,
@@ -124,7 +125,7 @@ app.include_router(api_router, prefix="/api/v1")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", PrivateAwareStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/health")

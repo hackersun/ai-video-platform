@@ -1922,7 +1922,7 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     synthesis_payload = synthesis_resp.json()
     assert synthesis_payload["output_url"] != synthesis_payload["video_url"]
     extra = synthesis_payload["extra_data"]
-    assert extra["manifest_url"] == concat_payload["manifest_url"]
+    assert extra["manifest_url"].split("?")[0] == concat_payload["manifest_url"].split("?")[0]
     assert extra["segment_count"] == 2
     assert [segment["video"]["job_id"] for segment in extra["segments"]] == video_job_ids
     assert [segment["audio"]["job_id"] for segment in extra["segments"]] == tts_job_ids
@@ -1953,7 +1953,7 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     )
     assert workflow_status.status_code == 200
     status_payload = workflow_status.json()
-    assert status_payload["synthesis_jobs"][0]["manifest_url"] == concat_payload["manifest_url"]
+    assert status_payload["synthesis_jobs"][0]["manifest_url"].split("?")[0] == concat_payload["manifest_url"].split("?")[0]
     assert status_payload["synthesis_jobs"][0]["segment_count"] == 2
 
     preflight_resp = client.get(
@@ -1964,7 +1964,7 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     preflight = preflight_resp.json()
     assert preflight["ready"] is True
     assert preflight["segment_count"] == 2
-    assert preflight["manifest_url"] == concat_payload["manifest_url"]
+    assert preflight["manifest_url"].split("?")[0] == concat_payload["manifest_url"].split("?")[0]
 
     render_resp = client.post(
         f"/api/v1/workflow/{workflow_id}/render",
@@ -1979,9 +1979,9 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert render_payload["is_publishable"] is False
     assert render_payload["output_kind"] == "preview_package"
     assert render_payload["publication_blockers"][0]["code"] == "preview_package_not_publishable"
-    assert render_payload["preview_url"].endswith("-preview.html")
-    assert render_payload["srt_url"].endswith(".srt")
-    assert render_payload["timeline_url"].endswith("-timeline.json")
+    assert render_payload["preview_url"].split("?")[0].endswith("-preview.html")
+    assert render_payload["srt_url"].split("?")[0].endswith(".srt")
+    assert render_payload["timeline_url"].split("?")[0].endswith("-timeline.json")
     assert render_payload["render_manifest_url"].startswith("/static/exports/")
 
     preview_resp = client.get(render_payload["preview_url"])
@@ -1991,9 +1991,9 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     render_manifest_resp = client.get(render_payload["render_manifest_url"])
     assert render_manifest_resp.status_code == 200
     render_manifest = render_manifest_resp.json()
-    assert render_manifest["output_url"] == render_payload["preview_url"]
-    assert render_manifest["playable_url"] == render_payload["preview_url"]
-    assert render_manifest["artifacts"]["preview_url"] == render_payload["preview_url"]
+    assert render_manifest["output_url"].split("?")[0] == render_payload["preview_url"].split("?")[0]
+    assert render_manifest["playable_url"].split("?")[0] == render_payload["preview_url"].split("?")[0]
+    assert render_manifest["artifacts"]["preview_url"].split("?")[0] == render_payload["preview_url"].split("?")[0]
     assert [segment["index"] for segment in render_manifest["segments"]] == [1, 2]
     assert render_manifest["segments"][0]["audio"]["text"] == "第 1 个镜头台词"
     assert render_manifest["tracks"]["audio"][0]["url"]
@@ -2087,12 +2087,12 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
         f"/api/v1/synthesis/jobs/{concat_payload['job_id']}",
         headers=_auth_headers(user_id),
     ).json()
-    assert rendered_job["output_url"] == timeline_render["preview_url"]
+    assert rendered_job["output_url"].split("?")[0] == timeline_render["preview_url"].split("?")[0]
     assert rendered_job["is_publishable"] is False
     assert rendered_job["output_kind"] == "preview_package"
     assert rendered_job["publication_blockers"][0]["code"] == "preview_package_not_publishable"
     assert rendered_job["extra_data"]["render_status"] == "rendered"
-    assert rendered_job["extra_data"]["render_artifacts"]["srt_url"] == timeline_render["srt_url"]
+    assert rendered_job["extra_data"]["render_artifacts"]["srt_url"].split("?")[0] == timeline_render["srt_url"].split("?")[0]
     assert rendered_job["extra_data"]["render_source"] == "editable_timeline"
 
     rendered_status = client.get(
@@ -2104,10 +2104,10 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert rendered_status_job["render_status"] == "rendered"
     assert rendered_status_job["is_publishable"] is False
     assert rendered_status_job["output_kind"] == "preview_package"
-    assert rendered_status_job["preview_url"] == timeline_render["preview_url"]
-    assert rendered_status_job["srt_url"] == timeline_render["srt_url"]
-    assert rendered_status_job["timeline_url"] == timeline_render["timeline_url"]
-    assert rendered_status_job["render_manifest_url"] == timeline_render["render_manifest_url"]
+    assert rendered_status_job["preview_url"].split("?")[0] == timeline_render["preview_url"].split("?")[0]
+    assert rendered_status_job["srt_url"].split("?")[0] == timeline_render["srt_url"].split("?")[0]
+    assert rendered_status_job["timeline_url"].split("?")[0] == timeline_render["timeline_url"].split("?")[0]
+    assert rendered_status_job["render_manifest_url"].split("?")[0] == timeline_render["render_manifest_url"].split("?")[0]
     assert rendered_status_job["segment_count"] == 2
 
 
@@ -4044,8 +4044,8 @@ def test_workflow_render_ffmpeg_local_marks_output_publishable(
     payload = response.json()
     assert payload["status"] == "rendered"
     assert payload["render_backend"] == "ffmpeg_local"
-    assert payload["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
-    assert payload["srt_url"] == "/static/exports/final-ffmpeg-local.srt"
+    assert payload["output_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.mp4"
+    assert payload["srt_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.srt"
     assert payload["duration_seconds"] == 1.2
     assert payload["is_publishable"] is True
     assert payload["output_kind"] == "final_video"
@@ -4055,9 +4055,9 @@ def test_workflow_render_ffmpeg_local_marks_output_publishable(
         f"/api/v1/synthesis/jobs/{synthesis_job_id}",
         headers=_auth_headers(user_id),
     ).json()
-    assert rendered_job["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert rendered_job["output_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.mp4"
     assert rendered_job["extra_data"]["render_backend"] == "ffmpeg_local"
-    assert rendered_job["extra_data"]["render_artifacts"]["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert rendered_job["extra_data"]["render_artifacts"]["output_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.mp4"
     assert rendered_job["extra_data"]["is_publishable"] is True
 
     status_resp = client.get(f"/api/v1/workflow/status/{workflow_id}", headers=_auth_headers(user_id))
@@ -4373,12 +4373,12 @@ def test_synthesis_jobs_filter_lineage_and_expose_render_artifacts(client: TestC
     assert job["storyboard_id"] == storyboard_id
     assert job["shot_id"] == shot_id
     assert job["render_status"] == "rendered"
-    assert job["manifest_url"] == "/static/exports/sequence-a.json"
+    assert job["manifest_url"].split("?")[0] == "/static/exports/sequence-a.json"
     assert job["segment_count"] == 1
-    assert job["preview_url"] == "/static/exports/render-a-preview.html"
-    assert job["srt_url"] == "/static/exports/render-a.srt"
-    assert job["timeline_url"] == "/static/exports/render-a-timeline.json"
-    assert job["render_manifest_url"] == "/static/exports/render-a.json"
+    assert job["preview_url"].split("?")[0] == "/static/exports/render-a-preview.html"
+    assert job["srt_url"].split("?")[0] == "/static/exports/render-a.srt"
+    assert job["timeline_url"].split("?")[0] == "/static/exports/render-a-timeline.json"
+    assert job["render_manifest_url"].split("?")[0] == "/static/exports/render-a.json"
 
 
 def test_tts_requires_api_key_outside_dev_mode(

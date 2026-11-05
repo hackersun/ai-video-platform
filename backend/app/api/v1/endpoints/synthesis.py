@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from app.core.database import get_db
 from app.core.dev_generation import dev_synthesis_url, is_dev_mode
+from app.core.media_access import sign_media_url
 from app.core.permissions import require_project_role
 from app.core.security import get_current_user_id
 from app.models.publication import Publication
@@ -206,14 +207,14 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
         audio_url=job.audio_url,
         status=job.status,
         progress=job.progress or 0,
-        output_url=job.output_url,
+        output_url=sign_media_url(job.output_url),
         cover_url=job.cover_url,
         duration_seconds=job.duration_seconds,
-        manifest_url=extra_data.get("manifest_url") or render_artifacts.get("source_manifest_url"),
-        preview_url=render_artifacts.get("preview_url"),
-        srt_url=render_artifacts.get("srt_url"),
-        timeline_url=render_artifacts.get("timeline_url"),
-        render_manifest_url=render_artifacts.get("render_manifest_url"),
+        manifest_url=sign_media_url(extra_data.get("manifest_url") or render_artifacts.get("source_manifest_url")),
+        preview_url=sign_media_url(render_artifacts.get("preview_url")),
+        srt_url=sign_media_url(render_artifacts.get("srt_url")),
+        timeline_url=sign_media_url(render_artifacts.get("timeline_url")),
+        render_manifest_url=sign_media_url(render_artifacts.get("render_manifest_url")),
         render_status=extra_data.get("render_status"),
         render_backend=extra_data.get("render_backend"),
         is_publishable=publication_readiness["is_publishable"],
@@ -336,7 +337,7 @@ def build_publication_response(publication: Publication) -> PublicationResponse:
         description=publication.description,
         status=publication.status,
         visibility=publication.visibility or "private",
-        video_url=publication.video_url,
+        video_url=sign_media_url(publication.video_url),
         cover_url=publication.cover_url,
         format=publication.format or "mp4",
         resolution=publication.resolution or "1080p",
@@ -344,7 +345,7 @@ def build_publication_response(publication: Publication) -> PublicationResponse:
         tags=publication.tags or [],
         view_count=publication.view_count or 0,
         like_count=publication.like_count or 0,
-        export_url=publication.export_url,
+        export_url=sign_media_url(publication.export_url),
         provider=publication.provider,
         metadata=publication.publication_metadata or {},
         created_at=publication.created_at,
@@ -1013,7 +1014,7 @@ async def download_publication(
     return {
         "id": publication.id,
         "title": publication.title,
-        "video_url": publication.video_url,
+        "video_url": sign_media_url(publication.video_url),
         "cover_url": publication.cover_url,
         "format": publication.format,
         "resolution": publication.resolution,

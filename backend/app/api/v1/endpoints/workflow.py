@@ -22,6 +22,7 @@ from app.core.database import get_db
 from app.core.api_key_utils import get_user_api_key
 from app.core.dev_generation import dev_audio_url, dev_synthesis_url, dev_video_url, is_dev_mode
 from app.core.model_registry import get_model_reference_limits, get_task_default
+from app.core.media_access import SignedMediaUrl, sign_media_url
 from app.core.security import get_current_user_id
 from app.models.llm_config import LLMConfig, LLMModel, LLMProvider
 from app.models import Asset, Clip, Project, QualityEvaluation, Timeline, Track, Workflow, VideoJob, TTSJob, SynthesisJob, Shot, StoryBible, Storyboard
@@ -1982,8 +1983,8 @@ class ConcatenateRequest(BaseModel):
 class ConcatenateResponse(BaseModel):
     job_id: str
     message: str
-    output_url: Optional[str] = None
-    manifest_url: Optional[str] = None
+    output_url: SignedMediaUrl = None
+    manifest_url: SignedMediaUrl = None
     segment_count: int = 0
     duration_seconds: float = 0.0
 
@@ -1995,7 +1996,7 @@ class RenderPreflightResponse(BaseModel):
     blocking_issue_count: int
     issue_count: int
     issues: List[Dict[str, Any]]
-    manifest_url: Optional[str] = None
+    manifest_url: SignedMediaUrl = None
     segment_count: int = 0
     duration_seconds: Optional[float] = None
     render_status: Optional[str] = None
@@ -2027,12 +2028,12 @@ class RenderResponse(BaseModel):
     message: str
     render_status: Optional[str] = None
     render_backend: Optional[str] = None
-    output_url: Optional[str] = None
-    manifest_url: Optional[str] = None
-    preview_url: Optional[str] = None
-    srt_url: Optional[str] = None
-    timeline_url: Optional[str] = None
-    render_manifest_url: Optional[str] = None
+    output_url: SignedMediaUrl = None
+    manifest_url: SignedMediaUrl = None
+    preview_url: SignedMediaUrl = None
+    srt_url: SignedMediaUrl = None
+    timeline_url: SignedMediaUrl = None
+    render_manifest_url: SignedMediaUrl = None
     segment_count: int = 0
     duration_seconds: Optional[float] = None
     issues: List[Dict[str, Any]] = Field(default_factory=list)
@@ -2828,18 +2829,18 @@ async def get_workflow_status(
             "progress": job.progress,
             "video_url": job.video_url,
             "audio_url": job.audio_url,
-            "output_url": job.output_url,
+            "output_url": sign_media_url(job.output_url),
             "duration_seconds": job.duration_seconds,
             "created_at": str(job.created_at),
             "project_id": job.project_id or extra.get("project_id"),
             "workflow_id": job.workflow_id or extra.get("workflow_id"),
             "video_job_id": extra.get("video_job_id"),
             "tts_job_id": extra.get("tts_job_id"),
-            "manifest_url": extra.get("manifest_url") or render_artifacts.get("source_manifest_url"),
-            "preview_url": render_artifacts.get("preview_url"),
-            "srt_url": render_artifacts.get("srt_url"),
-            "timeline_url": render_artifacts.get("timeline_url"),
-            "render_manifest_url": render_artifacts.get("render_manifest_url"),
+            "manifest_url": sign_media_url(extra.get("manifest_url") or render_artifacts.get("source_manifest_url")),
+            "preview_url": sign_media_url(render_artifacts.get("preview_url")),
+            "srt_url": sign_media_url(render_artifacts.get("srt_url")),
+            "timeline_url": sign_media_url(render_artifacts.get("timeline_url")),
+            "render_manifest_url": sign_media_url(render_artifacts.get("render_manifest_url")),
             "render_status": extra.get("render_status"),
             "render_backend": extra.get("render_backend"),
             "is_publishable": publication_readiness["is_publishable"],

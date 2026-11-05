@@ -58,7 +58,7 @@ def local_static_path_for_url(url: Optional[str]) -> Optional[Path]:
     if not url:
         return None
     parsed = urlparse(url)
-    media_path = parsed.path if parsed.scheme else url
+    media_path = parsed.path  # query (e.g. media signature) stripped
     if not media_path.startswith("/static/"):
         return None
     relative = media_path.removeprefix("/static/").lstrip("/")

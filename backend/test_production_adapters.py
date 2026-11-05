@@ -429,9 +429,9 @@ def test_workflow_cloud_render_returns_adapter_ready_without_claiming_output(cli
     render = render_resp.json()
     assert render["status"] == "adapter_ready"
     assert render["output_url"] is None
-    assert render["render_manifest_url"].endswith(".json")
-    assert render["srt_url"].endswith(".srt")
-    assert render["timeline_url"].endswith("-timeline.json")
+    assert render["render_manifest_url"].split("?")[0].endswith(".json")
+    assert render["srt_url"].split("?")[0].endswith(".srt")
+    assert render["timeline_url"].split("?")[0].endswith("-timeline.json")
 
     status_resp = client.get(f"/api/v1/workflow/status/{workflow_id}", headers=_auth_headers(user_id))
     assert status_resp.status_code == 200

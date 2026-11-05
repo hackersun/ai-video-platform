@@ -166,11 +166,11 @@ def test_publish_creates_local_export_without_cloud_keys(client: TestClient) -> 
     payload = publish_response.json()
     assert payload["provider"] == "local"
     assert payload["synthesis_job_id"] == synthesis_job_id
-    assert payload["video_url"] == "/static/exports/local-final.mp4"
+    assert payload["video_url"].split("?")[0] == "/static/exports/local-final.mp4"
     assert payload["visibility"] == "private"
     assert payload["export_url"].startswith("/static/exports/")
 
-    artifact_path = Path(__file__).resolve().parent / payload["export_url"].lstrip("/")
+    artifact_path = Path(__file__).resolve().parent / payload["export_url"].split("?")[0].lstrip("/")
     assert artifact_path.exists()
     assert "local-test" in artifact_path.read_text(encoding="utf-8")
 
@@ -321,7 +321,7 @@ def test_publish_allows_explicit_preview_package_export(client: TestClient) -> N
 
     assert response.status_code == 201
     payload = response.json()
-    assert payload["video_url"] == "/static/exports/render-preview.html"
+    assert payload["video_url"].split("?")[0] == "/static/exports/render-preview.html"
     assert payload["format"] == "html"
     assert payload["metadata"]["is_publishable"] is False
     assert payload["metadata"]["output_kind"] == "preview_package"
@@ -439,7 +439,7 @@ def test_publish_allows_cloud_render_final_video_and_preserves_provenance(client
     assert payload["metadata"]["is_publishable"] is True
     assert payload["metadata"]["output_kind"] == "final_video"
     assert payload["metadata"]["render_backend"] == "ffmpeg_cloud"
-    assert payload["metadata"]["render_manifest_url"] == render_artifacts["render_manifest_url"]
+    assert payload["metadata"]["render_manifest_url"].split("?")[0] == render_artifacts["render_manifest_url"].split("?")[0]
 
 
 def test_publish_export_preserves_render_artifact_provenance(client: TestClient) -> None:
@@ -485,23 +485,23 @@ def test_publish_export_preserves_render_artifact_provenance(client: TestClient)
     assert publish_response.status_code == 201
     payload = publish_response.json()
     publication_metadata = payload["metadata"]
-    assert payload["video_url"] == "/static/exports/final-render.mp4"
-    assert publication_metadata["source_output_url"] == "/static/exports/final-render.mp4"
-    assert publication_metadata["render_artifacts"] == render_artifacts
-    assert publication_metadata["render_manifest_url"] == render_artifacts["render_manifest_url"]
-    assert publication_metadata["timeline_url"] == render_artifacts["timeline_url"]
-    assert publication_metadata["srt_url"] == render_artifacts["srt_url"]
-    assert publication_metadata["preview_url"] == render_artifacts["preview_url"]
-    assert publication_metadata["source_manifest_url"] == render_artifacts["source_manifest_url"]
+    assert payload["video_url"].split("?")[0] == "/static/exports/final-render.mp4"
+    assert publication_metadata["source_output_url"].split("?")[0] == "/static/exports/final-render.mp4"
+    assert json.loads(__import__("re").sub(r"\?exp=\d+&sig=[0-9a-f]+", "", json.dumps(publication_metadata["render_artifacts"]))) == render_artifacts
+    assert publication_metadata["render_manifest_url"].split("?")[0] == render_artifacts["render_manifest_url"].split("?")[0]
+    assert publication_metadata["timeline_url"].split("?")[0] == render_artifacts["timeline_url"].split("?")[0]
+    assert publication_metadata["srt_url"].split("?")[0] == render_artifacts["srt_url"].split("?")[0]
+    assert publication_metadata["preview_url"].split("?")[0] == render_artifacts["preview_url"].split("?")[0]
+    assert publication_metadata["source_manifest_url"].split("?")[0] == render_artifacts["source_manifest_url"].split("?")[0]
     assert publication_metadata["render_status"] == "rendered"
     assert publication_metadata["render_backend"] == "ffmpeg_local"
     assert publication_metadata["render_source"] == "timeline"
     assert publication_metadata["timeline_id"] == "timeline-001"
 
-    artifact_path = Path(__file__).resolve().parent / payload["export_url"].lstrip("/")
+    artifact_path = Path(__file__).resolve().parent / payload["export_url"].split("?")[0].lstrip("/")
     artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     assert artifact_payload["render_artifacts"] == render_artifacts
-    assert artifact_payload["timeline_url"] == render_artifacts["timeline_url"]
+    assert artifact_payload["timeline_url"].split("?")[0] == render_artifacts["timeline_url"].split("?")[0]
 
 
 def test_publish_export_delivers_local_final_artifacts_to_qiniu(
@@ -575,7 +575,7 @@ def test_publish_export_delivers_local_final_artifacts_to_qiniu(
     assert payload["provider"] == "qiniu"
     assert payload["video_url"] == "https://cdn.example.com/static/exports/qiniu-final.mp4"
     assert payload["export_url"].startswith("https://cdn.example.com/static/exports/")
-    assert metadata["source_output_url"] == "/static/exports/qiniu-final.mp4"
+    assert metadata["source_output_url"].split("?")[0] == "/static/exports/qiniu-final.mp4"
     assert metadata["video_url"] == "https://cdn.example.com/static/exports/qiniu-final.mp4"
     assert metadata["render_artifacts"]["srt_url"] == "https://cdn.example.com/static/exports/qiniu-final.srt"
     assert metadata["render_artifacts"]["timeline_url"] == "https://cdn.example.com/static/exports/qiniu-timeline.json"
@@ -609,7 +609,7 @@ def test_execute_synthesis_persists_source_and_output_video_urls(client: TestCli
     assert job_response.status_code == 200
     job = job_response.json()
     assert job["video_url"] == "https://example.com/input.mp4"
-    assert job["output_url"] == payload["video_url"]
+    assert job["output_url"].split("?")[0] == payload["video_url"].split("?")[0]
 
 
 def test_publication_list_update_revoke_and_archive(client: TestClient) -> None:

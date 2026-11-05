@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.media_access import sign_media_url
 from app.core.permissions import require_project_role
 from app.core.security import get_current_user_id
 from app.core.time_utils import utc_now
@@ -111,7 +112,7 @@ def _serialize_pipeline(pipeline: NovelPublicationPipeline) -> Dict[str, Any]:
         "series_plan_version": pipeline.series_plan_version,
         "idempotency_key": pipeline.idempotency_key,
         "episodes": pipeline.episodes or [],
-        "final_video_url": pipeline.final_video_url,
+        "final_video_url": sign_media_url(pipeline.final_video_url),
         "publication_id": pipeline.publication_id,
         "publication_url": publication_url,
         "gate_summary": pipeline.gate_summary or {},
