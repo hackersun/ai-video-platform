@@ -48,8 +48,17 @@ async def persistent_credential_encryption_lifespan(_: FastAPI):
 
     assert_production_safe()
     require_stable_encryption_key()
+    await _startup_user_terms_columns()
     await _startup_model_center_migration()
     yield
+
+
+async def _startup_user_terms_columns() -> None:
+    """Idempotently add users.terms_accepted_* so existing databases keep working (no Alembic)."""
+    from app.core.database import engine
+    from app.db_migrations.user_terms_acceptance import add_user_terms_columns_async
+
+    await add_user_terms_columns_async(engine)
 
 
 async def _startup_model_center_migration() -> None:
