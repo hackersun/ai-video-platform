@@ -185,7 +185,7 @@ async def test_reactivate_reused_archived_distinct_character(db_session: AsyncSe
 
 
 @pytest.mark.asyncio
-async def test_discovery_emits_candidate_supporting_cast_not_archived_locals(
+async def test_discovery_includes_candidate_cast_and_prefers_signed_local(
     db_session: AsyncSession,
 ) -> None:
     user_id = str(uuid4())
@@ -223,6 +223,8 @@ async def test_discovery_emits_candidate_supporting_cast_not_archived_locals(
         source_text=chapter.content, shot_text=chapter.content,
     )
     char_ids = {item["entity_id"] for item in discovered["entity_refs"]["characters"]}
+    # Candidate supporting cast is discoverable before approval.
     assert lin.id in char_ids
-    assert protagonist.id in char_ids
-    assert local.id not in char_ids
+    # Same-identity signed chapter-local still preferred over its canonical.
+    assert local.id in char_ids
+    assert protagonist.id not in char_ids

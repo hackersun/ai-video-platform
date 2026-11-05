@@ -88,6 +88,8 @@ async def reactivate_reused_archived_characters(
     stay archived. Wrong mass-merges of distinct names are cleared back to candidate
     so story-lock does not fail-closed on required_entity_state_invalid.
     """
+    if not any(str(text or "").strip() for text in chapter_texts):
+        return []
     combined = "\n".join(chapter_texts)
     rows = list((await db.scalars(select(StoryEntity).where(
         StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
