@@ -32,4 +32,26 @@ def is_dev_mode() -> bool:
     return True
 
 
-__all__ = ["app_environment", "is_dev_mode", "is_production_environment"]
+_TRUTHY = {"true", "1", "yes", "on"}
+
+
+def assert_production_safe() -> None:
+    """Fail startup when dev auth shortcuts are enabled in a production environment."""
+    if not is_production_environment():
+        return
+    problems = []
+    if is_dev_mode():
+        problems.append("DEV_MODE enabled")
+    if (os.getenv("DEV_USER_ID") or "").strip():
+        problems.append("DEV_USER_ID set (dev-token fallback)")
+    for name in ("DEV_TOKEN", "DEV_AUTH_TOKEN", "ALLOW_DEV_TOKEN"):
+        if (os.getenv(name) or "").strip().lower() not in {"", "0", "false", "no", "off"}:
+            problems.append(f"{name} set")
+    if problems:
+        raise RuntimeError(
+            f"Refusing to start: APP_ENV={app_environment()} but " + ", ".join(problems)
+            + ". Unset dev settings (DEV_MODE=false) for production."
+        )
+
+
+__all__ = ["app_environment", "assert_production_safe", "is_dev_mode", "is_production_environment"]

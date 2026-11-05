@@ -135,8 +135,10 @@ def hash_reset_token(token: str) -> str:
 
 
 def is_dev_mode() -> bool:
-    """Return whether local development compatibility mode is enabled."""
-    return os.getenv("DEV_MODE", "true").lower() in ("true", "1", "yes")
+    """Return whether local development compatibility mode is enabled (production-aware)."""
+    from app.core.runtime_env import is_dev_mode as _runtime_is_dev_mode
+
+    return _runtime_is_dev_mode()
 
 
 def to_user_response(user: User) -> UserResponse:

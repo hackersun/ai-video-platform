@@ -44,6 +44,9 @@ ALLOWED_ORIGIN_REGEX = (
 
 @asynccontextmanager
 async def persistent_credential_encryption_lifespan(_: FastAPI):
+    from app.core.runtime_env import assert_production_safe
+
+    assert_production_safe()
     require_stable_encryption_key()
     await _startup_model_center_migration()
     yield
