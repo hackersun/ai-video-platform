@@ -33,6 +33,7 @@ def _register(client: TestClient, suffix: str, password: str = "oldPass123") -> 
             "username": f"account-{suffix}",
             "email": f"account-{suffix}@example.test",
             "password": password,
+            "accept_terms": True,
         },
     )
     assert response.status_code == 200
@@ -144,3 +145,23 @@ def test_non_dev_mode_rejects_dev_payload_tokens(
             headers={"Authorization": f"Bearer {_dev_style_token('frontend-dev-user')}"},
         )
     assert response.status_code == 401
+
+
+def test_register_requires_terms_acceptance(client: TestClient) -> None:
+    suffix = uuid4().hex[:10]
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"username": f"noterms-{suffix}", "email": f"noterms-{suffix}@example.test", "password": "abc12345"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["success"] is False
+    assert "用户协议" in payload["message"]
+
+
+def test_register_stores_terms_version_and_time(client: TestClient) -> None:
+    from app.core.legal import TERMS_VERSION
+
+    payload = _register(client, uuid4().hex[:10])
+    assert payload["user"]["terms_accepted_version"] == TERMS_VERSION
+    assert payload["user"]["terms_accepted_at"]

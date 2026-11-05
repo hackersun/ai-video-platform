@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AudioLines, BookText, CheckCircle2, Clapperboard, ImageIcon, KeyRound, Loader2, PlugZap, Settings2, XCircle } from 'lucide-react';
 
@@ -45,6 +46,7 @@ function errorText(error: unknown) {
 }
 
 export function SimpleModelSetup() {
+  const welcome = useSearchParams()?.get('welcome') === '1';
   const [state, setState] = useState<SimpleModelSetupState | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -164,6 +166,12 @@ export function SimpleModelSetup() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 py-2" data-testid="simple-model-setup">
+      {welcome && (
+        <div data-testid="onboarding-model-nudge" className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800">
+          欢迎加入！开始创作前，请先在下方为「文本 / 图片 / 视频 / 配音」各配置一个模型并测试连接；真实计费默认关闭，可在花费卡片中开启并设置上限。
+          <Link href="/novels" className="ml-2 font-medium underline">稍后再说，去作品列表 →</Link>
+        </div>
+      )}
       <header className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">模型设置</h1>

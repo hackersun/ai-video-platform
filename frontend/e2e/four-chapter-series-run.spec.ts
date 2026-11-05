@@ -139,9 +139,10 @@ async function register(page: any, suffix: string) {
   await page.getByPlaceholder('请输入邮箱').fill(`${username}@example.invalid`);
   await page.getByPlaceholder('请输入密码（至少6位）').fill(password);
   await page.getByPlaceholder('请再次输入密码').fill(password);
+  await page.getByTestId('register-accept-terms').check();
   await page.getByRole('button', { name: '注册' }).click();
   await expect(page.getByText('注册成功！正在跳转...')).toBeVisible();
-  await page.waitForURL(/\/(dashboard|novels)/);
+  await page.waitForURL(/\/(dashboard|novels|llm-config)/);
   return { username, user: JSON.parse(await page.evaluate(() => localStorage.getItem('user') || '{}')) };
 }
 

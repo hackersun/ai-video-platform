@@ -258,25 +258,67 @@ async def ensure_episode_ffmpeg_local(
     }
 
 
+def ai_watermark_burn_in_enabled() -> bool:
+    """Optional burned-in「AI 生成」watermark; default off (env AI_WATERMARK_BURN_IN)."""
+    import os
+
+    return os.getenv("AI_WATERMARK_BURN_IN", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ai_output_args(burn_watermark: bool) -> List[str]:
+    from app.core.legal import AI_GENERATED_METADATA_COMMENT
+
+    meta = ["-metadata", f"comment={AI_GENERATED_METADATA_COMMENT}", "-metadata", "description=AI-generated"]
+    if burn_watermark:
+        # ASCII text so no CJK font file is required.
+        vf = "drawtext=text='AI Generated':x=w-tw-24:y=24:fontsize=h/28:fontcolor=white@0.75:box=1:boxcolor=black@0.35"
+        return ["-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy", *meta]
+    return ["-c", "copy", *meta]
+
+
 def assemble_whole_book_mp4(
     episode_output_urls: Sequence[str],
     *,
     book_id: str,
     output_dir: Optional[Path] = None,
+    burn_watermark: Optional[bool] = None,
 ) -> str:
-    """Concat episode mp4s into one book mp4. Single episode returns that URL."""
+    """Concat episode mp4s into one book mp4 tagged as AI-generated (mp4 comment metadata).
+
+    A single episode is remuxed (stream copy) to carry the metadata; if that fails or the
+    file is not local, the original URL is returned unchanged.
+    """
     urls = [str(u) for u in episode_output_urls if u]
     if not urls:
         raise PipelineRenderBlocked("book_assemble_empty", "No episode output URLs to assemble")
-    if len(urls) == 1:
-        return urls[0]
+    if burn_watermark is None:
+        burn_watermark = ai_watermark_burn_in_enabled()
 
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
+        if len(urls) == 1:
+            return urls[0]
         raise PipelineRenderBlocked("ffmpeg_not_installed", "FFmpeg required for whole-book assemble")
 
     out_dir = output_dir or STATIC_EXPORTS
     out_dir.mkdir(parents=True, exist_ok=True)
+    output_path = out_dir / f"book-{book_id}.mp4"
+    tail = _ai_output_args(bool(burn_watermark))
+
+    if len(urls) == 1:
+        try:
+            src = _resolve_local_media(urls[0])
+            tmp_out = out_dir / f".book-{book_id}-{uuid4().hex[:8]}.mp4"
+            subprocess.run(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), *tail, str(tmp_out)],
+                check=True, capture_output=True, text=True,
+            )
+            tmp_out.replace(output_path)
+            return _url_for_path(output_path)
+        except Exception as exc:  # best effort: keep the episode as the book
+            logger.warning("single-episode AI metadata remux skipped: %s", exc)
+            return urls[0]
+
     work_dir = out_dir / f".book-concat-{book_id}-{uuid4().hex[:8]}"
     work_dir.mkdir(parents=True, exist_ok=True)
     concat_list = work_dir / "concat.txt"
@@ -287,23 +329,12 @@ def assemble_whole_book_mp4(
         escaped = str(path).replace("'", "'\\''")
         lines.append(f"file '{escaped}'")
     concat_list.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    output_path = out_dir / f"book-{book_id}.mp4"
     try:
         subprocess.run(
             [
-                ffmpeg,
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "concat",
-                "-safe",
-                "0",
-                "-i",
-                str(concat_list),
-                "-c",
-                "copy",
+                ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                "-f", "concat", "-safe", "0", "-i", str(concat_list),
+                *tail,
                 str(output_path),
             ],
             check=True,

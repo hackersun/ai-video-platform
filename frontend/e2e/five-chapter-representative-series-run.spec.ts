@@ -16,8 +16,9 @@ async function register(page: any) {
   await page.getByPlaceholder('请输入邮箱').fill(`${username}@example.invalid`);
   await page.getByPlaceholder('请输入密码（至少6位）').fill(password);
   await page.getByPlaceholder('请再次输入密码').fill(password);
+  await page.getByTestId('register-accept-terms').check();
   await page.getByRole('button', { name: '注册' }).click();
-  await page.waitForURL(/\/(dashboard|novels)/);
+  await page.waitForURL(/\/(dashboard|novels|llm-config)/);
 }
 
 test('five chapters can start whole-book production and expose representative mode', async ({ page }) => {

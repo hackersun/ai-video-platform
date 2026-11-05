@@ -28,6 +28,7 @@ import {
   Filter
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { AiGeneratedLabel } from '@/features/legal/ai-generated-label';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
@@ -1028,7 +1029,7 @@ export default function SynthesisPage() {
                             {focused && artifactLinks.preview_url && (
                               <video data-testid="focused-publication-video" src={toMediaUrl(artifactLinks.preview_url)} controls className="mb-3 w-full max-w-xl rounded-lg bg-black" />
                             )}
-                            <div className="text-white font-medium truncate">{focused && <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-xs text-emerald-300">本次成片</span>}{publication.title}</div>
+                            <div className="text-white font-medium truncate">{focused && <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-xs text-emerald-300">本次成片</span>}<AiGeneratedLabel className="mr-2 align-middle" />{publication.title}</div>
                             <div className="text-white/50 text-sm">
                               {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
                             </div>

@@ -3261,7 +3261,7 @@ class ApiClient {
   /**
    * 用户注册
    */
-  async register(username: string, email: string, password: string) {
+  async register(username: string, email: string, password: string, acceptTerms = false) {
     const response = await this.request<{
       success: boolean;
       message: string;
@@ -3269,7 +3269,7 @@ class ApiClient {
       access_token?: string;
     }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ username, email, password }),
+      body: JSON.stringify({ username, email, password, accept_terms: acceptTerms }),
     });
 
     if (response.access_token) {

@@ -4396,6 +4396,7 @@ def test_tts_requires_api_key_outside_dev_mode(
             "username": f"tts-key-user-{suffix}",
             "email": f"tts-key-user-{suffix}@example.test",
             "password": "testPass123",
+            "accept_terms": True,
         },
     )
     assert register_resp.status_code == 200

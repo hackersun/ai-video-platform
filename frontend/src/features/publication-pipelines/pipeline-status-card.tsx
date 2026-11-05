@@ -7,6 +7,7 @@ import { resolveMediaUrl, type PublicationPipeline } from '@/lib/api-client';
 import { blockerInfo } from '@/lib/blocker-messages';
 import { PIPELINE_STEPS, stageLabel } from '@/lib/stage-labels';
 import { isPipelineActive } from './use-publication-pipeline';
+import { AiGeneratedLabel } from '@/features/legal/ai-generated-label';
 
 const STAGE_ALIAS: Record<string, string> = { ensuring_plan: 'ensuring_run' };
 
@@ -78,6 +79,7 @@ export function PipelineStatusCard({
 
       {done && videoUrl && (
         <div className="space-y-2">
+          <AiGeneratedLabel />
           <video data-testid="pipeline-final-video" src={videoUrl} controls className="w-full max-w-2xl rounded-lg bg-black" />
           <div className="flex gap-2">
             {pipeline.publication_id && <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700"><Link href={`/synthesis?publication_id=${pipeline.publication_id}`}>查看发布</Link></Button>}

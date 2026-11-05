@@ -3,6 +3,7 @@
 支持用户注册、登录、获取用户信息、令牌刷新
 """
 
+from app.core.legal import TERMS_VERSION
 from app.core.time_utils import utc_now
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -45,6 +46,8 @@ class UserRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     email: str = Field(..., description="邮箱")
     password: str = Field(..., min_length=6, max_length=100, description="密码")
+    accept_terms: bool = Field(False, description="是否同意用户协议与隐私政策")
+    terms_version: Optional[str] = Field(None, max_length=40, description="同意的协议版本")
 
 
 class UserLoginRequest(BaseModel):
@@ -61,6 +64,8 @@ class UserResponse(BaseModel):
     avatar: Optional[str] = None
     created_at: datetime
     is_active: bool
+    terms_accepted_version: Optional[str] = None
+    terms_accepted_at: Optional[datetime] = None
 
 
 class TokenResponse(BaseModel):
@@ -253,6 +258,8 @@ async def register(
     db: AsyncSession = Depends(get_db)
 ):
     """用户注册 - 注册成功后直接返回access和refresh token。"""
+    if not request.accept_terms:
+        return AuthResponse(success=False, message="请先阅读并同意《用户协议》和《隐私政策》")
     # 检查用户名是否存在
     result = await db.execute(
         select(User).where(User.username == request.username)
@@ -273,7 +280,9 @@ async def register(
         username=request.username,
         email=request.email,
         hashed_password=hash_password(request.password),
-        is_active=True
+        is_active=True,
+        terms_accepted_version=TERMS_VERSION,
+        terms_accepted_at=utc_now(),
     )
     db.add(user)
     try:
@@ -298,7 +307,9 @@ async def register(
             email=user.email,
             avatar=user.avatar,
             created_at=user.created_at,
-            is_active=user.is_active
+            is_active=user.is_active,
+            terms_accepted_version=user.terms_accepted_version,
+            terms_accepted_at=user.terms_accepted_at,
         ),
         access_token=access_token,
         refresh_token=refresh_token

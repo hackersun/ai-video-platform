@@ -4,6 +4,7 @@
  */
 'use client';
 
+import { TERMS_VERSION } from '@/features/legal/legal-texts';
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 
 // ========== 类型定义 ==========
@@ -30,7 +31,7 @@ type AuthContextValue = {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<AuthResponse>;
   logout: (redirect?: boolean) => void;
-  register: (username: string, email: string, password: string) => Promise<AuthResponse>;
+  register: (username: string, email: string, password: string, acceptTerms?: boolean) => Promise<AuthResponse>;
   getToken: () => string | null;
   refreshUser: () => Promise<void>;
 };
@@ -207,12 +208,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (username: string, email: string, password: string): Promise<AuthResponse> => {
+    async (username: string, email: string, password: string, acceptTerms = false): Promise<AuthResponse> => {
       const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
       const response = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({ username, email, password, accept_terms: acceptTerms, terms_version: TERMS_VERSION }),
       });
       const data = await readAuthResponse(response, '注册服务暂时不可用，请稍后重试');
 

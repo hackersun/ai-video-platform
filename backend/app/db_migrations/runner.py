@@ -11,6 +11,7 @@ from app.db_migrations.publication_pipeline_admission import (
     add_active_pipeline_index,
     add_active_pipeline_index_async,
 )
+from app.db_migrations.user_terms_acceptance import add_user_terms_columns, add_user_terms_columns_async
 from app.db_migrations.model_center import add_model_center_links, add_model_center_links_async
 
 
@@ -70,6 +71,7 @@ def run_schema_migrations(engine: Engine) -> None:
     add_artifact_id(engine)
     add_model_center_links(engine)
     add_active_pipeline_index(engine)
+    add_user_terms_columns(engine)
 
 
 async def run_schema_migrations_async(engine: AsyncEngine) -> None:
@@ -77,3 +79,4 @@ async def run_schema_migrations_async(engine: AsyncEngine) -> None:
     await add_artifact_id_async(engine)
     await add_model_center_links_async(engine)
     await add_active_pipeline_index_async(engine)
+    await add_user_terms_columns_async(engine)

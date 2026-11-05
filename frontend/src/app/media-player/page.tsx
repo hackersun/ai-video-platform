@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { apiClient } from '@/lib/api-client';
+import { AiGeneratedLabel } from '@/features/legal/ai-generated-label';
 
 type RefreshReason = 'initial' | 'manual' | 'auto';
 
@@ -119,7 +120,7 @@ function MediaPlayerContent() {
         </header>
 
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
-          <div className="flex min-h-[60vh] items-center justify-center bg-black">
+          <div className="relative flex min-h-[60vh] items-center justify-center bg-black">
             {loading && (
               <div className="flex items-center gap-3 text-slate-300">
                 <Loader2 className="h-5 w-5 animate-spin" /> 正在获取最新播放地址…
@@ -137,6 +138,7 @@ function MediaPlayerContent() {
                 </button>
               </div>
             )}
+            {!loading && playbackUrl && <AiGeneratedLabel className="absolute left-3 top-3 z-10" />}
             {!loading && playbackUrl && (
               <video
                 data-testid="delivery-video"
