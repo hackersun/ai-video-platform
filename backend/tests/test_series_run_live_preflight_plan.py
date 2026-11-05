@@ -255,6 +255,8 @@ async def _fixture(db: AsyncSession, *, dialogue: str = "沈砚：别碰铜铃�
     from app.services.episode_production_service import create_or_resolve_shots_stage
     for index in (0,3):
         await create_or_resolve_shots_stage(db,run=run,episode=updated_episodes[index])
+    from app.services.billing_guard import opt_in_live_billing
+    await opt_in_live_billing(db, user_id, commit=False)
     await db.commit()
     return run
 async def _refresh_fixture_production_contracts(db: AsyncSession, run: SeriesProductionRun) -> None:

@@ -71,7 +71,7 @@ def test_tts_voice_preview_returns_playable_dev_audio(client: TestClient) -> Non
     assert payload["status"] == "succeeded"
     assert payload["voice"] == "female-shaonv"
     assert payload["audio_url"].startswith("/static/dev/")
-    assert payload["audio_url"].endswith(".wav")
+    assert payload["audio_url"].split("?")[0].endswith(".wav")
 
 
 def test_tts_voice_preview_dev_mode_falls_back_when_provider_has_no_audio(
@@ -266,8 +266,8 @@ def test_voice_clone_audio_upload_records_sample_source(client: TestClient) -> N
 
     assert create_resp.status_code == 201, create_resp.text
     clone = create_resp.json()
-    assert clone["sample_audio_url"].startswith("/static/generated/voice-clones/")
-    assert clone["sample_audio_url"].endswith(".webm")
+    assert clone["sample_audio_url"].split("?")[0].startswith("/static/generated/voice-clones/")
+    assert clone["sample_audio_url"].split("?")[0].endswith(".webm")
     assert clone["sample_source"] == "recording"
 
     list_resp = client.get("/api/v1/tts/voices?provider=minimax", headers=auth_headers(user_id))
@@ -328,7 +328,7 @@ def test_minimax_voice_clone_upload_activates_provider_when_key_available(
     assert listed["status"] == "provider_ready"
     assert listed["provider_ready"] is True
     assert listed["provider_file_id"] == "123456789"
-    (tts_endpoint.STATIC_ROOT / clone["sample_audio_url"].removeprefix("/static/")).unlink(missing_ok=True)
+    (tts_endpoint.STATIC_ROOT / clone["sample_audio_url"].split("?")[0].removeprefix("/static/")).unlink(missing_ok=True)
 
 
 def test_minimax_voice_preview_rejects_custom_clone_until_provider_ready(
