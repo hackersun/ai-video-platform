@@ -122,14 +122,30 @@ async def prepare_run_for_media(
         await auto_bind_models(db, run)
         await db.refresh(run)
 
-    # 2. live-call switch: server-owned budget policy, enabled automatically
-    if (run.budget_policy or {}).get("profile") != "isolated_live_canary":
-        try:
-            run.budget_policy = trusted_live_canary_policy({"profile": "isolated_live_canary"})
-        except InvalidAccountingInput as exc:
+    # 2. live-call switch: fake mode may auto-enable; live mode requires explicit opt-in
+    if fake:
+        if (run.budget_policy or {}).get("profile") != "isolated_live_canary":
+            try:
+                run.budget_policy = trusted_live_canary_policy({"profile": "isolated_live_canary"})
+            except InvalidAccountingInput as exc:
+                raise PipelineMediaBlocked(
+                    "live_canary_unavailable", f"服务端未配置真实调用预算上限，请联系管理员（{exc}）",
+                ) from exc
+    else:
+        from app.services.billing_guard import get_or_create_settings
+        settings = await get_or_create_settings(db, run.user_id)
+        if not settings.live_calls_opt_in:
             raise PipelineMediaBlocked(
-                "live_canary_unavailable", f"服务端未配置真实调用预算上限，请联系管理员（{exc}）",
-            ) from exc
+                "live_calls_not_opted_in",
+                "尚未开启真实模型调用。请到「模型设置」开启并确认费用上限后再试。",
+            )
+        if (run.budget_policy or {}).get("profile") != "isolated_live_canary":
+            try:
+                run.budget_policy = trusted_live_canary_policy({"profile": "isolated_live_canary"})
+            except InvalidAccountingInput as exc:
+                raise PipelineMediaBlocked(
+                    "live_canary_unavailable", f"服务端未配置真实调用预算上限，请联系管理员（{exc}）",
+                ) from exc
     await db.commit()
     await db.refresh(run)
 

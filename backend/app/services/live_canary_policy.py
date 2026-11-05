@@ -15,6 +15,10 @@ class InvalidAccountingInput(ValueError):
     pass
 
 
+class BudgetExceeded(ValueError):
+    pass
+
+
 def money(value: Any, *, positive: bool = False) -> Decimal:
     try:
         amount = Decimal(str(value))

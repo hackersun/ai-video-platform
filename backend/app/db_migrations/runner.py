@@ -19,6 +19,7 @@ def register_production_models() -> None:
     from app.models.entity_extraction_run import EntityExtractionRun
     from app.models.entity_feedback import EntityFeedback
     from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+    from app.models.billing import BillingLedgerEntry, UserBillingSettings
     from app.models.model_center import (
         ModelBinding,
         ModelCertificationRun,
@@ -42,6 +43,8 @@ def register_production_models() -> None:
         EntityExtractionRun,
         EntityFeedback,
         LiveCanaryProviderOperation,
+        BillingLedgerEntry,
+        UserBillingSettings,
         ModelBinding,
         ModelCertificationRun,
         ModelConfigAuditEvent,
