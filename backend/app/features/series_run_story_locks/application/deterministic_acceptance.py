@@ -87,6 +87,11 @@ async def seed_deterministic_local_mentions(
         for row in rows:
             if row.id == protagonist.id or (row.attributes or {}).get("merged_into_entity_id") != protagonist.id:
                 continue
+            if str(row.canonical_name or row.name or "") != character_alias:
+                # Other named characters stay merged but unsigned: signing every
+                # character in a chapter makes the chapter-local source ambiguous.
+                row.extra_data = {key: value for key, value in (row.extra_data or {}).items() if key != "merge_edges"}
+                continue
             edge = sign_merge_edge({"source_entity_id": row.id, "canonical_entity_id": protagonist.id,
                 "user_id": user_id, "novel_id": novel_id, "entity_type": "character",
                 "canonical_identity_sha256": identity})
