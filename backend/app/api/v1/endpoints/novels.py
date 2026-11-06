@@ -412,8 +412,8 @@ async def preview_import_novel(
 ):
     """上传 txt/md/markdown 文件并创建可确认的导入预览任务。"""
     try:
-        validate_import_filename(file.filename or "")
-        parsed = parse_novel_import(file.filename or "novel.txt", await file.read())
+        from app.services.upload_persistence import parse_uploaded_novel
+        parsed = await parse_uploaded_novel(file)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 

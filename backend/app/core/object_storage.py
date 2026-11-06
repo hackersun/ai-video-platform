@@ -160,9 +160,16 @@ class S3Backend(StorageBackend):
         import httpx
 
         url = self._presign("PUT", key, 900)
+        from contextlib import aclosing
+        from app.core.upload_stream import iter_file_chunks
+
+        # SigV4 uses UNSIGNED-PAYLOAD; a known length avoids chunked transfer
+        # incompatibilities with S3-compatible stores. No multipart/resume claim.
         async with httpx.AsyncClient(timeout=600) as client:
-            with file_path.open("rb") as fh:
-                resp = await client.put(url, content=fh.read(), headers={"content-type": content_type})
+            async with aclosing(iter_file_chunks(file_path)) as chunks:
+                resp = await client.put(url, content=chunks, headers={
+                    "content-type": content_type, "content-length": str(file_path.stat().st_size),
+                })
         if resp.status_code >= 300:
             raise RuntimeError(f"s3 upload failed: HTTP {resp.status_code}")
 
@@ -199,7 +206,9 @@ class QiniuBackend(StorageBackend):
             with file_path.open("rb") as fh:
                 resp = await client.post(
                     self.upload_url, data={"token": token, "key": key},
-                    files={"file": (file_path.name, fh.read(), content_type)},
+                    # HTTPX streams file handles in 64 KiB multipart chunks.
+                    # Keep Qiniu's single-form protocol (not resumable multipart).
+                    files={"file": (file_path.name, fh, content_type)},
                 )
         if resp.status_code >= 300:
             raise RuntimeError(f"qiniu upload failed: HTTP {resp.status_code}")

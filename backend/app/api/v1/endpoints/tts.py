@@ -401,24 +401,19 @@ async def _resolve_preview_tts_config(
 
 
 async def _save_voice_clone_upload(sample_audio: UploadFile, voice_id: str) -> str:
-    filename = sample_audio.filename or "sample.wav"
-    ext = Path(filename).suffix.lower()
-    if ext not in {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".webm"}:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="仅支持 wav/mp3/m4a/aac/ogg/webm 音频样本")
-    VOICE_CLONE_DIR.mkdir(parents=True, exist_ok=True)
-    target = (VOICE_CLONE_DIR / f"{voice_id}{ext}").resolve()
-    suffix = 1
-    while target.exists():
-        target = (VOICE_CLONE_DIR / f"{voice_id}-{suffix}{ext}").resolve()
-        suffix += 1
-    static_relative_path = target.relative_to(STATIC_ROOT.resolve()).as_posix()
-    data = await sample_audio.read()
-    if not data:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="声音样本不能为空")
-    if len(data) > 30 * 1024 * 1024:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="声音样本不能超过 30MB")
-    target.write_bytes(data)
-    return f"/static/{static_relative_path}"
+    from app.core.upload_stream import EmptyUpload, UploadTooLarge
+    from app.services.upload_persistence import persist_voice_sample
+
+    try:
+        return await persist_voice_sample(sample_audio, voice_id, static_root=STATIC_ROOT, directory=VOICE_CLONE_DIR)
+    except UploadTooLarge as exc:
+        raise HTTPException(status_code=413, detail="声音样本不能超过 30MB") from exc
+    except EmptyUpload as exc:
+        raise HTTPException(status_code=422, detail="声音样本不能为空") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await sample_audio.close()
 
 
 def _resolve_static_media_path(media_url: Optional[str]) -> Optional[str]:
