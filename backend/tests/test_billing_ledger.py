@@ -25,12 +25,6 @@ from app.services.live_canary_budget import BudgetExceeded, reserve_budget, reco
 from app.db_migrations.runner import register_production_models
 
 
-@pytest.fixture(autouse=True)
-def _clear_ambient_fake_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ambient e2e shells often export DETERMINISTIC_PROVIDER_FAKE=1; real-path tests must not inherit it."""
-    monkeypatch.delenv("DETERMINISTIC_PROVIDER_FAKE", raising=False)
-
-
 @pytest_asyncio.fixture
 async def db(tmp_path):
     register_production_models()
