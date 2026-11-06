@@ -121,7 +121,6 @@ def test_subprocesses_do_not_inherit_database_environment(monkeypatch):
 @pytest.mark.parametrize(
     "database_url",
     [
-        None,
         "sqlite+aiosqlite:///",
         "sqlite+aiosqlite:////Users/example/outside-tmp.db",
     ],
@@ -134,6 +133,17 @@ def test_isolated_mode_rejects_unsafe_sqlite_paths(database_url):
 
     assert process.returncode != 0
     assert "E2E_REQUIRE_ISOLATED_DB requires a SQLite .db path under /tmp" in process.stderr
+
+
+def test_isolated_default_path_is_valid_only_when_backend_is_under_tmp():
+    process = _run_database_import(require_isolated=True)
+    default_path = (BACKEND_ROOT / "ai_video.db").resolve()
+    if default_path.is_relative_to(Path("/tmp").resolve()):
+        result = _read_result(process)
+        assert result["diagnostic"]["resolved_sqlite_path"] == str(default_path)
+    else:
+        assert process.returncode != 0
+        assert "E2E_REQUIRE_ISOLATED_DB requires a SQLite .db path under /tmp" in process.stderr
 
 
 def test_isolated_mode_accepts_tmp_sqlite_database():

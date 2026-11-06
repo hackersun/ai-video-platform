@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './helpers/synthetic-media';
 
 function devToken(userId: string) {
   const payload = Buffer.from(JSON.stringify({ sub: userId, exp: Math.floor(Date.now() / 1000) + 86400 })).toString('base64url');
@@ -160,4 +160,13 @@ test('asset workbench paginates filtered assets and resets to the first page', a
   await pagination.getByLabel('每页资产数量').selectOption('24');
   await expect(pagination).toContainText('显示 1-24 / 26');
   await expect(page.getByTestId('asset-table-row')).toHaveCount(24);
+});
+
+
+test('asset thumbnails decode without repository generated-media files', async ({ page }) => {
+  await installMocks(page);
+  await page.goto('/assets');
+  const thumbnail = page.getByTestId('asset-table-row').first().getByRole('img', { name: '萧云正面定稿', exact: true });
+  await expect(thumbnail).toBeVisible();
+  await expect.poll(() => thumbnail.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
 });
