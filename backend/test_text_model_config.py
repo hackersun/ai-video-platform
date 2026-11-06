@@ -29,6 +29,7 @@ from app.api.v1.endpoints.llm_config import (
     test_minimax_api as _test_minimax_api,
     test_volcano_agent_plan_api as _test_volcano_agent_plan_api,
 )
+from tests.llm_config_cleanup import clear_user_model_configs
 from init_db import init_db
 from main import app
 
@@ -381,9 +382,7 @@ async def test_default_minimax_chat_model_is_resolved_as_text_config() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-default-minimax-config",
@@ -415,9 +414,7 @@ async def test_default_minimax_m3_model_uses_model_specific_base_url() -> None:
         await ensure_default_providers(db)
         await ensure_default_models(db)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-default-minimax-m3-config",
@@ -469,9 +466,7 @@ async def test_stale_minimax_m3_model_base_url_uses_key_region_route() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-stale-minimax-m3-base-url-config",
@@ -522,9 +517,7 @@ async def test_unreadable_encrypted_api_key_requires_reconfiguration() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-unreadable-key-config",
@@ -557,9 +550,7 @@ async def test_default_unreadable_text_config_falls_back_to_verified_available_c
         await ensure_default_providers(db)
         await ensure_default_models(db)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         stale_default = LLMConfig(
             id="text-stale-default-m3-config",
@@ -604,9 +595,7 @@ def test_llm_config_list_marks_unreadable_success_config_as_failed() -> None:
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             db.add(
                 LLMConfig(
                     id="config-list-unreadable-key-config",
@@ -646,9 +635,7 @@ def test_llm_config_test_unreadable_key_returns_reconfigure_message() -> None:
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             db.add(
                 LLMConfig(
                     id="config-test-unreadable-key-config",
@@ -760,11 +747,7 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(
-                select(LLMConfig).where(LLMConfig.user_id.in_([user_id, other_user_id]))
-            )
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id, other_user_id)
             await db.commit()
 
     import asyncio
@@ -824,9 +807,7 @@ def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias
 
     async def _prepare_isolated_aliases() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             if await db.get(LLMProvider, "minimax") is None:
                 db.add(LLMProvider(
                     id="minimax", name="minimax", name_cn="MiniMax",
@@ -892,9 +873,7 @@ def test_llm_create_config_updates_same_user_same_model_instead_of_duplicate() -
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -935,9 +914,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             config = LLMConfig(
                 id="llm-config-update-preserve-key-config",
                 user_id=user_id,
@@ -1013,9 +990,7 @@ def test_llm_defaults_are_scoped_by_model_capability() -> None:
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -1074,9 +1049,7 @@ def test_llm_set_default_only_replaces_same_capability() -> None:
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -1122,9 +1095,7 @@ def test_llm_visual_default_does_not_replace_text_default() -> None:
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -1392,9 +1363,7 @@ async def test_default_minimax_image_model_is_resolved_as_image_config() -> None
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="image-default-minimax-config",
@@ -1426,9 +1395,7 @@ async def test_minimax_m3_can_be_selected_as_default_visual_multimodal_config() 
         await ensure_default_providers(db)
         await ensure_default_models(db)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="vision-default-minimax-m3-config",
@@ -1495,9 +1462,7 @@ async def test_selected_model_config_overrides_default_with_capability_validatio
             )
             db.add(image_model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         default_text = LLMConfig(
             id="selected-default-text-config",
@@ -1585,9 +1550,7 @@ async def test_coding_plan_resolves_selected_text_model_config() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         default_text = LLMConfig(
             id="coding-plan-default-text-config",
