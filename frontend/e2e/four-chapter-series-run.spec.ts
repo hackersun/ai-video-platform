@@ -153,12 +153,11 @@ async function createNovelAndChapters(page: any, mode: 'smoke' | 'full') {
   await page.getByPlaceholder('简要介绍小说内容').fill('四章连续动漫真实隔离验收。');
   await page.locator('select').first().selectOption('mystery');
   await page.getByRole('button', { name: '保存草稿' }).click();
-  await page.waitForURL(/\/novels$/);
-  const link = page.getByRole('link', { name: new RegExp(title) }).first();
-  const href = await link.getAttribute('href');
-  expect(href).toMatch(/^\/novels\//);
-  const novelId = href!.split('/').pop()!;
-  await page.goto(`${href}?tab=chapters`);
+  await page.waitForURL(/\/novels\/[^/?#]+$/);
+  const novelPath = new URL(page.url()).pathname;
+  const novelId = novelPath.split('/').pop()!;
+  expect(novelId).not.toBe('new');
+  await page.goto(`${novelPath}?tab=chapters`);
   const persistedChapters: Array<{ id: string; title: string }> = [];
   for (let index = 0; index < fourChapterNovel.chapters.length; index += 1) {
     const source = fourChapterNovel.chapters[index];
