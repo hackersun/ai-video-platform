@@ -107,28 +107,19 @@ test.describe('小说管理完整流程', () => {
     await page.getByPlaceholder('输入小说标题').fill(testData.novel.title);
     await page.locator('select').first().selectOption('xianxia');
     await page.getByRole('button', { name: /发布小说/ }).click();
-    await page.waitForURL(/\/novels(?!\/new)/, { timeout: 10000 });
+    await page.waitForURL(/\/novels\/(?!new(?:[/?#]|$))[^/?#]+$/, { timeout: 10000 });
+    const novelPath = new URL(page.url()).pathname;
+    const novelId = novelPath.split('/').pop()!;
+    expect(novelId).not.toBe('new');
+    await page.goto(`${novelPath}?tab=chapters`);
 
-    const novelLink = page.getByRole('link', { name: new RegExp(testData.novel.title) }).first();
-    await novelLink.click();
-    await page.waitForURL(/\/novels\/.+/, { timeout: 5000 });
-    const novelId = page.url().split('/novels/')[1];
-
-    // 创建章节
-    const createChapterBtn = page.getByRole('button', { name: /新建章节/ });
-    if (await createChapterBtn.isVisible({ timeout: 3000 })) {
-      await createChapterBtn.click();
-      await page.getByPlaceholder('章节标题').fill(testData.chapter.title);
-      await page.getByPlaceholder(/章节内容/).fill(testData.chapter.content);
-      await page.getByRole('button', { name: /^创建$/ }).click();
-
-      // 验证章节出现
-      const chapterItem = page.locator('text=' + testData.chapter.title);
-      await expect(chapterItem.first()).toBeVisible({ timeout: 5000 });
-      console.log('✅ 章节创建成功');
-
-      await expect(page.url()).toContain(`/novels/${novelId}`);
-    }
+    // The single chapter entry now opens the assisted-creation dialog.
+    await page.getByRole('button', { name: '新建章节', exact: true }).click();
+    await page.getByPlaceholder(/章节标题，可留空/).fill(testData.chapter.title);
+    await page.getByPlaceholder(/章节内容或创作方向/).fill(testData.chapter.content);
+    await page.getByTestId('chapter-create-submit').click();
+    await expect(page.getByRole('link', { name: new RegExp(testData.chapter.title) }).first()).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/novels/${novelId}`));
   });
 
   test('1.4 AI章节生成按钮', async ({ page }) => {
