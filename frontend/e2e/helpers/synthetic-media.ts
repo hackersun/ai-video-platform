@@ -5,8 +5,8 @@ import { deflateSync } from 'node:zlib';
 function pngChunk(type: string, data: Buffer): Buffer {
   const body = Buffer.concat([Buffer.from(type), data]);
   let crc = 0xffffffff;
-  for (const byte of body) {
-    crc ^= byte;
+  for (let index = 0; index < body.length; index++) {
+    crc ^= body[index];
     for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
   }
   const size = Buffer.alloc(4);
