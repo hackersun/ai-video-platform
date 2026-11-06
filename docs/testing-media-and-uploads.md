@@ -9,3 +9,10 @@ Mocked browser specs assets-workbench-redesign, novel-detail-overview and produc
 
 Regression: the asset thumbnail must actually decode (naturalWidth > 0), not merely exist in the DOM. No media binaries are added to git.
 
+
+## Verification environment
+Use backend/venv/bin/python, and run pytest from backend/ so test_*.py and tests/ are both collected. Full browser tests include live-local API cases (assets.spec.ts and comprehensive.spec.ts), so start the deterministic backend before running them. Set PLAYWRIGHT_REUSE_EXISTING_SERVER=0 and ensure 3100 is free. The shared synthetic-image fixture applies only to opted-in mocked UI specs.
+
+The existing /tmp/avp-e2e/serve.sh starts the backend and workers, but the deterministic reference image service also needs to be listening on 18081: `cd backend && venv/bin/python scripts/serve_deterministic_reference.py --port 18081`. Its image is `/valid-composite.png`. The smoke script blocks at reference_preparation_blocked without that service. Stop these test processes when finished.
+
+The comprehensive chapter-creation test had the same obsolete list-page assumption as the four-chapter helper. It now follows the detail URL, explicitly opens the chapters tab, submits the current dialog and asserts a persisted chapter link instead of silently skipping a missing button.
