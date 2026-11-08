@@ -86,6 +86,17 @@ const STATUS_LABELS = {
 const GENRE_OPTIONS = ['全部', '仙侠', '都市', '科幻', '历史', '言情', '悬疑'];
 const IMPORT_GENRES = ['仙侠', '都市', '科幻', '历史', '言情', '悬疑', '奇幻'];
 
+/** 导入时的书名：优先后端识别的书名；识别不到（或只是“未命名小说”）时用文件名，粘贴内容用「未命名小说 + 日期」。 */
+function autoImportTitle(previewTitle: string | undefined, fileName: string) {
+  const title = (previewTitle || '').trim();
+  if (title && title !== '未命名小说') return title;
+  const stem = fileName.replace(/\.(txt|md|markdown)$/i, '').trim();
+  if (stem && stem.toLowerCase() !== 'pasted') return stem;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `未命名小说 ${now.getMonth() + 1}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
 // 内嵌组件使用 useSearchParams
 function NovelsContent() {
   const { toast } = useToast();
@@ -105,10 +116,16 @@ function NovelsContent() {
   const [importChapters, setImportChapters] = useState<ImportChapter[]>([]);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<Novel | null>(null);
   const [deleting, setDeleting] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const startPaste = searchParams?.get('start') === 'paste';
+  useEffect(() => {
+    if (startPaste) pasteRef.current?.focus();
+  }, [startPaste]);
   const highlightId = searchParams.get('highlight');
   const productionEntriesRequestRef = useRef(0);
   const [videoStatus, setVideoStatus] = useState<Record<string, 'running' | 'done' | 'attention'>>({});
@@ -257,6 +274,16 @@ function NovelsContent() {
     router.push(`/novels/${id}`);
   };
 
+  /** 粘贴的正文按 txt 走同一套解析与导入流程（一功能一入口）。 */
+  const handlePasteImport = async () => {
+    const text = pasteText.trim();
+    if (!text) {
+      setImportMessage('请先把小说正文粘贴到输入框');
+      return;
+    }
+    await handleImportFile(new File([text], 'pasted.txt', { type: 'text/plain' }));
+  };
+
   const handleImportFile = async (file?: File) => {
     if (!file) return;
     if (!/\.(txt|md|markdown)$/i.test(file.name)) {
@@ -270,7 +297,7 @@ function NovelsContent() {
       const preview = await apiClient.previewNovelImport(file);
       setImportJobId(preview.id);
       setImportTitle((currentTitle) =>
-        currentTitle.trim() ? currentTitle : preview.title || file.name.replace(/\.(txt|md|markdown)$/i, '')
+        currentTitle.trim() ? currentTitle : autoImportTitle(preview.title, file.name)
       );
       setImportChapters(preview.chapters || []);
       setImportMessage(`已解析 ${preview.chapter_count || 0} 章，请确认后导入`);
@@ -300,6 +327,7 @@ function NovelsContent() {
       setImportTitle('');
       setImportGenre('');
       setImportChapters([]);
+      setPasteText('');
       await loadNovelsFromAPI();
       router.push(`/novels/${novel.id}`);
     } catch (err: any) {
@@ -331,10 +359,27 @@ function NovelsContent() {
           <CardHeader>
             <CardTitle className="text-white flex items-center gap-2">
               <Upload className="w-5 h-5 text-violet-400" />
-              文本导入
+              粘贴或导入小说
             </CardTitle>
+            <p className="text-sm text-white/60">粘贴正文或选择 txt/md 文件，系统自动识别书名和章节；导入后点「一键生成视频」即可出片。</p>
           </CardHeader>
           <CardContent className="space-y-3">
+            <textarea
+              ref={pasteRef}
+              aria-label="粘贴小说正文"
+              data-testid="novel-paste-input"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={startPaste ? 8 : 4}
+              placeholder={'把小说正文粘贴到这里，例如：\n第一章 雾港来客\n沈砚抵达雾港……\n第二章 铜铃示警\n……'}
+              className="w-full rounded-md border border-white/10 bg-white/5 p-3 text-sm text-white placeholder:text-white/40"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" data-testid="novel-paste-parse" onClick={handlePasteImport} disabled={importing || !pasteText.trim()} className="bg-violet-600 hover:bg-violet-700">
+                {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+                识别章节
+              </Button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
               <Input
                 value={importTitle}
