@@ -222,3 +222,13 @@ async def test_cloud_render_request_uses_long_ttl_signed_urls(monkeypatch: pytes
     assert stored["srt_url"] == "/static/generated/videos/clip.mp4"
     assert stored["segments"][0]["video_url"] == "/static/generated/videos/a.mp4"
     assert CLOUD_RENDER_TTL_SECONDS > DEFAULT_TTL_SECONDS
+
+
+def test_download_flag_sets_attachment_disposition(client: TestClient, export_file: Path) -> None:
+    url = sign_media_url(f"/static/exports/{export_file.name}")
+    plain = client.get(url)
+    assert "content-disposition" not in plain.headers
+    resp = client.get(url + "&download=1")
+    assert resp.status_code == 200 and resp.content == b"fake-mp4"
+    assert resp.headers["content-disposition"].startswith(f'attachment; filename="{export_file.name}"')
+    assert client.get(f"/static/exports/{export_file.name}?download=1").status_code == 403

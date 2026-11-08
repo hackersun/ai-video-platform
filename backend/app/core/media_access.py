@@ -126,7 +126,27 @@ class PrivateAwareStaticFiles(StaticFiles):
                     response = JSONResponse({"detail": "media_access_denied"}, status_code=403)
                     await response(scope, receive, send)
                     return
+            query = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
+            if (query.get("download") or [""])[0] in {"1", "true"}:
+                send = _attachment_send(send, full_path.rsplit("/", 1)[-1])
         await super().__call__(scope, receive, send)
+
+
+def _attachment_send(send, filename: str):
+    """?download=1 → Content-Disposition: attachment, so cross-origin「下载视频」saves instead of opening a tab."""
+    from urllib.parse import quote
+
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", filename) or "download"
+    value = f"attachment; filename=\"{safe}\"; filename*=UTF-8''{quote(filename)}".encode("latin-1")
+
+    async def wrapped(message):
+        if message.get("type") == "http.response.start":
+            headers = [(k, v) for k, v in message.get("headers", []) if k.lower() != b"content-disposition"]
+            headers.append((b"content-disposition", value))
+            message = {**message, "headers": headers}
+        await send(message)
+
+    return wrapped
 
 
 def _serialize_signed(value: Optional[str]) -> Optional[str]:

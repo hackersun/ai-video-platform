@@ -35,6 +35,11 @@ function useStalledMs(pipeline: PublicationPipeline | null) {
   return now - since;
 }
 
+/** 后端对 ?download=1 返回 Content-Disposition: attachment，前后端分域时也能直接保存。 */
+function downloadUrl(url: string) {
+  return `${url}${url.includes('?') ? '&' : '?'}download=1`;
+}
+
 function resolveHref(href: string, novelId: string) {
   return href.startsWith('?') ? `/novels/${novelId}${href}` : href;
 }
@@ -106,7 +111,7 @@ export function PipelineStatusCard({
           <video data-testid="pipeline-final-video" src={videoUrl} controls className="w-full max-w-2xl rounded-lg bg-black" />
           <div className="flex gap-2">
             {pipeline.publication_id && <Button asChild size="sm" className="bg-emerald-600 hover:bg-emerald-700"><Link href={`/synthesis?publication_id=${pipeline.publication_id}`}>查看发布</Link></Button>}
-            <Button asChild size="sm" variant="outline"><a href={videoUrl} download target="_blank" rel="noreferrer">下载视频</a></Button>
+            <Button asChild size="sm" variant="outline"><a href={downloadUrl(videoUrl)} download>下载视频</a></Button>
           </div>
         </div>
       )}
