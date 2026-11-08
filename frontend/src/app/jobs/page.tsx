@@ -722,7 +722,7 @@ export default function JobsPage() {
                                   <div className="truncate text-sm font-medium text-white">{job.name}</div>
                                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/40">
                                     <span>{TYPE_LABELS[job.type]}</span>
-                                    <span className="max-w-[160px] truncate font-mono">{job.id}</span>
+                                    <span title={`任务编号 ${job.id}`}>编号 #{String(job.id).slice(0, 6)}</span>
                                     {job.output && (
                                       <span className="inline-flex items-center gap-1 text-teal-300/80">
                                         <Link2 className="h-3 w-3" />产物
@@ -851,7 +851,7 @@ export default function JobsPage() {
                             })()}
                             <div className="min-w-0 flex-1">
                               <h2 className="truncate text-lg font-semibold text-white">{selectedJob.name}</h2>
-                              <p className="mt-1 truncate font-mono text-xs text-white/40">{selectedJob.id}</p>
+                              <p className="mt-1 truncate text-xs text-white/40" title={selectedJob.id}>任务编号 #{String(selectedJob.id).slice(0, 6)}</p>
                             </div>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -929,9 +929,6 @@ export default function JobsPage() {
                             </div>
                           </div>
                           <JobOutputPreview job={selectedJob} />
-                          {selectedJob.output && (
-                            <p className="truncate font-mono text-xs text-white/35">{toMediaUrl(selectedJob.output)}</p>
-                          )}
                         </div>
 
                         {selectedJob.error && (

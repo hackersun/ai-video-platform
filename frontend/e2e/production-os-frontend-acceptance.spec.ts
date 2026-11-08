@@ -99,6 +99,9 @@ test.describe('Production OS deterministic frontend contracts', () => {
     await page.goto('/analytics');
     const metrics = page.getByTestId('production-metrics');
     await expect(metrics).toContainText('连续动漫生产指标');
+    // 原始接口路径与内部字段不再出现在页面上。
+    await expect(page.locator('main')).not.toContainText('is_mock');
+    await expect(page.locator('main')).not.toContainText('/api/v1/dashboard/analytics');
     await expect(metrics).toContainText('确定性验证就绪');
     await expect(metrics).toContainText('首轮镜头接收率75.0%');
     await expect(metrics).toContainText('每终稿分钟成本不可用');

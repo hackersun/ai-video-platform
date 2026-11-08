@@ -249,11 +249,11 @@ export default function AnalyticsPage() {
             </div>
             <h1 className="mt-3 text-3xl font-bold text-white">数据分析</h1>
             <p className="mt-1 text-white/60">
-              所有指标来自 `/api/v1/dashboard/analytics`，不使用前端模拟数据。
+              所有指标来自你的真实生成记录。
             </p>
             {analytics && (
               <p className="mt-2 text-xs text-white/40">
-                生成时间：{new Date(analytics.generated_at).toLocaleString('zh-CN')} · 统计周期：近 {analytics.period_days} 天 · is_mock={String(analytics.is_mock)}
+                生成时间：{new Date(analytics.generated_at).toLocaleString('zh-CN')} · 统计周期：近 {analytics.period_days} 天
               </p>
             )}
           </div>

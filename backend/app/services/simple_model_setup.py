@@ -14,6 +14,8 @@ logs a key.
 
 from __future__ import annotations
 
+import re
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
@@ -51,6 +53,20 @@ PROVIDER_PRESETS: dict[str, dict[str, list[str]]] = {
     "openai": {"text": ["gpt-4o-mini", "gpt-4o"], "image": ["dall-e-3"], "video": ["sora"], "tts": []},
 }
 HIDDEN_PROVIDERS = {"deterministic-acceptance"}
+# 自动化测试 / 预检遗留在目录里的临时供应商和模型（带 UUID 或固定测试前缀），不在用户界面展示。
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+_TEST_PREFIX_RE = re.compile(r"^(live|contract|test|tts-provider|preflight)[-_ ]", re.IGNORECASE)
+_TEST_DISPLAY_NAMES = {"预检供应商", "contract video", "contract text", "contract image", "contract tts"}
+
+
+def is_internal_test_artifact(*names: str | None) -> bool:
+    for raw in names:
+        name = (raw or "").strip()
+        if not name:
+            continue
+        if _UUID_RE.search(name) or _TEST_PREFIX_RE.match(name) or name.lower() in _TEST_DISPLAY_NAMES:
+            return True
+    return False
 SIMULATION_PROVIDER_ID = "deterministic-acceptance"
 # Canonical model-center tags (text must be "chat" for text_generation).
 SIMULATION_MODEL_TAGS = {"text": ("chat", ["chat", "text"]), "image": ("image-generation", ["image", "text-to-image"]),
@@ -224,16 +240,20 @@ async def get_simple_setup(db: AsyncSession, user_id: str, *, novel_id: str | No
     providers, models = await _catalog(db)
     by_pid = {p.id: p for p in providers}
     options: dict[str, list[dict[str, Any]]] = {cap: [] for cap in CAPABILITY_ORDER}
-    for model in models:
+    visible_providers = [p for p in providers if not is_internal_test_artifact(p.name, p.name_cn)]
+    visible_ids = {p.id for p in visible_providers}
+    visible_models = [m for m in models if m.provider_id in visible_ids
+                      and not is_internal_test_artifact(m.model_id, m.model_name, m.model_name_cn)]
+    for model in visible_models:
         for cap in model_capabilities(model):
             provider = by_pid[model.provider_id]
             options[cap].append({"model_id": model.id, "api_model_id": model.model_id,
                                  "name": model.model_name_cn or model.model_name or model.model_id, "provider_id": provider.id,
                                  "provider_name": provider.name_cn or provider.name})
     provider_items = []
-    for provider in providers:
+    for provider in visible_providers:
         preset_ids = PROVIDER_PRESETS.get(provider.name, {})
-        own = [m for m in models if m.provider_id == provider.id]
+        own = [m for m in visible_models if m.provider_id == provider.id]
         presets: dict[str, str | None] = {}
         for cap in CAPABILITY_ORDER:
             chosen = next((m.id for wanted in preset_ids.get(cap, []) for m in own if m.model_id == wanted), None)

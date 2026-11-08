@@ -126,7 +126,13 @@ function MediaPlayerContent() {
                 <Loader2 className="h-5 w-5 animate-spin" /> 正在获取最新播放地址…
               </div>
             )}
-            {!loading && error && (
+            {!loading && !jobId && (
+              <div data-testid="media-player-empty" className="max-w-md px-6 text-center text-slate-300">
+                <p className="mb-4">这里用于播放某一部成片。请到「成片」页选择要播放的作品。</p>
+                <a href="/synthesis" className="rounded-lg border border-slate-600 px-4 py-2 text-sm hover:bg-white/5">去成片列表</a>
+              </div>
+            )}
+            {!loading && error && jobId && (
               <div className="max-w-md px-6 text-center">
                 <p className="mb-4 text-rose-300">{error}</p>
                 <button
@@ -134,7 +140,7 @@ function MediaPlayerContent() {
                   onClick={() => void refreshPlayback('manual')}
                   className="rounded-lg border border-rose-400/50 px-4 py-2 text-sm text-rose-200 hover:bg-rose-500/10"
                 >
-                  修改配置后重试
+                  重新获取播放地址
                 </button>
               </div>
             )}
