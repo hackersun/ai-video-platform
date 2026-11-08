@@ -473,6 +473,26 @@ def _render_segment(
     return output_path
 
 
+_H264_SUPPORT: Dict[str, bool] = {}
+
+
+def _ffmpeg_has_libx264(ffmpeg_path: str) -> bool:
+    if ffmpeg_path not in _H264_SUPPORT:
+        try:
+            out = subprocess.run([ffmpeg_path, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=20)
+            _H264_SUPPORT[ffmpeg_path] = " libx264 " in out.stdout
+        except (OSError, subprocess.SubprocessError):
+            _H264_SUPPORT[ffmpeg_path] = False
+    return _H264_SUPPORT[ffmpeg_path]
+
+
+def final_video_codec_args(ffmpeg_path: str) -> List[str]:
+    """Deliverables must play in browsers/phones: H.264 when available, MPEG-4 Part 2 only as fallback."""
+    if _ffmpeg_has_libx264(ffmpeg_path):
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-profile:v", "high"]
+    return ["-c:v", "mpeg4", "-q:v", "5"]
+
+
 def _concat_segments(
     segment_paths: List[Path],
     output_path: Path,
@@ -502,10 +522,7 @@ def _concat_segments(
         cmd.extend(["-vf", f"subtitles=filename={_escape_filter_path(srt_path)}"])
     cmd.extend(
         [
-            "-c:v",
-            "mpeg4",
-            "-q:v",
-            "5",
+            *final_video_codec_args(ffmpeg_path),
             "-pix_fmt",
             "yuv420p",
             "-c:a",

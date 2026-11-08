@@ -493,3 +493,11 @@ def test_rendered_output_passes_publication_readiness(
     assert rendered["output_kind"] == "final_video"
     assert preview["is_publishable"] is False
     assert preview["publication_blockers"][0]["code"] == "preview_package_not_publishable"
+
+
+def test_final_deliverable_prefers_browser_playable_h264(monkeypatch):
+    from app.services import ffmpeg_local_renderer as renderer
+    monkeypatch.setattr(renderer, "_ffmpeg_has_libx264", lambda _path: True)
+    assert renderer.final_video_codec_args("ffmpeg")[:2] == ["-c:v", "libx264"]
+    monkeypatch.setattr(renderer, "_ffmpeg_has_libx264", lambda _path: False)
+    assert renderer.final_video_codec_args("ffmpeg")[:2] == ["-c:v", "mpeg4"]
