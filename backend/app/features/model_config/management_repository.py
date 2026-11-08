@@ -103,6 +103,16 @@ def _recipe_view(row: ProductionRecipeVersion) -> dict:
     }
 
 
+async def _simple_setup_generation_ready(db: AsyncSession, user_id: str) -> bool:
+    from app.services.simple_model_setup import get_simple_setup
+
+    try:
+        state = await get_simple_setup(db, user_id)
+    except Exception:  # readiness must stay readable even if the simple view fails
+        return False
+    return bool(state.get("configured") and state.get("verified"))
+
+
 async def management_overview(db: AsyncSession, user_id: str) -> dict:
     connection_rows = list((await db.scalars(select(ModelConnection).where(
         ModelConnection.user_id == user_id,
@@ -112,6 +122,10 @@ async def management_overview(db: AsyncSession, user_id: str) -> dict:
         ProductionRecipeVersion.user_id == user_id,
     ).order_by(ProductionRecipeVersion.id))).all())
     blocking_issues = await production_readiness(db, user_id=user_id)
+    if await _simple_setup_generation_ready(db, user_id):
+        # One-click generation actually works off the simple model setup; advanced
+        # Model Center gaps are then advisory, not production blockers.
+        blocking_issues = [{**item, "severity": "warning"} for item in blocking_issues]
     provider_labels = await _provider_labels(db, {row.provider_id for row in connection_rows})
     return {
         "blocking_issues": blocking_issues,

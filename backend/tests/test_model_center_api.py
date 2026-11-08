@@ -1755,3 +1755,17 @@ def _recipe_spec() -> dict:
         "render": {"binding_id": "binding-render", "required": True},
         "storage": {"binding_id": "binding-storage", "required": True},
     }
+
+
+@pytest.mark.asyncio
+async def test_overview_downgrades_advanced_gaps_when_simple_setup_can_generate(client, monkeypatch):
+    from app.features.model_config import management_repository
+
+    async def ready(_db, _user_id):
+        return True
+
+    blocked = (await client.get("/api/v1/model-center/overview")).json()["blocking_issues"]
+    monkeypatch.setattr(management_repository, "_simple_setup_generation_ready", ready)
+    advisory = (await client.get("/api/v1/model-center/overview")).json()["blocking_issues"]
+    assert [item["code"] for item in advisory] == [item["code"] for item in blocked]
+    assert all(item["severity"] == "warning" for item in advisory)
