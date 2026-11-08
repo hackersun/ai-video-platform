@@ -178,13 +178,17 @@ async def catalog_page(
         status=status,
         query=query,
     )
+    # 展示层：隐藏测试遗留供应商下的模型（复用 P0 规则；不影响按 id 解析已有配置）
+    from app.services.simple_model_setup import is_internal_test_artifact
+
+    models = [item for item in catalog.models if not is_internal_test_artifact(item.provider_name, item.provider_code)]
     start = (page - 1) * page_size
     items = []
-    for item in catalog.models[start:start + page_size]:
+    for item in models[start:start + page_size]:
         values = asdict(item)
         values["capabilities"] = sorted(item.capabilities)
         items.append(values)
-    return _page(items, page, page_size, len(catalog.models))
+    return _page(items, page, page_size, len(models))
 
 
 async def bindings_page(db: AsyncSession, user_id: str, page: int, page_size: int) -> dict:

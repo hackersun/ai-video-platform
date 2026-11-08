@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.time_utils import utc_now
 from app.features.model_config.catalog import is_product_visible_provider
+from app.services.simple_model_setup import is_internal_test_artifact
 from app.features.model_config.domain import VERIFIED_CONNECTION_STATUSES
 from app.features.model_config.readiness import production_readiness
 from app.features.model_config.catalog_permissions import is_catalog_admin
@@ -153,6 +154,8 @@ async def provider_page(db: AsyncSession, page: int, page_size: int) -> dict:
             select(ModelProvider).where(ModelProvider.enabled == True).order_by(ModelProvider.id)
         )).all()
         if is_product_visible_provider(row)
+        # 展示层：隐藏自动化测试遗留的临时供应商（live-*/contract-*/UUID 命名，复用 P0 规则）
+        and not is_internal_test_artifact(row.code, row.display_name)
     ]
     total = len(visible_rows)
     start = (page - 1) * page_size

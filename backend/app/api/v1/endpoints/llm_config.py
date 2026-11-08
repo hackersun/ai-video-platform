@@ -3,6 +3,7 @@
 支持多模型接入配置管理
 """
 
+from app.services.simple_model_setup import is_internal_test_artifact
 from app.core.time_utils import utc_now
 from typing import List, Optional
 from datetime import datetime
@@ -1198,6 +1199,7 @@ async def list_providers(
     providers = [
         provider for provider in result.scalars().all()
         if is_product_visible_provider(provider)
+        and not is_internal_test_artifact(provider.name, provider.name_cn)
     ]
     return [
         LLMProviderResponse(

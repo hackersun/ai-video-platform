@@ -30,9 +30,33 @@ from init_db import init_db
 from main import app
 
 
+_CREATED_TEST_PROVIDER_IDS: list[str] = []
+
+
 @pytest.fixture(scope="module", autouse=True)
-def _init_database() -> None:
+def _init_database():
     init_db()
+    yield
+    _cleanup_created_test_providers()
+
+
+def _cleanup_created_test_providers() -> None:
+    """本模块会在当前数据库里创建 live-* 临时供应商/模型/配置；结束后删除，避免残留到共享开发库的模型中心。"""
+    if not _CREATED_TEST_PROVIDER_IDS:
+        return
+    from sqlalchemy import delete
+
+    async def _cleanup() -> None:
+        async with AsyncSessionLocal() as db:
+            ids = list(_CREATED_TEST_PROVIDER_IDS)
+            model_ids = select(LLMModel.id).where(LLMModel.provider_id.in_(ids))
+            await db.execute(delete(LLMConfig).where(LLMConfig.model_id.in_(model_ids)))
+            await db.execute(delete(LLMModel).where(LLMModel.provider_id.in_(ids)))
+            await db.execute(delete(LLMProvider).where(LLMProvider.id.in_(ids), LLMProvider.name.like("live-%")))
+            await db.commit()
+
+    asyncio.run(_cleanup())
+    _CREATED_TEST_PROVIDER_IDS.clear()
 
 
 @pytest.fixture()
@@ -88,6 +112,7 @@ def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
                 ("tts", ["text-to-speech"], "tts"), ("video", ["text-to-video"], "video-generation"),
             ):
                 provider = LLMProvider(id=str(uuid4()), name=f"live-{capability}-{uuid4()}", is_active=True)
+                _CREATED_TEST_PROVIDER_IDS.append(provider.id)
                 model = LLMModel(id=str(uuid4()), provider_id=provider.id, model_id=f"api-{capability}", model_name=capability, model_type=model_type, capabilities=tags, is_active=True)
                 config = LLMConfig(id=str(uuid4()), user_id=user_id, model_id=model.id, name=capability, api_key="opaque", is_active=True, test_status="success", tested_at=utc_now())
                 db.add_all([provider, model, config]); bindings[capability] = config.id
