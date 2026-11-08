@@ -44,7 +44,8 @@ export function ModelCapabilitySelector({
   void disabled;
   const scopedConfigs = getConfigsByCapability(configs, capability);
   const defaultConfig = getDefaultConfigForCapability(configs, capability);
-  const selectedConfig = scopedConfigs.find((config) => config.id === value) || defaultConfig;
+  // 显式指定的配置（例如「模型设置」当前生效的默认，含模拟模式配置）优先，避免展示过期的历史配置状态。
+  const selectedConfig = (value ? configs.find((config) => config.id === value) : undefined) || defaultConfig;
   const selectableConfigs = requireVerified
     ? scopedConfigs.filter((config) => config.test_status === 'success' && config.key_available !== false)
     : scopedConfigs;

@@ -120,10 +120,16 @@ export default function NewNovelPage() {
       const configs = await response.json();
       const list = Array.isArray(configs) ? configs : [];
       setModelConfigs(list);
-      const textDefault = getDefaultConfigForCapability(list, 'text');
-      const imageDefault = getDefaultConfigForCapability(list, 'image');
-      if (textDefault) setTextModelConfigId(textDefault.id);
-      if (imageDefault) setImageModelConfigId(imageDefault.id);
+      // 以「模型设置」当前生效的配置为准（与小说详情页、一键生成口径一致）。
+      const simple = await apiClient.getSimpleModelSetup().catch(() => null);
+      const effective = (cap: 'text' | 'image') => {
+        const id = simple?.capabilities?.[cap]?.config_id;
+        return id && list.some((config: SavedModelConfig) => config.id === id) ? id : getDefaultConfigForCapability(list, cap)?.id;
+      };
+      const textId = effective('text');
+      const imageId = effective('image');
+      if (textId) setTextModelConfigId(textId);
+      if (imageId) setImageModelConfigId(imageId);
     } catch (error) {
       console.error('加载模型配置失败:', error);
     }
