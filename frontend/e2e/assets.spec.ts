@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -10,7 +11,8 @@ function devToken(userId: string) {
 }
 
 test.beforeEach(async ({ page }) => {
-  const userId = `asset-e2e-user-${Date.now()}`;
+  // 并发/重复运行时 Date.now() 可能撞同一毫秒，导致两个用例共用账号、互相看到对方资产
+  const userId = `asset-e2e-user-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const token = devToken(userId);
   await page.addInitScript(({ authToken, authUserId }) => {
     localStorage.setItem('auth_token', authToken);
@@ -42,7 +44,7 @@ async function apiPost(page: any, endpoint: string, body: any) {
 }
 
 test('资产库页面可创建、编辑和归档资产', async ({ page }) => {
-  const stamp = Date.now();
+  const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
   const name = `资产库验证角色-${stamp}`;
   const editedName = `${name}-更新`;
 

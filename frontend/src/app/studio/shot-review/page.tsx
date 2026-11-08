@@ -123,7 +123,9 @@ function ShotReviewContent() {
     setLoading(true);
     setError(null);
     try {
-      const response = await apiClient.getWorkflowShotReview(workflowId);
+      const raw = await apiClient.getWorkflowShotReview(workflowId);
+      // 接口异常/返回不完整时不让整页崩溃（之前会抛 "reading 'map'" 并触发整页错误）
+      const response = { ...raw, shots: Array.isArray(raw?.shots) ? raw.shots : [] };
       setData(response);
       setSelectedIds((current) => {
         const availableShotIds = new Set(response.shots.map((shot) => shot.shot_id));
