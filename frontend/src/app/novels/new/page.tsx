@@ -315,9 +315,7 @@ export default function NewNovelPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 主要内容 */}
-          <div className="lg:col-span-2 space-y-6">
+        <div className="mx-auto max-w-3xl space-y-6">
             {/* 基本信息 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -348,7 +346,6 @@ export default function NewNovelPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-white/60 mb-2 block">题材分类 *</label>
                     <select
@@ -362,6 +359,14 @@ export default function NewNovelPage() {
                       ))}
                     </select>
                   </div>
+              </CardContent>
+            </Card>
+
+            {/* 其余设置默认折叠：风格、标签、详细简介、封面、角色 */}
+            <details data-testid="novel-more-settings" className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+              <summary className="cursor-pointer text-sm font-medium text-white/80">更多设置（风格、标签、详细简介、封面，可稍后再填）</summary>
+              <div className="mt-4 space-y-6">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="text-sm text-white/60 mb-2 block">小说风格</label>
                     <select
@@ -375,8 +380,6 @@ export default function NewNovelPage() {
                       ))}
                     </select>
                   </div>
-                </div>
-
                 <div>
                   <label className="text-sm text-white/60 mb-2 block">标签</label>
                   <Input
@@ -386,9 +389,7 @@ export default function NewNovelPage() {
                     className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                   />
                 </div>
-              </CardContent>
-            </Card>
-
+                </div>
             {/* 详细简介 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -429,10 +430,6 @@ export default function NewNovelPage() {
                 />
               </CardContent>
             </Card>
-          </div>
-
-          {/* 侧边栏 */}
-          <div className="space-y-6">
             {/* 封面设置 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -535,7 +532,8 @@ export default function NewNovelPage() {
                 </ul>
               </CardContent>
             </Card>
-          </div>
+              </div>
+            </details>
         </div>
       </div>
     </MainLayout>
