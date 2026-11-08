@@ -1,0 +1,2015 @@
+{
+ "pages": [
+  {
+   "name": "00-register",
+   "url": "/register",
+   "fields": 5,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "用户注册"
+   ],
+   "jargon": [],
+   "english": [],
+   "chars": 96
+  },
+  {
+   "name": "01-after-register",
+   "url": "/llm-config?welcome=1",
+   "fields": 11,
+   "buttons": 3,
+   "links": 2,
+   "options": 0,
+   "headings": [
+    "模型设置",
+    "文本",
+    "图像",
+    "视频",
+    "语音",
+    "费用与真实调用"
+   ],
+   "jargon": [
+    "Prompt",
+    "Workflow",
+    "流水线",
+    "分镜",
+    "镜头",
+    "Provider",
+    "供应商",
+    "API",
+    "Key",
+    "Contract",
+    "TTS",
+    "Seed",
+    "Gate",
+    "合成",
+    "模拟模式",
+    "能力"
+   ],
+   "english": [
+    "API Key",
+    "OpenAI",
+    "MiniMax",
+    "DeepSeek",
+    "Agent Plan",
+    "PixVerse",
+    "live-text-3db10f7c-fa3e-4b14-b421-f8ecd1e4fded",
+    "live-image-ee896ef5-eb0c-47ef-a64b-c3e42d09f829",
+    "live-tts-f07077fe-533f-46cf-ae41-0d86c06a9ade",
+    "live-video-a043bdcf-0be8-4f9c-a424-7826c5c0716d",
+    "tts-provider-01960feb-35ae-419e-ad3b-7aae1c2fd571",
+    "contract-text",
+    "contract-image",
+    "contract-tts",
+    "live-text-7043f968-50fc-47b6-95aa-1899da9ca85d",
+    "live-image-81b339b5-e795-4719-a13b-a8fd7ddb0f36",
+    "live-tts-97d7390b-ac34-433d-a654-58b335bd1f96",
+    "live-video-88e62dbb-aaa6-41bb-a4f5-8d75a847fa46",
+    "tts-provider-70001232-da69-4a0f-ae0c-70cd75cc34a9",
+    "live-text-4a9c4dfc-ec9d-4911-b6e3-ce1e79465562",
+    "live-image-ec8f1b43-71a9-41f1-a178-1526dcd832c5",
+    "live-tts-849ecd23-3c17-48b5-8c96-6a0e6469d423",
+    "live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89",
+    "live-text-6042e4ae-f8e8-43c7-846f-8e589e8ce4ad",
+    "live-image-fda18a8e-40f0-4f2a-a8d3-7b88feea9ed3"
+   ],
+   "chars": 12430
+  },
+  {
+   "name": "02-model-setup-simple",
+   "url": "/llm-config",
+   "fields": 11,
+   "buttons": 3,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "模型设置",
+    "文本",
+    "图像",
+    "视频",
+    "语音",
+    "费用与真实调用"
+   ],
+   "jargon": [
+    "Prompt",
+    "Workflow",
+    "流水线",
+    "分镜",
+    "镜头",
+    "Provider",
+    "供应商",
+    "API",
+    "Key",
+    "Contract",
+    "TTS",
+    "Seed",
+    "Gate",
+    "合成",
+    "模拟模式",
+    "能力"
+   ],
+   "english": [
+    "API Key",
+    "OpenAI",
+    "MiniMax",
+    "DeepSeek",
+    "Agent Plan",
+    "PixVerse",
+    "live-text-3db10f7c-fa3e-4b14-b421-f8ecd1e4fded",
+    "live-image-ee896ef5-eb0c-47ef-a64b-c3e42d09f829",
+    "live-tts-f07077fe-533f-46cf-ae41-0d86c06a9ade",
+    "live-video-a043bdcf-0be8-4f9c-a424-7826c5c0716d",
+    "tts-provider-01960feb-35ae-419e-ad3b-7aae1c2fd571",
+    "contract-text",
+    "contract-image",
+    "contract-tts",
+    "live-text-7043f968-50fc-47b6-95aa-1899da9ca85d",
+    "live-image-81b339b5-e795-4719-a13b-a8fd7ddb0f36",
+    "live-tts-97d7390b-ac34-433d-a654-58b335bd1f96",
+    "live-video-88e62dbb-aaa6-41bb-a4f5-8d75a847fa46",
+    "tts-provider-70001232-da69-4a0f-ae0c-70cd75cc34a9",
+    "live-text-4a9c4dfc-ec9d-4911-b6e3-ce1e79465562",
+    "live-image-ec8f1b43-71a9-41f1-a178-1526dcd832c5",
+    "live-tts-849ecd23-3c17-48b5-8c96-6a0e6469d423",
+    "live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89",
+    "live-text-6042e4ae-f8e8-43c7-846f-8e589e8ce4ad",
+    "live-image-fda18a8e-40f0-4f2a-a8d3-7b88feea9ed3"
+   ],
+   "chars": 12344
+  },
+  {
+   "name": "03-model-center-overview",
+   "url": "/llm-config?section=overview",
+   "fields": 0,
+   "buttons": 0,
+   "links": 28,
+   "options": 0,
+   "headings": [
+    "模型中心",
+    "四步完成模型接入",
+    "生产阻塞项",
+    "配置覆盖",
+    "全局配置"
+   ],
+   "jargon": [
+    "提示词",
+    "适配器",
+    "供应商",
+    "API",
+    "Key",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "版本",
+    "模板",
+    "绑定",
+    "凭证",
+    "能力",
+    "校验",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API",
+    "API Key",
+    "Model ID"
+   ],
+   "chars": 660
+  },
+  {
+   "name": "03-model-center-connections",
+   "url": "/llm-config?section=connections",
+   "fields": 5,
+   "buttons": 3,
+   "links": 21,
+   "options": 0,
+   "headings": [
+    "供应商账号",
+    "新增供应商账号",
+    "供应商账号"
+   ],
+   "jargon": [
+    "提示词",
+    "供应商",
+    "API",
+    "Key",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "TTS",
+    "版本",
+    "模板",
+    "凭证",
+    "网关",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号",
+    "私有网关"
+   ],
+   "english": [
+    "API",
+    "API Key",
+    "Key",
+    "qwen",
+    "OpenAI",
+    "openai",
+    "live-image-fda18a8e-40f0-4f2a-a8d3-7b88feea9ed3",
+    "live-text-7043f968-50fc-47b6-95aa-1899da9ca85d",
+    "live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89",
+    "PixVerse",
+    "pixverse",
+    "live-tts-f07077fe-533f-46cf-ae41-0d86c06a9ade",
+    "MiniMax",
+    "minimax",
+    "volcano",
+    "Agent Plan",
+    "volcano-agent-plan",
+    "live-tts-a4672450-bc5e-4179-b1fe-4e2ef3d82d4b",
+    "live-image-ec8f1b43-71a9-41f1-a178-1526dcd832c5",
+    "alibaba",
+    "baidu",
+    "live-video-e6230fdd-9ac4-4906-8029-8a645a0a2558",
+    "live-video-88e62dbb-aaa6-41bb-a4f5-8d75a847fa46",
+    "live-text-6042e4ae-f8e8-43c7-846f-8e589e8ce4ad",
+    "live-tts-97d7390b-ac34-433d-a654-58b335bd1f96"
+   ],
+   "chars": 2294
+  },
+  {
+   "name": "03-model-center-catalog",
+   "url": "/llm-config?section=catalog",
+   "fields": 3,
+   "buttons": 22,
+   "links": 19,
+   "options": 0,
+   "headings": [
+    "模型目录",
+    "模型详情"
+   ],
+   "jargon": [
+    "提示词",
+    "供应商",
+    "API",
+    "Key",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "契约",
+    "证据",
+    "TTS",
+    "版本",
+    "合成",
+    "模板",
+    "凭证",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API",
+    "API Key",
+    "OpenAI",
+    "live-image-fda18a8e-40f0-4f2a-a8d3-7b88feea9ed3",
+    "live-text-7043f968-50fc-47b6-95aa-1899da9ca85d",
+    "live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89",
+    "PixVerse",
+    "live-tts-f07077fe-533f-46cf-ae41-0d86c06a9ade",
+    "MiniMax",
+    "Agent Plan",
+    "live-tts-a4672450-bc5e-4179-b1fe-4e2ef3d82d4b",
+    "live-image-ec8f1b43-71a9-41f1-a178-1526dcd832c5",
+    "live-video-e6230fdd-9ac4-4906-8029-8a645a0a2558",
+    "live-video-88e62dbb-aaa6-41bb-a4f5-8d75a847fa46",
+    "live-text-6042e4ae-f8e8-43c7-846f-8e589e8ce4ad",
+    "live-tts-97d7390b-ac34-433d-a654-58b335bd1f96",
+    "live-tts-849ecd23-3c17-48b5-8c96-6a0e6469d423",
+    "live-video-a043bdcf-0be8-4f9c-a424-7826c5c0716d",
+    "live-text-4a9c4dfc-ec9d-4911-b6e3-ce1e79465562",
+    "DeepSeek",
+    "live-text-3db10f7c-fa3e-4b14-b421-f8ecd1e4fded",
+    "live-image-81b339b5-e795-4719-a13b-a8fd7ddb0f36",
+    "live-image-ee896ef5-eb0c-47ef-a64b-c3e42d09f829",
+    "DeepSeek V4 Flash",
+    "deepseek-v4-flash"
+   ],
+   "chars": 3519
+  },
+  {
+   "name": "03-model-center-bindings",
+   "url": "/llm-config?section=bindings",
+   "fields": 0,
+   "buttons": 1,
+   "links": 19,
+   "options": 0,
+   "headings": [
+    "默认模型",
+    "默认模型"
+   ],
+   "jargon": [
+    "提示词",
+    "供应商",
+    "API",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "版本",
+    "资产",
+    "模板",
+    "凭证",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API"
+   ],
+   "chars": 403
+  },
+  {
+   "name": "03-model-center-presets",
+   "url": "/llm-config?section=presets",
+   "fields": 0,
+   "buttons": 0,
+   "links": 28,
+   "options": 0,
+   "headings": [
+    "模型中心",
+    "四步完成模型接入",
+    "生产阻塞项",
+    "配置覆盖",
+    "全局配置"
+   ],
+   "jargon": [
+    "提示词",
+    "适配器",
+    "供应商",
+    "API",
+    "Key",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "版本",
+    "模板",
+    "绑定",
+    "凭证",
+    "能力",
+    "校验",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API",
+    "API Key",
+    "Model ID"
+   ],
+   "chars": 660
+  },
+  {
+   "name": "03-model-center-prompts",
+   "url": "/llm-config?section=prompts",
+   "fields": 0,
+   "buttons": 16,
+   "links": 12,
+   "options": 0,
+   "headings": [
+    "提示词使用地图",
+    "故事开发",
+    "内容制作",
+    "视觉生产",
+    "声音与交付",
+    "章节续写"
+   ],
+   "jargon": [
+    "提示词",
+    "分镜",
+    "镜头",
+    "供应商",
+    "API",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "版本",
+    "路由",
+    "参考图",
+    "字幕",
+    "合成",
+    "模板",
+    "凭证",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API"
+   ],
+   "chars": 879
+  },
+  {
+   "name": "03-model-center-test-lab",
+   "url": "/llm-config?section=test-lab",
+   "fields": 7,
+   "buttons": 2,
+   "links": 20,
+   "options": 0,
+   "headings": [
+    "测试实验室",
+    "分级认证",
+    "认证历史",
+    "测试运行"
+   ],
+   "jargon": [
+    "提示词",
+    "供应商",
+    "API",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "契约",
+    "证据",
+    "版本",
+    "字幕",
+    "合成",
+    "模板",
+    "凭证",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API"
+   ],
+   "chars": 629
+  },
+  {
+   "name": "04-model-setup-after-sim",
+   "url": "/llm-config",
+   "fields": 11,
+   "buttons": 3,
+   "links": 2,
+   "options": 0,
+   "headings": [
+    "模型设置",
+    "文本",
+    "图像",
+    "视频",
+    "语音",
+    "费用与真实调用"
+   ],
+   "jargon": [
+    "Prompt",
+    "Workflow",
+    "流水线",
+    "分镜",
+    "镜头",
+    "Provider",
+    "供应商",
+    "API",
+    "Key",
+    "Contract",
+    "TTS",
+    "Seed",
+    "Gate",
+    "合成",
+    "Deterministic",
+    "模拟模式",
+    "能力"
+   ],
+   "english": [
+    "API Key",
+    "OpenAI",
+    "MiniMax",
+    "DeepSeek",
+    "Agent Plan",
+    "PixVerse",
+    "live-text-3db10f7c-fa3e-4b14-b421-f8ecd1e4fded",
+    "live-image-ee896ef5-eb0c-47ef-a64b-c3e42d09f829",
+    "live-tts-f07077fe-533f-46cf-ae41-0d86c06a9ade",
+    "live-video-a043bdcf-0be8-4f9c-a424-7826c5c0716d",
+    "tts-provider-01960feb-35ae-419e-ad3b-7aae1c2fd571",
+    "contract-text",
+    "contract-image",
+    "contract-tts",
+    "live-text-7043f968-50fc-47b6-95aa-1899da9ca85d",
+    "live-image-81b339b5-e795-4719-a13b-a8fd7ddb0f36",
+    "live-tts-97d7390b-ac34-433d-a654-58b335bd1f96",
+    "live-video-88e62dbb-aaa6-41bb-a4f5-8d75a847fa46",
+    "tts-provider-70001232-da69-4a0f-ae0c-70cd75cc34a9",
+    "live-text-4a9c4dfc-ec9d-4911-b6e3-ce1e79465562",
+    "live-image-ec8f1b43-71a9-41f1-a178-1526dcd832c5",
+    "live-tts-849ecd23-3c17-48b5-8c96-6a0e6469d423",
+    "live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89",
+    "live-text-6042e4ae-f8e8-43c7-846f-8e589e8ce4ad",
+    "live-image-fda18a8e-40f0-4f2a-a8d3-7b88feea9ed3"
+   ],
+   "chars": 12616
+  },
+  {
+   "name": "05-novels-empty",
+   "url": "/novels",
+   "fields": 4,
+   "buttons": 11,
+   "links": 2,
+   "options": 4,
+   "headings": [
+    "小说管理",
+    "文本导入"
+   ],
+   "jargon": [],
+   "english": [
+    "txt"
+   ],
+   "chars": 116
+  },
+  {
+   "name": "06-novel-new",
+   "url": "/novels/new",
+   "fields": 7,
+   "buttons": 57,
+   "links": 4,
+   "options": 0,
+   "headings": [
+    "创建小说",
+    "基本信息",
+    "详细简介\nAI 生成",
+    "封面设置\nAI 生成",
+    "角色关联"
+   ],
+   "jargon": [
+    "提示词",
+    "渲染",
+    "Deterministic",
+    "模拟模式",
+    "能力"
+   ],
+   "english": [
+    "AI",
+    "Deterministic text",
+    "Deterministic image",
+    "x1600"
+   ],
+   "chars": 981
+  },
+  {
+   "name": "07-import-preview",
+   "url": "/novels",
+   "fields": 4,
+   "buttons": 12,
+   "links": 2,
+   "options": 4,
+   "headings": [
+    "小说管理",
+    "文本导入"
+   ],
+   "jargon": [],
+   "english": [
+    "txt"
+   ],
+   "chars": 399
+  },
+  {
+   "name": "08-novel-detail",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 19,
+   "links": 12,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "章节管理"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 1000
+  },
+  {
+   "name": "09-novel-tab-章节3",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 18,
+   "links": 12,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "章节管理"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 1000
+  },
+  {
+   "name": "09-novel-tab-整书计划0",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 1,
+   "buttons": 25,
+   "links": 3,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "整部漫剧生产计划"
+   ],
+   "jargon": [
+    "Story Bible",
+    "提示词",
+    "分镜",
+    "TTS",
+    "渲染",
+    "一致性",
+    "参考图",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic",
+    "锁定"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 1271
+  },
+  {
+   "name": "09-novel-tab-角色0",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 16,
+   "links": 3,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "角色管理"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "实体",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 681
+  },
+  {
+   "name": "09-novel-tab-剧本0",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 14,
+   "links": 4,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "剧本管理"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 675
+  },
+  {
+   "name": "09-novel-tab-StoryBib",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 19,
+   "links": 3,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "Story Bible"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 711
+  },
+  {
+   "name": "09-novel-tab-设置",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 4,
+   "buttons": 15,
+   "links": 3,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "小说设置"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 736
+  },
+  {
+   "name": "10-chapters",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7/chapters",
+   "fields": 1,
+   "buttons": 5,
+   "links": 12,
+   "options": 0,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。” - 章节管理",
+    "第一章 雾港来客",
+    "第二章 铜铃示警",
+    "第三章 北岬余波"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜"
+   ],
+   "english": [
+    "AI",
+    "Story Bible"
+   ],
+   "chars": 638
+  },
+  {
+   "name": "11-asset-analysis",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7/asset-analysis",
+   "fields": 5,
+   "buttons": 7,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”"
+   ],
+   "jargon": [
+    "实体",
+    "证据",
+    "资产"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 324
+  },
+  {
+   "name": "12-one-click-confirm",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 21,
+   "links": 12,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "章节管理",
+    "模拟模式确认"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 1000
+  },
+  {
+   "name": "13-progress",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 17,
+   "links": 13,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "章节管理"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "渲染",
+    "一致性",
+    "合成",
+    "资产",
+    "设定"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "TTS"
+   ],
+   "chars": 926
+  },
+  {
+   "name": "14-finished",
+   "url": "/novels/d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+   "fields": 0,
+   "buttons": 18,
+   "links": 14,
+   "options": 6,
+   "headings": [
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "作品阅读预览",
+    "章节管理"
+   ],
+   "jargon": [
+    "Story Bible",
+    "分镜",
+    "TTS",
+    "渲染",
+    "一致性",
+    "合成",
+    "资产",
+    "设定",
+    "Deterministic"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "Deterministic text",
+    "Deterministic image",
+    "Deterministic video",
+    "Deterministic tts",
+    "TTS"
+   ],
+   "chars": 1027
+  },
+  {
+   "name": "20-synthesis",
+   "url": "/synthesis",
+   "fields": 8,
+   "buttons": 25,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "音视频合成",
+    "选择视频",
+    "选择音频",
+    "合成设置",
+    "合成历史",
+    "发布记录"
+   ],
+   "jargon": [
+    "分镜",
+    "镜头",
+    "TTS",
+    "渲染",
+    "合成"
+   ],
+   "english": [
+    "TTS",
+    "aa704328",
+    "AM",
+    "d21a8e63",
+    "faa81",
+    "a30ca3b9",
+    "ae59961",
+    "ccc0f4",
+    "aaff0",
+    "e2b2ec85",
+    "aaa0cec8",
+    "ad1483a8",
+    "ed9243",
+    "d57c6696",
+    "dca94e6",
+    "AI",
+    "local",
+    "published"
+   ],
+   "chars": 633
+  },
+  {
+   "name": "20-dashboard",
+   "url": "/dashboard",
+   "fields": 0,
+   "buttons": 1,
+   "links": 23,
+   "options": 0,
+   "headings": [
+    "欢迎回来，用户 👋",
+    "推荐制作路径",
+    "常用入口",
+    "我的作品",
+    "沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”",
+    "数据统计",
+    "最近视频",
+    "最近音频",
+    "快捷操作"
+   ],
+   "jargon": [
+    "分镜",
+    "镜头",
+    "字幕",
+    "合成",
+    "资产",
+    "设定",
+    "锁定"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 563
+  },
+  {
+   "name": "20-quick-start",
+   "url": "/quick-start",
+   "fields": 9,
+   "buttons": 4,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "连续动漫向导",
+    "故事输入",
+    "检查"
+   ],
+   "jargon": [
+    "分镜",
+    "镜头",
+    "渲染",
+    "字幕",
+    "设定"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 583
+  },
+  {
+   "name": "20-jobs",
+   "url": "/jobs",
+   "fields": 6,
+   "buttons": 47,
+   "links": 0,
+   "options": 7,
+   "headings": [
+    "任务队列",
+    "查询过滤",
+    "任务列表",
+    "任务预览",
+    "视频拼接-aa704328",
+    "输出预览"
+   ],
+   "jargon": [
+    "镜头",
+    "队列",
+    "合成"
+   ],
+   "english": [
+    "aa704328",
+    "cd758800-7985-4510-a56f-72ec9a108998",
+    "ccc0f4",
+    "fc80755e-99ee-403a-978d-71c305a8f2d0",
+    "ad1483a8",
+    "f9f12-2f28-4c71-8bd8-d076915583e9",
+    "f015fcda-b91e-4487-8226-624917c64ef5",
+    "c97d24-ae9c-4670-b987-d9a7b72c7464",
+    "d2f-888b-4760-99b8-696e5a286d84",
+    "d52bc78-3bba-40a7-a843-a2c68114992e",
+    "a34-408f-b778-20cbe31efe3d",
+    "static",
+    "exports",
+    "final-85f32ae9-d995-4688-9952-1cec1072fa36-20261108064716189138.mp4",
+    "exp",
+    "sig",
+    "ac8aef861b77076decbfe245c0aee8dcb8feb8c6e779cb75a6dfd93bf0a3f771"
+   ],
+   "chars": 1401
+  },
+  {
+   "name": "20-assets",
+   "url": "/assets",
+   "fields": 18,
+   "buttons": 44,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "资产库",
+    "资产工作台",
+    "都市异能觉醒提示词",
+    "补齐资产",
+    "角色三视图"
+   ],
+   "jargon": [
+    "提示词",
+    "镜头",
+    "版本",
+    "制片",
+    "一致性",
+    "资产",
+    "设定",
+    "模板",
+    "能力",
+    "锁定"
+   ],
+   "english": [],
+   "chars": 1393
+  },
+  {
+   "name": "20-characters",
+   "url": "/characters",
+   "fields": 2,
+   "buttons": 2,
+   "links": 2,
+   "options": 0,
+   "headings": [
+    "角色管理"
+   ],
+   "jargon": [
+    "提示词",
+    "实体",
+    "绑定",
+    "能力"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 311
+  },
+  {
+   "name": "20-studio",
+   "url": "/studio?workflow_id=aa704328-23b2-4ac6-a0af-3bbd10e8951f",
+   "fields": 0,
+   "buttons": 14,
+   "links": 20,
+   "options": 4,
+   "headings": [
+    "系列动漫工作室",
+    "小说《沈砚穿着深蓝旧呢大衣抵达雾港。码头上，林晚提着一盏铜灯等候。林晚说：“船队已经失踪三天了。”沈砚说：“我会查清失踪船队的去向。”》",
+    "第三章 北岬余波 制作看板",
+    "设定与资产",
+    "分镜与配音",
+    "镜头生成",
+    "复审与成片",
+    "本集概览",
+    "模型就绪度",
+    "待处理事项",
+    "高级工作区",
+    "当前激活 Prompt 技能"
+   ],
+   "jargon": [
+    "Story Bible",
+    "Prompt",
+    "提示词",
+    "工作流",
+    "分镜",
+    "Shot",
+    "镜头",
+    "时间线",
+    "实体",
+    "连续性",
+    "合约",
+    "证据",
+    "TTS",
+    "Seed",
+    "渲染",
+    "门禁",
+    "一致性",
+    "字幕",
+    "合成",
+    "资产",
+    "设定",
+    "绑定",
+    "任务中心",
+    "剧集",
+    "集数",
+    "锁定",
+    "就绪度"
+   ],
+   "english": [
+    "Story Bible",
+    "draft",
+    "TTS",
+    "Seedance-2.0",
+    "Seedance 2.0",
+    "available",
+    "HappyHorse-1.1 R2V",
+    "planned",
+    "HappyHorse-1.1 I2V",
+    "assets",
+    "Readiness 75",
+    "Final Quality",
+    "facts",
+    "dbacf73673a2659e458cc70a349c3f8b5dd2d0dc4efcc54f07115f35252c7bc",
+    "Prompt",
+    "shot",
+    "video",
+    "Prompt Skill",
+    "DNA",
+    "Agent"
+   ],
+   "chars": 2125
+  },
+  {
+   "name": "20-producer",
+   "url": "/producer",
+   "fields": 5,
+   "buttons": 22,
+   "links": 8,
+   "options": 0,
+   "headings": [
+    "把生产控制能力放到台面上",
+    "本集生产状态",
+    "小说、章节与制片工程",
+    "生产检查提示",
+    "Story Bible 状态机",
+    "还没有状态机",
+    "AI 制片助手",
+    "资产定稿包",
+    "还没有定稿包",
+    "工作流摘要",
+    "操作结果与说明",
+    "批量操作"
+   ],
+   "jargon": [
+    "Story Bible",
+    "工作流",
+    "分镜",
+    "镜头",
+    "时间线",
+    "合约",
+    "Seed",
+    "渲染",
+    "节点",
+    "路由",
+    "漂移",
+    "制片",
+    "参考图",
+    "字幕",
+    "合成",
+    "资产",
+    "工程",
+    "绑定",
+    "能力",
+    "锁定",
+    "就绪度"
+   ],
+   "english": [
+    "AI",
+    "Story Bible",
+    "faa",
+    "aaf",
+    "ed92",
+    "Production Bible v1",
+    "Seedance",
+    "Seedance-2.0-fast",
+    "Seedance-2.0",
+    "SD1.5",
+    "SRT"
+   ],
+   "chars": 2006
+  },
+  {
+   "name": "20-workflow",
+   "url": "/workflow",
+   "fields": 3,
+   "buttons": 29,
+   "links": 3,
+   "options": 0,
+   "headings": [
+    "AI 视频创作工作流",
+    "创作步骤",
+    "AI 制片控制台",
+    "短视频出片模式",
+    "快捷入口",
+    "小说\n第 1 步，共 10 步"
+   ],
+   "jargon": [
+    "工作流",
+    "分镜",
+    "镜头",
+    "时间线",
+    "合约",
+    "TTS",
+    "渲染",
+    "制片",
+    "字幕",
+    "合成",
+    "资产",
+    "设定",
+    "工程",
+    "绑定",
+    "锁定"
+   ],
+   "english": [
+    "AI",
+    "SRT",
+    "TTS"
+   ],
+   "chars": 1002
+  },
+  {
+   "name": "20-scripts",
+   "url": "/scripts",
+   "fields": 3,
+   "buttons": 20,
+   "links": 4,
+   "options": 4,
+   "headings": [
+    "剧本管理",
+    "第 3 集剧本草稿",
+    "第 2 集剧本草稿",
+    "第 1 集剧本草稿",
+    "剧本预览",
+    "第 3 集剧本草稿"
+   ],
+   "jargon": [
+    "分镜",
+    "绑定"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 876
+  },
+  {
+   "name": "20-storyboards",
+   "url": "/storyboards",
+   "fields": 2,
+   "buttons": 7,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "分镜设计"
+   ],
+   "jargon": [
+    "分镜",
+    "镜头"
+   ],
+   "english": [
+    "faa81...",
+    "draft",
+    "aaff0...",
+    "ed9243...",
+    "AI"
+   ],
+   "chars": 558
+  },
+  {
+   "name": "20-shots",
+   "url": "/shots",
+   "fields": 0,
+   "buttons": 27,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "镜头管理"
+   ],
+   "jargon": [
+    "Prompt",
+    "提示词",
+    "镜头",
+    "连续性",
+    "一致性",
+    "字幕",
+    "资产",
+    "锁定"
+   ],
+   "english": [
+    "Prompt Skill",
+    "DNA",
+    "faa81...",
+    "cinematic",
+    "consistent-anime",
+    "object Object",
+    "close",
+    "aaff0...",
+    "ed9243..."
+   ],
+   "chars": 2304
+  },
+  {
+   "name": "20-timelines",
+   "url": "/timelines",
+   "fields": 1,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "时间线编辑"
+   ],
+   "jargon": [
+    "工作流",
+    "时间线",
+    "Timeline",
+    "合成"
+   ],
+   "english": [
+    "Timeline Editor",
+    "SynthesisJob",
+    "Timeline"
+   ],
+   "chars": 158
+  },
+  {
+   "name": "20-subtitles",
+   "url": "/subtitles",
+   "fields": 11,
+   "buttons": 13,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "字幕工作台",
+    "从镜头生成",
+    "字幕轨",
+    "字幕段编辑"
+   ],
+   "jargon": [
+    "镜头",
+    "TTS",
+    "字幕"
+   ],
+   "english": [
+    "Subtitle Workspace",
+    "TTS",
+    "SRT",
+    "VTT",
+    "ASS",
+    "draft",
+    "zh-CN",
+    "direct",
+    "model",
+    "ad5",
+    "s - 4.0s",
+    "pending",
+    "review"
+   ],
+   "chars": 465
+  },
+  {
+   "name": "20-tts",
+   "url": "/tts",
+   "fields": 10,
+   "buttons": 7,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "语音合成 (TTS)",
+    "从创作链路选择",
+    "语音模型配置",
+    "音色选择与试听",
+    "声音克隆",
+    "角色音色锁",
+    "文本内容",
+    "生成历史"
+   ],
+   "jargon": [
+    "Story Bible",
+    "适配器",
+    "TTS",
+    "合成"
+   ],
+   "english": [
+    "TTS",
+    "female -",
+    "male -",
+    "wav",
+    "mp3",
+    "m4a",
+    "webm",
+    "URL",
+    "Story Bible",
+    "voice",
+    "speed"
+   ],
+   "chars": 581
+  },
+  {
+   "name": "20-video-generation",
+   "url": "/video-generation",
+   "fields": 15,
+   "buttons": 53,
+   "links": 3,
+   "options": 0,
+   "headings": [
+    "视频生成",
+    "制作链路",
+    "视频模型",
+    "生成模式",
+    "参数配置",
+    "高级生产适配",
+    "视频预览",
+    "历史筛选\n清空",
+    "生成历史",
+    "音视频直生历史"
+   ],
+   "jargon": [
+    "Workflow",
+    "分镜",
+    "镜头",
+    "适配器",
+    "API",
+    "Key",
+    "模型目录",
+    "Seed",
+    "分辨率",
+    "渲染",
+    "一致性",
+    "参考图",
+    "资产",
+    "Deterministic",
+    "多模态",
+    "锁定"
+   ],
+   "english": [
+    "DEV",
+    "MODE",
+    "volcano",
+    "doubao-seedance-2-0-260128",
+    "API Key",
+    "Seedance 2.0",
+    "volcano.seedance.2",
+    "HappyHorse-1.1 R2V",
+    "alibaba.happyhorse.1",
+    "r2v",
+    "HappyHorse-1.1 I2V",
+    "i2v",
+    "HappyHorse-1.1 T2V",
+    "t2v",
+    "Omni",
+    "kling.3",
+    "omni",
+    "PixVerse C1",
+    "pixverse.c1",
+    "Seedance 1.5 Pro",
+    "volcano.seedance.1",
+    "pro",
+    "V2.6",
+    "kling.v2",
+    "kling.o1"
+   ],
+   "chars": 3022
+  },
+  {
+   "name": "20-templates",
+   "url": "/templates",
+   "fields": 17,
+   "buttons": 56,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "模板市场",
+    "公共模板",
+    "都市言情\n预置",
+    "玄幻修仙\n预置",
+    "悬疑推理\n预置",
+    "科幻未来\n预置",
+    "对话场景\n预置",
+    "动作场景\n预置",
+    "情感高潮\n预置",
+    "角色特写\n预置",
+    "场景氛围\n预置",
+    "动态效果\n预置"
+   ],
+   "jargon": [
+    "提示词",
+    "镜头",
+    "资产",
+    "设定",
+    "模板"
+   ],
+   "english": [],
+   "chars": 668
+  },
+  {
+   "name": "20-prompt-skills",
+   "url": "/llm-config?section=prompts",
+   "fields": 0,
+   "buttons": 16,
+   "links": 12,
+   "options": 0,
+   "headings": [
+    "提示词使用地图",
+    "故事开发",
+    "内容制作",
+    "视觉生产",
+    "声音与交付",
+    "章节续写"
+   ],
+   "jargon": [
+    "提示词",
+    "分镜",
+    "镜头",
+    "供应商",
+    "API",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "版本",
+    "路由",
+    "参考图",
+    "字幕",
+    "合成",
+    "模板",
+    "凭证",
+    "Deterministic",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号"
+   ],
+   "english": [
+    "API",
+    "deterministic-text",
+    "deterministic-acceptance"
+   ],
+   "chars": 843
+  },
+  {
+   "name": "20-story-bibles",
+   "url": "/story-bibles",
+   "fields": 0,
+   "buttons": 4,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "Story Bible 管理",
+    "全部 STORY BIBLE",
+    "选择或创建一个 Story Bible"
+   ],
+   "jargon": [
+    "Story Bible",
+    "一致性"
+   ],
+   "english": [
+    "Story Bible",
+    "STORY BIBLE",
+    "Production Bible v1"
+   ],
+   "chars": 296
+  },
+  {
+   "name": "20-entities",
+   "url": "/entities",
+   "fields": 69,
+   "buttons": 278,
+   "links": 52,
+   "options": 5,
+   "headings": [
+    "实体审阅台",
+    "周铎",
+    "连续场景",
+    "主角",
+    "连续性道具",
+    "沈砚",
+    "周铎",
+    "周铎",
+    "连续性道具·第3章提及",
+    "连续场景·第3章提及",
+    "林晚·第3章提及",
+    "连续场景·第2章提及"
+   ],
+   "jargon": [
+    "镜头",
+    "实体",
+    "连续性",
+    "证据",
+    "门禁",
+    "Deterministic",
+    "能力",
+    "锁定"
+   ],
+   "english": [
+    "system",
+    "deterministic",
+    "starter"
+   ],
+   "chars": 7326
+  },
+  {
+   "name": "20-graph",
+   "url": "/graph",
+   "fields": 1,
+   "buttons": 8,
+   "links": 0,
+   "options": 3,
+   "headings": [
+    "角色关系图",
+    "关系网络图",
+    "暂无关系图数据"
+   ],
+   "jargon": [
+    "节点"
+   ],
+   "english": [],
+   "chars": 172
+  },
+  {
+   "name": "20-versions",
+   "url": "/versions",
+   "fields": 2,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "版本历史"
+   ],
+   "jargon": [
+    "分镜",
+    "镜头"
+   ],
+   "english": [],
+   "chars": 35
+  },
+  {
+   "name": "20-analytics",
+   "url": "/analytics",
+   "fields": 0,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "数据分析",
+    "连续动漫生产指标",
+    "AI 调用与成本",
+    "任务完成率",
+    "近 14 天任务趋势",
+    "任务类型分布",
+    "模型使用排行",
+    "最近创作活动"
+   ],
+   "jargon": [
+    "分镜",
+    "镜头",
+    "连续性",
+    "API",
+    "LLM",
+    "Token",
+    "合成",
+    "资产"
+   ],
+   "english": [
+    "api",
+    "dashboard",
+    "analytics",
+    "mock",
+    "false",
+    "novels",
+    "chapters",
+    "scripts",
+    "characters",
+    "assets",
+    "AI",
+    "Token",
+    "llm",
+    "usage",
+    "logs"
+   ],
+   "chars": 1011
+  },
+  {
+   "name": "20-production-adapters",
+   "url": "/llm-config?section=connections",
+   "fields": 5,
+   "buttons": 3,
+   "links": 21,
+   "options": 0,
+   "headings": [
+    "供应商账号",
+    "新增供应商账号",
+    "供应商账号"
+   ],
+   "jargon": [
+    "提示词",
+    "供应商",
+    "API",
+    "Key",
+    "模型目录",
+    "组合预设",
+    "预设",
+    "认证",
+    "证据",
+    "TTS",
+    "版本",
+    "模板",
+    "凭证",
+    "网关",
+    "能力",
+    "就绪度",
+    "阻塞",
+    "供应商账号",
+    "私有网关"
+   ],
+   "english": [
+    "API",
+    "API Key",
+    "Key",
+    "qwen",
+    "OpenAI",
+    "openai",
+    "live-image-fda18a8e-40f0-4f2a-a8d3-7b88feea9ed3",
+    "live-text-7043f968-50fc-47b6-95aa-1899da9ca85d",
+    "live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89",
+    "PixVerse",
+    "pixverse",
+    "live-tts-f07077fe-533f-46cf-ae41-0d86c06a9ade",
+    "MiniMax",
+    "minimax",
+    "volcano",
+    "Agent Plan",
+    "volcano-agent-plan",
+    "live-tts-a4672450-bc5e-4179-b1fe-4e2ef3d82d4b",
+    "live-image-ec8f1b43-71a9-41f1-a178-1526dcd832c5",
+    "alibaba",
+    "baidu",
+    "live-video-e6230fdd-9ac4-4906-8029-8a645a0a2558",
+    "live-video-88e62dbb-aaa6-41bb-a4f5-8d75a847fa46",
+    "live-text-6042e4ae-f8e8-43c7-846f-8e589e8ce4ad",
+    "live-tts-97d7390b-ac34-433d-a654-58b335bd1f96"
+   ],
+   "chars": 2296
+  },
+  {
+   "name": "20-teams",
+   "url": "/settings/team",
+   "fields": 0,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [],
+   "jargon": [
+    "重试"
+   ],
+   "english": [],
+   "chars": 10
+  },
+  {
+   "name": "20-media-player",
+   "url": "/media-player",
+   "fields": 0,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [
+    "成片播放"
+   ],
+   "jargon": [
+    "重试"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 83
+  },
+  {
+   "name": "20-settings",
+   "url": "/settings",
+   "fields": 0,
+   "buttons": 4,
+   "links": 6,
+   "options": 0,
+   "headings": [
+    "系统设置",
+    "当前账户",
+    "协议与合规",
+    "快捷设置",
+    "个人资料",
+    "通知设置",
+    "安全设置",
+    "外观设置"
+   ],
+   "jargon": [],
+   "english": [
+    "ux343448",
+    "example.test",
+    "AI"
+   ],
+   "chars": 427
+  },
+  {
+   "name": "20-settings-profile",
+   "url": "/settings/profile",
+   "fields": 3,
+   "buttons": 2,
+   "links": 2,
+   "options": 0,
+   "headings": [
+    "个人资料",
+    "头像",
+    "基本信息"
+   ],
+   "jargon": [],
+   "english": [
+    "ux343448",
+    "URL"
+   ],
+   "chars": 99
+  },
+  {
+   "name": "20-settings-security",
+   "url": "/settings/security",
+   "fields": 3,
+   "buttons": 4,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "安全设置",
+    "修改密码"
+   ],
+   "jargon": [],
+   "english": [],
+   "chars": 116
+  },
+  {
+   "name": "20-settings-team",
+   "url": "/settings/team",
+   "fields": 0,
+   "buttons": 1,
+   "links": 0,
+   "options": 0,
+   "headings": [],
+   "jargon": [
+    "重试"
+   ],
+   "english": [],
+   "chars": 10
+  },
+  {
+   "name": "20-settings-notifications",
+   "url": "/settings/notifications",
+   "fields": 0,
+   "buttons": 7,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "通知设置",
+    "使用说明"
+   ],
+   "jargon": [
+    "合成"
+   ],
+   "english": [
+    "Toast"
+   ],
+   "chars": 382
+  },
+  {
+   "name": "20-settings-appearance",
+   "url": "/settings/appearance",
+   "fields": 0,
+   "buttons": 11,
+   "links": 1,
+   "options": 0,
+   "headings": [
+    "外观设置",
+    "界面主题",
+    "适配创作环境的双主题工作台",
+    "强调色"
+   ],
+   "jargon": [
+    "镜头"
+   ],
+   "english": [
+    "AI"
+   ],
+   "chars": 492
+  }
+ ],
+ "clicks": [
+  "勾选同意条款",
+  "注册",
+  "导航:模型设置",
+  "使用模拟模式",
+  "测试连接",
+  "导航:小说",
+  "选择文件",
+  "确认导入",
+  "一键生成视频",
+  "开始生成"
+ ],
+ "landing": "http://127.0.0.1:3000/llm-config?welcome=1",
+ "nid": "d21a8e63-7084-40f3-9c2d-72d5613c8ea7",
+ "genSeconds": 0.002,
+ "clicksToVideo": 10,
+ "nav": "AI视频平台\n小说\n任务中心\n资产\n成片\n模型设置\n高级工具\nux343448",
+ "advMenu": "工作室\n快速开始\n故事设定\nAI 制片\n工作流\n视频生成\n配音\n时间线\n数据概览"
+}
