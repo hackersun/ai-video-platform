@@ -13,13 +13,13 @@ import { ModelCenterOverviewPanel } from './model-center-overview-panel';
 import { ModelCenterCompactNav, ModelCenterRail } from './model-center-rail';
 
 const headingBySection = {
-  overview: ['模型中心', '统一管理已接入模型、连接、任务组合和提示词版本。'],
+  overview: ['模型中心', '日常使用只需在「模型设置」填 Key；这里用于多账号、私有网关、模型切换和提示词调优。'],
   connections: ['供应商账号', '保存 API 凭证；同一供应商可按套餐、环境或账号分别管理。'],
   catalog: ['模型目录', '按能力查看已接入模型版本和认证等级。'],
   bindings: ['默认模型', '选择文本、图片、视频和配音任务实际使用的模型。'],
-  recipes: ['组合预设', '将文本、图像、视频、语音的生产组合版本化。'],
+  recipes: ['生成方案', '把文本、图像、视频、配音的模型组合保存成可复用的方案。'],
   prompts: ['提示词使用地图', '查看每个生产环节当前实际使用的模板、模型和覆盖来源。'],
-  'test-lab': ['测试实验室', '查看连接认证运行和已脱敏测试证据。'],
+  'test-lab': ['测试实验室', '查看连接检测记录和已脱敏的测试证据。'],
 } as const;
 
 export function ModelCenterShell() {

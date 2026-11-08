@@ -47,7 +47,7 @@ test('模型中心按能力展示真实目录，并提供组合检查器', async
   await page.goto('/llm-config?section=catalog&capability=video_generation');
   await expect(page.getByRole('heading', { name: '模型目录' })).toBeVisible();
   await expect(page.getByText('doubao-seedance-1-5-pro')).toBeVisible();
-  await expect(page.getByText('组合生产链')).toBeVisible();
+  await expect(page.getByRole('link', { name: '维护生成方案' })).toBeVisible();
   await expect(page.getByRole('link', { name: '视频模型' })).toBeVisible();
   const screenshot = test.info().outputPath('model-center-catalog.png');
   await page.screenshot({ path: screenshot, fullPage: true });
