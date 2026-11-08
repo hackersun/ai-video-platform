@@ -54,6 +54,7 @@ import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
 import { PipelineStatusCard } from '@/features/publication-pipelines/pipeline-status-card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { usePublicationPipeline, isPipelineActive } from '@/features/publication-pipelines/use-publication-pipeline';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { SeriesRunPanel } from '@/components/novels/series-run-panel';
@@ -453,6 +454,54 @@ export default function NovelDetailPage() {
   const searchParams = useSearchParams();
   const novelId = params.id as string;
   const publicationPipeline = usePublicationPipeline(novelId);
+  // 一键生成：产品内统一确认弹窗；准备/弹窗期间按钮禁用 + 同步 ref 防止重复弹出。
+  const [oneClickConfirm, setOneClickConfirm] = useState<{ title: string; description: string; optIn: boolean } | null>(null);
+  const [oneClickPreparing, setOneClickPreparing] = useState(false);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const oneClickGuard = useRef(false);
+  const launchOneClick = async () => {
+    const next = await publicationPipeline.start();
+    if (next) toast({ title: '已开始一键生成视频', description: '可在下方查看进度，完成后可直接播放。', type: 'success' });
+  };
+  const prepareOneClick = async () => {
+    if (oneClickGuard.current) return;
+    oneClickGuard.current = true;
+    setOneClickPreparing(true);
+    try {
+      const [billing, modelSetup] = await Promise.all([
+        apiClient.getBillingSettings(),
+        apiClient.getSimpleModelSetup().catch(() => null),
+      ]);
+      if (modelSetup?.simulation_enabled) {
+        setOneClickConfirm({ title: '模拟模式确认', description: '当前为模拟模式、不扣费：不会调用付费接口，生成的是演示素材。确认开始一键生成？', optIn: false });
+      } else if (!billing.live_calls_opt_in) {
+        setOneClickConfirm({ title: '首次付费运行确认', description: `一键生成会调用真实模型，费用计入账户上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。确认开启真实调用并开始？也可先到「模型设置」调整上限。`, optIn: true });
+      } else if (!billing.opted_in_at) {
+        setOneClickConfirm({ title: '确认真实调用', description: `将按上限 ¥${billing.per_user_cap_rmb} 发起真实调用（已用 ¥${billing.used_rmb}）。确认开始？`, optIn: false });
+      } else {
+        await launchOneClick();
+      }
+    } catch (e: any) {
+      toast({ title: '无法读取费用设置', description: e?.message || '请稍后重试或到模型设置检查', type: 'error' });
+    } finally {
+      oneClickGuard.current = false;
+      setOneClickPreparing(false);
+    }
+  };
+  const confirmOneClick = async () => {
+    const pending = oneClickConfirm;
+    if (!pending || oneClickGuard.current) return;
+    oneClickGuard.current = true;
+    try {
+      if (pending.optIn) await apiClient.updateBillingSettings({ live_calls_opt_in: true });
+      setOneClickConfirm(null);
+      await launchOneClick();
+    } catch (e: any) {
+      toast({ title: '开启真实调用失败', description: e?.message || '请稍后重试', type: 'error' });
+    } finally {
+      oneClickGuard.current = false;
+    }
+  };
   const tabParam = searchParams.get('tab');
   
   const [novel, setNovel] = useState<Novel | null>(null);
@@ -1163,6 +1212,26 @@ export default function NovelDetailPage() {
 
   return (
     <MainLayout>
+      <ConfirmDialog
+        open={oneClickConfirm !== null}
+        title={oneClickConfirm?.title || ''}
+        description={oneClickConfirm?.description || ''}
+        confirmText="开始生成"
+        loading={publicationPipeline.busy}
+        onOpenChange={(open) => { if (!open) setOneClickConfirm(null); }}
+        onConfirm={confirmOneClick}
+      />
+      <ConfirmDialog
+        open={cancelConfirmOpen}
+        title="取消本次生成？"
+        description="取消后可随时重新点击「一键生成视频」。"
+        confirmText="确认取消"
+        cancelText="继续生成"
+        destructive
+        loading={publicationPipeline.busy}
+        onOpenChange={setCancelConfirmOpen}
+        onConfirm={async () => { setCancelConfirmOpen(false); await publicationPipeline.cancel(); }}
+      />
       <div className="space-y-6">
         {/* 顶部导航 */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1188,34 +1257,8 @@ export default function NovelDetailPage() {
               <Button
                 data-testid="one-click-generate"
                 className="bg-violet-600 hover:bg-violet-700"
-                onClick={async () => {
-                  try {
-                    const [billing, modelSetup] = await Promise.all([
-                      apiClient.getBillingSettings(),
-                      apiClient.getSimpleModelSetup().catch(() => null),
-                    ]);
-                    if (modelSetup?.simulation_enabled) {
-                      const ok = window.confirm('模拟模式确认\n\n当前为模拟模式、不扣费：不会调用付费接口，生成的是演示素材。\n确认开始一键生成？');
-                      if (!ok) return;
-                    } else if (!billing.live_calls_opt_in) {
-                      const ok = window.confirm(
-                        `首次付费运行确认\n\n一键生成会调用真实模型，费用计入账户上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。\n确认开启真实调用并开始？\n\n也可先到「模型设置」调整上限。`,
-                      );
-                      if (!ok) return;
-                      await apiClient.updateBillingSettings({ live_calls_opt_in: true });
-                    } else if (!billing.opted_in_at) {
-                      // belt-and-suspenders: settings say opted-in but no timestamp
-                      const ok = window.confirm(`将按上限 ¥${billing.per_user_cap_rmb} 发起真实调用（已用 ¥${billing.used_rmb}）。确认开始？`);
-                      if (!ok) return;
-                    }
-                  } catch (e: any) {
-                    toast({ title: '无法读取费用设置', description: e?.message || '请稍后重试或到模型设置检查', type: 'error' });
-                    return;
-                  }
-                  const next = await publicationPipeline.start();
-                  if (next) toast({ title: '已开始一键生成视频', description: '可在下方查看进度，完成后可直接播放。', type: 'success' });
-                }}
-                disabled={chapters.length < 2 || publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline)}
+                onClick={() => void prepareOneClick()}
+                disabled={chapters.length < 2 || oneClickPreparing || oneClickConfirm !== null || publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline)}
               >
                 {publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline) ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -1259,7 +1302,7 @@ export default function NovelDetailPage() {
           error={publicationPipeline.error}
           onPause={() => { publicationPipeline.pause(); }}
           onResume={() => { publicationPipeline.resume(); }}
-          onCancel={() => { if (window.confirm('确定取消本次生成吗？')) publicationPipeline.cancel(); }}
+          onCancel={() => setCancelConfirmOpen(true)}
         />
 
         {/* 作品概览 */}
