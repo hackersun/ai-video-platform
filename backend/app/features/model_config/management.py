@@ -181,7 +181,10 @@ async def catalog_page(
     # 展示层：隐藏测试遗留供应商下的模型（复用 P0 规则；不影响按 id 解析已有配置）
     from app.services.simple_model_setup import is_internal_test_artifact
 
-    models = [item for item in catalog.models if not is_internal_test_artifact(item.provider_name, item.provider_code)]
+    models = [
+        item for item in catalog.models
+        if not is_internal_test_artifact(item.provider_name, item.provider_code, item.model_name, item.api_model_id)
+    ]
     start = (page - 1) * page_size
     items = []
     for item in models[start:start + page_size]:

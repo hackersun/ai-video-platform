@@ -39,3 +39,28 @@ def test_provider_page_hides_live_uuid_and_contract_providers_but_keeps_real_one
     page = asyncio.run(management_repository.provider_page(_FakeDb(rows), 1, 20))
     assert [item["display_name"] for item in page["items"]] == ["火山引擎", "DeepSeek 官方"]
     assert page["meta"]["total"] == 2
+
+
+def test_catalog_page_hides_uuid_named_models_and_test_providers(monkeypatch):
+    from app.features.model_config import management
+
+    def _model(provider_name, provider_code, model_name, api_model_id):
+        return SimpleNamespace(
+            provider_name=provider_name, provider_code=provider_code, model_name=model_name,
+            api_model_id=api_model_id, capabilities={"video_generation"},
+        )
+
+    models = [
+        _model("火山引擎", "volcano", "Seedance 2.0", "doubao-seedance-2-0-260128"),
+        _model("火山引擎", "volcano", "custom-video-c154a4b1-3b65-4d6e-9f00-000000000000", "doubao-custom-video-route"),
+        _model("live-video-e0e55e44-df7f-4a0c-970c-7053c05a8a89", "live-video-x", "video", "api-video"),
+    ]
+
+    async def _fake_catalog(*args, **kwargs):
+        return SimpleNamespace(models=models)
+
+    monkeypatch.setattr(management, "list_product_catalog", _fake_catalog)
+    monkeypatch.setattr(management, "asdict", lambda item: dict(vars(item)))
+    page = asyncio.run(management.catalog_page(None, "user-1", 1, 20))
+    assert [item["model_name"] for item in page["items"]] == ["Seedance 2.0"]
+    assert page["meta"]["total"] == 1
