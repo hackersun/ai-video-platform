@@ -118,10 +118,30 @@ export default function NewNovelPage() {
       const response = await fetchWithAuth(`${API_BASE}/llm/configs?include_model_center_defaults=true`);
       if (!response.ok) return;
       const configs = await response.json();
-      const list = Array.isArray(configs) ? configs : [];
-      setModelConfigs(list);
+      const list: SavedModelConfig[] = Array.isArray(configs) ? configs : [];
       // 以「模型设置」当前生效的配置为准（与小说详情页、一键生成口径一致）。
       const simple = await apiClient.getSimpleModelSetup().catch(() => null);
+      // 模型设置生效的配置（如模拟模式）可能不在历史配置列表中，补入后卡片展示其真实状态，而不是回退到过期的失败配置。
+      (['text', 'image'] as const).forEach((cap) => {
+        const current = simple?.capabilities?.[cap];
+        if (!current?.config_id || list.some((config) => config.id === current.config_id)) return;
+        list.unshift({
+          id: current.config_id,
+          model_id: current.model_id || '',
+          api_model_id: current.api_model_id || undefined,
+          model_capabilities: [cap],
+          provider_id: current.provider_id || '',
+          provider_name: current.provider_name || undefined,
+          model_name: current.model_name || current.model_id || '',
+          name: `${current.label || cap} · ${current.provider_name || current.provider_id || ''}`,
+          is_default: true,
+          test_status: current.test_status,
+          test_message: current.test_message,
+          tested_at: current.tested_at,
+          key_available: true,
+        });
+      });
+      setModelConfigs([...list]);
       const effective = (cap: 'text' | 'image') => {
         const id = simple?.capabilities?.[cap]?.config_id;
         return id && list.some((config: SavedModelConfig) => config.id === id) ? id : getDefaultConfigForCapability(list, cap)?.id;
