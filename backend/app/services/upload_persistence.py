@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from app.core.upload_stream import EmptyUpload, copy_upload
+from app.core.upload_stream import EmptyUpload, UploadTooLarge, copy_upload
 from app.services import media_persistence as media
 from app.services.novel_import_service import parse_novel_import, validate_import_filename
 
@@ -58,5 +58,8 @@ async def parse_uploaded_novel(upload):
             return parse_novel_import(upload.filename, target.read_bytes())
     except EmptyUpload as exc:
         raise ValueError("上传文件为空") from exc
+    except UploadTooLarge as exc:
+        limit_mb = max(1, NOVEL_IMPORT_MAX_BYTES // (1024 * 1024))
+        raise ValueError(f"小说文件超过 {limit_mb}MB 大小限制，请拆分后分批导入") from exc
     finally:
         await upload.close()
