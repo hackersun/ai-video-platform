@@ -11,7 +11,7 @@ function errorText(error: unknown) {
 }
 
 /** 模型设置页：用量 / 上限 / 真实调用开关（R03）。 */
-export function BillingSpendCard() {
+export function BillingSpendCard({ refreshToken = 0 }: { refreshToken?: number } = {}) {
   const [settings, setSettings] = useState<BillingSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -34,7 +34,7 @@ export function BillingSpendCard() {
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh, refreshToken]);
 
   const save = async (patch: Partial<BillingSettings>) => {
     setSaving(true);

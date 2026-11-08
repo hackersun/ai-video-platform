@@ -150,3 +150,40 @@ export function getDefaultConfigForCapability(configs: SavedModelConfig[], capab
 export function getVerifiedConfigsByCapability(configs: SavedModelConfig[], capability: ModelCapability) {
   return getConfigsByCapability(configs, capability).filter(config => config.test_status === 'success' && config.key_available !== false);
 }
+
+const DEMO_MODEL_NAMES: Record<string, string> = {
+  text: '演示文本模型',
+  image: '演示图片模型',
+  video: '演示视频模型',
+  tts: '演示配音模型',
+  audio: '演示配音模型',
+};
+
+/** 是否为本地模拟（演示）模型：provider 为 deterministic-* 或名称以 Deterministic 开头。 */
+export function isDemoModel(model?: { provider_id?: string | null; model_name?: string | null; name?: string | null; model_id?: string | null } | null) {
+  if (!model) return false;
+  const provider = String(model.provider_id || '').toLowerCase();
+  const name = String(model.model_name || model.name || model.model_id || '').toLowerCase();
+  return provider.startsWith('deterministic') || name.startsWith('deterministic');
+}
+
+/** 面向用户的模型名：演示模型显示为「演示文本模型」等白话名称，其余原样。 */
+export function friendlyModelName(
+  model?: { provider_id?: string | null; model_name?: string | null; name?: string | null; model_id?: string | null } | null,
+  capability?: string,
+) {
+  if (!model) return '';
+  if (isDemoModel(model)) {
+    const raw = String(model.model_name || model.name || model.model_id || '').toLowerCase();
+    const cap = capability || (['text', 'image', 'video', 'tts'].find((c) => raw.includes(c)) ?? '');
+    return DEMO_MODEL_NAMES[cap] || '演示模型';
+  }
+  return String(model.model_name || model.name || model.model_id || '');
+}
+
+/** 面向用户的服务商名：模拟模式显示为「演示模式（不扣费）」。 */
+export function friendlyProviderName(provider?: { provider_id?: string | null; provider_name?: string | null } | null) {
+  if (!provider) return '';
+  if (String(provider.provider_id || '').toLowerCase().startsWith('deterministic') || provider.provider_name === '模拟模式') return '演示模式（不扣费）';
+  return String(provider.provider_name || provider.provider_id || '');
+}

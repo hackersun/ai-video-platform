@@ -257,10 +257,18 @@ function simpleState(configured: boolean, verified = false) {
   };
 }
 
-test('model settings: one API key, four capability cards, test connection, secret never shown', async ({ page }) => {
+test('model settings: one API key, save-and-check in one click, live calls on with default caps, secret never shown', async ({ page }) => {
   let saved: any = null;
   let configured = false;
   let verified = false;
+  let billingPut: any = null;
+  await page.route('**/api/v1/billing/settings', async (route) => {
+    if (route.request().method() === 'PUT') billingPut = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      live_calls_opt_in: Boolean(billingPut?.live_calls_opt_in), opted_in_at: null,
+      per_user_cap_rmb: billingPut?.per_user_cap_rmb || '100', per_pipeline_cap_rmb: billingPut?.per_pipeline_cap_rmb || '20', used_rmb: '0',
+    }) });
+  });
   await page.route('**/api/v1/model-center/simple-setup/test', async (route) => {
     verified = true;
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -278,28 +286,103 @@ test('model settings: one API key, four capability cards, test connection, secre
 
   await page.goto('/llm-config');
   await expect(page.getByRole('heading', { name: '模型设置' })).toBeVisible();
+  await expect(page.getByText('尚未完成设置')).toBeVisible();
+  // 四项模型默认折叠为一行摘要，「修改模型」展开后仍可逐项调整。
+  await expect(page.getByTestId('model-setup-summary')).toContainText('文本：文本推荐模型');
+  await expect(page.getByTestId('model-card-text')).toHaveCount(0);
+  await page.getByRole('button', { name: '修改模型' }).click();
   for (const label of ['文本', '图像', '视频', '语音']) {
     await expect(page.getByRole('heading', { name: label, exact: true })).toBeVisible();
   }
-  await expect(page.getByText('尚未完成设置')).toBeVisible();
+  // 火山语音的 App ID 只在缺失导致检测失败时才要求。
+  await expect(page.getByLabel('语音 App ID')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '测试连接' })).toHaveCount(0);
 
   await page.getByLabel('API Key', { exact: true }).fill(SECRET);
-  await page.getByRole('button', { name: '保存' }).click();
-  await expect(page.getByText('已保存。建议点击「测试连接」确认可用。')).toBeVisible();
+  await page.getByRole('button', { name: '保存并检测' }).click();
+  await expect(page.getByTestId('model-setup-notice')).toContainText('已保存并检测：4/4 项可用');
+  await expect(page.getByTestId('model-setup-notice')).toContainText('已开启真实调用：每次生成最多 ¥50，账户累计最多 ¥200');
   expect(saved.provider_id).toBe('volcano');
   expect(saved.api_key).toBe(SECRET);
   expect(Object.keys(saved.capabilities).sort()).toEqual(['image', 'text', 'tts', 'video']);
+  expect(billingPut).toEqual({ live_calls_opt_in: true, per_pipeline_cap_rmb: '50', per_user_cap_rmb: '200' });
   await expect(page.getByLabel('API Key', { exact: true })).toHaveValue('');
   await expect(page.getByLabel('API Key', { exact: true })).toHaveAttribute('placeholder', /已保存/);
-
-  await page.getByRole('button', { name: '测试连接' }).click();
-  await expect(page.getByText('测试完成：4/4 项可用')).toBeVisible();
   await expect(page.getByTestId('model-test-video')).toContainText('连接成功');
   await expect(page.getByText('全部就绪')).toBeVisible();
   expect(await page.content()).not.toContain(SECRET);
 
+  await page.getByRole('button', { name: '费用上限（可选）' }).click();
+  await expect(page.getByLabel('开启真实模型调用')).toBeChecked();
+  await expect(page.getByLabel('账户费用上限')).toHaveValue('200');
+
   await page.getByRole('link', { name: '高级设置' }).click();
   await expect(page).toHaveURL(/section=overview/);
+});
+
+test('model settings: failed voice check asks for the missing App ID only then, live calls stay off', async ({ page }) => {
+  let billingPut: any = null;
+  await page.route('**/api/v1/billing/settings', async (route) => {
+    if (route.request().method() === 'PUT') billingPut = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ live_calls_opt_in: false, per_user_cap_rmb: '100', per_pipeline_cap_rmb: '20', used_rmb: '0' }) });
+  });
+  await page.route('**/api/v1/model-center/simple-setup/test', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      results: {
+        text: { success: true, message: '连接成功' }, image: { success: true, message: '连接成功' }, video: { success: true, message: '连接成功' },
+        tts: { success: false, message: '语音接口缺少 App ID：请在火山语音控制台获取后填写' },
+      },
+      state: simpleState(true, false),
+    }) });
+  });
+  await page.route('**/api/v1/model-center/simple-setup', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(simpleState(route.request().method() === 'PUT')) });
+  });
+  await page.goto('/llm-config');
+  await expect(page.getByLabel('语音 App ID')).toHaveCount(0);
+  await page.getByLabel('API Key', { exact: true }).fill(SECRET);
+  await page.getByRole('button', { name: '保存并检测' }).click();
+  await expect(page.getByTestId('model-setup-notice')).toContainText('已保存并检测：3/4 项可用');
+  await expect(page.getByTestId('model-test-tts')).toContainText('缺少 App ID');
+  await expect(page.getByLabel('语音 App ID')).toBeVisible();
+  expect(billingPut).toBeNull();
+});
+
+test('welcome: only two choices; free trial saves, self-checks and jumps to novel import', async ({ page }) => {
+  let simulationSaved = false;
+  await page.route('**/api/v1/model-center/simple-setup/test', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      results: Object.fromEntries(['text', 'image', 'video', 'tts'].map((c) => [c, { success: true, message: '演示模式可用' }])),
+      state: { ...simpleState(true, true), simulation_available: true, simulation_enabled: true },
+    }) });
+  });
+  await page.route('**/api/v1/model-center/simple-setup', async (route) => {
+    if (route.request().method() === 'PUT') simulationSaved = route.request().postDataJSON().simulation === true;
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...simpleState(simulationSaved, simulationSaved), simulation_available: true, simulation_enabled: simulationSaved }) });
+  });
+  await page.route('**/api/v1/novels**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.goto('/llm-config?welcome=1');
+  const choice = page.getByTestId('onboarding-choice');
+  await expect(choice.getByRole('button')).toHaveCount(2);
+  await expect(choice.getByRole('button', { name: /免费试用/ })).toBeVisible();
+  await expect(choice.getByRole('button', { name: /我有 API Key/ })).toBeVisible();
+  await expect(page.getByLabel('API Key', { exact: true })).toHaveCount(0);
+  await choice.getByRole('button', { name: /免费试用/ }).click();
+  await expect(page).toHaveURL(/\/novels\?start=paste/);
+  expect(simulationSaved).toBe(true);
+});
+
+test('welcome: "我有 API Key" reveals only the key form', async ({ page }) => {
+  await page.route('**/api/v1/model-center/simple-setup', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...simpleState(false), simulation_available: true, simulation_enabled: false }) });
+  });
+  await page.goto('/llm-config?welcome=1');
+  await page.getByTestId('onboarding-choice').getByRole('button', { name: /我有 API Key/ }).click();
+  await expect(page.getByTestId('onboarding-choice')).toHaveCount(0);
+  await expect(page.getByLabel('API Key', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '保存并检测' })).toBeVisible();
 });
 
 test('top navigation has one canonical entry per function and legacy entries redirect', async ({ page }) => {

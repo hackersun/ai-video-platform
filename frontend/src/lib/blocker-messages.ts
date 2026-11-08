@@ -2,7 +2,7 @@
 export interface BlockerInfo { title: string; hint: string; href?: string; action?: string }
 
 const MAP: Record<string, BlockerInfo> = {
-  models_not_configured: { title: '还没有配置可用的模型', hint: '请到「模型设置」填写 API Key 并测试连接。', href: '/llm-config#model-settings-key', action: '去模型设置' },
+  models_not_configured: { title: '还没有配置可用的模型', hint: '请到「模型设置」粘贴 API Key 并点击「保存并检测」，或选择「免费试用」。', href: '/llm-config#model-settings-key', action: '去模型设置' },
   model_bindings_not_fresh: { title: '模型配置需要重新验证', hint: '模型配置已变化或过期，请在「模型设置」重新测试。', href: '/llm-config', action: '去模型设置' },
   model_bindings_missing: { title: '还没有配置可用的模型', hint: '请先在「模型设置」配置模型。', href: '/llm-config', action: '去模型设置' },
   provider_binding_not_ready: { title: '模型服务暂不可用', hint: '请在「模型设置」检查服务状态。', href: '/llm-config', action: '去模型设置' },
