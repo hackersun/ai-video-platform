@@ -50,6 +50,11 @@ test('演示模式一键生成不弹确认、连点只提交一次，排队无�
 
   const card = page.getByTestId('pipeline-status-card');
   await expect(card).toContainText('排队中，等待处理');
+  // 进度只显示 4 个大阶段，9 个细分步骤收在「查看详情」里。
+  await expect(page.getByTestId('pipeline-phases').getByRole('listitem')).toHaveText(['准备', '写剧本', '做画面和配音', '合成视频']);
+  await expect(page.getByRole('list', { name: '详细步骤' })).toBeHidden();
+  await page.getByTestId('pipeline-step-details').getByText('查看详情').click();
+  await expect(page.getByRole('list', { name: '详细步骤' }).getByRole('listitem')).toHaveCount(9);
   await expect(page.getByTestId('pipeline-wait-hint')).toHaveCount(0);
   await expect(page.getByTestId('pipeline-wait-hint')).toContainText('处理节点繁忙或暂未启动', { timeout: 35_000 });
   expect(posts).toBe(1);

@@ -6,7 +6,7 @@ import { AlertCircle, CheckCircle2, Film, Loader2, Pause, Play, X } from 'lucide
 import { Button } from '@/components/ui/button';
 import { resolveMediaUrl, type PublicationPipeline } from '@/lib/api-client';
 import { blockerInfo } from '@/lib/blocker-messages';
-import { PIPELINE_STEPS, stageLabel } from '@/lib/stage-labels';
+import { PIPELINE_PHASES, PIPELINE_STEPS, pipelinePhaseIndex, stageLabel } from '@/lib/stage-labels';
 import { isPipelineActive } from './use-publication-pipeline';
 import { AiGeneratedLabel } from '@/features/legal/ai-generated-label';
 
@@ -68,7 +68,7 @@ export function PipelineStatusCard({
   const blocker = needsHelp ? blockerInfo(pipeline.blocker_code, pipeline.blocker_detail) : null;
   const videoUrl = resolveMediaUrl(pipeline.final_video_url);
   const queued = pipeline.status === 'queued' || (active && pipeline.stage === 'accepted');
-  const statusText = done ? '已完成' : pipeline.status === 'paused' ? '已暂停' : pipeline.status === 'cancelled' ? '已取消' : needsHelp ? '需处理' : queued ? '排队中，等待处理' : `进行中：${stageLabel(STAGE_ALIAS[pipeline.stage] || pipeline.stage)}`;
+  const statusText = done ? '已完成' : pipeline.status === 'paused' ? '已暂停' : pipeline.status === 'cancelled' ? '已取消' : needsHelp ? '需处理' : queued ? '排队中，等待处理' : `进行中：${PIPELINE_PHASES[pipelinePhaseIndex(STAGE_ALIAS[pipeline.stage] || pipeline.stage)].label}`;
   const waitHint = !active ? '' : queued && stalledMs >= QUEUE_HINT_AFTER_MS
     ? '处理节点繁忙或暂未启动。任务已保存，节点恢复后会自动开始，无需重复提交。'
     : !queued && stalledMs >= STALL_HINT_AFTER_MS ? '当前步骤暂无新进展，正在等待处理节点响应；中断的任务会被自动接管继续。' : '';
@@ -88,13 +88,24 @@ export function PipelineStatusCard({
         </div>
       </div>
 
-      <ol className="grid grid-cols-3 gap-1 sm:grid-cols-5 lg:grid-cols-9" aria-label="生成进度">
-        {PIPELINE_STEPS.map((step, i) => {
-          const state = i < current || done ? 'done' : i === current ? (needsHelp ? 'blocked' : 'current') : 'todo';
+      <ol className="grid grid-cols-2 gap-1 sm:grid-cols-4" aria-label="生成进度" data-testid="pipeline-phases">
+        {PIPELINE_PHASES.map((phase, i) => {
+          const currentPhase = done ? PIPELINE_PHASES.length : pipelinePhaseIndex(PIPELINE_STEPS[current]);
+          const state = i < currentPhase ? 'done' : i === currentPhase ? (needsHelp ? 'blocked' : 'current') : 'todo';
           const cls = state === 'done' ? 'bg-emerald-500/25 text-emerald-100' : state === 'current' ? 'bg-violet-500/40 text-white' : state === 'blocked' ? 'bg-amber-500/40 text-white' : 'bg-white/5 text-white/40';
-          return <li key={step} className={`rounded px-2 py-1 text-center text-xs ${cls}`}>{stageLabel(step)}</li>;
+          return <li key={phase.id} className={`rounded px-2 py-1 text-center text-xs ${cls}`}>{phase.label}</li>;
         })}
       </ol>
+      <details className="text-xs text-white/50" data-testid="pipeline-step-details">
+        <summary className="cursor-pointer select-none">查看详情</summary>
+        <ol className="mt-2 grid grid-cols-3 gap-1 sm:grid-cols-5 lg:grid-cols-9" aria-label="详细步骤">
+          {PIPELINE_STEPS.map((step, i) => {
+            const state = i < current || done ? 'done' : i === current ? (needsHelp ? 'blocked' : 'current') : 'todo';
+            const cls = state === 'done' ? 'bg-emerald-500/15 text-emerald-100/80' : state === 'current' ? 'bg-violet-500/30 text-white' : state === 'blocked' ? 'bg-amber-500/30 text-white' : 'bg-white/5 text-white/30';
+            return <li key={step} className={`rounded px-2 py-1 text-center ${cls}`}>{stageLabel(step)}</li>;
+          })}
+        </ol>
+      </details>
 
       {waitHint && <p data-testid="pipeline-wait-hint" role="status" className="rounded-md bg-black/20 p-3 text-sm text-white/80">{waitHint}</p>}
       {blocker && (

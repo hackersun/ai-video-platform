@@ -22,3 +22,16 @@ export const PIPELINE_STEPS = [
   'accepted', 'ensuring_run', 'run_front_to_shots', 'run_media_quality', 'episode_rendering',
   'book_assembling', 'publication_gating', 'publishing', 'succeeded',
 ] as const;
+
+/** 面向新手的 4 个大阶段：把 9 个流水线步骤合并展示，细节放在「查看详情」。 */
+export const PIPELINE_PHASES = [
+  { id: 'prepare', label: '准备', steps: ['accepted', 'ensuring_run', 'ensuring_plan'] },
+  { id: 'script', label: '写剧本', steps: ['run_front_to_shots'] },
+  { id: 'media', label: '做画面和配音', steps: ['run_media_quality', 'episode_rendering'] },
+  { id: 'assemble', label: '合成视频', steps: ['book_assembling', 'publication_gating', 'publishing', 'succeeded'] },
+] as const;
+
+export function pipelinePhaseIndex(stage?: string | null) {
+  const idx = PIPELINE_PHASES.findIndex((phase) => (phase.steps as readonly string[]).includes(stage || ''));
+  return idx < 0 ? 0 : idx;
+}
