@@ -30,6 +30,30 @@ def _legacy_response_summary(output: Any) -> Any:
     return None
 
 
+_AUTH_HINTS = ("401", "403", "unauthorized", "forbidden", "authentication", "invalid api key", "api key", "apikey", "access denied")
+_NETWORK_HINTS = ("timeout", "timed out", "connecterror", "connection refused", "name or service not known", "nodename nor servname")
+
+
+def _error_status_code(error: BaseException) -> int | None:
+    for candidate in (getattr(error, "status_code", None), getattr(getattr(error, "response", None), "status_code", None)):
+        if isinstance(candidate, int):
+            return candidate
+    return None
+
+
+def connection_failure_message(error: BaseException) -> str:
+    """Map a provider exception to an actionable, secret-free Chinese hint."""
+    status = _error_status_code(error)
+    text = f"{type(error).__name__} {error}".lower()
+    if status in (401, 403) or any(hint in text for hint in _AUTH_HINTS):
+        return "供应商连接测试失败：API Key 无效或无权限，请检查后重新保存"
+    if status == 429:
+        return "供应商连接测试失败：请求过于频繁或额度不足，请稍后重试"
+    if isinstance(error, TimeoutError) or any(hint in text for hint in _NETWORK_HINTS):
+        return "供应商连接测试失败：无法连接供应商，请检查网络或自定义 API 地址"
+    return "供应商连接测试失败"
+
+
 async def connection_test(
     operation: Callable[[], Awaitable[DriverSubmission]],
     success_message: str,
@@ -38,7 +62,7 @@ async def connection_test(
         submission = await operation()
     except Exception as error:
         return DriverTestResult(
-            "failed", "供应商连接测试失败", {"provider_error_type": type(error).__name__},
+            "failed", connection_failure_message(error), {"provider_error_type": type(error).__name__},
         )
     evidence = {"submission_status": submission.status}
     if submission.status not in _ACCEPTED_SUBMISSION_STATUSES or not (
