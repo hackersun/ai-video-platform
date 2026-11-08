@@ -167,9 +167,17 @@ def _resolve_entity(
     return entity, matches, verified
 
 
+def _fresh_voice_binding(voice: VoiceApprovalContext, snapshot: dict[str, str]) -> dict[str, Any]:
+    return {"voice_id": voice.selection["voice_id"], "version": int(voice.selection["version"]),
+        "status": "locked", "provider_id": voice.provider_id, "config_id": voice.config.id,
+        "db_model_id": voice.model.id, "api_model_id": voice.model.model_id,
+        "tested_at": snapshot["tested_at"]}
+
+
 def _accept_existing(
     entity: StoryEntity, matches: list[StoryEntity], voice: VoiceApprovalContext | None,
     snapshot: dict[str, str] | None, evidence_hash: str,
+    evidence: list[dict[str, Any]] | None = None,
 ) -> bool:
     if not matches:
         return False
@@ -183,6 +191,14 @@ def _accept_existing(
             and rule.get("evidence_hash") == evidence_hash
             and not existing_voice
         )
+    if status == APPROVED and entity.source != "system" and not existing_voice and voice is not None and snapshot:
+        # Approved by extraction/review but never voice-bound (typical for every
+        # additional speaking character): bind the fresh default TTS voice without
+        # touching the approval record, instead of blocking the whole run.
+        attrs["voice_binding"] = _fresh_voice_binding(voice, snapshot)
+        attrs.update({"speaking": True, "dialogue_evidence": list(evidence or []), "dialogue_evidence_hash": evidence_hash})
+        entity.attributes = attrs
+        return True
     if status == APPROVED and entity.source != "system":
         expected = {"config_id": voice.config.id, "provider_id": voice.provider_id,
                     "db_model_id": voice.model.id, "api_model_id": voice.model.model_id,
@@ -235,10 +251,7 @@ def _apply_approval(command: RuleApprovalCommand) -> None:
             "metadata_hash": item.get("metadata_hash")}) for item in history})},
         "speaking": True, "dialogue_evidence": evidence, "dialogue_evidence_hash": evidence_hash})
     if voice and snapshot:
-        attrs["voice_binding"] = {"voice_id": voice.selection["voice_id"], "version": int(voice.selection["version"]),
-            "status": "locked", "provider_id": voice.provider_id, "config_id": voice.config.id,
-            "db_model_id": voice.model.id, "api_model_id": voice.model.model_id,
-            "tested_at": snapshot["tested_at"]}
+        attrs["voice_binding"] = _fresh_voice_binding(voice, snapshot)
     else:
         attrs.pop("voice_binding", None)
     chapter = next(item for item in chapters if item.id == evidence[0]["chapter_id"])
@@ -329,7 +342,7 @@ async def _prepare_explicit_dialogue_facts(
         evidence_hash = _fingerprint({"speaker": speaker, "evidence": evidence})
         entity, matches, verified = _resolve_entity(
             _speaker_matches(existing, speaker), speaker, evidence, evidence_hash, run, chapters)
-        if _accept_existing(entity, matches, voice, tts_snapshot, evidence_hash):
+        if _accept_existing(entity, matches, voice, tts_snapshot, evidence_hash, evidence):
             _ensure_local_mentions(db, entity, speaker, evidence, chapters, existing, run.user_id)
             prepared.append(entity)
             continue

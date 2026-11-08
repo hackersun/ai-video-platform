@@ -1031,6 +1031,29 @@ async def test_manual_approved_entity_is_read_only_and_must_match_fresh_tts_bind
     assert entity.attributes["voice_binding"]["version"] == 7
 
 @pytest.mark.asyncio
+async def test_auto_approved_speaker_without_voice_gets_fresh_binding_instead_of_blocking(db_session: AsyncSession) -> None:
+    run = await _fixture(db_session)
+    await _explicit_dialogue_source(db_session, run)
+    await _fresh_bindings(db_session, run)
+    entity = await db_session.scalar(select(StoryEntity).where(
+        StoryEntity.novel_id == run.novel_id, StoryEntity.entity_type == "character"))
+    attrs = dict(entity.attributes)
+    attrs.pop("voice_binding", None)
+    original_approval = dict(attrs["approval_record"])
+    entity.attributes = attrs
+    entity.source = "deterministic"
+    set_entity_review_status(entity, APPROVED, changed_by=run.user_id, reason="entity_extraction_v2:auto_approve")
+    await db_session.commit()
+
+    await prepare_story_locks(db_session, run)
+    await db_session.refresh(entity)
+    selection = run.run_metadata["voice_selection"]
+    assert entity.attributes["approval_record"] == original_approval
+    assert entity.attributes["voice_binding"]["voice_id"] == selection["voice_id"]
+    assert entity.attributes["voice_binding"]["tested_at"] == selection["tested_at"]
+    assert get_entity_review_status(entity) == APPROVED
+
+@pytest.mark.asyncio
 async def test_voice_selection_is_required_and_exposes_only_safe_bound_options_without_writes(db_session: AsyncSession) -> None:
     run = await _fixture(db_session)
     novel_id = run.novel_id
