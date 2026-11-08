@@ -512,6 +512,18 @@ export default function NovelDetailPage() {
   const [videoSummaries, setVideoSummaries] = useState<VideoJobSummary[]>([]);
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
   const [seriesPlan, setSeriesPlan] = useState<SeriesPlan | null>(null);
+  // 分步制作（专业）入口默认折叠；打开后记住偏好。
+  const [stepMode, setStepMode] = useState(false);
+  useEffect(() => {
+    try { setStepMode(window.localStorage.getItem('avp.novel.stepMode') === '1'); } catch { /* ignore */ }
+  }, []);
+  const toggleStepMode = () => {
+    setStepMode((current) => {
+      const next = !current;
+      try { window.localStorage.setItem('avp.novel.stepMode', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [productionEntry, setProductionEntry] = useState<NovelProductionEntry | null | undefined>(undefined);
   const [entityReviewSummary, setEntityReviewSummary] = useState<any | null>(null);
   const [storyStateMachine, setStoryStateMachine] = useState<StoryStateMachine | null>(null);
@@ -1275,11 +1287,15 @@ export default function NovelDetailPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => router.push(`/novels/${novelId}/asset-analysis`)}>
-                    <Sparkles className="w-4 h-4 mr-2" />AI 分析制作资产
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setCoverStyleDialogOpen(true)} disabled={generatingCover}>
                     <ImageIcon className="w-4 h-4 mr-2" />生成封面
+                  </DropdownMenuItem>
+                  <div className="px-2 pb-1 pt-2 text-xs text-white/40">分步制作（专业）</div>
+                  <DropdownMenuItem data-testid="novel-step-mode-toggle" onClick={toggleStepMode}>
+                    <ListChecks className="w-4 h-4 mr-2" />{stepMode ? '收起分步制作面板' : '展开分步制作面板'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => router.push(`/novels/${novelId}/asset-analysis`)}>
+                    <Sparkles className="w-4 h-4 mr-2" />AI 分析制作资产
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => router.push(`/video-generation?novel_id=${novelId}`)}>
                     <Film className="w-4 h-4 mr-2" />单集视频制作
@@ -1388,6 +1404,9 @@ export default function NovelDetailPage() {
                   ))}
                 </div>
 
+                {stepMode && (
+                  <div data-testid="novel-step-panel" className="space-y-3 rounded-lg border border-white/10 bg-black/10 p-3">
+                    <div className="text-xs text-white/50">分步制作（专业）：逐步生成资产、剧本和分镜。日常出片直接用「一键生成视频」即可。</div>
                 <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium text-cyan-50">
                     <Sparkles className="h-4 w-4" />
@@ -1436,6 +1455,8 @@ export default function NovelDetailPage() {
                     </div>
                   </Link>
                 </div>
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>
@@ -1670,7 +1691,7 @@ export default function NovelDetailPage() {
                                 编辑
                               </Link>
                             </Button>
-                            <Button
+                            {stepMode && <Button
                               size="sm"
                               variant="outline"
                               onClick={() => generateScriptForChapter(chapter.id)}
@@ -1679,7 +1700,7 @@ export default function NovelDetailPage() {
                             >
                               {generatingScriptChapterId === chapter.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
                               生成剧本
-                            </Button>
+                            </Button>}
                             <Button asChild size="sm" variant="ghost">
                               <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapter.id}`}>
                                 <FileText className="w-4 h-4 mr-1" />
@@ -2324,37 +2345,6 @@ export default function NovelDetailPage() {
           </TabsContent>
         </Tabs>
 
-        {/* 底部快捷入口 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-violet-600/20 to-purple-600/20 border-violet-500/30">
-            <CardContent className="p-4 text-center">
-              <Film className="w-8 h-8 mx-auto mb-2 text-violet-400" />
-              <div className="text-white font-medium">视频生成</div>
-              <div className="text-white/60 text-sm">基于剧本生成视频</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border-blue-500/30">
-            <CardContent className="p-4 text-center">
-              <Volume2 className="w-8 h-8 mx-auto mb-2 text-blue-400" />
-              <div className="text-white font-medium">语音合成</div>
-              <div className="text-white/60 text-sm">TTS语音生成</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-green-600/20 to-emerald-600/20 border-green-500/30">
-            <CardContent className="p-4 text-center">
-              <Play className="w-8 h-8 mx-auto mb-2 text-green-400" />
-              <div className="text-white font-medium">音视频合成</div>
-              <div className="text-white/60 text-sm">视频+音频合并</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-orange-600/20 to-amber-600/20 border-orange-500/30">
-            <CardContent className="p-4 text-center">
-              <ImageIcon className="w-8 h-8 mx-auto mb-2 text-orange-400" />
-              <div className="text-white font-medium">封面生成</div>
-              <div className="text-white/60 text-sm">AI生成小说封面</div>
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </MainLayout>
   );
