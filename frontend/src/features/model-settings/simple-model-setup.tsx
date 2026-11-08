@@ -23,7 +23,7 @@ const HINTS: Record<SimpleCapability, string> = {
   tts: '旁白与角色配音',
 };
 
-type Draft = { model_id: string; api_key: string; voice: string };
+type Draft = { model_id: string; api_key: string; voice: string; app_id: string };
 
 export function statusOf(card?: SimpleModelCard | null) {
   if (!card || !card.config_id) return { tone: 'empty', text: '未配置' } as const;
@@ -56,8 +56,8 @@ export function SimpleModelSetup() {
   const [providerId, setProviderId] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [drafts, setDrafts] = useState<Record<SimpleCapability, Draft>>({
-    text: { model_id: '', api_key: '', voice: '' }, image: { model_id: '', api_key: '', voice: '' },
-    video: { model_id: '', api_key: '', voice: '' }, tts: { model_id: '', api_key: '', voice: '' },
+    text: { model_id: '', api_key: '', voice: '', app_id: '' }, image: { model_id: '', api_key: '', voice: '', app_id: '' },
+    video: { model_id: '', api_key: '', voice: '', app_id: '' }, tts: { model_id: '', api_key: '', voice: '', app_id: '' },
   });
   const [results, setResults] = useState<SimpleModelSetupTestResult['results']>({});
 
@@ -81,6 +81,7 @@ export function SimpleModelSetup() {
           model_id: card?.model_id || current[cap].model_id || preset,
           api_key: '',
           voice: card?.extra_params?.default_voice_id || current[cap].voice || '',
+          app_id: card?.extra_params?.app_id || current[cap].app_id || '',
         };
       }
       return out;
@@ -131,7 +132,12 @@ export function SimpleModelSetup() {
         if (!d.model_id) continue;
         capabilities[cap] = { model_id: d.model_id };
         if (d.api_key.trim()) capabilities[cap].api_key = d.api_key.trim();
-        if (cap === 'tts') capabilities[cap].extra_params = d.voice.trim() ? { default_voice_id: d.voice.trim() } : {};
+        if (cap === 'tts') {
+          const extra: Record<string, string> = {};
+          if (d.voice.trim()) extra.default_voice_id = d.voice.trim();
+          if (d.app_id.trim()) extra.app_id = d.app_id.trim();
+          capabilities[cap].extra_params = extra;
+        }
       }
       const next = await apiClient.saveSimpleModelSetup({ provider_id: providerId || null, api_key: apiKey.trim() || null, capabilities });
       setApiKey('');
@@ -279,6 +285,12 @@ export function SimpleModelSetup() {
                 <input aria-label={`${card?.label}单独 API Key`} type="password" autoComplete="off" value={draft.api_key}
                   onChange={(e) => setDrafts((c) => ({ ...c, [cap]: { ...c[cap], api_key: e.target.value } }))}
                   placeholder={`${selected?.provider_name} 的 API Key（已保存则留空）`}
+                  className="mt-2 h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" />
+              )}
+              {cap === 'tts' && (selected?.provider_id || providerId).toLowerCase().includes('volc') && (
+                <input aria-label="语音 App ID" value={draft.app_id}
+                  onChange={(e) => setDrafts((c) => ({ ...c, tts: { ...c.tts, app_id: e.target.value } }))}
+                  placeholder="App ID（火山语音必填，在火山引擎语音控制台获取）"
                   className="mt-2 h-9 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" />
               )}
               {cap === 'tts' && (

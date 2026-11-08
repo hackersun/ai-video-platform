@@ -25,3 +25,11 @@ def test_rate_limit_and_network_hints():
 
 def test_unknown_error_keeps_generic_message():
     assert connection_failure_message(ValueError("boom")) == "供应商连接测试失败"
+
+
+def test_speech_failures_are_specific():
+    assert "App ID" in connection_failure_message(ValueError("豆包语音 TTS 配置缺少 app_id"))
+    assert "地址不受支持" in connection_failure_message(ValueError("不是受支持的豆包语音 V3 TTS 地址"))
+    assert "Access Token" in connection_failure_message(ValueError("豆包语音合成失败 [45000030]: requested grant not found"))
+    assert "API Key 无效" in connection_failure_message(ValueError("豆包语音 HTTP 请求失败 [401]"))
+    assert "返回异常" in connection_failure_message(ValueError("豆包语音事件流未正常结束"))

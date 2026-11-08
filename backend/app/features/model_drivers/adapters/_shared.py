@@ -31,6 +31,8 @@ def _legacy_response_summary(output: Any) -> Any:
 
 
 _AUTH_HINTS = ("401", "403", "unauthorized", "forbidden", "authentication", "invalid api key", "api key", "apikey", "access denied")
+_SPEECH_AUTH_HINTS = ("grant", "not granted", "resource", "permission", "45000", "鉴权")
+_PROVIDER_PAYLOAD_HINTS = ("无法解析", "未正常结束", "未返回音频", "无效的音频分片", "非对象事件")
 _NETWORK_HINTS = ("timeout", "timed out", "connecterror", "connection refused", "name or service not known", "nodename nor servname")
 
 
@@ -45,6 +47,14 @@ def connection_failure_message(error: BaseException) -> str:
     """Map a provider exception to an actionable, secret-free Chinese hint."""
     status = _error_status_code(error)
     text = f"{type(error).__name__} {error}".lower()
+    if "app_id" in text or "appid" in text:
+        return "供应商连接测试失败：语音服务缺少 App ID，请在模型设置的语音卡片填写 App ID 后重新保存"
+    if "不是受支持" in text:
+        return "供应商连接测试失败：语音接口地址不受支持，请清空自定义 API 地址或改用官方地址"
+    if any(hint in text for hint in _SPEECH_AUTH_HINTS):
+        return "供应商连接测试失败：语音 Access Token 无效或未开通该音色资源，请检查后重新保存"
+    if any(hint in text for hint in _PROVIDER_PAYLOAD_HINTS):
+        return "供应商连接测试失败：供应商返回异常数据，请稍后重试"
     if status in (401, 403) or any(hint in text for hint in _AUTH_HINTS):
         return "供应商连接测试失败：API Key 无效或无权限，请检查后重新保存"
     if status == 429:
