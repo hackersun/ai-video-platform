@@ -1,0 +1,217 @@
+{
+ "1.1-register-empty": {
+  "ok": true,
+  "ms": 2939,
+  "note": "http://127.0.0.1:3000/register"
+ },
+ "1.2-register": {
+  "ok": true,
+  "ms": 3939,
+  "note": "http://127.0.0.1:3000/llm-config?welcome=1"
+ },
+ "1.3-logout-wrongpw": {
+  "ok": true,
+  "ms": 4189,
+  "note": "用户名或密码错误|"
+ },
+ "1.4-login": {
+  "ok": true,
+  "ms": 2302,
+  "note": "http://127.0.0.1:3000/novels"
+ },
+ "2.1-wrong-key": {
+  "ok": true,
+  "ms": 13888,
+  "note": "deterministic provider adapter verified | deterministic provider adapter verified | deterministic provider adapter verified | deterministic provider adapter verified"
+ },
+ "2.2-advanced-overview": {
+  "ok": true,
+  "ms": 2306,
+  "note": "http://127.0.0.1:3000/llm-config?section=overview"
+ },
+ "2.3-wrong-key-real-provider": {
+  "ok": true,
+  "ms": 6507,
+  "note": "供应商连接测试失败 | 供应商连接测试失败 | 供应商连接测试失败 | 供应商连接测试失败"
+ },
+ "2.3b-wrong-key-after-fix": {
+  "ok": true,
+  "ms": 6502,
+  "note": "供应商连接测试失败：API Key 无效或无权限，请检查后重新保存 | 供应商连接测试失败：API Key 无效或无权限，请检查后重新保存 | 供应商连接测试失败：API Key 无效或无权限，请检查后重新保存 | 供应商连接测试失败"
+ },
+ "2.4-add-connection": {
+  "ok": true,
+  "ms": 7314,
+  "note": "providers=27 msg=供应商账号已保存。请使用“测试可用性”完成认证。"
+ },
+ "2.5-test-connection": {
+  "ok": true,
+  "ms": 4711,
+  "note": " url=http://127.0.0.1:3000/llm-config?section=test-lab&level=connection&connectionId=41f7907b-5637-44cd-a62c-16add69870f5"
+ },
+ "2.6-edit-connection": {
+  "ok": true,
+  "ms": 5033,
+  "note": "凭证已更新并脱敏保存，请继续测试可用性。"
+ },
+ "2.7-default-model": {
+  "ok": true,
+  "ms": 5896,
+  "note": "opened"
+ },
+ "2.8-delete-connection": {
+  "ok": true,
+  "ms": 6386,
+  "note": "still present=0 账号已移除，密钥已清除；历史测试和任务记录仍保留。"
+ },
+ "2.9-simulation-mode": {
+  "ok": true,
+  "ms": 6355,
+  "note": "模拟模式：连接正常（未调用付费接口） | 模拟模式：连接正常（未调用付费接口） | 模拟模式：连接正常（未调用付费接口） | 模拟模式：连接正常（未调用付费接口）"
+ },
+ "2.10-model-center-after": {
+  "ok": true,
+  "ms": 3682,
+  "note": "全局仍有 13 项"
+ },
+ "3.1-create-empty-title": {
+  "ok": true,
+  "ms": 34593,
+  "note": "http://127.0.0.1:3000/novels/new "
+ },
+ "3.2-create-novel": {
+  "ok": false,
+  "ms": 20052,
+  "note": "page.waitForURL: Timeout 20000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation until \"load\"\n============================================================"
+ },
+ "3.3-add-chapters": {
+  "ok": false,
+  "ms": 30004,
+  "note": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('tab', { name: /章节/ }).first()\n"
+ },
+ "3.4-import-reject-cases": {
+  "ok": true,
+  "ms": 12115,
+  "note": "bad.pdf:仅支持 .txt、.md 或 .markdown 文件 ; empty.txt:上传文件为空 ; huge.txt:媒体文件超过本地持久化大小限制"
+ },
+ "3.5-import-multichar": {
+  "ok": true,
+  "ms": 9114,
+  "note": "8c3fd614-7640-4242-953d-aa42f44edc4e"
+ },
+ "3.2b-create-novel": {
+  "ok": true,
+  "ms": 5239,
+  "note": "dda4faeb-55a7-4a8d-b227-a920dbb3bf09"
+ },
+ "3.3b-add-chapters": {
+  "ok": true,
+  "ms": 7853,
+  "note": "emptyDisabled=true"
+ },
+ "4.1-one-click-double": {
+  "ok": true,
+  "ms": 7571,
+  "note": "POSTs=1 dialogs=3"
+ },
+ "6.1-refresh-midrun": {
+  "ok": true,
+  "ms": 4872,
+  "note": "一键生成视频 · 需处理"
+ },
+ "4.2-wait-success": {
+  "ok": false,
+  "ms": 2203,
+  "note": "一键生成视频 · 需处理 :: 一键生成视频 · 需处理\n继续\n取消\n已提交\n准备整书计划\n生成剧本和分镜\n生成画面和配音\n渲染各集\n拼接整书\n质量检查\n发布中\n已完成\n故事设定锁定失败\n人物或剧情证据需要人工确认。\n去确认"
+ },
+ "5.1-play-download": {
+  "ok": true,
+  "ms": 2323,
+  "note": "duration=20.125 bytes=12802204 ctype=video/mp4 target=_blank download-attr=null disp=none"
+ },
+ "5.2-publish-view": {
+  "ok": true,
+  "ms": 3952,
+  "note": "http://127.0.0.1:3000/synthesis?publication_id=1c104e8d-3952-423f-bf79-985cfda3e8c7"
+ },
+ "manual-4.1-one-click-double": {
+  "ok": true,
+  "ms": 7555,
+  "note": "POSTs=2 dialogs=3"
+ },
+ "manual-6.1-refresh-midrun": {
+  "ok": true,
+  "ms": 4817,
+  "note": "一键生成视频 · 需处理"
+ },
+ "manual-4.2-wait-success": {
+  "ok": false,
+  "ms": 2215,
+  "note": "一键生成视频 · 需处理 :: 一键生成视频 · 需处理\n继续\n取消\n已提交\n准备整书计划\n生成剧本和分镜\n生成画面和配音\n渲染各集\n拼接整书\n质量检查\n发布中\n已完成\n故事设定锁定失败\n人物或剧情证据需要人工确认。\n去确认"
+ },
+ "manual-5.1-play-download": {
+  "ok": false,
+  "ms": 30004,
+  "note": "locator.scrollIntoViewIfNeeded: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByTestId('pipeline-final-video')\n"
+ },
+ "manual-5.2-publish-view": {
+  "ok": false,
+  "ms": 30003,
+  "note": "locator.click: Timeout 30000ms exceeded.\nCall log:\n  - waiting for getByRole('link', { name: '查看发布' })\n"
+ },
+ "multi-4.3-resume": {
+  "ok": true,
+  "ms": 13983,
+  "note": "5.71s"
+ },
+ "manual-4.3-resume": {
+  "ok": true,
+  "ms": 8986,
+  "note": "0.674s"
+ },
+ "5.3-works-list": {
+  "ok": true,
+  "ms": 2701,
+  "note": "http://127.0.0.1:3000/synthesis"
+ },
+ "7.1-stab-run": {
+  "ok": true,
+  "ms": 13863,
+  "note": "novel=8c60a084-6b8b-4f95-82fa-59aec20792e4 9s bytes=6230228"
+ },
+ "7.2-stab-run": {
+  "ok": true,
+  "ms": 13604,
+  "note": "novel=40c3974b-236c-4149-b8a5-cae47dd5cb6a 9s bytes=6230228"
+ },
+ "7.3-stab-run": {
+  "ok": true,
+  "ms": 13565,
+  "note": "novel=fb693dcf-a43b-4595-a482-36046f8ef398 9s bytes=6230228"
+ },
+ "4.4-cancel": {
+  "ok": true,
+  "ms": 22743,
+  "note": "一键生成视频 · 已取消 -> 一键生成视频 · 已取消"
+ },
+ "4.5-regenerate-after-cancel": {
+  "ok": true,
+  "ms": 8693,
+  "note": "一键生成视频 · 已完成"
+ },
+ "6.2-worker-down-then-up": {
+  "ok": true,
+  "ms": 26260,
+  "note": "一键生成视频 · 进行中：已提交 / after15s 一键生成视频 · 进行中：已提交 -> 一键生成视频 · 已完成"
+ },
+ "6.3-worker-killed-midrun": {
+  "ok": true,
+  "ms": 135122,
+  "note": "一键生成视频 · 进行中：已提交 -> 一键生成视频 · 已完成"
+ },
+ "3.4b-import-too-large-after-fix": {
+  "ok": true,
+  "ms": 4692,
+  "note": "小说文件超过 10MB 大小限制，请拆分后分批导入"
+ }
+}
