@@ -442,6 +442,90 @@ export default function SynthesisPage() {
     return status || '未渲染';
   };
 
+  const publicationHistoryCard = (
+    <Card className="bg-white/5 border-white/10" data-testid="publication-history">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-white flex items-center gap-2">
+          <Download className="w-5 h-5" />
+          发布记录
+        </CardTitle>
+        <Button variant="ghost" size="sm" onClick={loadPublications}>
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {publications.length === 0 ? (
+          <div className="text-center py-8 text-white/40">
+            <Download className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>暂无发布记录</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[36rem] overflow-y-auto">
+            {[...publications].sort((a, b) => Number(b.id === focusPublicationId) - Number(a.id === focusPublicationId)).map((publication) => {
+              const artifactLinks = publicationArtifactLinks(publication);
+              const focused = publication.id === focusPublicationId;
+              return (
+                <div
+                  key={publication.id}
+                  data-testid={`publication-row-${publication.id}`}
+                  data-focused={focused ? 'true' : undefined}
+                  className={`flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between ${focused ? 'ring-2 ring-emerald-400' : ''}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    {focused && artifactLinks.preview_url && (
+                      <video data-testid="focused-publication-video" src={toMediaUrl(artifactLinks.preview_url)} controls className="mb-3 w-full max-w-xl rounded-lg bg-black" />
+                    )}
+                    <div className="text-white font-medium truncate">{focused && <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-xs text-emerald-300">本次成片</span>}<AiGeneratedLabel className="mr-2 align-middle" />{publication.title}</div>
+                    <div className="text-white/50 text-sm">
+                      {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {artifactLinks.preview_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.preview_url)} target="_blank" rel="noreferrer">
+                          <Eye className="w-3.5 h-3.5 mr-1" />
+                          发布预览
+                        </a>
+                      )}
+                      {artifactLinks.srt_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.srt_url)} target="_blank" rel="noreferrer">
+                          <FileText className="w-3.5 h-3.5 mr-1" />
+                          发布字幕 SRT
+                        </a>
+                      )}
+                      {artifactLinks.timeline_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.timeline_url)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                          发布时间线
+                        </a>
+                      )}
+                      {artifactLinks.render_manifest_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.render_manifest_url)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                          发布渲染清单
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(toMediaUrl(publication.export_url), '_blank')}>
+                      <Download className="w-4 h-4" />
+                    </Button>
+                    <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
+                      <XCircle className="w-4 h-4" />
+                    </Button>
+                    <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -454,7 +538,10 @@ export default function SynthesisPage() {
           <p className="text-white/60 mt-1">将视频与音频合并为完整作品</p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* 从「查看发布」进入时，发布记录置顶整宽展示，避免长右栏造成左侧空白 */}
+        {focusPublicationId && publicationHistoryCard}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:items-start">
           {/* 左侧：选择源 */}
           <div className="space-y-4">
             {/* 视频选择 */}
@@ -997,87 +1084,7 @@ export default function SynthesisPage() {
               </CardContent>
             </Card>
 
-            <Card className="bg-white/5 border-white/10" data-testid="publication-history">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Download className="w-5 h-5" />
-                  发布记录
-                </CardTitle>
-                <Button variant="ghost" size="sm" onClick={loadPublications}>
-                  <RefreshCw className="w-4 h-4" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {publications.length === 0 ? (
-                  <div className="text-center py-8 text-white/40">
-                    <Download className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>暂无发布记录</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-[36rem] overflow-y-auto">
-                    {[...publications].sort((a, b) => Number(b.id === focusPublicationId) - Number(a.id === focusPublicationId)).map((publication) => {
-                      const artifactLinks = publicationArtifactLinks(publication);
-                      const focused = publication.id === focusPublicationId;
-                      return (
-                        <div
-                          key={publication.id}
-                          data-testid={`publication-row-${publication.id}`}
-                          data-focused={focused ? 'true' : undefined}
-                          className={`flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between ${focused ? 'ring-2 ring-emerald-400' : ''}`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            {focused && artifactLinks.preview_url && (
-                              <video data-testid="focused-publication-video" src={toMediaUrl(artifactLinks.preview_url)} controls className="mb-3 w-full max-w-xl rounded-lg bg-black" />
-                            )}
-                            <div className="text-white font-medium truncate">{focused && <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-xs text-emerald-300">本次成片</span>}<AiGeneratedLabel className="mr-2 align-middle" />{publication.title}</div>
-                            <div className="text-white/50 text-sm">
-                              {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {artifactLinks.preview_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.preview_url)} target="_blank" rel="noreferrer">
-                                  <Eye className="w-3.5 h-3.5 mr-1" />
-                                  发布预览
-                                </a>
-                              )}
-                              {artifactLinks.srt_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.srt_url)} target="_blank" rel="noreferrer">
-                                  <FileText className="w-3.5 h-3.5 mr-1" />
-                                  发布字幕 SRT
-                                </a>
-                              )}
-                              {artifactLinks.timeline_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.timeline_url)} target="_blank" rel="noreferrer">
-                                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                                  发布时间线
-                                </a>
-                              )}
-                              {artifactLinks.render_manifest_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.render_manifest_url)} target="_blank" rel="noreferrer">
-                                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                                  发布渲染清单
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 self-end sm:self-auto">
-                            <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(toMediaUrl(publication.export_url), '_blank')}>
-                              <Download className="w-4 h-4" />
-                            </Button>
-                            <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
-                              <XCircle className="w-4 h-4" />
-                            </Button>
-                            <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            {!focusPublicationId && publicationHistoryCard}
           </div>
         </div>
       </div>
