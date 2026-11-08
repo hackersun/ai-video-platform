@@ -1,5 +1,7 @@
 'use client';
 
+import { friendlyModelName } from '@/lib/model-configs';
+
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { Cpu, Loader2, Pencil } from 'lucide-react';
@@ -56,13 +58,13 @@ export function NovelModelOverrides({ novelId, onEffectiveChange }: Props) {
     <section id="novel-model-overrides" className="rounded-xl border border-slate-200 bg-white px-4 py-3" data-testid="novel-model-line">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
         <span className="inline-flex items-center gap-1.5 font-medium text-slate-700"><Cpu className="h-4 w-4 text-violet-600" />
-          {overridden.length ? `本小说覆盖了 ${overridden.length} 项模型` : '使用全局模型设置'}
+          {overridden.length ? `本小说覆盖了 ${overridden.length} 项模型` : '使用默认模型（来自「模型设置」）'}
         </span>
         {SIMPLE_CAPABILITIES.map((cap) => {
           const card = state.novel_effective?.[cap];
           const st = statusOf(card);
           return <span key={cap} className="text-slate-500">
-            {card?.label}：<span className={st.tone === 'ok' ? 'text-slate-800' : 'text-amber-600'}>{card?.model_name || '未配置'}</span>
+            {card?.label}：<span className={st.tone === 'ok' ? 'text-slate-800' : 'text-amber-600'}>{friendlyModelName(card, cap) || '未配置'}</span>
             {state.novel_overrides?.[cap] ? <span className="ml-1 text-xs text-violet-600">(覆盖)</span> : null}
           </span>;
         })}
@@ -81,8 +83,8 @@ export function NovelModelOverrides({ novelId, onEffectiveChange }: Props) {
               <select aria-label={`本小说${state.capabilities[cap]?.label}模型`} disabled={saving}
                 value={state.novel_overrides?.[cap] || ''} onChange={(e) => change(cap, e.target.value)}
                 className="mt-1 h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-900">
-                <option value="">跟随全局（{state.capabilities[cap]?.model_name || '未配置'}）</option>
-                {state.novel_choices?.[cap]?.map((c) => <option key={c.config_id} value={c.config_id}>{c.model_name} · {c.name}</option>)}
+                <option value="">跟随全局（{friendlyModelName(state.capabilities[cap], cap) || '未配置'}）</option>
+                {state.novel_choices?.[cap]?.map((c) => <option key={c.config_id} value={c.config_id}>{friendlyModelName(c, cap)} · {c.name}</option>)}
               </select>
             </label>
           ))}

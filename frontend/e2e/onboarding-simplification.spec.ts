@@ -385,6 +385,21 @@ test('welcome: "我有 API Key" reveals only the key form', async ({ page }) => 
   await expect(page.getByRole('button', { name: '保存并检测' })).toBeVisible();
 });
 
+test('demo (simulation) models are shown with plain names, never internal Deterministic ids', async ({ page }) => {
+  const state = simpleState(true, true);
+  for (const [cap, card] of Object.entries(state.capabilities) as [string, any][]) {
+    Object.assign(card, { provider_id: 'deterministic-acceptance', provider_name: '模拟模式', model_id: `deterministic-${cap}`, model_name: `Deterministic ${cap}`, options: [] });
+  }
+  await page.route('**/api/v1/model-center/simple-setup', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...state, simulation_available: true, simulation_enabled: true }) });
+  });
+  await page.goto('/llm-config');
+  await expect(page.getByTestId('model-setup-summary')).toContainText('文本：演示文本模型 · 图像：演示图片模型 · 视频：演示视频模型 · 语音：演示配音模型');
+  await page.getByRole('button', { name: '修改模型' }).click();
+  await expect(page.getByLabel('文本模型')).toContainText('演示文本模型 · 演示模式（不扣费）（当前）');
+  expect(await page.locator('main').innerText()).not.toContain('Deterministic');
+});
+
 test('top navigation has one canonical entry per function and legacy entries redirect', async ({ page }) => {
   await page.route('**/api/v1/**', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });

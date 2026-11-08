@@ -126,7 +126,7 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
   await page.goto('/novels/novel-overview');
 
   const modelLine = page.getByTestId('novel-model-line');
-  await expect(modelLine).toContainText('使用全局模型设置');
+  await expect(modelLine).toContainText('使用默认模型（来自「模型设置」）');
   await expect(modelLine).toContainText('Ark Code');
   await expect(modelLine.getByRole('link', { name: '模型设置' })).toHaveAttribute('href', '/llm-config');
 

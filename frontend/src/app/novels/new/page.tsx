@@ -31,6 +31,7 @@ import { apiClient } from '@/lib/api-client';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
+  friendlyModelName,
 } from '@/lib/model-configs';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -133,7 +134,7 @@ export default function NewNovelPage() {
           provider_id: current.provider_id || '',
           provider_name: current.provider_name || undefined,
           model_name: current.model_name || current.model_id || '',
-          name: `${current.label || cap} · ${current.provider_name || current.provider_id || ''}`,
+          name: friendlyModelName(current, cap),
           is_default: true,
           test_status: current.test_status,
           test_message: current.test_message,

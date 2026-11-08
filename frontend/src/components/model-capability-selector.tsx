@@ -9,6 +9,9 @@ import {
   MODEL_CAPABILITY_LABELS,
   modelStatusLabel,
   SavedModelConfig,
+  friendlyModelName,
+  friendlyProviderName,
+  isDemoModel,
 } from '@/lib/model-configs';
 import { cn } from '@/lib/utils';
 
@@ -53,7 +56,9 @@ export function ModelCapabilitySelector({
   const verified = selectedConfig?.test_status === 'success' && selectedConfig.key_available !== false;
   const failed = selectedConfig?.test_status === 'failed' || selectedConfig?.key_available === false;
   const configLabel = selectedConfig
-    ? `${selectedConfig.name} · ${selectedConfig.provider_name || selectedConfig.provider_id} / ${selectedConfig.model_name}`
+    ? isDemoModel(selectedConfig)
+      ? `${friendlyModelName(selectedConfig, capability)} · ${friendlyProviderName(selectedConfig)}`
+      : `${selectedConfig.name} · ${selectedConfig.provider_name || selectedConfig.provider_id} / ${selectedConfig.model_name}`
     : `未配置${MODEL_CAPABILITY_LABELS[capability]}模型`;
 
   return (
