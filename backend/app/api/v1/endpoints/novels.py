@@ -475,7 +475,8 @@ async def confirm_import_novel(
         genre=request.genre,
         tags=request.tags or [],
         source="imported",
-        status="completed",
+        # 导入只是把原文带进来，尚未生成视频；与手动新建一致按“草稿”显示。
+        status="draft",
         word_count=job.word_count or 0,
         extra_data={"import_job_id": job.id, **(job.metadata_json or {})},
     )

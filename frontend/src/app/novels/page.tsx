@@ -84,6 +84,7 @@ const STATUS_LABELS = {
 };
 
 const GENRE_OPTIONS = ['全部', '仙侠', '都市', '科幻', '历史', '言情', '悬疑'];
+const IMPORT_GENRES = ['仙侠', '都市', '科幻', '历史', '言情', '悬疑', '奇幻'];
 
 // 内嵌组件使用 useSearchParams
 function NovelsContent() {
@@ -341,12 +342,15 @@ function NovelsContent() {
                 placeholder="导入后小说标题"
                 className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
               />
-              <Input
+              <select
+                aria-label="导入题材"
                 value={importGenre}
                 onChange={(e) => setImportGenre(e.target.value)}
-                placeholder="类型（可选）"
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-              />
+                className="h-10 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white"
+              >
+                <option value="">题材（可选）</option>
+                {IMPORT_GENRES.map((genre) => <option key={genre} value={genre}>{genre}</option>)}
+              </select>
               <label
                 htmlFor="novel-import-file-input"
                 className="inline-flex items-center justify-center rounded-md bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15 cursor-pointer"
