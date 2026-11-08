@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
 import { AlertCircle, CheckCircle2, Film, Loader2, Pause, Play, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { resolveMediaUrl, type PublicationPipeline } from '@/lib/api-client';
@@ -18,6 +19,22 @@ function stepIndex(p: PublicationPipeline) {
   return idx < 0 ? 0 : idx;
 }
 
+const QUEUE_HINT_AFTER_MS = 20_000;
+const STALL_HINT_AFTER_MS = 90_000;
+
+/** 客户端观察到的“无进展时长”，用于在处理节点繁忙/停机时给出明确提示（不依赖服务端时钟）。 */
+function useStalledMs(pipeline: PublicationPipeline | null) {
+  const signature = pipeline ? `${pipeline.pipeline_id}|${pipeline.status}|${pipeline.stage}|${pipeline.updated_at || ''}` : '';
+  const [since, setSince] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { setSince(Date.now()); setNow(Date.now()); }, [signature]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  return now - since;
+}
+
 function resolveHref(href: string, novelId: string) {
   return href.startsWith('?') ? `/novels/${novelId}${href}` : href;
 }
@@ -28,6 +45,7 @@ export function PipelineStatusCard({
   novelId: string; pipeline: PublicationPipeline | null; loading: boolean; busy: boolean; error: string;
   onPause: () => void; onResume: () => void; onCancel: () => void;
 }) {
+  const stalledMs = useStalledMs(pipeline);
   if (loading) return null;
   if (!pipeline) {
     return (
@@ -44,7 +62,11 @@ export function PipelineStatusCard({
   const needsHelp = pipeline.status === 'blocked' || pipeline.status === 'failed';
   const blocker = needsHelp ? blockerInfo(pipeline.blocker_code, pipeline.blocker_detail) : null;
   const videoUrl = resolveMediaUrl(pipeline.final_video_url);
-  const statusText = done ? '已完成' : pipeline.status === 'paused' ? '已暂停' : pipeline.status === 'cancelled' ? '已取消' : needsHelp ? '需处理' : `进行中：${stageLabel(STAGE_ALIAS[pipeline.stage] || pipeline.stage)}`;
+  const queued = pipeline.status === 'queued' || (active && pipeline.stage === 'accepted');
+  const statusText = done ? '已完成' : pipeline.status === 'paused' ? '已暂停' : pipeline.status === 'cancelled' ? '已取消' : needsHelp ? '需处理' : queued ? '排队中，等待处理' : `进行中：${stageLabel(STAGE_ALIAS[pipeline.stage] || pipeline.stage)}`;
+  const waitHint = !active ? '' : queued && stalledMs >= QUEUE_HINT_AFTER_MS
+    ? '处理节点繁忙或暂未启动。任务已保存，节点恢复后会自动开始，无需重复提交。'
+    : !queued && stalledMs >= STALL_HINT_AFTER_MS ? '当前步骤暂无新进展，正在等待处理节点响应；中断的任务会被自动接管继续。' : '';
   const tone = done ? 'border-emerald-400/25 bg-emerald-500/10' : needsHelp ? 'border-amber-400/30 bg-amber-500/10' : 'border-violet-400/25 bg-violet-500/10';
 
   return (
@@ -69,6 +91,7 @@ export function PipelineStatusCard({
         })}
       </ol>
 
+      {waitHint && <p data-testid="pipeline-wait-hint" role="status" className="rounded-md bg-black/20 p-3 text-sm text-white/80">{waitHint}</p>}
       {blocker && (
         <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-black/20 p-3 text-sm">
           <div><div className="font-medium text-amber-100">{blocker.title}</div><div className="text-white/70">{blocker.hint}</div></div>
