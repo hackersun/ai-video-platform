@@ -38,6 +38,9 @@ test.describe('Production OS deterministic frontend contracts', () => {
     await expect(graph).toContainText('Production Graph');
     await graph.getByRole('link', { name: '查看受影响镜头' }).click();
     await expect(page).toHaveURL(/shot_id=shot-2/);
+    // Next <Link> 是客户端导航：URL 先变，RSC 请求/开发态按需编译仍在进行。
+    // 并发跑时紧接着 goto 会被这次未完成的导航打断（net::ERR_ABORTED），先等导航真正落定。
+    await page.waitForLoadState('networkidle');
     await page.goto('/studio?workflow_id=wf-os');
     expect(requests.some((item) => item.path.endsWith('/video/models'))).toBeTruthy();
   });
