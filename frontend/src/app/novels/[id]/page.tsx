@@ -473,13 +473,14 @@ export default function NovelDetailPage() {
         apiClient.getSimpleModelSetup().catch(() => null),
       ]);
       if (modelSetup?.simulation_enabled) {
-        setOneClickConfirm({ title: '模拟模式确认', description: '当前为模拟模式、不扣费：不会调用付费接口，生成的是演示素材。确认开始一键生成？', optIn: false });
-      } else if (!billing.live_calls_opt_in) {
-        setOneClickConfirm({ title: '首次付费运行确认', description: `一键生成会调用真实模型，费用计入账户上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。确认开启真实调用并开始？也可先到「模型设置」调整上限。`, optIn: true });
-      } else if (!billing.opted_in_at) {
-        setOneClickConfirm({ title: '确认真实调用', description: `将按上限 ¥${billing.per_user_cap_rmb} 发起真实调用（已用 ¥${billing.used_rmb}）。确认开始？`, optIn: false });
-      } else {
+        // 演示模式不扣费：直接开始，不再弹确认。
         await launchOneClick();
+      } else {
+        // 真实调用：每次都确认，并写清本次和账户的花费上限。
+        const caps = `本次最多花费 ¥${billing.per_pipeline_cap_rmb ?? '—'}，账户累计上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。`;
+        setOneClickConfirm(billing.live_calls_opt_in
+          ? { title: '确认开始生成', description: `将调用真实模型生成视频。${caps}`, optIn: false }
+          : { title: '开启真实调用并开始生成', description: `尚未开启真实调用。确认后将开启并调用真实模型。${caps}可在「模型设置 → 费用上限」修改。`, optIn: true });
       }
     } catch (e: any) {
       toast({ title: '无法读取费用设置', description: e?.message || '请稍后重试或到模型设置检查', type: 'error' });
