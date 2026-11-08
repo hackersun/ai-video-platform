@@ -110,6 +110,11 @@ test('目录模型可以查看、校验并携带精确参数进入测试和设�
 });
 
 test('有密钥的草稿连接可以进入精确预选的连接认证', async ({ page }) => {
+  // 没有可自动测试的已发布模型时，回退到预选好账号的连接认证页。
+  await page.route('**/api/v1/model-center/certification-candidates?**', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ items: [], meta: { page: 1, page_size: 100, total: 0 } }),
+  }));
   await page.route('**/api/v1/model-center/connections?**', async (route) => {
     await route.fulfill({
       status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -163,12 +168,18 @@ test('连接认证会精确预选模型，完成后展示脱敏证据并保留�
   await page.route('**/api/v1/model-center/certifications', async (route) => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify(certification),
   }));
+  let certificationBody: Record<string, unknown> | null = null;
+  await page.route('**/api/v1/model-center/certifications', async (route) => {
+    certificationBody = route.request().postDataJSON();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(certification) });
+  });
   await page.goto('/llm-config?section=connections&returnTo=%2Fstudio');
   await page.getByRole('button', { name: '测试可用性' }).click();
-  await expect(page.getByLabel('兼容模型与连接')).toHaveValue('profile-1:connection-1');
-  await page.getByLabel('操作原因').fill('验证主视频连接');
-  await page.getByRole('button', { name: '提交认证' }).click();
-  await expect(page).toHaveURL('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
+  // 一键测试：复用已保存账号，自动预选该账号的兼容模型，不再要求填写表单，也不离开当前页。
+  await expect(page.getByText(/测试可用性通过：1\/1 · Seedance 1.5 Pro 可用/)).toBeVisible();
+  expect(certificationBody).toMatchObject({ profile_version_id: 'profile-1', connection_id: 'connection-1', level: 'connection' });
+  await expect(page).toHaveURL('/llm-config?section=connections&returnTo=%2Fstudio');
+  await page.goto('/llm-config?section=test-lab&runId=run-17&returnTo=%2Fstudio');
   await page.getByText('已脱敏响应证据').click();
   await expect(page.getByText('evidence-17')).toBeVisible();
   await expect(page.getByRole('link', { name: '返回原工作台' })).toHaveAttribute('href', '/studio');
