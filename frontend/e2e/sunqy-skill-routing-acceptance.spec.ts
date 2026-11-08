@@ -46,7 +46,8 @@ test('sunqy starts a four-chapter Skill-routed production from the workbench', a
     await page.reload();
   }
 
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   await page.getByRole('button', { name: '整书自动制作', exact: true }).click();
   await page.waitForFunction((id) => Boolean(localStorage.getItem(`series-run:${id}`)), novelId);

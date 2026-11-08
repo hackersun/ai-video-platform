@@ -80,7 +80,7 @@ test('remove false narration entities and rebuild the two-chapter series run fro
   await expect(retainedCard.getByText('顾清霜', { exact: true })).toBeVisible({ timeout: 30_000 });
 
   await page.goto(`/novels/${novelId}?tab=series-plan`);
-  await page.getByRole('tab', { name: '整书计划 (2)', exact: true }).click();
+  await page.getByRole('tab', { name: '分集计划 (2)', exact: true }).click();
   const rebuiltPlanResponse = page.waitForResponse(
     (response) => response.url().endsWith(`/novels/${novelId}/series-plan`)
       && response.request().method() === 'POST',
@@ -92,7 +92,7 @@ test('remove false narration entities and rebuild the two-chapter series run fro
   await expect(page.getByText('xianxia-3d · 9:16')).toBeVisible({ timeout: 120_000 });
   await page.evaluate((id) => localStorage.removeItem(`series-run:${id}`), novelId);
   await page.reload();
-  await page.getByRole('tab', { name: '整书计划 (2)', exact: true }).click();
+  await page.getByRole('tab', { name: '分集计划 (2)', exact: true }).click();
   const panel = page.getByTestId('series-run-panel');
   await panel.getByRole('button', { name: '整书自动制作', exact: true }).click();
   await page.waitForFunction(

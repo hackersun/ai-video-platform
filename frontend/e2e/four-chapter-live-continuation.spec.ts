@@ -27,7 +27,8 @@ test('continue an authenticated four-chapter 3D native-audio run from the fronte
   }, { id: userId, tokenValue: token, novel: novelId, run: runId });
 
   await page.goto(`/novels/${novelId}`);
-  await page.getByRole('tab', { name: '整书计划 (4)', exact: true }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: '分集计划 (4)', exact: true }).click();
   const readyEpisodes = page.getByTestId('series-run-episodes').getByText('镜头就绪');
   if (await readyEpisodes.count() !== 4) {
     for (const configId of ['f03311c6-5ca3-4e88-a552-fb5623a394bd', '980cb5db-0281-4835-9486-a739fcb35d98']) {
@@ -46,7 +47,8 @@ test('continue an authenticated four-chapter 3D native-audio run from the fronte
     });
     expect(validated.ok(), `validate live bindings: ${await validated.text()}`).toBe(true);
     await page.reload();
-    await page.getByRole('tab', { name: '整书计划 (4)', exact: true }).click();
+    await page.getByTestId('novel-more-tabs').click();
+    await page.getByRole('tab', { name: '分集计划 (4)', exact: true }).click();
     await expect(page.getByText(/实模关键镜头验证已启用/)).toBeVisible({ timeout: 120_000 });
     await page.getByRole('button', { name: '继续推进' }).click();
   }

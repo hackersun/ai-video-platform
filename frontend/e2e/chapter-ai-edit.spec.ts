@@ -216,6 +216,7 @@ test('novel detail supports AI-assisted chapter creation and Chinese settings co
   expect(generatedChapter?.title || '').toMatch(/^第2章/);
   expect(generatedChapter?.title).not.toBe('第2章');
 
+  await page.getByTestId('novel-more-tabs').click();
   await page.getByRole('tab', { name: /设置/ }).click();
   const settingsPanel = page.locator('[role="tabpanel"]').filter({ hasText: '小说设置' });
   await settingsPanel.locator('select').first().selectOption('玄幻');

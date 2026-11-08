@@ -1,5 +1,6 @@
 'use client';
 
+import { TERMS } from '@/lib/glossary';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -547,6 +548,7 @@ export default function NovelDetailPage() {
   const [newCharacterName, setNewCharacterName] = useState('');
   const [newCharacterDesc, setNewCharacterDesc] = useState('');
   const [activeTab, setActiveTab] = useState('chapters');
+  const [showMoreTabs, setShowMoreTabs] = useState(false);
   const [creatingCharacter, setCreatingCharacter] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
   const [settingsDescription, setSettingsDescription] = useState('');
@@ -1302,7 +1304,7 @@ export default function NovelDetailPage() {
                     <Film className="w-4 h-4 mr-2" />单集视频制作
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleGenerateSeriesPlan} disabled={generatingSeriesPlan || chapters.length === 0}>
-                    <ListChecks className="w-4 h-4 mr-2" />{generatingSeriesPlan ? '整书计划生成中…' : '重新生成整书计划'}
+                    <ListChecks className="w-4 h-4 mr-2" />{generatingSeriesPlan ? '分集计划生成中…' : '重新生成分集计划'}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1442,7 +1444,7 @@ export default function NovelDetailPage() {
                   <div className="rounded-lg bg-white/[0.04] p-3">
                     <div className="text-xs text-white/40">下一步建议</div>
                     <div className="mt-1 text-sm font-medium text-white">
-                      {chapters.length === 0 ? '先创建章节' : seriesPlan?.episodes?.length ? '按集推进制作' : '生成整书计划'}
+                      {chapters.length === 0 ? '先创建章节' : seriesPlan?.episodes?.length ? '按集推进制作' : '生成分集计划'}
                     </div>
                   </div>
                   <Link href={`/novels/${novelId}/asset-analysis`} className="rounded-lg border border-cyan-400/20 bg-cyan-500/[0.08] p-3 transition-colors hover:bg-cyan-500/[0.12]">
@@ -1519,26 +1521,39 @@ export default function NovelDetailPage() {
               <FileText className="w-4 h-4 mr-2" />
               章节 ({chapters.length})
             </TabsTrigger>
-            <TabsTrigger value="series-plan" className="data-[state=active]:bg-violet-600">
-              <ListChecks className="w-4 h-4 mr-2" />
-              整书计划 ({seriesPlan?.episodes?.length || 0})
-            </TabsTrigger>
             <TabsTrigger value="characters" className="data-[state=active]:bg-violet-600">
               <Users className="w-4 h-4 mr-2" />
               角色 ({characters.length})
             </TabsTrigger>
-            <TabsTrigger value="scripts" className="data-[state=active]:bg-violet-600">
-              <FileText className="w-4 h-4 mr-2" />
-              剧本 ({scripts.length})
-            </TabsTrigger>
-            <TabsTrigger value="story-bible" className="data-[state=active]:bg-violet-600">
-              <ShieldCheck className="w-4 h-4 mr-2" />
-              Story Bible ({storyBibles.length})
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="data-[state=active]:bg-violet-600">
-              <Settings className="w-4 h-4 mr-2" />
-              设置
-            </TabsTrigger>
+            {(stepMode || showMoreTabs || !['chapters', 'characters'].includes(activeTab)) ? (
+              <>
+                <TabsTrigger value="series-plan" className="data-[state=active]:bg-violet-600">
+                  <ListChecks className="w-4 h-4 mr-2" />
+                  {TERMS.seriesPlan} ({seriesPlan?.episodes?.length || 0})
+                </TabsTrigger>
+                <TabsTrigger value="scripts" className="data-[state=active]:bg-violet-600">
+                  <FileText className="w-4 h-4 mr-2" />
+                  {TERMS.script} ({scripts.length})
+                </TabsTrigger>
+                <TabsTrigger value="story-bible" className="data-[state=active]:bg-violet-600">
+                  <ShieldCheck className="w-4 h-4 mr-2" />
+                  {TERMS.storyBible} ({storyBibles.length})
+                </TabsTrigger>
+                <TabsTrigger value="settings" className="data-[state=active]:bg-violet-600">
+                  <Settings className="w-4 h-4 mr-2" />
+                  设置
+                </TabsTrigger>
+              </>
+            ) : (
+              <button
+                type="button"
+                data-testid="novel-more-tabs"
+                onClick={() => setShowMoreTabs(true)}
+                className="inline-flex items-center rounded-sm px-3 py-1.5 text-sm text-slate-400 hover:text-white"
+              >
+                更多（{TERMS.seriesPlan}、{TERMS.script}、{TERMS.storyBible}、设置）
+              </button>
+            )}
           </TabsList>
 
           {/* 章节列表 */}
@@ -1790,7 +1805,7 @@ export default function NovelDetailPage() {
                             连续动漫制作线
                           </div>
                           <p className="mt-1 text-sm text-white/60">
-                            整书计划会把多集拆分接入 Series Studio / Producer：先锁定 Production Bible，再逐集推进资产、声线、本集工程和质量门禁。
+                            分集计划会把多集拆分接入 Series Studio / Producer：先锁定 Production Bible，再逐集推进资产、声线、本集工程和质量门禁。
                           </p>
                         </div>
                         <Badge variant="outline" className="w-fit border-blue-300/40 text-blue-100">
@@ -2034,7 +2049,7 @@ export default function NovelDetailPage() {
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-white flex items-center gap-2">
                   <ShieldCheck className="w-5 h-5 text-violet-400" />
-                  Story Bible
+                  {TERMS.storyBible}（Story Bible）
                 </CardTitle>
                 <div className="flex flex-wrap gap-2 sm:justify-end">
                   <Button

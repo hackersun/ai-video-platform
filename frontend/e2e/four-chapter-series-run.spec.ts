@@ -181,7 +181,8 @@ async function createNovelAndChapters(page: any, mode: 'smoke' | 'full') {
       await expect(chapterLink).toBeVisible();
     }
   }
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   await expect(page.getByTestId('series-run-panel')).toBeVisible();
   await page.getByRole('button', { name: '整书自动制作', exact: true }).click();

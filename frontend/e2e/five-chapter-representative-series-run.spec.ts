@@ -42,7 +42,8 @@ test('five chapters can start whole-book production and expose representative mo
     await expect(page.getByText(chapter.title, { exact: true })).toBeVisible({ timeout: 30_000 });
   }
 
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByLabel('更多风格').selectOption('xianxia-3d');
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   const panel = page.getByTestId('series-run-panel');

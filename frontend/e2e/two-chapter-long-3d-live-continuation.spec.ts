@@ -74,7 +74,7 @@ test('continue the frontend-created two-chapter run through two native-audio vid
   }
 
   await page.goto(`/novels/${novelId}?tab=series-plan`);
-  await page.getByRole('tab', { name: '整书计划 (2)', exact: true }).click();
+  await page.getByRole('tab', { name: '分集计划 (2)', exact: true }).click();
   const panel = page.getByTestId('series-run-panel');
   await expect(panel.getByTestId('series-run-episodes').getByText('镜头就绪')).toHaveCount(2, { timeout: 10 * 60_000 });
   for (const skill of ['剧本 Skill', '实体抽取 Skill', '分镜 Skill', '镜头提示词 Skill']) {

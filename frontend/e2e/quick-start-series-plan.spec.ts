@@ -453,7 +453,7 @@ test('novel detail opens the whole-book plan tab from query params', async ({ pa
   }));
 
   await page.goto('/novels/novel-series-e2e?tab=series-plan');
-  await expect(page.getByRole('tab', { name: /整书计划/ })).toHaveAttribute('data-state', 'active', { timeout: 10_000 });
+  await expect(page.getByRole('tab', { name: /分集计划/ })).toHaveAttribute('data-state', 'active', { timeout: 10_000 });
   await expect(page.getByText('连续动漫制作线')).toBeVisible();
   await expect(page.getByText('第一集 星光密信')).toBeVisible();
   await expect(page.getByText('待锁定 2 个资产')).toBeVisible();

@@ -45,7 +45,7 @@ test('continue the frontend-created five-chapter run through reference, first fr
   }
 
   await page.goto(`/novels/${novelId}?tab=series-plan`);
-  await page.getByRole('tab', { name: '整书计划 (5)', exact: true }).click();
+  await page.getByRole('tab', { name: '分集计划 (5)', exact: true }).click();
   const panel = page.getByTestId('series-run-panel');
   await expect(panel.getByTestId('series-run-episodes').getByText('镜头就绪')).toHaveCount(5, { timeout: 120_000 });
   await expect(panel.getByTestId('series-run-skill-evidence')).toContainText('剧本 Skill');

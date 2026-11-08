@@ -211,11 +211,14 @@ test('imports txt chapters and drives entity and Story Bible actions', async ({ 
   await page.getByRole('button', { name: /确认导入/ }).click();
   await page.waitForURL(/\/novels\/novel-imported/);
 
+  await expect(page.getByRole('tab', { name: /^章节 \(/ })).toBeVisible();
+  await expect(page.getByRole('tab', { name: /故事设定 \(/ })).toHaveCount(0);
   await page.getByRole('tab', { name: /角色 \(/ }).click();
   await page.getByRole('button', { name: /提取实体/ }).click();
   await expect(page.locator('[role="tabpanel"]').filter({ hasText: '已提取 4 个实体' })).toBeVisible();
 
-  await page.getByRole('tab', { name: /Story Bible \(/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /故事设定 \(/ }).click();
   await page.getByRole('button', { name: /^生成$/ }).click();
   await expect(page.locator('[role="tabpanel"]').filter({ hasText: 'Story Bible 已生成' })).toBeVisible();
 
