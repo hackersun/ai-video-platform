@@ -73,3 +73,9 @@ RATE_LIMIT_BACKEND=memory REFRESH_TOKEN_STORE=memory \
 - W3-2 会话/密码/前端 auth 渐进
 - W3-3 CI
 - W3-4 本文档与 Caddy example
+
+## 落地提交
+
+- `6e93a823` W3 commercial gates（限流 / 会话 / 密码 / CI）
+- 生产欢迎 BYOK 文案确认：第1波 `7f561b05` / `W1-5`，本波未改布局
+
