@@ -22,37 +22,46 @@
 
 验收总目标（走查）：
 
-- [ ] 顶栏默认可见入口 ≤ 3：小说 / 成片 / 模型设置；任务中心、资产在「高级工具」
-- [ ] 手机宽度可进「模型设置」（不得被 `slice(0,4)` 挤掉）
-- [ ] 「快速开始」不作为主导航心智：改名「专家向导」并进高级工具；首页/dashboard CTA 统一「开始创作」→ `/novels`
-- [ ] 导入：「识别章节 + 确认导入」合并为「导入并开始」；失败才展开预览
-- [ ] 分集计划 / 故事设定等主路径去英文行话；扩展 glossary；Production Bible / Series Studio / Readiness / 门禁等不对新手主路径可见（专业页可保留但顶栏提示日常用一键）
-- [ ] 生产无试用时欢迎态清晰大卡「填写 API Key 开始」，文案说清无免费试用、需自带 Key
-- [ ] 数据概览纯数据、快捷入口 ≤ 3；工作室/制片/工作流顶栏提示「日常请用小说页一键生成」
-- [ ] 任务中心尽量显示书名 + 步骤中文（API 不够则前端可读映射）
-- [ ] 假模式新账号：注册 → 看片点击数记录；截图 `docs/ui-simplification-2026-11-08/wave1-after/`
-- [ ] 相关 Playwright + tsc/lint + 相关 backend 测试绿
+- [x] 顶栏默认可见入口 ≤ 3：小说 / 成片 / 模型设置；任务中心、资产在「高级工具」
+- [x] 手机宽度可进「模型设置」（不得被 `slice(0,4)` 挤掉）
+- [x] 「快速开始」不作为主导航心智：改名「专家向导」并进高级工具；首页/dashboard CTA 统一「开始创作」→ `/novels`
+- [x] 导入：「识别章节 + 确认导入」合并为「导入并开始」；失败才展开预览
+- [x] 分集计划 / 故事设定等主路径去英文行话；扩展 glossary；Production Bible / Series Studio / Readiness / 门禁等不对新手主路径可见（专业页可保留但顶栏提示日常用一键）
+- [x] 生产无试用时欢迎态清晰大卡「填写 API Key 开始」，文案说清无免费试用、需自带 Key
+- [x] 数据概览纯数据、快捷入口 ≤ 3；工作室/制片/工作流顶栏提示「日常请用小说页一键生成」
+- [x] 任务中心尽量显示书名 + 步骤中文（API 不够则前端可读映射）
+- [x] 假模式新账号：注册 → 看片点击数记录；截图 `docs/ui-simplification-2026-11-08/wave1-after/`
+- [x] 相关 Playwright + tsc/lint + 相关 backend 测试绿
 
 ### 任务清单
 
 | # | 任务 | 主要文件 | 相关测试 | 状态 |
 |---|---|---|---|---|
-| W1-1 | 主导航→小说/成片/模型设置；任务中心+资产进高级；手机栏必含模型设置 | `top-navigation.tsx` | `top-navigation.spec.ts` | ☐ |
-| W1-2 | 「快速开始」→「专家向导」进高级；首页/dashboard CTA「开始创作」→`/novels`；去掉连续动漫向导双叙事 | `page.tsx`(home)、`dashboard/page.tsx`、`top-navigation.tsx`、`quick-start` 文案 | `home-cta.spec.ts`、`smoke.spec.ts`、`top-navigation.spec.ts` | ☐ |
-| W1-3 | 导入合并「识别+确认」→「导入并开始」；失败才展开预览 | `novels/page.tsx` | `novel-paste-import.spec.ts`、`novel-import-story-bible.spec.ts`、onboarding 相关 | ☐ |
-| W1-4 | 扩展 glossary；分集计划/故事设定去英文行话；主路径不可见 Production Bible 等 | `glossary.ts`、novel detail、stage/blocker labels | novel / story-bible / series-plan 相关 e2e | ☐ |
-| W1-5 | 生产无试用欢迎态：清晰大卡「填写 API Key 开始」；说清无免费试用 | `simple-model-setup.tsx` | `onboarding-simplification.spec.ts` | ☐ |
-| W1-6 | dashboard 纯数据、快捷入口≤3；studio/producer/workflow 顶栏「日常请用小说页一键生成」 | `dashboard/page.tsx`、studio/producer/workflow 壳 | 相关 e2e（有则跑） | ☐ |
-| W1-7 | 任务中心：书名 + 步骤中文（API 不够前端映射） | `jobs/page.tsx` | jobs / full-flow 相关 | ☐ |
+| W1-1 | 主导航→小说/成片/模型设置；任务中心+资产进高级；手机栏必含模型设置 | `top-navigation.tsx` | `top-navigation.spec.ts` | ✅ |
+| W1-2 | 「快速开始」→「专家向导」进高级；首页/dashboard CTA「开始创作」→`/novels`；去掉连续动漫向导双叙事 | `page.tsx`(home)、`dashboard/page.tsx`、`top-navigation.tsx`、`quick-start` 文案 | `home-cta.spec.ts`、`smoke.spec.ts`、`top-navigation.spec.ts` | ✅ |
+| W1-3 | 导入合并「识别+确认」→「导入并开始」；失败才展开预览 | `novels/page.tsx` | `novel-paste-import.spec.ts`、`novel-import-story-bible.spec.ts`、onboarding 相关 | ✅ |
+| W1-4 | 扩展 glossary；分集计划/故事设定去英文行话；主路径不可见 Production Bible 等 | `glossary.ts`、novel detail、stage/blocker labels | novel / story-bible / series-plan 相关 e2e | ✅ |
+| W1-5 | 生产无试用欢迎态：清晰大卡「填写 API Key 开始」；说清无免费试用 | `simple-model-setup.tsx` | `onboarding-simplification.spec.ts` | ✅ |
+| W1-6 | dashboard 纯数据、快捷入口≤3；studio/producer/workflow 顶栏「日常请用小说页一键生成」 | `dashboard/page.tsx`、studio/producer/workflow 壳 | 相关 e2e（有则跑） | ✅ |
+| W1-7 | 任务中心：书名 + 步骤中文（API 不够前端映射） | `jobs/page.tsx` | jobs / full-flow 相关 | ✅ |
 
 **走查与收尾**
 
-- [ ] 假模式新账号全路径点击统计
-- [ ] 截图 `docs/ui-simplification-2026-11-08/wave1-after/`
+- [x] 假模式新账号全路径点击统计
+- [x] 截图 `docs/ui-simplification-2026-11-08/wave1-after/`
 - [ ] 本计划勾选第 1 波；打包 `~/Documents/avp-wave1.tgz` → `/workspace/wave1/`
 - [ ] 停止服务
 
 ---
+
+### 第1波实施记录（2026-11-10）
+
+- 假模式新账号旅程：`docs/ui-simplification-2026-11-08/wave1-after/wave1.json`
+- 点击序列：勾选条款 → 注册 → 演示模式 → 导入并开始 → 一键生成视频 → 播放 → 下载视频 → 查看发布（共 8 次主路径点击；native dialog=0）
+- 生成约 8s 完成；下载 `video/mp4` ~6.2MB；dashboard 快捷入口=3；欢迎页 chooser=2（演示/自带 Key）
+- 截图：`wave1-after/01-welcome.png` … `12-dashboard-shortcuts.png`
+- 附：进度卡优先展示后端 `blocker_detail` 中文修复提示（`blocker-messages.ts`）
+- 验证：frontend typecheck/lint 绿；Playwright 22/22（top-navigation/home-cta/dashboard-shortcuts/jobs-readable-names/novel-paste-import/onboarding-simplification/smoke）；backend `test_simple_setup_hides_test_artifacts` 2 passed
 
 ## 第 2 波：后端管线可靠（本轮不做）
 

@@ -36,8 +36,12 @@ const MAP: Record<string, BlockerInfo> = {
 };
 
 export function blockerInfo(code?: string | null, detail?: string | null): BlockerInfo {
-  if (code && MAP[code]) return MAP[code];
-  return { title: '生成遇到问题', hint: detail && !detail.trim().startsWith('{') ? detail : '请稍后重试，或在「高级：分步控制」中查看详情。' };
+  const cleanDetail = detail && !detail.trim().startsWith('{') ? detail.trim() : '';
+  if (code && MAP[code]) {
+    // Prefer backend actionable Chinese repair_hint/blocker_detail when present.
+    return cleanDetail ? { ...MAP[code], hint: cleanDetail } : MAP[code];
+  }
+  return { title: '生成遇到问题', hint: cleanDetail || '请稍后重试，或在「高级：分步控制」中查看详情。' };
 }
 
 /** 兼容字符串 / {code,message} / 任意对象 的阻塞描述 → 一行中文。 */
