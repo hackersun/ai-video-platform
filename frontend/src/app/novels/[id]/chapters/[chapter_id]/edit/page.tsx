@@ -278,7 +278,7 @@ export default function ChapterEditPage() {
   const canContinueFromContext = wordCount === 0;
   const contentPreview = getStoryExcerpt(
     formData.content,
-    '这个章节还没有正文，适合让 AI 根据前文、Story Bible 和实体上下文生成本章内容。',
+    '这个章节还没有正文，适合让 AI 根据前文、故事设定 和实体上下文生成本章内容。',
     260
   );
 
@@ -461,7 +461,7 @@ export default function ChapterEditPage() {
             }
             footer={
               <p className="text-xs leading-5 text-white/40">
-                AI 会读取小说简介、前后章节、Story Bible 及已抽取的人物/场景/道具/事件，生成后立即保存并同步一致性上下文。
+                AI 会读取小说简介、前后章节、故事设定 及已抽取的人物/场景/道具/事件，生成后立即保存并同步一致性上下文。
               </p>
             }
           />
@@ -470,7 +470,7 @@ export default function ChapterEditPage() {
       <ConfirmDialog
         open={showRewriteConfirm}
         title="重新生成本章"
-        description="确定要根据小说整体设定、前后章节和 Story Bible 重新生成本章吗？当前正文会被替换。"
+        description="确定要根据小说整体设定、前后章节和 故事设定 重新生成本章吗？当前正文会被替换。"
         confirmText="重新生成"
         loading={isGenerating}
         onOpenChange={setShowRewriteConfirm}

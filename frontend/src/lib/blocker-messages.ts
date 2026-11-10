@@ -2,13 +2,13 @@
 export interface BlockerInfo { title: string; hint: string; href?: string; action?: string }
 
 const MAP: Record<string, BlockerInfo> = {
-  models_not_configured: { title: '还没有配置可用的模型', hint: '请到「模型设置」粘贴 API Key 并点击「保存并检测」，或选择「免费试用」。', href: '/llm-config#model-settings-key', action: '去模型设置' },
+  models_not_configured: { title: '还没有配置可用的模型', hint: '请到「模型设置」粘贴 API Key 并点击「保存并检测」，生产环境需自带 API Key。', href: '/llm-config#model-settings-key', action: '去模型设置' },
   model_bindings_not_fresh: { title: '模型配置需要重新验证', hint: '模型配置已变化或过期，请在「模型设置」重新测试。', href: '/llm-config', action: '去模型设置' },
   model_bindings_missing: { title: '还没有配置可用的模型', hint: '请先在「模型设置」配置模型。', href: '/llm-config', action: '去模型设置' },
   provider_binding_not_ready: { title: '模型服务暂不可用', hint: '请在「模型设置」检查服务状态。', href: '/llm-config', action: '去模型设置' },
   chapters_missing: { title: '章节不足', hint: '至少需要 2 章内容才能生成整书视频。', href: '?tab=chapters', action: '去添加章节' },
-  series_plan_episodes_missing: { title: '整书计划为空', hint: '请先检查章节内容后重新生成整书计划。', href: '?tab=series-plan', action: '查看整书计划' },
-  series_plan_build_failed: { title: '整书计划生成失败', hint: '请检查章节内容或稍后重试。', href: '?tab=series-plan', action: '查看整书计划' },
+  series_plan_episodes_missing: { title: '分集计划为空', hint: '请先检查章节内容后重新生成分集计划。', href: '?tab=series-plan', action: '查看分集计划' },
+  series_plan_build_failed: { title: '分集计划生成失败', hint: '请检查章节内容或稍后重试。', href: '?tab=series-plan', action: '查看分集计划' },
   voice_selection_required: { title: '需要为角色选择配音', hint: '请在「高级：分步控制」里为主角选择声音。', href: '?tab=series-plan', action: '去选择配音' },
   voice_selection_stale: { title: '配音选择已过期', hint: '请重新为角色选择声音。', href: '?tab=series-plan', action: '去选择配音' },
   full_shot_selection_required: { title: '部分镜头无法自动选取', hint: '请在「高级：分步控制」中手动确认关键镜头。', href: '?tab=series-plan', action: '去确认镜头' },

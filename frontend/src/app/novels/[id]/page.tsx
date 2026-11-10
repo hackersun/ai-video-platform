@@ -813,7 +813,7 @@ export default function NovelDetailPage() {
     setChapterAiAction('continue');
     try {
       const instructionParts = [
-        '请作为下一章继续创作，必须承接当前小说简介、已有章节结尾、Story Bible、人物关系、场景、道具和事件线。',
+        '请作为下一章继续创作，必须承接当前小说简介、已有章节结尾、故事设定、人物关系、场景、道具和事件线。',
         '章节结尾要留下可继续进入下一章或后续分镜的视频化悬念。',
       ];
       if (newChapterContent.trim()) {
@@ -981,16 +981,16 @@ export default function NovelDetailPage() {
     try {
       const bible = await apiClient.generateStoryBible({
         novel_id: novelId,
-        title: `${novel.title} Story Bible`,
+        title: `${novel.title} ${TERMS.storyBible}`,
         style: novel.genre || 'anime',
         model_config_id: textModelConfigId || undefined,
       });
       setStoryBibles((prev) => [bible, ...prev.filter((item) => item.id !== bible.id)]);
       setStoryStateMachine(bible?.extra_data?.state_machine || null);
       setStateMachineIssues([]);
-      setBibleMessage('Story Bible 已生成');
+      setBibleMessage(`${TERMS.storyBible}已生成`);
     } catch (err: any) {
-      setBibleMessage(err?.message || 'Story Bible 生成失败');
+      setBibleMessage(err?.message || `${TERMS.storyBible}生成失败`);
     } finally {
       setGeneratingBible(false);
     }
@@ -999,7 +999,7 @@ export default function NovelDetailPage() {
   const handleCheckStoryBible = async () => {
     const storyBible = storyBibles[0];
     if (!storyBible) {
-      setBibleMessage('请先生成 Story Bible');
+      setBibleMessage(`请先生成${TERMS.storyBible}`);
       return;
     }
 
@@ -1013,7 +1013,7 @@ export default function NovelDetailPage() {
       setBibleIssues(result.issues || []);
       setBibleMessage(`检查完成：${result.issue_count || 0} 个提示`);
     } catch (err: any) {
-      setBibleMessage(err?.message || 'Story Bible 检查失败');
+      setBibleMessage(err?.message || `${TERMS.storyBible}检查失败`);
     } finally {
       setCheckingBible(false);
     }
@@ -1022,7 +1022,7 @@ export default function NovelDetailPage() {
   const handleGenerateStateMachine = async () => {
     const storyBible = storyBibles[0];
     if (!storyBible) {
-      setStateMachineMessage('请先生成 Story Bible');
+      setStateMachineMessage(`请先生成${TERMS.storyBible}`);
       return;
     }
     setGeneratingStateMachine(true);
@@ -1042,12 +1042,12 @@ export default function NovelDetailPage() {
             : item
         )
       );
-      setStateMachineMessage(`状态机已生成：人物 ${machine.summary?.characters || 0}、场景 ${machine.summary?.scenes || 0}、道具 ${machine.summary?.props || 0}、事件 ${machine.summary?.events || 0}`);
-      toast({ title: 'Story Bible 状态机已生成', type: 'success' });
+      setStateMachineMessage(`${TERMS.stateMachine}已生成：人物 ${machine.summary?.characters || 0}、场景 ${machine.summary?.scenes || 0}、道具 ${machine.summary?.props || 0}、事件 ${machine.summary?.events || 0}`);
+      toast({ title: `${TERMS.storyBible}·${TERMS.stateMachine}已生成`, type: 'success' });
     } catch (err: any) {
-      const message = err?.message || '状态机生成失败';
+      const message = err?.message || `${TERMS.stateMachine}生成失败`;
       setStateMachineMessage(message);
-      toast({ title: '状态机生成失败', description: message, type: 'error' });
+      toast({ title: `${TERMS.stateMachine}生成失败`, description: message, type: 'error' });
     } finally {
       setGeneratingStateMachine(false);
     }
@@ -1056,7 +1056,7 @@ export default function NovelDetailPage() {
   const handleCheckStateMachine = async () => {
     const storyBible = storyBibles[0];
     if (!storyBible) {
-      setStateMachineMessage('请先生成 Story Bible');
+      setStateMachineMessage(`请先生成${TERMS.storyBible}`);
       return;
     }
     setCheckingStateMachine(true);
@@ -1066,9 +1066,9 @@ export default function NovelDetailPage() {
         novel_id: novelId,
       });
       setStateMachineIssues(result.issues || []);
-      setStateMachineMessage(`状态机检查完成：${result.issue_count || 0} 个提示`);
+      setStateMachineMessage(`${TERMS.stateMachine}检查完成：${result.issue_count || 0} 个提示`);
     } catch (err: any) {
-      setStateMachineMessage(err?.message || '状态机检查失败');
+      setStateMachineMessage(err?.message || `${TERMS.stateMachine}检查失败`);
     } finally {
       setCheckingStateMachine(false);
     }
@@ -1438,7 +1438,7 @@ export default function NovelDetailPage() {
                   <div className="rounded-lg bg-white/[0.04] p-3">
                     <div className="text-xs text-white/40">一致性状态</div>
                     <div className="mt-1 text-sm font-medium text-white">
-                      {storyBibles.length > 0 ? 'Story Bible 已建立' : '建议生成 Story Bible'}
+                      {storyBibles.length > 0 ? `${TERMS.storyBible}已建立` : `建议生成${TERMS.storyBible}`}
                     </div>
                   </div>
                   <div className="rounded-lg bg-white/[0.04] p-3">
@@ -1589,7 +1589,7 @@ export default function NovelDetailPage() {
                       </Button>
                     </div>
                     <Textarea
-                      placeholder="章节内容或创作方向（可选）。如果直接点 AI 续写，系统会读取小说简介、前文、Story Bible、人物、场景、道具和事件线来生成下一章。"
+                      placeholder="章节内容或创作方向（可选）。如果直接点 AI 续写，系统会读取小说简介、前文、故事设定、人物、场景、道具和事件线来生成下一章。"
                       value={newChapterContent}
                       onChange={(e) => setNewChapterContent(e.target.value)}
                       className="bg-white/10 border-white/20 text-white min-h-[160px] resize-y"
@@ -1612,7 +1612,7 @@ export default function NovelDetailPage() {
                       />
                     </div>
                     <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-3 text-sm text-violet-100">
-                      AI 辅助会优先使用上方“文本生成默认”模型，并自动带入本小说已有章节、Story Bible、人物、场景、道具和事件上下文，尽量保持下一章剧情承接。
+                      AI 辅助会优先使用上方“文本生成默认”模型，并自动带入本小说已有章节、故事设定、人物、场景、道具和事件上下文，尽量保持下一章剧情承接。
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
                       <select
@@ -1802,36 +1802,36 @@ export default function NovelDetailPage() {
                         <div>
                           <div className="flex items-center gap-2 text-sm font-medium text-blue-100">
                             <Film className="h-4 w-4" />
-                            连续动漫制作线
+                            分集制作进度
                           </div>
                           <p className="mt-1 text-sm text-white/60">
-                            分集计划会把多集拆分接入 Series Studio / Producer：先锁定 Production Bible，再逐集推进资产、声线、本集工程和质量门禁。
+                            {TERMS.seriesPlan}会把多集拆开制作：先锁定{TERMS.productionBible}与{TERMS.storyBible}，再逐集推进{TERMS.assets}、{TERMS.tts}和发布前检查。日常请用「{TERMS.oneClick}」。
                           </p>
                         </div>
                         <Badge variant="outline" className="w-fit border-blue-300/40 text-blue-100">
-                          Series Studio Ready
+                          可继续制作
                         </Badge>
                       </div>
                       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">Production Bible</div>
-                          <div className="mt-1 text-sm text-white">{storyBibles.length > 0 ? '已绑定世界观/规则' : '待生成故事圣经'}</div>
+                          <div className="text-xs text-white/40">{TERMS.productionBible}</div>
+                          <div className="mt-1 text-sm text-white">{storyBibles.length > 0 ? '已绑定世界观/规则' : `待生成${TERMS.storyBible}`}</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">角色/场景资产</div>
-                          <div className="mt-1 text-sm text-white">{characters.length > 0 ? `${characters.length} 个角色可复用` : '待提取角色资产'}</div>
+                          <div className="text-xs text-white/40">{TERMS.assets}</div>
+                          <div className="mt-1 text-sm text-white">{characters.length > 0 ? `${characters.length} 个角色可复用` : '待提取角色'}</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">声线连续性</div>
-                          <div className="mt-1 text-sm text-white">进入 Producer 后锁定配音与字幕节奏</div>
+                          <div className="text-xs text-white/40">{TERMS.tts}连续性</div>
+                          <div className="mt-1 text-sm text-white">锁定角色声音与字幕节奏</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
                           <div className="text-xs text-white/40">本集工程</div>
-                          <div className="mt-1 text-sm text-white">继续本集工程会进入系列生产线</div>
+                          <div className="mt-1 text-sm text-white">继续本集可进入分步精修</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">质量门禁</div>
-                          <div className="mt-1 text-sm text-white">检查剧本、分镜、镜头、媒体完整性</div>
+                          <div className="text-xs text-white/40">{TERMS.gate}</div>
+                          <div className="mt-1 text-sm text-white">检查剧本、画面脚本和成片完整性</div>
                         </div>
                       </div>
                     </div>
@@ -2049,7 +2049,7 @@ export default function NovelDetailPage() {
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-white flex items-center gap-2">
                   <ShieldCheck className="w-5 h-5 text-violet-400" />
-                  {TERMS.storyBible}（Story Bible）
+                  {TERMS.storyBible}
                 </CardTitle>
                 <div className="flex flex-wrap gap-2 sm:justify-end">
                   <Button
@@ -2088,7 +2088,7 @@ export default function NovelDetailPage() {
                     className="border-blue-500/50"
                   >
                     {generatingStateMachine ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ListChecks className="w-4 h-4 mr-2" />}
-                    状态机
+                    {TERMS.stateMachine}
                   </Button>
                   <Button
                     size="sm"
@@ -2113,7 +2113,7 @@ export default function NovelDetailPage() {
                 {storyBibles.length === 0 ? (
                   <div className="text-center py-8 text-white/40">
                     <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>暂无 Story Bible</p>
+                    <p>暂无{TERMS.storyBible}</p>
                     <p className="text-sm">可基于章节和角色生成一致性设定</p>
                   </div>
                 ) : (
@@ -2145,7 +2145,7 @@ export default function NovelDetailPage() {
                       <div>
                         <div className="flex items-center gap-2 text-white font-medium">
                           <ListChecks className="h-4 w-4 text-blue-200" />
-                          跨章节状态机
+                          跨章节{TERMS.stateMachine}
                         </div>
                         <p className="mt-1 text-sm text-white/55">
                           人物、场景、道具和事件状态会进入后续章节、分镜、镜头和视频生成约束。
@@ -2194,9 +2194,9 @@ export default function NovelDetailPage() {
                   </div>
                 ) : storyBibles.length > 0 ? (
                   <div className="rounded-lg border border-dashed border-white/15 bg-white/5 p-4">
-                    <div className="text-white font-medium">尚未生成跨章节状态机</div>
+                    <div className="text-white font-medium">尚未生成跨章节{TERMS.stateMachine}</div>
                     <p className="mt-1 text-sm text-white/50">
-                      状态机会把人物服装/关系、场景环境、道具流转和事件因果变成可检查规则，减少多集生成漂移。
+                      {TERMS.stateMachine}会把人物服装/关系、场景环境、道具流转和事件因果变成可检查规则，减少多集生成漂移。
                     </p>
                     <Button
                       size="sm"
@@ -2205,7 +2205,7 @@ export default function NovelDetailPage() {
                       disabled={generatingStateMachine}
                     >
                       {generatingStateMachine ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                      生成状态机
+                      生成{TERMS.stateMachine}
                     </Button>
                   </div>
                 ) : null}
@@ -2225,7 +2225,7 @@ export default function NovelDetailPage() {
 
                 {stateMachineIssues.length > 0 && (
                   <div>
-                    <div className="text-white/80 text-sm mb-2">状态机提示</div>
+                    <div className="text-white/80 text-sm mb-2">{TERMS.stateMachine}提示</div>
                     <div className="space-y-2">
                       {stateMachineIssues.slice(0, 12).map((issue, index) => (
                         <div key={`${issue.code}-${issue.name || issue.chapter_id || index}`} className="rounded-md bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-sm text-yellow-100">
