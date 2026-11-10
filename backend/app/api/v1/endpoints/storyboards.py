@@ -1,6 +1,7 @@
 """
 分镜管理 API 端点
 """
+from app.core.media_access import SignedMediaStr, SignedMediaUrl
 from app.core.time_utils import utc_now
 import asyncio
 import uuid
@@ -180,9 +181,9 @@ class StoryboardMergeVideosResponse(BaseModel):
     job_id: str
     storyboard_id: str
     message: str
-    output_url: Optional[str] = None
-    manifest_url: str
-    srt_url: Optional[str] = None
+    output_url: SignedMediaUrl = None
+    manifest_url: SignedMediaStr
+    srt_url: SignedMediaUrl = None
     segment_count: int
     duration_seconds: float
     segments: List[dict]
@@ -200,9 +201,9 @@ class StoryboardMergeVersionResponse(BaseModel):
     job_id: str
     storyboard_id: str
     title: Optional[str] = None
-    output_url: Optional[str] = None
-    manifest_url: Optional[str] = None
-    srt_url: Optional[str] = None
+    output_url: SignedMediaUrl = None
+    manifest_url: SignedMediaUrl = None
+    srt_url: SignedMediaUrl = None
     segment_count: int = 0
     duration_seconds: Optional[float] = None
     selected_shot_ids: List[str] = Field(default_factory=list)
@@ -419,7 +420,7 @@ def _media_url_to_local_static_path(url: Optional[str]) -> Optional[Path]:
         return None
     raw_url = str(url).strip()
     parsed = urlparse(raw_url)
-    media_path = parsed.path if parsed.scheme else raw_url
+    media_path = parsed.path  # query (e.g. media signature) stripped
     media_path = unquote(media_path)
     if media_path.startswith("/static/"):
         relative = media_path[len("/static/"):]
@@ -1691,7 +1692,7 @@ async def merge_storyboard_videos(
 
     srt_content = _build_storyboard_srt(segments) if request.include_subtitles and request.subtitle_mode != "off" else ""
     srt_url = _write_storyboard_export_text(f"{synthesis_job_id}.srt", srt_content) if srt_content else None
-    output_url: Optional[str] = None
+    output_url: SignedMediaUrl = None
     render_backend = "local_manifest"
     is_real_merged = False
     render_message: Optional[str] = None

@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 
 import { apiClient } from '@/lib/api-client';
+import { AiGeneratedLabel } from '@/features/legal/ai-generated-label';
 
 type RefreshReason = 'initial' | 'manual' | 'auto';
 
@@ -119,13 +120,19 @@ function MediaPlayerContent() {
         </header>
 
         <section className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 shadow-2xl">
-          <div className="flex min-h-[60vh] items-center justify-center bg-black">
+          <div className="relative flex min-h-[60vh] items-center justify-center bg-black">
             {loading && (
               <div className="flex items-center gap-3 text-slate-300">
                 <Loader2 className="h-5 w-5 animate-spin" /> 正在获取最新播放地址…
               </div>
             )}
-            {!loading && error && (
+            {!loading && !jobId && (
+              <div data-testid="media-player-empty" className="max-w-md px-6 text-center text-slate-300">
+                <p className="mb-4">这里用于播放某一部成片。请到「成片」页选择要播放的作品。</p>
+                <a href="/synthesis" className="rounded-lg border border-slate-600 px-4 py-2 text-sm hover:bg-white/5">去成片列表</a>
+              </div>
+            )}
+            {!loading && error && jobId && (
               <div className="max-w-md px-6 text-center">
                 <p className="mb-4 text-rose-300">{error}</p>
                 <button
@@ -133,10 +140,11 @@ function MediaPlayerContent() {
                   onClick={() => void refreshPlayback('manual')}
                   className="rounded-lg border border-rose-400/50 px-4 py-2 text-sm text-rose-200 hover:bg-rose-500/10"
                 >
-                  修改配置后重试
+                  重新获取播放地址
                 </button>
               </div>
             )}
+            {!loading && playbackUrl && <AiGeneratedLabel className="absolute left-3 top-3 z-10" />}
             {!loading && playbackUrl && (
               <video
                 data-testid="delivery-video"

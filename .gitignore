@@ -68,3 +68,16 @@ npm-debug.log*
 
 # Accidental local package resolver output
 /backend/=*
+
+# Repo hygiene (untracked from index, kept on disk; history still has blobs)
+/backend/backend/
+/backend/test-results/
+/e2e/test-results/
+**/test-results/
+/backend/=*
+/backend/output/
+/backend/.superpowers/
+/tmp/docx_requirements_report/
+/tmp/pdfs/
+.pytest_cache/
+*.pyc

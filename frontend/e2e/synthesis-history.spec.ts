@@ -68,6 +68,12 @@ test('synthesis history can filter and preview render artifacts inline', async (
 
   await page.goto('/synthesis');
 
+  await expect(page.getByRole('heading', { name: '我的成片', level: 1 })).toBeVisible();
+  const manual = page.getByTestId('manual-synthesis');
+  await expect(manual).not.toHaveAttribute('open', '');
+  await expect(page.getByText('选择视频', { exact: true })).toBeHidden();
+  await manual.locator('summary').click();
+  await expect(page.getByText('选择视频', { exact: true })).toBeVisible();
   await expect(page.getByText('合成历史筛选')).toBeVisible();
   await page.getByLabel('小说ID').fill('novel-001');
   await page.getByLabel('章节ID').fill('chapter-001');

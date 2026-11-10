@@ -3,6 +3,10 @@ import { writeFile } from 'node:fs/promises';
 
 import { devToken } from './helpers/production-os-fixture';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 const userId = process.env.TWO_CHAPTER_LIVE_USER_ID || '';
 const novelId = process.env.TWO_CHAPTER_LIVE_NOVEL_ID || '';
 const runId = process.env.TWO_CHAPTER_LIVE_RUN_ID || '';
@@ -70,7 +74,7 @@ test('continue the frontend-created two-chapter run through two native-audio vid
   }
 
   await page.goto(`/novels/${novelId}?tab=series-plan`);
-  await page.getByRole('tab', { name: '整书计划 (2)', exact: true }).click();
+  await page.getByRole('tab', { name: '分集计划 (2)', exact: true }).click();
   const panel = page.getByTestId('series-run-panel');
   await expect(panel.getByTestId('series-run-episodes').getByText('镜头就绪')).toHaveCount(2, { timeout: 10 * 60_000 });
   for (const skill of ['剧本 Skill', '实体抽取 Skill', '分镜 Skill', '镜头提示词 Skill']) {

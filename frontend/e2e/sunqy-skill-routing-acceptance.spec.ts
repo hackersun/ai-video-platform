@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 const userId = '56ae84de-951f-4e74-ac79-3550d6f6f3b2';
 const apiBase = 'http://127.0.0.1:8000/api/v1';
 
@@ -32,7 +36,7 @@ test('sunqy starts a four-chapter Skill-routed production from the workbench', a
     await page.getByRole('button', { name: '新建章节' }).click();
     await page.getByPlaceholder(/章节标题，可留空/).fill(chapterTitle);
     await page.getByPlaceholder(/章节内容或创作方向/).fill(content);
-    await page.getByRole('button', { name: '手动创建' }).click();
+    await page.getByTestId('chapter-create-submit').click();
     await expect.poll(async () => {
       const response = await page.request.get(`${apiBase}/chapters/novel/${novelId}`, {
         headers: { Authorization: `Bearer ${userId}` },
@@ -42,7 +46,8 @@ test('sunqy starts a four-chapter Skill-routed production from the workbench', a
     await page.reload();
   }
 
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   await page.getByRole('button', { name: '整书自动制作', exact: true }).click();
   await page.waitForFunction((id) => Boolean(localStorage.getItem(`series-run:${id}`)), novelId);

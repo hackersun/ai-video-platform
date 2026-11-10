@@ -17,7 +17,7 @@ test('existing series run reuses character assets and restores completed deliver
   }, { id: userId, tokenValue: token, novel: novelId, run: runId });
 
   await page.goto(`/novels/${novelId}?tab=series-plan`);
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   const panel = page.getByTestId('series-run-panel');
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: '3 镜头前中后代表验证' }).click();

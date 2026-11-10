@@ -57,14 +57,35 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('概览用四个业务步骤解释模型接入与默认设置', async ({ page }) => {
+test('概览不再展示四步路径，专业功能收进专业模式开关', async ({ page }) => {
   await page.goto('/llm-config?section=overview');
+  await page.evaluate(() => window.localStorage.removeItem('avp.modelCenter.pro'));
+  await page.reload();
 
-  await expect(page.getByRole('heading', { name: '四步完成模型接入' })).toBeVisible();
-  await expect(page.getByText('1. 保存供应商账号')).toBeVisible();
-  await expect(page.getByText('4. 设为默认模型')).toBeVisible();
-  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /供应商账号/ })).toBeVisible();
-  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /默认模型/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '模型中心', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '四步完成模型接入' })).toHaveCount(0);
+  const nav = page.getByRole('navigation', { name: '模型中心功能' });
+  await expect(nav.getByRole('link', { name: /供应商账号/ })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /默认模型/ })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /生成方案/ })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /测试实验室/ })).toHaveCount(0);
+  await expect(nav.getByRole('link', { name: /提示词模板/ })).toHaveCount(0);
+
+  const toggle = page.getByTestId('model-center-pro-toggle');
+  await expect(toggle).toHaveAttribute('aria-checked', 'false');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-checked', 'true');
+  await expect(nav.getByRole('link', { name: /测试实验室/ })).toBeVisible();
+  await expect(nav.getByRole('link', { name: /提示词模板/ })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /测试实验室/ })).toBeVisible();
+});
+
+test('专业模式关闭时，深链接仍可直接打开测试实验室', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.removeItem('avp.modelCenter.pro'));
+  await page.goto('/llm-config?section=test-lab');
+  await expect(page.getByRole('heading', { name: '测试实验室', level: 1 })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '模型中心功能' }).getByRole('link', { name: /测试实验室/ })).toBeVisible();
 });
 
 test('供应商账号解释账号名称且保留原连接契约', async ({ page }) => {

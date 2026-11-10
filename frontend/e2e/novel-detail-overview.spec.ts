@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './helpers/synthetic-media';
 
 function devToken(userId: string) {
   const payload = Buffer.from(
@@ -92,6 +92,23 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
       await route.fulfill({ json: [] });
       return;
     }
+    if (method === 'GET' && path === '/model-center/simple-setup') {
+      const card = (capability: string, label: string, model_name: string | null) => ({
+        capability, label, config_id: model_name ? `cfg-${capability}` : null, model_name,
+        has_key: Boolean(model_name), test_status: model_name ? 'success' : null, fresh: Boolean(model_name),
+        extra_params: {}, options: [],
+      });
+      const effective = {
+        text: card('text', '文本', 'Ark Code'), image: card('image', '图像', null),
+        video: card('video', '视频', null), tts: card('tts', '语音', null),
+      };
+      await route.fulfill({ json: {
+        providers: [], capabilities: effective, primary_provider_id: null, configured: false, verified: false,
+        novel_id: 'novel-overview', novel_overrides: { text: null, image: null, video: null, tts: null },
+        novel_effective: effective, novel_choices: { text: [], image: [], video: [], tts: [] },
+      } });
+      return;
+    }
     if (method === 'GET' && path === '/llm/configs') {
       await route.fulfill({ json: [{
         id: '', model_id: 'profile-ark-code', api_model_id: 'ark-code-latest',
@@ -108,8 +125,10 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
 
   await page.goto('/novels/novel-overview');
 
-  await expect(page.getByLabel('文本生成模型配置')).toHaveValue('');
-  await expect(page.getByLabel('文本生成模型配置').locator('option:checked')).toContainText('ark-code-latest');
+  const modelLine = page.getByTestId('novel-model-line');
+  await expect(modelLine).toContainText('使用默认模型（来自「模型设置」）');
+  await expect(modelLine).toContainText('Ark Code');
+  await expect(modelLine.getByRole('link', { name: '模型设置' })).toHaveAttribute('href', '/llm-config');
 
   const overview = page.getByTestId('novel-overview-card');
   await expect(overview).toBeVisible();
@@ -130,7 +149,9 @@ test('作品详情首屏用左侧封面和右侧简介展示作品概览', async
   await page.reload();
   await expect(overview).toContainText('更新后的作品简介，跨章节保持人物、服装和世界观一致。');
 
-  await page.getByRole('button', { name: '生成封面' }).click();
+  // 已有封面时，「生成封面」收在「更多」菜单里。
+  await page.getByTestId('novel-more-actions').click();
+  await page.getByRole('menuitem', { name: '生成封面' }).click();
 
   const coverDialog = page.getByRole('dialog', { name: '生成封面图片' });
   await expect(coverDialog).toBeVisible();

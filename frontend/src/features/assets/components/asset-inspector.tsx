@@ -24,6 +24,8 @@ type Props = {
   onDeactivateEntity: (entity: AssetEntityOption) => Promise<boolean>;
 };
 
+const REFERENCE_VIEW_LABELS: Record<string, string> = { front: '正面', side: '侧面', back: '背面', main: '主视图', three_quarter: '四分之三侧' };
+
 export function AssetInspector(props: Props) {
   const [deactivateOpen, setDeactivateOpen] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
@@ -34,6 +36,10 @@ export function AssetInspector(props: Props) {
   const status = workbenchStatus(asset);
   const preview = props.toMediaUrl(asset.thumbnail_url || asset.url);
   const entity = props.entityOptions.find((item) => item.id === asset.entity_id);
+  const params = (asset.generation_params || {}) as Record<string, any>;
+  const contractId: string | undefined = params.visual_contract?.id || params.visual_contract_id || undefined;
+  const referenceViewKey: string | undefined = params.reference_view_key || undefined;
+  const inheritsFrom = referenceViewKey ? (REFERENCE_VIEW_LABELS[referenceViewKey] || referenceViewKey) : undefined;
 
   const confirmDeactivate = async () => {
     if (!entity) return;
@@ -60,6 +66,12 @@ export function AssetInspector(props: Props) {
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3"><div className="text-white/35">引用</div><div className="mt-1 text-white/75">{asset.usage_count || 0} 次</div></div>
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3"><div className="text-white/35">一致性</div><div className={`mt-1 ${consistency !== null && consistency < 60 ? 'text-red-300' : 'text-emerald-300'}`}>{consistency ?? '未检测'}{consistency !== null ? ' 分' : ''}</div></div>
       </div>
+      {(contractId || inheritsFrom) && (
+        <div data-testid="asset-inspector-lineage" className="mt-3 flex flex-wrap gap-2 text-xs">
+          {contractId && <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-2 py-1 text-cyan-100">视觉契约 {contractId}</span>}
+          {inheritsFrom && <span className="rounded-full border border-violet-300/30 bg-violet-400/10 px-2 py-1 text-violet-100">继承{inheritsFrom}参考</span>}
+        </div>
+      )}
       {failure && (
         <div className="mt-4 rounded-lg border border-red-400/20 bg-red-500/[0.08] p-3 text-xs leading-5 text-red-100">
           <div className="font-medium">问题详情</div><div className="mt-1 text-red-200/80">{failure.error}</div>

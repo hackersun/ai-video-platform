@@ -1,0 +1,15 @@
+drill=pg_dump_restore
+started_at=2026-11-10 09:20:14 +0800
+container=fde3bbc292004d02ed137d15189b01ed124367fae1b65baf323176f756889aa4
+dump_path=/tmp/avp-wave4-backups/wave4-20261110-092014.dump
+dump_bytes=1843
+dump_seconds=0
+restored_note=pre-dump
+restore_seconds=0
+rpo_target=upgrade-predeploy pg_dump only (no continuous WAL yet); measured_dump_lag_seconds≈0 for this drill
+rto_measured_seconds=0 (drop+create+pg_restore on local docker)
+rpo_declared=last successful pre-deploy dump (ops/deploy/deploy.sh); continuous archive not enabled
+rto_declared_goal<=15m for single-node docker restore of empty/small DB; this drill=1794273614
+STATUS=PASS
+finished_at=2026-11-10 09:20:14 +0800
+wall_seconds=0

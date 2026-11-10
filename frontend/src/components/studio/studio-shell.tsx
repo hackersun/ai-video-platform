@@ -322,7 +322,6 @@ export function StudioShell() {
         { href: '/studio/continuity-review', label: '连续性复审' },
         { href: '/studio/shot-review', label: '镜头审阅' },
         { href: '/workflow', label: '工作流' },
-        { href: '/producer', label: 'AI 制片' },
         { href: '/video-generation', label: '视频生成' },
       ]
     : [];
@@ -386,8 +385,12 @@ export function StudioShell() {
     loadWorkflows();
   }, [loadWorkflows]);
 
+  const lastQueryWorkflowIdRef = useRef(searchParams.get('workflow_id') || '');
   useEffect(() => {
     const queryWorkflowId = searchParams.get('workflow_id') || '';
+    // Only react to URL changes; an in-page switch updates state first and the URL catches up.
+    if (queryWorkflowId === lastQueryWorkflowIdRef.current) return;
+    lastQueryWorkflowIdRef.current = queryWorkflowId;
     if (queryWorkflowId && queryWorkflowId !== workflowId) {
       setSnapshot(null);
       setProductionCards(null);
@@ -495,6 +498,7 @@ export function StudioShell() {
       setLoading(true);
       try {
         await apiClient.lockEpisodeContract(workflowId);
+        toast({ title: '剧集合约已锁定', description: '本集连续性快照已刷新。', type: 'success' });
         await loadSnapshot(workflowId, mode);
       } catch (err: any) {
         setError(err.message || '锁定剧集合约失败');
@@ -695,14 +699,14 @@ export function StudioShell() {
           <CardContent className="p-8 text-center">
             <div className="text-lg font-medium text-white">先从小说创建本集工程</div>
             <div className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/55">
-              还没有可继续制作的本集工程。建议先打开连续动漫向导，导入小说章节并生成动漫设定本和第一集；完成后会带着本集工程回到这里继续一键草片、资产锁和质量门禁。
+              还没有可继续制作的本集工程。建议先到小说页一键生成；需要分步精修时再打开专家向导；完成后会带着本集工程回到这里继续一键草片、资产锁和质量门禁。
             </div>
             <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
               <Button className="bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/quick-start')}>
-                连续动漫向导：小说到第一集
+                专家向导：小说到第一集
               </Button>
-              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/producer')}>
-                一键成片：创建本集工程
+              <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/novels')}>
+                一键成片：从小说开始
               </Button>
             </div>
           </CardContent>

@@ -17,6 +17,7 @@ base_url="${AI_VIDEO_BASE_URL:-http://127.0.0.1:$port}"
 
 for attempt in $(seq 1 30); do
   if curl --fail --silent "$base_url/healthz" >/dev/null \
+    && curl --fail --silent "$base_url/ready" >/dev/null \
     && curl --fail --silent "$base_url/api/v1/versions" >/dev/null \
     && curl --fail --silent "$base_url/login" >/dev/null; then
     echo "健康检查通过：$base_url"

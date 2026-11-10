@@ -765,9 +765,9 @@ export default function QuickStartPage() {
           <div>
             <h1 className="text-3xl font-bold text-white flex items-center gap-2">
               <Wand2 className="h-7 w-7 text-violet-400" />
-              连续动漫向导
+              专家向导
             </h1>
-            <p className="mt-1 text-white/60">粘贴故事，AI 自动生成动漫设定本、首集剧本分镜和可预览草片</p>
+            <p className="mt-1 text-white/60">专业分步制作：生成设定本、首集剧本分镜和草片。日常请用小说页「一键生成视频」。</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Button onClick={() => saveDraft(true)} variant="outline" className="border-white/20 text-white">
@@ -821,6 +821,7 @@ export default function QuickStartPage() {
                     value={form.title}
                     onChange={(event) => setForm({ ...form, title: event.target.value })}
                     placeholder="例如：星灯邮差"
+                    aria-label="作品名"
                     className="bg-white/5 border-white/10 text-white"
                   />
                 </div>
@@ -830,6 +831,7 @@ export default function QuickStartPage() {
                     value={form.chapterTitle}
                     onChange={(event) => setForm({ ...form, chapterTitle: event.target.value })}
                     placeholder="例如：第一章 雨后的旧邮局"
+                    aria-label="首集章节名"
                     className="bg-white/5 border-white/10 text-white"
                   />
                 </div>
@@ -837,11 +839,11 @@ export default function QuickStartPage() {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_160px]">
                 <div className="space-y-1.5">
                   <div className="text-xs text-white/50">故事类型</div>
-                  <Select value={form.genre} onChange={(event) => setForm({ ...form, genre: event.target.value })} options={genreOptions} />
+                  <Select aria-label="故事类型" value={form.genre} onChange={(event) => setForm({ ...form, genre: event.target.value })} options={genreOptions} />
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-xs text-white/50">画面风格</div>
-                  <Select value={form.style} onChange={(event) => setForm({ ...form, style: event.target.value })} options={styleOptions} />
+                  <Select aria-label="画面风格" value={form.style} onChange={(event) => setForm({ ...form, style: event.target.value })} options={styleOptions} />
                 </div>
                 <div className="space-y-1.5">
                   <div className="text-xs text-white/50">首集镜头数（留空自动）</div>
@@ -869,6 +871,7 @@ export default function QuickStartPage() {
                   value={form.premise}
                   onChange={(event) => setForm({ ...form, premise: event.target.value })}
                   placeholder="写 2-5 句话即可，例如：主角是谁、遇到什么事件、这一季要完成什么目标。"
+                  aria-label="故事梗概"
                   className="min-h-[100px]"
                 />
               </div>
@@ -878,6 +881,7 @@ export default function QuickStartPage() {
                   value={form.chapterContent}
                   onChange={(event) => setForm({ ...form, chapterContent: event.target.value })}
                   placeholder="粘贴首章正文。没有完整章节时，也可以先粘贴 1-3 段关键剧情。"
+                  aria-label="首章正文"
                   className="min-h-[180px]"
                 />
               </div>

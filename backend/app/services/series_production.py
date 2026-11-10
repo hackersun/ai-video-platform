@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections import defaultdict
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Sequence, Any, Dict, Iterable, List, Optional
 
 from fastapi import HTTPException, status
 from sqlalchemy import and_, desc, or_, select
@@ -534,6 +535,24 @@ async def _load_novel(db: AsyncSession, user_id: str, novel_id: str) -> Novel:
     return novel
 
 
+def chapter_fingerprint(chapters: Sequence[Chapter]) -> str:
+    """Stable fingerprint of a novel's chapter set (ids, order and content)."""
+    digest = hashlib.sha256()
+    for chapter in chapters:
+        content_hash = hashlib.sha256(str(chapter.content or "").encode("utf-8")).hexdigest()
+        digest.update(f"{chapter.id}:{chapter.chapter_number}:{content_hash}\n".encode("utf-8"))
+    return digest.hexdigest()
+
+
+async def current_chapter_fingerprint(db: AsyncSession, user_id: str, novel_id: str) -> str:
+    rows = await db.execute(
+        select(Chapter)
+        .where(and_(Chapter.novel_id == novel_id, Chapter.user_id == user_id))
+        .order_by(Chapter.chapter_number, Chapter.created_at)
+    )
+    return chapter_fingerprint(list(rows.scalars().all()))
+
+
 async def get_series_plan(db: AsyncSession, user_id: str, novel_id: str) -> Dict[str, Any]:
     novel = await _load_novel(db, user_id, novel_id)
     plan = _json_dict(_json_dict(novel.extra_data).get(SERIES_PLAN_KEY))
@@ -810,6 +829,7 @@ async def build_series_plan(
         "aspect_ratio": aspect_ratio or "9:16",
         "style": style or novel.genre or "anime",
         "chapter_count": total_chapters,
+        "chapter_fingerprint": chapter_fingerprint(chapters),
         "status": "planned",
         "generated_at": now,
         "updated_at": now,

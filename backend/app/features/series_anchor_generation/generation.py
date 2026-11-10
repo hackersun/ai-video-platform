@@ -78,7 +78,7 @@ def _selected_ids(run: SeriesProductionRun, shots: list, requested: list[str], m
     if selected != (metadata.get("selected_anchor_shot_ids") or []) or mode != metadata.get("selected_anchor_mode"):
         raise SeriesAnchorError(409, "generation selection must match the persisted anchor mode and order")
     recommendations = recommend_anchor_shots([shot for shot in shots if shot.id in set(selected)], mode=mode)
-    blocker = anchor_coverage_blocker(recommendations, mode=mode)
+    blocker = anchor_coverage_blocker(recommendations, mode=mode, episodes=shots)
     if blocker:
         raise SeriesAnchorError(409, blocker)
     if set(selected) != {item["shot_id"] for item in recommendations}:
@@ -329,12 +329,19 @@ async def generate_selected(
             "error_code": "media_batch_submission_failed",
         }
         await db.commit()
+        await SeriesRunOrchestrator().close_media_tail(
+            db, run, selected_shot_ids=selected, submission_id=submission.id, media_failed=True,
+        )
         raise
     if reused: batches.append({"reused": True, "media_job_ids": reused})
     await record_anchor_skill_evidence(db, run, batches)
     pending = pending_source_response(selected, batches)
     if pending is not None:
         submission.status, submission.response_payload = pending["status"], pending
+        await db.commit()
+        await db.refresh(run)
+        pending = {**pending, "run_status": run.status}
+        submission.response_payload = pending
         await db.commit()
         return pending
     quality = await _evaluate_quality(
@@ -345,6 +352,13 @@ async def generate_selected(
     response = {"status": "completed", "selected_shot_ids": selected,
                 "workflow_batches": batches, "quality_results": quality}
     submission.status, submission.response_payload = "completed", response
+    await db.commit()
+    await SeriesRunOrchestrator().close_media_tail(
+        db, run, selected_shot_ids=selected, submission_id=submission.id, quality_results=quality,
+    )
+    await db.refresh(run)
+    response = {**response, "run_status": run.status}
+    submission.response_payload = response
     await db.commit()
     return response
 

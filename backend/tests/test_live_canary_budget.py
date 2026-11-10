@@ -51,6 +51,7 @@ async def db(tmp_path):
 
 
 async def _run(db: AsyncSession, *, maximum: str = "10.00") -> SeriesProductionRun:
+    from app.services.billing_guard import opt_in_live_billing
     user_id = f"user-{uuid4()}"
     novel = Novel(id=str(uuid4()), user_id=user_id, title="synthetic", status="draft")
     run = SeriesProductionRun(
@@ -60,7 +61,7 @@ async def _run(db: AsyncSession, *, maximum: str = "10.00") -> SeriesProductionR
         cost_summary={}, gate_summary={}, run_metadata={}, episodes=[], version=1,
     )
     db.add_all([novel, run])
-    await db.commit()
+    await opt_in_live_billing(db, user_id, commit=True)
     return run
 
 

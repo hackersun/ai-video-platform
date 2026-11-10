@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 from app.core.database import get_db
 from app.core.dev_generation import dev_synthesis_url, is_dev_mode
+from app.core.media_access import sign_media_url
 from app.core.permissions import require_project_role
 from app.core.security import get_current_user_id
 from app.models.publication import Publication
@@ -25,6 +26,7 @@ from app.models.tts_job import TTSJob
 from app.models.video_job import VideoJob
 from app.services.media_delivery import resolve_provider_media_url
 from app.services.publication_readiness import evaluate_publication_readiness
+from app.services.publication_export import PublicationNotReadyError, create_platform_publication
 
 router = APIRouter(tags=["音视频合成"])
 
@@ -205,14 +207,14 @@ def build_synthesis_response(job: SynthesisJob) -> SynthesisJobResponse:
         audio_url=job.audio_url,
         status=job.status,
         progress=job.progress or 0,
-        output_url=job.output_url,
+        output_url=sign_media_url(job.output_url),
         cover_url=job.cover_url,
         duration_seconds=job.duration_seconds,
-        manifest_url=extra_data.get("manifest_url") or render_artifacts.get("source_manifest_url"),
-        preview_url=render_artifacts.get("preview_url"),
-        srt_url=render_artifacts.get("srt_url"),
-        timeline_url=render_artifacts.get("timeline_url"),
-        render_manifest_url=render_artifacts.get("render_manifest_url"),
+        manifest_url=sign_media_url(extra_data.get("manifest_url") or render_artifacts.get("source_manifest_url")),
+        preview_url=sign_media_url(render_artifacts.get("preview_url")),
+        srt_url=sign_media_url(render_artifacts.get("srt_url")),
+        timeline_url=sign_media_url(render_artifacts.get("timeline_url")),
+        render_manifest_url=sign_media_url(render_artifacts.get("render_manifest_url")),
         render_status=extra_data.get("render_status"),
         render_backend=extra_data.get("render_backend"),
         is_publishable=publication_readiness["is_publishable"],
@@ -335,7 +337,7 @@ def build_publication_response(publication: Publication) -> PublicationResponse:
         description=publication.description,
         status=publication.status,
         visibility=publication.visibility or "private",
-        video_url=publication.video_url,
+        video_url=sign_media_url(publication.video_url),
         cover_url=publication.cover_url,
         format=publication.format or "mp4",
         resolution=publication.resolution or "1080p",
@@ -343,7 +345,7 @@ def build_publication_response(publication: Publication) -> PublicationResponse:
         tags=publication.tags or [],
         view_count=publication.view_count or 0,
         like_count=publication.like_count or 0,
-        export_url=publication.export_url,
+        export_url=sign_media_url(publication.export_url),
         provider=publication.provider,
         metadata=publication.publication_metadata or {},
         created_at=publication.created_at,
@@ -681,6 +683,7 @@ async def publish_export(
     """创建本地导出记录。
 
     DEV_MODE/local 模式下生成可下载的静态 JSON artifact，不声明云端发布。
+    Thin wrapper over ``create_platform_publication`` (shared with publication pipelines).
     """
     if not request.synthesis_job_id and not request.metadata:
         raise HTTPException(
@@ -704,97 +707,26 @@ async def publish_export(
     if project_id:
         await require_project_role(db, project_id, user_id, "viewer")
 
-    export_id = str(uuid4())
     title = request.title or (synthesis_job.title if synthesis_job else None) or "本地导出"
     metadata = dict(request.metadata or {})
-    job_extra_data = synthesis_job.extra_data if synthesis_job and isinstance(synthesis_job.extra_data, dict) else {}
-    render_artifacts = (
-        job_extra_data.get("render_artifacts")
-        if isinstance(job_extra_data.get("render_artifacts"), dict)
-        else {}
-    )
-    playback_video_url = synthesis_job.output_url if synthesis_job else metadata.get("source_output_url")
-    if synthesis_job and not playback_video_url:
-        _raise_publication_not_ready(evaluate_publication_readiness(playback_video_url, job_extra_data))
-    preview_export = False
-    readiness: Optional[Dict[str, Any]] = None
-    if synthesis_job:
-        readiness = evaluate_publication_readiness(playback_video_url, job_extra_data)
-        preview_export = _can_export_preview_package(readiness, job_extra_data, metadata)
-        if not readiness["is_publishable"] and not preview_export:
-            _raise_publication_not_ready(readiness)
-    else:
-        readiness = evaluate_publication_readiness(playback_video_url, metadata)
-        if not readiness["is_publishable"]:
-            _raise_publication_not_ready(readiness)
     visibility = str(metadata.get("visibility") or "private")
-    if visibility not in {"private", "project", "public"}:
-        visibility = "private"
-    source_manifest_url = render_artifacts.get("source_manifest_url") or job_extra_data.get("manifest_url")
-    artifact_payload = {
-        "id": export_id,
-        "title": title,
-        "provider": "local",
-        "project_id": project_id,
-        "synthesis_job_id": synthesis_job.id if synthesis_job else None,
-        "source_output_url": playback_video_url,
-        "video_url": render_artifacts.get("preview_url") if preview_export else playback_video_url,
-        "cover_url": synthesis_job.cover_url if synthesis_job else metadata.get("cover_url"),
-        "duration_seconds": synthesis_job.duration_seconds if synthesis_job else metadata.get("duration_seconds"),
-        "metadata": metadata,
-        "created_at": utc_now().isoformat(),
-    }
-    if synthesis_job:
-        artifact_payload.update(
-            {
-                "render_artifacts": render_artifacts,
-                "preview_url": render_artifacts.get("preview_url"),
-                "srt_url": render_artifacts.get("srt_url"),
-                "timeline_url": render_artifacts.get("timeline_url"),
-                "render_manifest_url": render_artifacts.get("render_manifest_url"),
-                "source_manifest_url": source_manifest_url,
-                "render_status": job_extra_data.get("render_status"),
-                "render_backend": job_extra_data.get("render_backend"),
-                "render_source": job_extra_data.get("render_source"),
-                "timeline_id": job_extra_data.get("render_timeline_id") or job_extra_data.get("timeline_id"),
-                "is_publishable": False if preview_export else True,
-                "output_kind": "preview_package" if preview_export else "final_video",
-                "preview_export": preview_export,
-            }
+    allow_preview = bool(metadata.get("allow_preview_export"))
+    try:
+        publication = await create_platform_publication(
+            db,
+            user_id=user_id,
+            title=title,
+            video_url=synthesis_job.output_url if synthesis_job else metadata.get("source_output_url"),
+            synthesis_job=synthesis_job,
+            project_id=project_id,
+            visibility=visibility,
+            status="succeeded",
+            metadata=metadata,
+            allow_preview_export=allow_preview,
         )
-    publication_provider = await _apply_publication_storage_delivery(db, user_id, artifact_payload)
-    publication_video_url = artifact_payload.get("video_url")
-    artifact_path, local_export_url = write_local_export_artifact(export_id, artifact_payload)
-    publication_provider, export_url = await _apply_export_artifact_storage_delivery(
-        db,
-        user_id,
-        artifact_payload,
-        local_export_url=local_export_url,
-        current_provider=publication_provider,
-    )
-    artifact_payload["provider"] = publication_provider
-    artifact_payload["export_url"] = export_url
-    artifact_path.write_text(json.dumps(artifact_payload, ensure_ascii=False, sort_keys=True, indent=2), encoding="utf-8")
+    except PublicationNotReadyError as exc:
+        _raise_publication_not_ready(exc.readiness)
 
-    publication = Publication(
-        id=export_id,
-        user_id=user_id,
-        project_id=project_id,
-        synthesis_job_id=synthesis_job.id if synthesis_job else None,
-        title=title,
-        status="succeeded",
-        visibility=visibility,
-        video_url=publication_video_url,
-        cover_url=synthesis_job.cover_url if synthesis_job else metadata.get("cover_url"),
-        duration_seconds=synthesis_job.duration_seconds if synthesis_job else metadata.get("duration_seconds"),
-        format=metadata.get("format") or ("html" if preview_export else "mp4"),
-        resolution=metadata.get("resolution") or "1080p",
-        export_url=export_url,
-        artifact_path=str(artifact_path),
-        provider=publication_provider,
-        publication_metadata=artifact_payload,
-    )
-    db.add(publication)
     await db.commit()
     await db.refresh(publication)
     return build_publication_response(publication)
@@ -1082,7 +1014,7 @@ async def download_publication(
     return {
         "id": publication.id,
         "title": publication.title,
-        "video_url": publication.video_url,
+        "video_url": sign_media_url(publication.video_url),
         "cover_url": publication.cover_url,
         "format": publication.format,
         "resolution": publication.resolution,

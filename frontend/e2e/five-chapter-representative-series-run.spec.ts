@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test';
 
 import { fiveChapter3dNovel } from './helpers/five-chapter-3d-fixture';
 
+// Live acceptance against a real backend/providers: opt in with E2E_LIVE=1 (plus the IDs below).
+test.skip(process.env.E2E_LIVE !== '1', 'live acceptance: set E2E_LIVE=1');
+
+
 test.setTimeout(180_000);
 
 async function register(page: any) {
@@ -10,10 +14,11 @@ async function register(page: any) {
   await page.goto('/register');
   await page.getByPlaceholder('请输入用户名').fill(username);
   await page.getByPlaceholder('请输入邮箱').fill(`${username}@example.invalid`);
-  await page.getByPlaceholder('请输入密码（至少6位）').fill(password);
+  await page.getByPlaceholder('请输入密码（至少8位，含字母和数字）').fill(password);
   await page.getByPlaceholder('请再次输入密码').fill(password);
+  await page.getByTestId('register-accept-terms').check();
   await page.getByRole('button', { name: '注册' }).click();
-  await page.waitForURL(/\/dashboard/);
+  await page.waitForURL(/\/(dashboard|novels|llm-config)/);
 }
 
 test('five chapters can start whole-book production and expose representative mode', async ({ page }) => {
@@ -33,11 +38,12 @@ test('five chapters can start whole-book production and expose representative mo
     await page.getByRole('button', { name: '新建章节' }).click();
     await page.getByPlaceholder(/章节标题，可留空/).fill(chapter.title);
     await page.getByPlaceholder(/章节内容或创作方向/).fill(chapter.content);
-    await page.getByRole('button', { name: '手动创建' }).click();
+    await page.getByTestId('chapter-create-submit').click();
     await expect(page.getByText(chapter.title, { exact: true })).toBeVisible({ timeout: 30_000 });
   }
 
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByLabel('更多风格').selectOption('xianxia-3d');
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   const panel = page.getByTestId('series-run-panel');

@@ -71,16 +71,35 @@ def _clean_heading(line: str) -> str:
     return re.sub(r"^\s*#{1,6}\s*", "", line).strip()
 
 
+_SENTENCE_PUNCT_RE = re.compile(r"[，。！？；、“”\"「」…,.!?;:：]")
+_GENERIC_STEMS = {"pasted", "paste", "untitled", "novel", "new", "新建文本文档", "未命名"}
+
+
+def _looks_like_title(line: str) -> bool:
+    """标题应是短句，不含句读；正文首段（如“沈砚穿着…，…。”）不能当书名。"""
+    return 0 < len(line) <= 30 and not _SENTENCE_PUNCT_RE.search(line)
+
+
 def _guess_title(filename: str, lines: list[str]) -> str:
     for line in lines[:20]:
         stripped = line.strip()
         if not stripped:
             continue
         if stripped.startswith("#"):
-            return _clean_heading(stripped)[:200]
-        if not CHAPTER_HEADING_RE.match(stripped):
-            return stripped[:200]
-    return Path(filename).stem[:200] or "未命名小说"
+            heading = _clean_heading(stripped)
+            if heading and not CHAPTER_HEADING_RE.match(heading):
+                return heading[:200]
+            break
+        if CHAPTER_HEADING_RE.match(stripped):
+            # 正文从章节开始，没有单独的书名行。
+            break
+        if _looks_like_title(stripped):
+            return stripped
+        break
+    stem = Path(filename).stem.strip()
+    if stem and stem.lower() not in _GENERIC_STEMS:
+        return stem[:200]
+    return "未命名小说"
 
 
 def _chapter_preview(content: str, limit: int = 280) -> str:

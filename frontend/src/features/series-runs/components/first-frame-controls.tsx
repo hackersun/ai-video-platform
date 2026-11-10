@@ -1,6 +1,6 @@
 'use client';
 
-import { Image, Loader2, RefreshCw } from 'lucide-react';
+import { Image as ImageIcon, Loader2, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 
@@ -26,7 +26,7 @@ export function FirstFrameControls({
     <div className="space-y-2 rounded-lg border border-cyan-400/20 bg-cyan-500/5 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" onClick={onGenerate} disabled={disabled || busy}>
-          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Image className="mr-2 h-4 w-4" />}
+          {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ImageIcon className="mr-2 h-4 w-4" />}
           生成 {selectedCount} 个镜头首帧
         </Button>
         {failures.length > 0 && (

@@ -1,9 +1,14 @@
 'use client';
 
+import Link from 'next/link';
+
 import { FormEvent, Fragment, useEffect, useState } from 'react';
 import { KeyRound, Plus, TestTube, Trash2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
+import { modelCenterApi } from '../api';
+import { modelCenterMutationInvalidations } from '../hooks/model-center-query-store';
+import { runModelCenterMutation } from '../hooks/run-model-center-mutation';
 import { useModelConnections } from '../hooks/use-model-connections';
 import { useModelProviders } from '../hooks/use-model-providers';
 import { modelCenterHref, type ModelCenterLocation } from '../navigation';
@@ -47,10 +52,41 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
     }
   };
 
-  const runTest = (connectionId: string) => {
-    router.push(modelCenterHref({
-      ...location, section: 'test-lab', level: 'connection', connectionId, runId: undefined,
-    }));
+  const [testingId, setTestingId] = useState<string | null>(null);
+  // 直接复用已保存账号：自动选择该账号可用的已发布模型发起连接认证，无需再填表单。
+  const runTest = async (connectionId: string) => {
+    setTestingId(connectionId);
+    setMessage(null);
+    try {
+      const candidates = (await modelCenterApi.listCertificationCandidates(1, 100, undefined, undefined, 'connection', undefined, connectionId)).items
+        .filter((item) => item.connection.id === connectionId).slice(0, 4);
+      if (!candidates.length) {
+        router.push(modelCenterHref({ ...location, section: 'test-lab', level: 'connection', connectionId, runId: undefined }));
+        return;
+      }
+      const outcomes: string[] = [];
+      let passed = 0;
+      for (const candidate of candidates) {
+        let run = await runModelCenterMutation(
+          () => modelCenterApi.createCertification({ profile_version_id: candidate.profile.id, connection_id: connectionId, level: 'connection', reason: '供应商账号可用性测试' }),
+          modelCenterMutationInvalidations.certificationRun,
+        );
+        for (let i = 0; i < 20 && !run.completed_at && !['success', 'passed', 'failed', 'blocked', 'cancelled'].includes(run.status); i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          run = await modelCenterApi.getCertification(run.id);
+        }
+        const ok = run.status === 'success' || run.status === 'passed';
+        if (ok) passed += 1;
+        const detail = typeof run.sanitized_evidence?.message === 'string' ? `：${run.sanitized_evidence.message}` : '';
+        outcomes.push(`${candidate.profile.name} ${ok ? '可用' : `失败${detail}`}`);
+      }
+      setMessage(`测试可用性${passed === candidates.length ? '通过' : '未全部通过（失败）'}：${passed}/${candidates.length} · ${outcomes.join('；')}`);
+      await reload();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? `测试可用性失败：${reason.message}` : '测试可用性失败，请稍后重试');
+    } finally {
+      setTestingId(null);
+    }
   };
 
   const replaceSecret = async (event: FormEvent<HTMLFormElement>, connectionId: string, revision: number) => {
@@ -77,7 +113,7 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
   return (
     <div className="space-y-4 p-4">
       <form id="connection-form" onSubmit={submit} className="rounded-lg border border-white/10 bg-slate-950/30 p-4">
-        <div><h2 className="text-sm font-semibold text-white">新增供应商账号</h2><p className="mt-1 text-xs leading-5 text-slate-400">账号名称用于区分同一供应商的不同账号、套餐或环境，不会发送给模型供应商。</p></div>
+        <div><h2 className="text-sm font-semibold text-white">新增供应商账号</h2><p className="mt-1 text-xs leading-5 text-slate-400">账号名称用于区分同一供应商的不同账号、套餐或环境，不会发送给模型供应商。</p><p data-testid="connections-simple-setup-hint" className="mt-2 rounded-md bg-violet-500/10 px-3 py-2 text-xs text-violet-200">推荐在 <Link href="/llm-config" className="font-medium underline">模型设置</Link> 页填写 API Key：一个 Key 自动配好文本、图像、视频、语音四项并可一键测试。这里仅用于多账号、私有网关等高级场景。</p></div>
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <label className="text-xs text-slate-400">供应商<select aria-label="提供方" required value={form.providerId} onChange={(event) => setForm({ ...form, providerId: event.target.value })} className="model-center-input mt-1 w-full"><option value="" disabled>{providers.loading ? '正在读取供应商…' : '请选择供应商'}</option>{providers.data?.items.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name}（{provider.code}）</option>)}</select></label>
           <label className="text-xs text-slate-400">账号名称<input aria-label="账号名称" required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="例如：火山生产套餐" className="model-center-input mt-1 w-full" /></label>
@@ -92,7 +128,7 @@ export function ModelCenterConnectionsPanel({ location }: { location: ModelCente
       {!data?.items.length ? <ModelCenterEmpty title="还没有供应商账号" description="先保存 API 凭证，再测试可用性并选择默认模型。" /> : (
         <div className="overflow-x-auto rounded-lg border border-white/10">
           <table className="w-full min-w-[900px] table-fixed text-left text-sm"><thead className="bg-white/[0.035] text-xs text-slate-500"><tr><th className="w-36">账号名称</th><th className="w-28">供应商</th><th className="w-32">凭证</th><th className="w-32">接口地址</th><th className="w-[22rem] text-right">操作</th></tr></thead>
-            <tbody>{data.items.map((connection) => { const displayName = connectionDisplayName(connection.name, connection.provider_name); return <Fragment key={connection.id}><tr className="border-t border-white/[0.07] text-slate-300"><td><span className="font-medium text-white">{displayName}</span>{connection.name.startsWith('legacy:') && <span className="mt-0.5 block text-[11px] text-slate-500">历史迁移配置</span>}</td><td><ProviderModelLabel providerName={connection.provider_name} providerCode={connection.provider_code} /></td><td><span className={`whitespace-nowrap ${connection.has_secret ? 'text-emerald-300' : 'text-amber-300'}`}>{connection.has_secret ? '已保存 · 已脱敏' : '未设置'}</span></td><td className="max-w-44 truncate whitespace-nowrap text-slate-500">{connection.base_url || '供应商默认地址'}</td><td className="whitespace-nowrap text-right"><div className="flex flex-nowrap justify-end gap-2"><button type="button" onClick={() => { setEditingId(connection.id); setSecretForm({ apiKey: '', reason: '' }); }} className="model-center-quiet whitespace-nowrap"><KeyRound className="h-3.5 w-3.5 shrink-0" />{connection.has_secret ? '替换凭证' : '补录凭证'}</button><button type="button" disabled={!connection.has_secret} title={connection.has_secret ? '选择兼容模型并向供应商发起连接认证' : '请先保存 API Key'} onClick={() => runTest(connection.id)} className="model-center-quiet whitespace-nowrap"><TestTube className="h-3.5 w-3.5 shrink-0" />测试可用性</button><button type="button" aria-label={`移除${displayName}`} onClick={() => setRemoving(connection)} className="model-center-quiet whitespace-nowrap text-rose-200 hover:text-rose-100"><Trash2 className="h-3.5 w-3.5 shrink-0" />移除</button></div></td></tr>{editingId === connection.id && <tr className="border-t border-violet-400/15 bg-violet-500/5"><td colSpan={5}><form onSubmit={(event) => void replaceSecret(event, connection.id, connection.revision)} className="flex flex-wrap items-center gap-2 p-3"><input aria-label={`API Key ${connection.name}`} required type="password" autoComplete="off" value={secretForm.apiKey} onChange={(event) => setSecretForm({ ...secretForm, apiKey: event.target.value })} placeholder="输入新的 API Key" className="model-center-input min-w-64 flex-1" /><input aria-label={`凭证更新原因 ${connection.name}`} required minLength={2} value={secretForm.reason} onChange={(event) => setSecretForm({ ...secretForm, reason: event.target.value })} placeholder="更新原因（至少2字）" className="model-center-input min-w-52" /><button type="submit" disabled={creating} className="model-center-primary whitespace-nowrap">保存凭证</button><button type="button" onClick={() => setEditingId(null)} className="model-center-quiet whitespace-nowrap">取消</button></form></td></tr>}</Fragment>; })}</tbody>
+            <tbody>{data.items.map((connection) => { const displayName = connectionDisplayName(connection.name, connection.provider_name); return <Fragment key={connection.id}><tr className="border-t border-white/[0.07] text-slate-300"><td><span className="font-medium text-white">{displayName}</span>{connection.name.startsWith('legacy:') && <span className="mt-0.5 block text-[11px] text-slate-500">历史迁移配置</span>}</td><td><ProviderModelLabel providerName={connection.provider_name} providerCode={connection.provider_code} /></td><td><span className={`whitespace-nowrap ${connection.has_secret ? 'text-emerald-300' : 'text-amber-300'}`}>{connection.has_secret ? '已保存 · 已脱敏' : '未设置'}</span></td><td className="max-w-44 truncate whitespace-nowrap text-slate-500">{connection.base_url || '供应商默认地址'}</td><td className="whitespace-nowrap text-right"><div className="flex flex-nowrap justify-end gap-2"><button type="button" onClick={() => { setEditingId(connection.id); setSecretForm({ apiKey: '', reason: '' }); }} className="model-center-quiet whitespace-nowrap"><KeyRound className="h-3.5 w-3.5 shrink-0" />{connection.has_secret ? '替换凭证' : '补录凭证'}</button><button type="button" disabled={!connection.has_secret || testingId !== null} title={connection.has_secret ? '选择兼容模型并向供应商发起连接认证' : '请先保存 API Key'} onClick={() => void runTest(connection.id)} className="model-center-quiet whitespace-nowrap"><TestTube className="h-3.5 w-3.5 shrink-0" />{testingId === connection.id ? '测试中…' : '测试可用性'}</button><button type="button" aria-label={`移除${displayName}`} onClick={() => setRemoving(connection)} className="model-center-quiet whitespace-nowrap text-rose-200 hover:text-rose-100"><Trash2 className="h-3.5 w-3.5 shrink-0" />移除</button></div></td></tr>{editingId === connection.id && <tr className="border-t border-violet-400/15 bg-violet-500/5"><td colSpan={5}><form onSubmit={(event) => void replaceSecret(event, connection.id, connection.revision)} className="flex flex-wrap items-center gap-2 p-3"><input aria-label={`API Key ${connection.name}`} required type="password" autoComplete="off" value={secretForm.apiKey} onChange={(event) => setSecretForm({ ...secretForm, apiKey: event.target.value })} placeholder="输入新的 API Key" className="model-center-input min-w-64 flex-1" /><input aria-label={`凭证更新原因 ${connection.name}`} required minLength={2} value={secretForm.reason} onChange={(event) => setSecretForm({ ...secretForm, reason: event.target.value })} placeholder="更新原因（至少2字）" className="model-center-input min-w-52" /><button type="submit" disabled={creating} className="model-center-primary whitespace-nowrap">保存凭证</button><button type="button" onClick={() => setEditingId(null)} className="model-center-quiet whitespace-nowrap">取消</button></form></td></tr>}</Fragment>; })}</tbody>
           </table>
         </div>
       )}

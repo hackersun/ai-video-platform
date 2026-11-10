@@ -255,6 +255,8 @@ async def _fixture(db: AsyncSession, *, dialogue: str = "沈砚：别碰铜铃�
     from app.services.episode_production_service import create_or_resolve_shots_stage
     for index in (0,3):
         await create_or_resolve_shots_stage(db,run=run,episode=updated_episodes[index])
+    from app.services.billing_guard import opt_in_live_billing
+    await opt_in_live_billing(db, user_id, commit=False)
     await db.commit()
     return run
 async def _refresh_fixture_production_contracts(db: AsyncSession, run: SeriesProductionRun) -> None:
@@ -1029,6 +1031,29 @@ async def test_manual_approved_entity_is_read_only_and_must_match_fresh_tts_bind
     assert entity.attributes["voice_binding"]["version"] == 7
 
 @pytest.mark.asyncio
+async def test_auto_approved_speaker_without_voice_gets_fresh_binding_instead_of_blocking(db_session: AsyncSession) -> None:
+    run = await _fixture(db_session)
+    await _explicit_dialogue_source(db_session, run)
+    await _fresh_bindings(db_session, run)
+    entity = await db_session.scalar(select(StoryEntity).where(
+        StoryEntity.novel_id == run.novel_id, StoryEntity.entity_type == "character"))
+    attrs = dict(entity.attributes)
+    attrs.pop("voice_binding", None)
+    original_approval = dict(attrs["approval_record"])
+    entity.attributes = attrs
+    entity.source = "deterministic"
+    set_entity_review_status(entity, APPROVED, changed_by=run.user_id, reason="entity_extraction_v2:auto_approve")
+    await db_session.commit()
+
+    await prepare_story_locks(db_session, run)
+    await db_session.refresh(entity)
+    selection = run.run_metadata["voice_selection"]
+    assert entity.attributes["approval_record"] == original_approval
+    assert entity.attributes["voice_binding"]["voice_id"] == selection["voice_id"]
+    assert entity.attributes["voice_binding"]["tested_at"] == selection["tested_at"]
+    assert get_entity_review_status(entity) == APPROVED
+
+@pytest.mark.asyncio
 async def test_voice_selection_is_required_and_exposes_only_safe_bound_options_without_writes(db_session: AsyncSession) -> None:
     run = await _fixture(db_session)
     novel_id = run.novel_id
@@ -1798,8 +1823,9 @@ async def test_deterministic_setup_seeds_normal_approved_facts_then_real_story_l
     assert all(((entity.extra_data or {}).get("lifecycle") or {}).get("status") == "approved" for entity in production_entities)
     await db_session.refresh(supporting_character)
     assert supporting_character.is_approved is False
-    assert supporting_character.extra_data["lifecycle"]["status"] == "archived"
-    assert supporting_character.extra_data["deterministic_merge"]["canonical_entity_id"]
+    # Distinct supporting cast must not be mass-archived into 主角.
+    assert get_entity_review_status(supporting_character) != "archived"
+    assert "deterministic_merge" not in (supporting_character.extra_data or {})
     protagonist = next(entity for entity in entities if entity.entity_type == "character" and entity.name == "主角")
     assert protagonist.attributes["voice_binding"]["status"] == "locked"
     bible = await db_session.get(StoryBible, locked["story_bible_id"])

@@ -22,16 +22,13 @@ from app.services.live_canary_bindings import (
     validate_required_model_bindings,
 )
 from app.services.live_canary_policy import (
+    BudgetExceeded,
     InvalidAccountingInput,
     money as _money,
     money_text as _text,
     trusted_live_canary_policy,
 )
 from app.services.live_canary_repair_budget import effective_budget_maximum
-
-
-class BudgetExceeded(ValueError):
-    pass
 
 
 def _reservation_id(value: str) -> str:
@@ -61,7 +58,21 @@ async def _persist(db: AsyncSession, run: SeriesProductionRun, summary: dict[str
 async def reserve_budget(
     db: AsyncSession, run: SeriesProductionRun, *, reservation_id: str, estimate_rmb: Decimal,
     commit: bool = True,
+    is_fake: bool = False,
+    pipeline_id: str | None = None,
+    novel_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    capability: str | None = None,
+    units: str | None = None,
 ) -> dict[str, Any]:
+    from app.services.billing_guard import (
+        assert_may_reserve,
+        resolve_ledger_is_fake,
+        write_reservation_ledger,
+    )
+
+    is_fake = resolve_ledger_is_fake(is_fake)
     summary = _summary(run)
     reservations = summary["reservations"]
     reservation_id = _reservation_id(reservation_id)
@@ -73,6 +84,21 @@ async def reserve_budget(
         return dict(existing)
     if (run.budget_policy or {}).get("blocked"):
         raise BudgetExceeded("series run budget is blocked")
+    await assert_may_reserve(
+        db,
+        user_id=run.user_id,
+        estimate_rmb=estimate,
+        reservation_id=reservation_id,
+        is_fake=is_fake,
+        novel_id=novel_id or run.novel_id,
+        pipeline_id=pipeline_id,
+        series_run_id=run.id,
+        provider=provider,
+        model=model,
+        capability=capability,
+        units=units,
+        commit=False,
+    )
     spent = _money(summary["spent_rmb"])
     reserved = _money(summary["reserved_rmb"])
     maximum = effective_budget_maximum(run)
@@ -81,6 +107,21 @@ async def reserve_budget(
     reservation = {"estimate_rmb": _text(estimate), "state": "reserved"}
     reservations[reservation_id] = reservation
     summary["reserved_rmb"] = _text(reserved + estimate)
+    await write_reservation_ledger(
+        db,
+        user_id=run.user_id,
+        reservation_id=reservation_id,
+        estimate_rmb=estimate,
+        is_fake=is_fake,
+        novel_id=novel_id or run.novel_id,
+        pipeline_id=pipeline_id,
+        series_run_id=run.id,
+        provider=provider,
+        model=model,
+        capability=capability,
+        units=units,
+        commit=False,
+    )
     await _persist(db, run, summary, commit=commit)
     return dict(reservation)
 
@@ -96,8 +137,15 @@ async def prepare_provider_operation(
     estimate_rmb: Decimal,
 ) -> LiveCanaryProviderOperation:
     """Atomically persist reservation and recoverable operation before provider submission."""
+    from app.services.billing_guard import resolve_ledger_is_fake
+
     await reserve_budget(
-        db, run, reservation_id=reservation_id, estimate_rmb=estimate_rmb, commit=False
+        db,
+        run,
+        reservation_id=reservation_id,
+        estimate_rmb=estimate_rmb,
+        commit=False,
+        is_fake=resolve_ledger_is_fake(),
     )
     summary = _summary(run)
     reservation = summary["reservations"][_reservation_id(reservation_id)]
@@ -381,6 +429,8 @@ async def reconcile_reservation(
         run.budget_policy = policy
         flag_modified(run, "budget_policy")
     reservation.update(state=state, actual_rmb=_text(actual))
+    from app.services.billing_guard import settle_ledger_entry
+    await settle_ledger_entry(db, user_id=run.user_id, reservation_id=reservation_id, actual_rmb=actual, commit=False)
     await _persist(db, run, summary)
     return dict(reservation)
 
@@ -402,6 +452,8 @@ async def release_reservation(
     estimate = _money(reservation["estimate_rmb"])
     summary["reserved_rmb"] = _text(_money(summary["reserved_rmb"]) - estimate)
     reservation["state"] = "released"
+    from app.services.billing_guard import release_ledger_entry
+    await release_ledger_entry(db, user_id=run.user_id, reservation_id=reservation_id, commit=False)
     await _persist(db, run, summary)
     return dict(reservation)
 

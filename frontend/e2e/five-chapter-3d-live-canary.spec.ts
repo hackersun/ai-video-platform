@@ -60,11 +60,12 @@ test('sunqy creates a fresh five-chapter 3D novel and generates three representa
     await page.getByRole('button', { name: '新建章节' }).click();
     await page.getByPlaceholder(/章节标题，可留空/).fill(chapter.title);
     await page.getByPlaceholder(/章节内容或创作方向/).fill(chapter.content);
-    await page.getByRole('button', { name: '手动创建' }).click();
+    await page.getByTestId('chapter-create-submit').click();
     await expect(page.getByText(chapter.title, { exact: true })).toBeVisible({ timeout: 30_000 });
   }
 
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByLabel('更多风格').selectOption('xianxia-3d');
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   await expect(page.getByText('xianxia-3d · 9:16')).toBeVisible({ timeout: 120_000 });

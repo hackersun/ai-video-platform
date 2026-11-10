@@ -121,11 +121,12 @@ def test_execute_async_returns_immediately_and_queues_owned_run(
         headers=_headers(user_id),
     )
     queued: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        series_endpoint,
-        "start_series_run_execution",
-        lambda run_id, owner: queued.append((run_id, owner)) or True,
-    )
+
+    async def _fake_start(run_id, owner):
+        queued.append((run_id, owner))
+        return True
+
+    monkeypatch.setattr(series_endpoint, "start_series_run_execution", _fake_start)
 
     response = client.post(
         f"/api/v1/series-runs/{created.json()['id']}/execute-async",
@@ -585,3 +586,45 @@ async def test_idempotency_conflict_rolls_back_and_returns_winner() -> None:
     assert response.status_code == 200
     assert db.rolled_back is True
     assert b'"id":"winner"' in response.body
+
+
+@pytest.mark.asyncio
+async def test_build_episodes_stops_at_stage_boundary_when_paused(client: TestClient) -> None:
+    user_id = f"pause-boundary-{uuid4()}"
+    novel_id, chapter_ids = _series_source(client, user_id)
+    created = client.post(
+        "/api/v1/series-runs",
+        json=_run_payload(novel_id, chapter_ids, "pause-boundary"),
+        headers=_headers(user_id),
+    )
+    calls: list[str] = []
+
+    async def builder(db, run, episode, stage):
+        calls.append(stage)
+        if stage == "workflow_ready":
+            run.status = "paused"
+            run.run_metadata = {**(run.run_metadata or {}), "resume_status": "episodes_building"}
+            await db.commit()
+            return {"workflow_id": f"wf-{uuid4()}"}
+        return {f"{stage}_id": str(uuid4())}
+
+    async with AsyncSessionLocal() as db:
+        run = await db.get(SeriesProductionRun, created.json()["id"])
+        while run.status != "episodes_building":
+            transition_run(
+                run,
+                ("preflight", "planning", "facts_ready", "assets_ready", "episodes_building")[
+                    ("created", "preflight", "planning", "facts_ready", "assets_ready").index(run.status)
+                ],
+            )
+        await db.commit()
+        result = await SeriesRunOrchestrator(stage_builder=builder).build_episodes(db, run)
+        assert result.status == "paused"
+        assert calls == ["workflow_ready"]
+        assert "script_ready" not in calls
+
+
+def test_illegal_jump_from_media_running_to_completed_still_fails() -> None:
+    run = SeriesProductionRun(status="media_running", version=1, run_metadata={"media_preflight": {"ready": True}})
+    with pytest.raises(InvalidRunTransition):
+        transition_run(run, "completed")

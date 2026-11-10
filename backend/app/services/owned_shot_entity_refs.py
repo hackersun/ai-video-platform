@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import StoryEntity
-from app.services.story_entity_lifecycle import is_entity_production_visible
+from app.services.story_entity_lifecycle import is_entity_reviewable
 
 
 REF_KEYS = {
@@ -98,9 +98,11 @@ async def resolve_owned_shot_entity_context(
         is_merged_source = (
             normalized_merge.get("status") == "merged_superseded"
             and canonical is not None
-            and is_entity_production_visible(canonical)
+            and is_entity_reviewable(canonical)
         )
-        if not is_entity_production_visible(entity) and not is_merged_source:
+        # Include candidates so first-run multi-character novels can lock supporting cast.
+        # Archived same-identity locals remain discoverable when their canonical is reviewable.
+        if not is_entity_reviewable(entity) and not is_merged_source:
             continue
         identity = _canonical_identity(entity)
         if entity.entity_type in REF_KEYS and identity:

@@ -1,0 +1,62 @@
+{
+ "trial": {
+  "clicks": [
+   "勾选条款",
+   "注册",
+   "免费试用",
+   "识别章节",
+   "确认导入",
+   "一键生成视频（试用无需确认）",
+   "播放（播放器内）",
+   "下载视频",
+   "查看发布"
+  ],
+  "decisions": [
+   "免费试用 还是 我有 Key"
+  ],
+  "native": 0,
+  "user": "p0t429666"
+ },
+ "key": {
+  "clicks": [],
+  "decisions": []
+ },
+ "checks": {
+  "welcomeUrl": "http://127.0.0.1:3000/llm-config?welcome=1",
+  "welcomeControls": {
+   "controls": 0,
+   "buttons": 2
+  },
+  "choiceButtons": 2,
+  "pasteFocused": true,
+  "autoTitle": "未命名小说 11-08 17:33",
+  "detailControls": {
+   "controls": 0,
+   "buttons": 10
+  },
+  "detailHasAiNext": 0,
+  "detailGenScriptBtns": 0,
+  "detailDeterministic": false,
+  "tabsDefault": [
+   "章节 (3)",
+   "角色 (0)"
+  ],
+  "confirmDialogs": 0,
+  "genStatus": "一键生成视频 · 已完成",
+  "genSeconds": 8,
+  "duration": 20.125,
+  "phases": "准备\n写剧本\n做画面和配音\n合成视频",
+  "download": {
+   "bytes": 6230228,
+   "type": "video/mp4",
+   "disp": "attachment; filename=\"book-5de34c58-7ed8-4754-899b-cda16bc83f77.mp4\"; filename*=UTF-8''book-5de34c58-7ed8-4754-899b-cda16bc83f77.mp4"
+  },
+  "publishUrl": "http://127.0.0.1:3000/synthesis?publication_id=265d79d9-95a1-45fd-b9dd-720853df93fa",
+  "newNovelControls": {
+   "controls": 7,
+   "buttons": 57
+  },
+  "mcConnText": null,
+  "mcCatalogText": null
+ }
+}

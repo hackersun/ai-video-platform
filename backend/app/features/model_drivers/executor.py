@@ -28,6 +28,7 @@ from app.features.model_drivers.domain import (
     VideoCommand,
 )
 from app.features.model_drivers.registry import DriverRegistry
+from app.features.model_drivers.adapters._shared import generation_failure_message
 
 
 _SENSITIVE_KEY_PARTS = ("authorization", "password", "secret", "token", "api_key", "apikey")
@@ -205,16 +206,25 @@ async def _execute_driver_operation(
     try:
         return await call()
     except Exception as error:
+        repair_hint = generation_failure_message(
+            error, capability=str(getattr(context.profile, "capabilities", None) and next(iter(context.profile.capabilities), "") or ""),
+        )
+        # Prefer a more specific capability when the operation is generation/poll under a single-cap profile.
+        caps = list(getattr(context.profile, "capabilities", ()) or ())
+        if len(caps) == 1:
+            repair_hint = generation_failure_message(error, capability=str(caps[0]))
         raw_evidence = {
             "operation": operation,
             "provider_error_class": type(error).__name__,
             "provider_error_type": type(error).__name__,
             "provider_error_summary": f"provider_{operation}_failed",
+            "repair_hint": repair_hint,
         }
         if getattr(error, "evidence", None):
             raw_evidence["provider_evidence"] = error.evidence
         evidence = _sanitize_evidence(raw_evidence, context.secrets)
         wrapped_error = DriverExecutionError(operation, evidence, cause=error)
+        wrapped_error.repair_hint = repair_hint  # type: ignore[attr-defined]
     raise wrapped_error from None
 
 

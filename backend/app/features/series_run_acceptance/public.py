@@ -15,10 +15,11 @@ from app.features.series_run_story_locks.public import (
     apply_deterministic_voice_binding, deterministic_anchor_entity_refs,
     deterministic_evidence_contract, seed_deterministic_local_mentions,
 )
+from app.features.series_run_story_locks.application.deterministic_acceptance import fixture_chapter_position
 from app.models import Chapter, LLMConfig, LLMModel, LLMProvider, Novel, Shot, StoryEntity, Storyboard
 from app.models.series_production_run import SeriesProductionRun
 from app.services.deterministic_acceptance_lineage import sync_deterministic_episode_input_hash
-from app.services.story_entity_lifecycle import ARCHIVED, CANDIDATE, set_entity_review_status
+from app.services.story_entity_lifecycle import CANDIDATE, set_entity_review_status
 
 
 async def _context(db: AsyncSession, user_id: str, novel_id: str):
@@ -45,7 +46,7 @@ def _new_protagonist(user_id: str, novel_id: str, chapter: Chapter) -> StoryEnti
     entity = StoryEntity(
         id=str(uuid4()), user_id=user_id, novel_id=novel_id, chapter_id=chapter.id,
         first_seen_chapter_id=chapter.id, entity_type="character", name="主角", canonical_name="主角",
-        description="四章故事的已批准主角", version=1, source="deterministic",
+        description="确定性验收故事的已批准主角", version=1, source="deterministic",
         attributes={"source_chapter_id": chapter.id, "source_chapter_index": 1,
             "introduced_at": {"chapter_id": chapter.id, "chapter_number": 1},
             "evidence_contract": deterministic_evidence_contract(chapter), "speaking": True,
@@ -57,7 +58,25 @@ def _new_protagonist(user_id: str, novel_id: str, chapter: Chapter) -> StoryEnti
     return entity
 
 
+def _refresh_stale_evidence(entity: StoryEntity, chapter: Chapter) -> None:
+    """Re-anchor fixture evidence when its source chapter was edited (rerun after edit)."""
+    attrs = dict(entity.attributes or {})
+    current = deterministic_evidence_contract(chapter)
+    evidence = dict(attrs.get("evidence_contract") or {})
+    if evidence.get("chapter_id") == current.get("chapter_id") and evidence.get("content_hash") == current.get("content_hash"):
+        return
+    attrs["evidence_contract"] = current
+    entity.attributes = attrs
+
+
 async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_ids: list[str], chapters: dict[str, Chapter]):
+    """Ensure the deterministic 主角 fixture row exists and is candidate.
+
+    Distinct supporting named characters must stay active. Mass-archiving every
+    non-主角 character into 主角 made multi-character novels fail story-lock with
+    required_entity_state_invalid once chapter text rediscovered those archived
+    locals. Same-identity alias merges happen later in seed_deterministic_local_mentions.
+    """
     protagonist = await db.scalar(select(StoryEntity).where(
         StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
         StoryEntity.source == "deterministic", StoryEntity.name == "主角"))
@@ -65,30 +84,22 @@ async def _protagonist(db: AsyncSession, user_id: str, novel_id: str, chapter_id
         protagonist = _new_protagonist(user_id, novel_id, chapters[chapter_ids[0]])
         db.add(protagonist)
     await db.flush()
-    rows = list((await db.scalars(select(StoryEntity).where(
-        StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
-        StoryEntity.entity_type == "character"))).all())
-    approval_at = utc_now().isoformat()
-    for character in rows:
-        if character.id != protagonist.id:
-            protagonist.aliases = list(dict.fromkeys([*(protagonist.aliases or []), str(character.name or "")]))
-            merge = {"status": "merged_superseded", "canonical_entity_id": protagonist.id, "merged_at": approval_at}
-            character.extra_data = {**(character.extra_data or {}), "deterministic_merge": merge, "normalized_merge": dict(merge)}
-            character.attributes = {**(character.attributes or {}), "merged_into_entity_id": protagonist.id}
-            set_entity_review_status(character, ARCHIVED, changed_by=user_id, reason="merged_into_deterministic_protagonist")
-            continue
-        attrs = dict(character.attributes or {})
-        attrs.pop("approval_record", None)
-        attrs.setdefault("source_chapter_id", character.chapter_id or chapter_ids[0])
-        attrs.setdefault("source_chapter_index", 1)
-        attrs.setdefault("introduced_at", {"chapter_id": attrs["source_chapter_id"], "chapter_number": 1})
-        attrs.setdefault("evidence_contract", deterministic_evidence_contract(chapters[str(attrs["source_chapter_id"])]))
-        attrs.setdefault("visual_dna", {"costume": "深色长衣", "line_style": "统一二维动漫线稿"})
-        attrs.setdefault("reference_requirements", {"character_multiview": ["front", "three_quarter", "full_body"]})
-        attrs.update(speaking=True, voice_binding={"voice_id": "deterministic-protagonist-voice", "version": 1, "status": "locked"})
-        character.chapter_id, character.first_seen_chapter_id = character.chapter_id or chapter_ids[0], character.first_seen_chapter_id or character.chapter_id
-        character.version, character.attributes = int(character.version or 1), attrs
-        set_entity_review_status(character, CANDIDATE, changed_by=user_id, reason="deterministic_acceptance_fixture")
+    character = protagonist
+    attrs = dict(character.attributes or {})
+    attrs.pop("approval_record", None)
+    attrs.setdefault("source_chapter_id", character.chapter_id or chapter_ids[0])
+    attrs.setdefault("source_chapter_index", 1)
+    attrs.setdefault("introduced_at", {"chapter_id": attrs["source_chapter_id"], "chapter_number": 1})
+    attrs.setdefault("evidence_contract", deterministic_evidence_contract(chapters[str(attrs["source_chapter_id"])]))
+    source_chapter = chapters.get(str((attrs.get("evidence_contract") or {}).get("chapter_id") or attrs["source_chapter_id"]))
+    if source_chapter is not None and (attrs["evidence_contract"] or {}).get("content_hash") != deterministic_evidence_contract(source_chapter).get("content_hash"):
+        attrs["evidence_contract"] = deterministic_evidence_contract(source_chapter)
+    attrs.setdefault("visual_dna", {"costume": "深色长衣", "line_style": "统一二维动漫线稿"})
+    attrs.setdefault("reference_requirements", {"character_multiview": ["front", "three_quarter", "full_body"]})
+    attrs.update(speaking=True, voice_binding={"voice_id": "deterministic-protagonist-voice", "version": 1, "status": "locked"})
+    character.chapter_id, character.first_seen_chapter_id = character.chapter_id or chapter_ids[0], character.first_seen_chapter_id or character.chapter_id
+    character.version, character.attributes = int(character.version or 1), attrs
+    set_entity_review_status(character, CANDIDATE, changed_by=user_id, reason="deterministic_acceptance_fixture")
     return protagonist
 
 
@@ -103,8 +114,11 @@ FACTS = (
 
 async def _fixture_entities(db: AsyncSession, user_id: str, novel_id: str, chapter_ids: list[str], chapters, protagonist):
     entities = {"主角": protagonist}
-    for entity_type, name, number, fact_attrs in FACTS:
-        chapter_id = chapter_ids[number - 1]
+    # FACTS slots describe a 4-chapter reference story; map them onto the real chapter count.
+    unique_ids = list(dict.fromkeys(chapter_ids))
+    for entity_type, name, slot, fact_attrs in FACTS:
+        number = fixture_chapter_position(slot, len(unique_ids))
+        chapter_id = unique_ids[number - 1]
         existing = await db.scalar(select(StoryEntity).where(
             StoryEntity.user_id == user_id, StoryEntity.novel_id == novel_id,
             StoryEntity.source == "deterministic", StoryEntity.entity_type == entity_type, StoryEntity.name == name))
@@ -117,6 +131,8 @@ async def _fixture_entities(db: AsyncSession, user_id: str, novel_id: str, chapt
                     "evidence_contract": deterministic_evidence_contract(chapters[chapter_id])})
             set_entity_review_status(existing, CANDIDATE, changed_by=user_id, reason="deterministic_acceptance_fixture")
             db.add(existing)
+        else:
+            _refresh_stale_evidence(existing, chapters[chapter_id])
         entities[name] = existing
     await db.flush()
     return entities
@@ -139,7 +155,8 @@ def _decorate_shot(shot: Shot, protagonist: StoryEntity, episode: dict, refs: di
         shot.image_url, shot.image_status = first_frame_url, "succeeded"
 
 
-def _dialogue_anchor(user_id: str, storyboard_id: str, protagonist: StoryEntity, episode: dict, refs: dict, number: int) -> Shot:
+def _dialogue_anchor(user_id: str, storyboard_id: str, protagonist: StoryEntity, episode: dict, refs: dict, number: int,
+                     is_last: bool = False) -> Shot:
     first_frame_url = str(os.getenv("DETERMINISTIC_REFERENCE_URL") or "").strip()
     return Shot(id=str(uuid4()), user_id=user_id, storyboard_id=storyboard_id, shot_number=number,
         duration=4, prompt="主角携带连续性道具进入新场景，事件转折并形成最终后果",
@@ -153,7 +170,7 @@ def _dialogue_anchor(user_id: str, storyboard_id: str, protagonist: StoryEntity,
             "dialogue_source": {"source": "deterministic_acceptance_fixture", "source_span": [0, 1]},
             "voice_binding": {"entity_id": protagonist.id, "voice_id": "deterministic-protagonist-voice", "version": 1, "status": "locked"},
             "character_evidence": True, "scene_refs": ["连续场景"], "continuity_prop": "连续性道具",
-            "event_refs": ["主角完成最终事件" if int(episode["episode_number"]) == 4 else "道具被发现"],
+            "event_refs": ["主角完成最终事件" if is_last else "道具被发现"],
             "event_turning_point": True, "style_evidence": True, "delivery_evidence": True, "final_consequence": True})
 
 
@@ -161,6 +178,7 @@ async def _episodes(db, run, user_id, chapters, entities, protagonist):
     episodes = [dict(item) for item in run.episodes or []]
     await seed_deterministic_local_mentions(db, user_id=user_id, novel_id=run.novel_id,
         episodes=episodes, chapters_by_id=chapters, fixture_entities=entities)
+    last_number = max([int(item.get("episode_number") or 0) for item in episodes] or [0])
     for episode in episodes:
         source = [chapters[str(value)] for value in episode.get("chapter_ids") or []]
         episode["input_hash"] = "|".join(f"{item.id}:{item.updated_at.isoformat() if item.updated_at else ''}" for item in source)
@@ -171,12 +189,13 @@ async def _episodes(db, run, user_id, chapters, entities, protagonist):
         if not storyboard_id or not shot_ids:
             continue
         rows = list((await db.scalars(select(Shot).where(Shot.id.in_(shot_ids), Shot.user_id == user_id))).all())
-        refs = deterministic_anchor_entity_refs(entities, int(episode.get("episode_number") or 0))
+        refs = deterministic_anchor_entity_refs(entities, int(episode.get("episode_number") or 0), len(episodes))
         for shot in rows:
             _decorate_shot(shot, protagonist, episode, refs)
-        if int(episode["episode_number"]) in {1, 4} and not any((row.extra_data or {}).get("deterministic_dialogue_anchor") for row in rows):
+        is_last = int(episode["episode_number"]) == last_number
+        if int(episode["episode_number"]) in {1, last_number} and not any((row.extra_data or {}).get("deterministic_dialogue_anchor") for row in rows):
             extra = _dialogue_anchor(user_id, storyboard_id, protagonist, episode, refs,
-                                     max([row.shot_number or 0 for row in rows] or [0]) + 1)
+                                     max([row.shot_number or 0 for row in rows] or [0]) + 1, is_last)
             db.add(extra); shot_ids.append(extra.id)
             board = await db.get(Storyboard, storyboard_id)
             if board is not None: board.shot_count = len(shot_ids)

@@ -322,9 +322,10 @@ test('quick start auto preview uses canonical episode production pipeline with a
   expect(mediaRequests[0]).toMatchObject({
     production_strategy: 'draft_fast',
     strategy: 'separate_video_tts',
-    model_config_id: 'video-model-e2e',
-    audio_model_config_id: 'audio-model-e2e',
   });
+  // model_config is the single runtime source: the backend resolves the global default / per-novel override.
+  expect(mediaRequests[0].model_config_id).toBeUndefined();
+  expect(mediaRequests[0].audio_model_config_id).toBeUndefined();
   expect(preflightRequests.length).toBe(1);
   await expect(page.getByRole('link', { name: '播放预览包' })).toBeVisible();
 });
@@ -452,8 +453,8 @@ test('novel detail opens the whole-book plan tab from query params', async ({ pa
   }));
 
   await page.goto('/novels/novel-series-e2e?tab=series-plan');
-  await expect(page.getByRole('tab', { name: /整书计划/ })).toHaveAttribute('data-state', 'active', { timeout: 10_000 });
-  await expect(page.getByText('连续动漫制作线')).toBeVisible();
+  await expect(page.getByRole('tab', { name: /分集计划/ })).toHaveAttribute('data-state', 'active', { timeout: 10_000 });
+  await expect(page.getByText('分集制作进度')).toBeVisible();
   await expect(page.getByText('第一集 星光密信')).toBeVisible();
   await expect(page.getByText('待锁定 2 个资产')).toBeVisible();
   await expect(page.getByText('声线锁定、质量门禁（1）')).toBeVisible();

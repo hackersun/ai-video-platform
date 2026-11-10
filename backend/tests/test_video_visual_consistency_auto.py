@@ -135,7 +135,7 @@ async def test_sync_video_job_prefers_configured_public_storage_delivery(
         return "/static/generated/videos/shot.mp4"
 
     async def deliver(_db, _user_id, media_url, **_kwargs):
-        assert media_url == "/static/generated/videos/shot.mp4"
+        assert media_url.split("?")[0] == "/static/generated/videos/shot.mp4"
         return {"provider_url": "https://cdn.example.com/static/generated/videos/shot.mp4"}
 
     monkeypatch.setattr(job_sync, "persist_remote_media_url", persist)

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { fulfillStudioFallback } from './support/studio-fallbacks';
 
 function devToken(userId: string) {
   const payload = Buffer.from(
@@ -103,6 +104,7 @@ test('series studio overview shows global control state', async ({ page }) => {
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [], count: 0 }) });
       return;
     }
+    if (await fulfillStudioFallback(route, path)) return;
     throw new Error(`未模拟接口: ${route.request().method()} ${path}`);
   });
 
@@ -110,10 +112,10 @@ test('series studio overview shows global control state', async ({ page }) => {
 
   await expect(page.getByText('系列动漫工作室')).toBeVisible();
   await expect(page.getByText('连续性状态')).toBeVisible();
-  await expect(page.getByRole('button', { name: '下一步' })).toBeVisible();
+  await expect(page.getByTestId('studio-command-bar').getByRole('button', { name: /应用资产锁|生成 Story Bible/ }).first()).toBeVisible();
   await expect(page.getByText('模型策略：快速草稿')).toBeVisible();
 
-  await page.getByRole('button', { name: '下一步' }).click();
+  await page.getByTestId('studio-command-bar').getByRole('button', { name: '应用资产锁' }).click();
   await expect(page.getByText('最近动作：')).toBeVisible();
   expect(actionRequested).toBe(true);
 });

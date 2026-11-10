@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, releases, dev ]
+    branches: [ main, releases, dev, 'feat/**', 'fix/**', 'codex/**' ]
   pull_request:
-    branches: [ main, releases, dev ]
+  workflow_dispatch:
 
 jobs:
   code-health:
@@ -144,6 +144,10 @@ jobs:
     - name: Run TypeScript check
       working-directory: ./frontend
       run: npm run typecheck
+
+    - name: Run ESLint
+      working-directory: ./frontend
+      run: npm run lint
     
     - name: Build
       working-directory: ./frontend
@@ -164,3 +168,56 @@ jobs:
     
     - name: Build frontend
       run: docker build -t ai-video-frontend:latest ./frontend
+
+
+  commercial-gates:
+    name: Commercial auth/rate-limit gates
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      working-directory: ./backend
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest==9.0.2 pytest-asyncio==1.3.0
+    - name: Run commercial gate tests
+      working-directory: ./backend
+      env:
+        RATE_LIMIT_BACKEND: memory
+        REFRESH_TOKEN_STORE: memory
+        ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+        E2E_REQUIRE_ISOLATED_DB: "true"
+      run: |
+        test_db=$(mktemp /tmp/ai-video-platform-ci-XXXXXX.db)
+        trap 'rm -f "$test_db"' EXIT
+        DATABASE_URL="sqlite+aiosqlite:///$test_db" \
+          pytest -q tests/test_commercial_rate_limit.py test_auth_account.py
+
+  commercial-novice-e2e:
+    name: Commercial novice fake-mode smoke
+    runs-on: ubuntu-latest
+    needs: [frontend-tests, commercial-gates]
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+    - name: Install frontend dependencies
+      working-directory: ./frontend
+      run: npm ci
+    - name: Install Playwright browser
+      working-directory: ./frontend
+      run: npx playwright install --with-deps chromium
+    - name: Run novice/onboarding + smoke suite
+      working-directory: ./frontend
+      env:
+        CI: "true"
+      run: npm run e2e:commercial-novice

@@ -328,7 +328,7 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
         await db.commit()
 
     def fake_burn(video_url, segments):
-        assert video_url == "/static/generated/videos/provider-local.mp4"
+        assert video_url.split("?")[0] == "/static/generated/videos/provider-local.mp4"
         assert segments[0]["text"] == "主角：继续。"
         return {
             "video_url": "/static/generated/videos/native-subtitled.mp4",
@@ -373,7 +373,7 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
         video = await db.get(VideoJob, ids["video"])
 
     assert result["status"] == "completed"
-    assert aggregate.output_video_url == "/static/generated/videos/native-subtitled.mp4"
+    assert aggregate.output_video_url.split("?")[0] == "/static/generated/videos/native-subtitled.mp4"
     assert aggregate.subtitle_track_id == track_id
     assert aggregate.extra_data["subtitle_burned"] is True
     assert aggregate.extra_data["subtitle_public_video_url"] == "https://cdn.example/native-subtitled.mp4"
@@ -409,7 +409,7 @@ async def test_reconcile_burns_native_audio_subtitle_and_records_public_delivery
         repeated_job = await db.get(MediaGenerationJob, aggregate.id)
 
     assert repeated["status"] == "completed"
-    assert repeated_job.output_video_url == "/static/generated/videos/native-subtitled.mp4"
+    assert repeated_job.output_video_url.split("?")[0] == "/static/generated/videos/native-subtitled.mp4"
     assert repeated_job.extra_data["subtitle_delivery"]["object_key"] == (
         "static/generated/videos/native-subtitled.mp4"
     )

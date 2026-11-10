@@ -9,6 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.core.time_utils import utc_now
+
 from app.models import Workflow
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
 from app.models.series_production_run import SeriesProductionRun
@@ -106,9 +108,55 @@ async def build_production_stage(
 StageBuilder = Callable[[AsyncSession, SeriesProductionRun, dict[str, Any], str], Awaitable[dict[str, Any]]]
 
 
+def _artifact_id_from_job(job: Any) -> str | None:
+    extra = job.extra_data if isinstance(getattr(job, "extra_data", None), dict) else {}
+    artifact = extra.get("artifact_id") or getattr(job, "output_manifest_url", None) or getattr(job, "output_video_url", None) or getattr(job, "output_audio_url", None)
+    return str(artifact) if artifact else None
+
+
+def real_media_success(jobs_by_shot: dict[str, Any], selected: list[str]) -> bool:
+    if set(jobs_by_shot) != set(selected):
+        return False
+    for shot_id in selected:
+        job = jobs_by_shot.get(shot_id)
+        if job is None:
+            return False
+        if getattr(job, "is_active", True) is not True:
+            return False
+        if getattr(job, "status", None) not in {"succeeded", "completed"}:
+            return False
+        if not _artifact_id_from_job(job):
+            return False
+    return True
+
+
+def quality_gate_passed(run: SeriesProductionRun, selected: list[str], jobs_by_shot: dict[str, Any]) -> tuple[bool, str | None]:
+    """Return (ok, blocker_code). ready must be True for every selected artifact."""
+    reports = ((run.run_metadata or {}).get("anchor_quality_reports") or {})
+    if not selected:
+        return False, "quality_gate_incomplete"
+    for shot_id in selected:
+        job = jobs_by_shot.get(shot_id)
+        if job is None:
+            return False, "quality_gate_incomplete"
+        artifact_id = _artifact_id_from_job(job)
+        if not artifact_id:
+            return False, "quality_gate_incomplete"
+        report = reports.get(artifact_id)
+        if not isinstance(report, dict) or report.get("ready") is not True:
+            return False, "quality_gate_incomplete"
+    return True, None
+
+
+
 class SeriesRunOrchestrator:
-    def __init__(self, stage_builder: StageBuilder = build_production_stage) -> None:
+    def __init__(
+        self,
+        stage_builder: StageBuilder = build_production_stage,
+        should_stop: Callable[[], Awaitable[bool]] | None = None,
+    ) -> None:
         self._stage_builder = stage_builder
+        self._should_stop = should_stop
 
     async def validate_live_model_bindings(self, db: AsyncSession, run: SeriesProductionRun, bindings, **constraints):
         constraints.setdefault("persist", True)
@@ -142,7 +190,6 @@ class SeriesRunOrchestrator:
             raise InvalidRunTransition(f"cannot start media from {run.status}")
         if (run.budget_policy or {}).get("live_canary") is True:
             from datetime import timedelta
-            from app.core.time_utils import utc_now
             await recover_provider_operations(
                 db, adapters={}, user_id=run.user_id,
                 stale_before=utc_now() - timedelta(minutes=15),
@@ -195,6 +242,8 @@ class SeriesRunOrchestrator:
         for index, stored in enumerate(list(run.episodes or [])):
             if stored.get("stage") == "shots_ready":
                 continue
+            if await self._stop_requested(db, run):
+                return run
             episode = dict(stored)
             episode["attempt_count"] = int(episode.get("attempt_count") or 0) + 1
             episode["blocker"] = None
@@ -203,6 +252,8 @@ class SeriesRunOrchestrator:
             await db.commit()
             current_stage = episode.get("stage") or "created"
             for stage in EPISODE_STAGES[EPISODE_STAGES.index(current_stage) + 1:]:
+                if await self._stop_requested(db, run):
+                    return run
                 try:
                     async with db.begin_nested():
                         additions = await self._stage_builder(db, run, dict(episode), stage)
@@ -221,9 +272,117 @@ class SeriesRunOrchestrator:
                 episode.update(stage=stage, canonical_ids=canonical, blocker=None)
                 self._replace_episode(run, index, episode)
                 await db.commit()
+                if await self._stop_requested(db, run):
+                    return run
         transition_run(run, "shots_ready")
         run.current_episode_number = int((run.episodes or [])[-1]["episode_number"])
         await db.commit()
+        return run
+
+    async def _stop_requested(self, db: AsyncSession, run: SeriesProductionRun) -> bool:
+        await db.refresh(run)
+        if run.status == "paused":
+            return True
+        if self._should_stop is not None and await self._should_stop():
+            await db.refresh(run)
+            return True
+        return False
+
+
+    async def close_media_tail(
+        self,
+        db: AsyncSession,
+        run: SeriesProductionRun,
+        *,
+        selected_shot_ids: list[str],
+        submission_id: str | None = None,
+        quality_results: list[dict[str, Any]] | None = None,
+        media_failed: bool = False,
+        jobs_by_shot: dict[str, Any] | None = None,
+    ) -> SeriesProductionRun:
+        """Close media_running → evaluating → completed when media+quality pass.
+
+        Submission completion is orthogonal: callers may commit Submission first.
+        """
+        if run.status == "completed":
+            return run
+
+        selected = list(selected_shot_ids)
+        jobs = jobs_by_shot or {}
+        if jobs_by_shot is None and not media_failed:
+            from app.models.media_generation_job import MediaGenerationJob
+            rows = list((await db.scalars(select(MediaGenerationJob).where(
+                MediaGenerationJob.user_id == run.user_id,
+                MediaGenerationJob.shot_id.in_(selected),
+                MediaGenerationJob.is_active.is_(True),
+                MediaGenerationJob.status.in_(("succeeded", "completed")),
+            ).order_by(MediaGenerationJob.created_at.desc()))).all())
+            jobs = {}
+            for job in rows:
+                jobs.setdefault(str(job.shot_id), job)
+
+        gate_summary = dict(run.gate_summary or {})
+        media_tail = {
+            "submission_id": submission_id,
+            "selected_shot_ids": selected,
+            "closed_at": utc_now().isoformat(),
+        }
+
+        if media_failed:
+            media_tail.update(result="failed", blocker_code="media_batch_submission_failed")
+            gate_summary["media_tail"] = media_tail
+            run.gate_summary = gate_summary
+            flag_modified(run, "gate_summary")
+            if run.status not in {"failed", "completed"}:
+                transition_run(run, "failed")
+            metadata = dict(run.run_metadata or {})
+            metadata["tail_error"] = media_tail
+            run.run_metadata = metadata
+            await db.commit()
+            return run
+
+        media_ok = real_media_success(jobs, selected)
+        quality_ok, blocker = quality_gate_passed(run, selected, jobs) if media_ok else (False, "quality_gate_incomplete")
+
+        if run.status == "evaluating" and quality_ok and media_ok:
+            media_tail.update(result="passed", blocker_code=None)
+            gate_summary["media_tail"] = media_tail
+            run.gate_summary = gate_summary
+            transition_run(run, "completed")
+            await db.commit()
+            return run
+
+        if run.status != "media_running" and run.status != "evaluating":
+            return run
+
+        if not media_ok or not quality_ok:
+            media_tail.update(result="blocked", blocker_code=blocker or "quality_gate_incomplete")
+            if quality_results is not None:
+                media_tail["quality_fingerprint"] = [
+                    {"shot_id": item.get("shot_id"), "artifact_id": item.get("artifact_id"), "ready": item.get("ready")}
+                    for item in quality_results
+                ]
+            gate_summary["media_tail"] = media_tail
+            run.gate_summary = gate_summary
+            if run.status == "media_running":
+                transition_run(run, "blocked")
+            await db.commit()
+            return run
+
+        media_tail.update(result="passed", blocker_code=None)
+        if quality_results is not None:
+            media_tail["quality_fingerprint"] = [
+                {"shot_id": item.get("shot_id"), "artifact_id": item.get("artifact_id"), "ready": item.get("ready")}
+                for item in quality_results
+            ]
+        gate_summary["media_tail"] = media_tail
+        run.gate_summary = gate_summary
+        if run.status == "media_running":
+            transition_run(run, "evaluating")
+            await db.commit()
+        if run.status == "evaluating":
+            transition_run(run, "completed")
+            await db.commit()
         return run
 
     @staticmethod

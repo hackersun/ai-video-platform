@@ -1,0 +1,20 @@
+# Optional edge rate-limit (requires Caddy rate_limit plugin / xcaddy build).
+# Primary enforcement is FastAPI CommercialRateLimitMiddleware.
+# Do not replace ops/deploy/Caddyfile blindly — merge with Wave2 /ready routes.
+
+(api_rate_limits) {
+    # Illustrative only — tune to your Caddy build.
+    # rate_limit {
+    #     zone auth {
+    #         key {remote_host}
+    #         events 10
+    #         window 1m
+    #     }
+    # }
+}
+
+# Example merge into handle /api/* :
+# handle /api/v1/auth/* {
+#     import api_rate_limits
+#     reverse_proxy api:8000
+# }

@@ -72,8 +72,8 @@ async def production_readiness(db: AsyncSession, *, user_id: str) -> list[dict]:
 def _connection_issues(connections: list[ModelConnection]) -> list[dict]:
     if not connections:
         return [_issue(
-            "connection_missing", "尚未保存模型连接。", section="connections",
-            action_label="新增模型连接",
+            "connection_missing", "尚未保存供应商账号。", section="connections",
+            action_label="添加供应商账号",
         )]
     if not any(item.status in VERIFIED_CONNECTION_STATUSES for item in connections):
         return [_issue(
@@ -86,8 +86,8 @@ def _connection_issues(connections: list[ModelConnection]) -> list[dict]:
 def _binding_issues(bindings: list[ModelBinding], profiles: dict[str, ModelProfileVersion]) -> list[dict]:
     if not bindings:
         return [_issue(
-            "active_binding_missing", "尚未建立已启用的能力绑定。", section="bindings",
-            action_label="建立能力绑定",
+            "active_binding_missing", "还没有设置默认模型。", section="bindings",
+            action_label="设置默认模型",
         )]
     return [
         _issue(
@@ -142,8 +142,8 @@ async def _recipe_issues(db: AsyncSession, *, user_id: str) -> list[dict]:
         ProductionRecipeVersion.status == "published",
     ).limit(1))
     return [] if published else [_issue(
-        "published_recipe_missing", "尚未发布可供工作台使用的组合预设。",
-        section="recipes", action_label="发布组合预设",
+        "published_recipe_missing", "还没有发布可用的生成方案。",
+        section="recipes", action_label="发布生成方案",
     )]
 
 

@@ -31,7 +31,6 @@ from app.services.image_result_parser import extract_image_urls_from_provider_re
 from app.services.asset_generation_service import style_keywords_for
 from app.services.image_prompt_policy import append_global_image_constraints
 from app.services.media_persistence import persist_remote_media_url
-from app.services.novel_import_service import parse_novel_import, validate_import_filename
 from app.services.novel_production_entry import build_novel_production_entries, build_novel_production_entry
 from app.services.prompt_skill_service import apply_active_prompt_skill_template
 from app.services.series_production import build_series_plan, get_series_plan
@@ -49,6 +48,8 @@ class NovelCreate(BaseModel):
     genre: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     cover_url: Optional[str] = None
+    intro: Optional[str] = Field(None, max_length=20000, description="详细简介/世界观/人物设定")
+    style: Optional[str] = Field(None, max_length=100, description="小说风格")
 
 
 class NovelUpdate(BaseModel):
@@ -410,8 +411,8 @@ async def preview_import_novel(
 ):
     """上传 txt/md/markdown 文件并创建可确认的导入预览任务。"""
     try:
-        validate_import_filename(file.filename or "")
-        parsed = parse_novel_import(file.filename or "novel.txt", await file.read())
+        from app.services.upload_persistence import parse_uploaded_novel
+        parsed = await parse_uploaded_novel(file)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
@@ -474,7 +475,8 @@ async def confirm_import_novel(
         genre=request.genre,
         tags=request.tags or [],
         source="imported",
-        status="completed",
+        # 导入只是把原文带进来，尚未生成视频；与手动新建一致按“草稿”显示。
+        status="draft",
         word_count=job.word_count or 0,
         extra_data={"import_job_id": job.id, **(job.metadata_json or {})},
     )
@@ -781,7 +783,8 @@ async def create_novel(
         genre=novel.genre,
         tags=novel.tags or [],
         cover_url=novel.cover_url,
-        status="draft"
+        status="draft",
+        extra_data={k: v for k, v in {"intro": (novel.intro or "").strip(), "novel_style": (novel.style or "").strip()}.items() if v},
     )
     db.add(db_novel)
     await db.commit()

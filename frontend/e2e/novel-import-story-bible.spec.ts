@@ -207,17 +207,20 @@ test('imports txt chapters and drives entity and Story Bible actions', async ({ 
     buffer: Buffer.from('第一章 启航\n林澈进入星舰。\n\n第二章 星门\n星门在远方开启。'),
   });
 
-  await expect(page.getByText('已解析 2 章')).toBeVisible();
-  await page.getByRole('button', { name: /确认导入/ }).click();
+  // 文件导入成功时自动确认，不展开预览
+  await expect(page.getByTestId('novel-import-preview')).toHaveCount(0);
   await page.waitForURL(/\/novels\/novel-imported/);
 
+  await expect(page.getByRole('tab', { name: /^章节 \(/ })).toBeVisible();
+  await expect(page.getByRole('tab', { name: /故事设定 \(/ })).toHaveCount(0);
   await page.getByRole('tab', { name: /角色 \(/ }).click();
   await page.getByRole('button', { name: /提取实体/ }).click();
   await expect(page.locator('[role="tabpanel"]').filter({ hasText: '已提取 4 个实体' })).toBeVisible();
 
-  await page.getByRole('tab', { name: /Story Bible \(/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /故事设定 \(/ }).click();
   await page.getByRole('button', { name: /^生成$/ }).click();
-  await expect(page.locator('[role="tabpanel"]').filter({ hasText: 'Story Bible 已生成' })).toBeVisible();
+  await expect(page.locator('[role="tabpanel"]').filter({ hasText: '故事设定已生成' })).toBeVisible();
 
   await page.getByRole('button', { name: /^检查$/ }).click();
   await expect(page.getByText('检查完成：0 个提示')).toBeVisible();

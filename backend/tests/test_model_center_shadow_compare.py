@@ -23,10 +23,14 @@ async def db_session() -> AsyncSession:
     await engine.dispose()
 
 
-def test_read_mode_defaults_to_legacy_and_parses_explicit_shadow(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_mode_defaults_to_canonical_and_parses_explicit_modes(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.features.model_config.settings import ModelCenterReadMode, model_center_read_mode
 
     monkeypatch.delenv("MODEL_CENTER_READ_MODE", raising=False)
+    monkeypatch.delenv("MODEL_CENTER_CANONICAL_READS", raising=False)
+    assert model_center_read_mode() is ModelCenterReadMode.CANONICAL
+
+    monkeypatch.setenv("MODEL_CENTER_READ_MODE", "legacy")
     assert model_center_read_mode() is ModelCenterReadMode.LEGACY
 
     monkeypatch.setenv("MODEL_CENTER_READ_MODE", "shadow")
@@ -147,9 +151,10 @@ async def test_shadow_mode_treats_backfilled_legacy_identity_as_equivalent(
 
 
 @pytest.mark.asyncio
-async def test_canonical_mode_never_falls_back_to_legacy(
+async def test_strict_canonical_mode_never_falls_back_to_legacy(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("MODEL_CENTER_STRICT_CANONICAL", "1")
     from app.core.time_utils import utc_now
     from app.features.model_config.bindings import ModelBindingError, resolve_model_binding
 

@@ -29,6 +29,7 @@ from app.api.v1.endpoints.llm_config import (
     test_minimax_api as _test_minimax_api,
     test_volcano_agent_plan_api as _test_volcano_agent_plan_api,
 )
+from tests.llm_config_cleanup import clear_user_model_configs
 from init_db import init_db
 from main import app
 
@@ -368,10 +369,10 @@ async def test_default_minimax_chat_model_is_resolved_as_text_config() -> None:
             )
             db.add(provider)
 
-        model = await db.get(LLMModel, "minimax-m2-7")
+        model = await db.get(LLMModel, "minimax-m2.7")
         if model is None:
             model = LLMModel(
-                id="minimax-m2-7",
+                id="minimax-m2.7",
                 provider_id="minimax",
                 model_id="MiniMax-M2.7",
                 model_name="MiniMax-M2.7",
@@ -381,14 +382,12 @@ async def test_default_minimax_chat_model_is_resolved_as_text_config() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-default-minimax-config",
             user_id=user_id,
-            model_id="minimax-m2-7",
+            model_id="minimax-m2.7",
             name="MiniMax default text",
             is_active=True,
             is_default=True,
@@ -415,9 +414,7 @@ async def test_default_minimax_m3_model_uses_model_specific_base_url() -> None:
         await ensure_default_providers(db)
         await ensure_default_models(db)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-default-minimax-m3-config",
@@ -469,9 +466,7 @@ async def test_stale_minimax_m3_model_base_url_uses_key_region_route() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-stale-minimax-m3-base-url-config",
@@ -509,10 +504,10 @@ async def test_unreadable_encrypted_api_key_requires_reconfiguration() -> None:
             )
             db.add(provider)
 
-        model = await db.get(LLMModel, "minimax-m2-7")
+        model = await db.get(LLMModel, "minimax-m2.7")
         if model is None:
             model = LLMModel(
-                id="minimax-m2-7",
+                id="minimax-m2.7",
                 provider_id="minimax",
                 model_id="MiniMax-M2.7",
                 model_name="MiniMax-M2.7",
@@ -522,14 +517,12 @@ async def test_unreadable_encrypted_api_key_requires_reconfiguration() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="text-unreadable-key-config",
             user_id=user_id,
-            model_id="minimax-m2-7",
+            model_id="minimax-m2.7",
             name="旧加密配置",
             is_active=True,
             is_default=True,
@@ -557,9 +550,7 @@ async def test_default_unreadable_text_config_falls_back_to_verified_available_c
         await ensure_default_providers(db)
         await ensure_default_models(db)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         stale_default = LLMConfig(
             id="text-stale-default-m3-config",
@@ -574,7 +565,7 @@ async def test_default_unreadable_text_config_falls_back_to_verified_available_c
         available_fallback = LLMConfig(
             id="text-available-fallback-m27-config",
             user_id=user_id,
-            model_id="minimax-m2-7",
+            model_id="minimax-m2.7",
             name="可用 MiniMax-2.7",
             is_active=True,
             is_default=False,
@@ -604,9 +595,7 @@ def test_llm_config_list_marks_unreadable_success_config_as_failed() -> None:
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             db.add(
                 LLMConfig(
                     id="config-list-unreadable-key-config",
@@ -646,9 +635,7 @@ def test_llm_config_test_unreadable_key_returns_reconfigure_message() -> None:
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             db.add(
                 LLMConfig(
                     id="config-test-unreadable-key-config",
@@ -760,20 +747,27 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(
-                select(LLMConfig).where(LLMConfig.user_id.in_([user_id, other_user_id]))
-            )
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id, other_user_id)
             await db.commit()
 
     import asyncio
 
     asyncio.run(_cleanup())
 
+    # Create against the currently displayed MiniMax-M2.7 catalog row
+    # (dotted seed alone, or hyphen twin when both aliases exist).
+    preview_resp = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
+    assert preview_resp.status_code == 200
+    preview = [
+        item for item in preview_resp.json()
+        if item.get("model_id") == "MiniMax-M2.7" and item.get("model_type") == "chat"
+    ]
+    assert preview, "MiniMax-M2.7 chat catalog row missing"
+    listed_id = preview[0]["id"]
+
     create_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2-7", "name": "我的文本模型", "api_key": "sk-text", "is_default": True},
+        json={"model_id": listed_id, "name": "我的文本模型", "api_key": "sk-text", "is_default": True},
         headers=headers,
     )
     assert create_resp.status_code == 201
@@ -792,16 +786,18 @@ def test_llm_model_catalog_marks_current_user_config_status() -> None:
     owner_models_resp = client.get("/api/v1/llm/models?provider=minimax", headers=headers)
     assert owner_models_resp.status_code == 200
     owner_models = {item["id"]: item for item in owner_models_resp.json()}
-    assert owner_models["minimax-m2-7"]["user_configured"] is True
-    assert owner_models["minimax-m2-7"]["user_config_id"] == config_id
-    assert owner_models["minimax-m2-7"]["user_is_default"] is True
-    assert owner_models["minimax-m2-7"]["user_test_status"] == "success"
+    assert listed_id in owner_models
+    assert owner_models[listed_id]["user_configured"] is True
+    assert owner_models[listed_id]["user_config_id"] == config_id
+    assert owner_models[listed_id]["user_is_default"] is True
+    assert owner_models[listed_id]["user_test_status"] == "success"
+    assert owner_models[listed_id]["model_id"] == "MiniMax-M2.7"
 
     other_models_resp = client.get("/api/v1/llm/models?provider=minimax", headers=other_headers)
     assert other_models_resp.status_code == 200
     other_models = {item["id"]: item for item in other_models_resp.json()}
-    assert other_models["minimax-m2-7"]["user_configured"] is False
-    assert other_models["minimax-m2-7"]["user_config_id"] is None
+    assert other_models[listed_id]["user_configured"] is False
+    assert other_models[listed_id]["user_config_id"] is None
 
 
 def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias_visible() -> None:
@@ -811,13 +807,19 @@ def test_llm_models_deduplicate_legacy_minimax_aliases_but_keep_configured_alias
 
     async def _prepare_isolated_aliases() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             if await db.get(LLMProvider, "minimax") is None:
                 db.add(LLMProvider(
                     id="minimax", name="minimax", name_cn="MiniMax",
                     base_url="https://api.minimaxi.com/v1", is_active=True,
+                ))
+            # Ensure both dotted seed and hyphen legacy alias exist so dedupe rank
+            # (prefer ids without '.') can be asserted.
+            if await db.get(LLMModel, "minimax-m2.7") is None:
+                db.add(LLMModel(
+                    id="minimax-m2.7", provider_id="minimax", model_id="MiniMax-M2.7",
+                    model_name="MiniMax-M2.7", model_type="chat", capabilities=["chat"],
+                    is_active=True,
                 ))
             if await db.get(LLMModel, "minimax-m2-7") is None:
                 db.add(LLMModel(
@@ -871,9 +873,7 @@ def test_llm_create_config_updates_same_user_same_model_instead_of_duplicate() -
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -882,14 +882,14 @@ def test_llm_create_config_updates_same_user_same_model_instead_of_duplicate() -
 
     first_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2-7", "name": "第一次配置", "api_key": "sk-old", "is_default": False},
+        json={"model_id": "minimax-m2.7", "name": "第一次配置", "api_key": "sk-old", "is_default": False},
         headers=headers,
     )
     assert first_resp.status_code == 201
 
     second_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2-7", "name": "更新后的配置", "api_key": "sk-new", "is_default": True},
+        json={"model_id": "minimax-m2.7", "name": "更新后的配置", "api_key": "sk-new", "is_default": True},
         headers=headers,
     )
     assert second_resp.status_code == 201
@@ -899,7 +899,7 @@ def test_llm_create_config_updates_same_user_same_model_instead_of_duplicate() -
 
     configs_resp = client.get("/api/v1/llm/configs", headers=headers)
     assert configs_resp.status_code == 200
-    configs = [item for item in configs_resp.json() if item["config_model_id"] == "minimax-m2-7"]
+    configs = [item for item in configs_resp.json() if item["config_model_id"] == "minimax-m2.7"]
     assert len(configs) == 1
 
 
@@ -914,9 +914,7 @@ def test_llm_update_config_can_preserve_existing_key_and_verified_status() -> No
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             config = LLMConfig(
                 id="llm-config-update-preserve-key-config",
                 user_id=user_id,
@@ -992,9 +990,7 @@ def test_llm_defaults_are_scoped_by_model_capability() -> None:
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -1004,7 +1000,7 @@ def test_llm_defaults_are_scoped_by_model_capability() -> None:
     text_resp = client.post(
         "/api/v1/llm/configs",
         json={
-            "model_id": "minimax-m2-7",
+            "model_id": "minimax-m2.7",
             "name": "默认文本",
             "api_key": "sk-text",
             "is_default": True,
@@ -1053,9 +1049,7 @@ def test_llm_set_default_only_replaces_same_capability() -> None:
 
     async def _cleanup() -> None:
         async with AsyncSessionLocal() as db:
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -1064,7 +1058,7 @@ def test_llm_set_default_only_replaces_same_capability() -> None:
 
     text_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2-7", "name": "文本默认", "api_key": "sk-text", "is_default": True},
+        json={"model_id": "minimax-m2.7", "name": "文本默认", "api_key": "sk-text", "is_default": True},
         headers=headers,
     )
     assert text_resp.status_code == 201
@@ -1101,9 +1095,7 @@ def test_llm_visual_default_does_not_replace_text_default() -> None:
 
             await ensure_default_providers(db)
             await ensure_default_models(db)
-            existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-            for config in existing.scalars().all():
-                await db.delete(config)
+            await clear_user_model_configs(db, user_id)
             await db.commit()
 
     import asyncio
@@ -1112,7 +1104,7 @@ def test_llm_visual_default_does_not_replace_text_default() -> None:
 
     text_resp = client.post(
         "/api/v1/llm/configs",
-        json={"model_id": "minimax-m2-7", "name": "默认文本", "api_key": "sk-text", "is_default": True},
+        json={"model_id": "minimax-m2.7", "name": "默认文本", "api_key": "sk-text", "is_default": True},
         headers=headers,
     )
     assert text_resp.status_code == 201
@@ -1371,9 +1363,7 @@ async def test_default_minimax_image_model_is_resolved_as_image_config() -> None
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="image-default-minimax-config",
@@ -1405,9 +1395,7 @@ async def test_minimax_m3_can_be_selected_as_default_visual_multimodal_config() 
         await ensure_default_providers(db)
         await ensure_default_models(db)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         config = LLMConfig(
             id="vision-default-minimax-m3-config",
@@ -1448,10 +1436,10 @@ async def test_selected_model_config_overrides_default_with_capability_validatio
             )
             db.add(provider)
 
-        chat_model = await db.get(LLMModel, "minimax-m2-7")
+        chat_model = await db.get(LLMModel, "minimax-m2.7")
         if chat_model is None:
             chat_model = LLMModel(
-                id="minimax-m2-7",
+                id="minimax-m2.7",
                 provider_id="minimax",
                 model_id="MiniMax-M2.7",
                 model_name="MiniMax-M2.7",
@@ -1474,14 +1462,12 @@ async def test_selected_model_config_overrides_default_with_capability_validatio
             )
             db.add(image_model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         default_text = LLMConfig(
             id="selected-default-text-config",
             user_id=user_id,
-            model_id="minimax-m2-7",
+            model_id="minimax-m2.7",
             name="默认文本",
             is_active=True,
             is_default=True,
@@ -1490,7 +1476,7 @@ async def test_selected_model_config_overrides_default_with_capability_validatio
         selected_text = LLMConfig(
             id="selected-explicit-text-config",
             user_id=user_id,
-            model_id="minimax-m2-7",
+            model_id="minimax-m2.7",
             name="指定文本",
             is_active=True,
             is_default=False,
@@ -1551,10 +1537,10 @@ async def test_coding_plan_resolves_selected_text_model_config() -> None:
             )
             db.add(provider)
 
-        model = await db.get(LLMModel, "minimax-m2-7")
+        model = await db.get(LLMModel, "minimax-m2.7")
         if model is None:
             model = LLMModel(
-                id="minimax-m2-7",
+                id="minimax-m2.7",
                 provider_id="minimax",
                 model_id="MiniMax-M2.7",
                 model_name="MiniMax-M2.7",
@@ -1564,9 +1550,7 @@ async def test_coding_plan_resolves_selected_text_model_config() -> None:
             )
             db.add(model)
 
-        existing = await db.execute(select(LLMConfig).where(LLMConfig.user_id == user_id))
-        for config in existing.scalars().all():
-            await db.delete(config)
+        await clear_user_model_configs(db, user_id)
 
         default_text = LLMConfig(
             id="coding-plan-default-text-config",
@@ -1580,7 +1564,7 @@ async def test_coding_plan_resolves_selected_text_model_config() -> None:
         selected_text = LLMConfig(
             id="coding-plan-selected-text-config",
             user_id=user_id,
-            model_id="minimax-m2-7",
+            model_id="minimax-m2.7",
             name="指定文本",
             is_active=True,
             is_default=False,

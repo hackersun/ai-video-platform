@@ -1,0 +1,8 @@
+endpoint=http://127.0.0.1:59000
+bucket=avp-wave4-private
+started_at=2026-11-10 09:20:13 +0800
+STATUS=PENDING_CREDENTIALS_OR_IMAGE
+reason=MinIO/S3 endpoint not reachable at http://127.0.0.1:59000
+need=
+  - docker image for MinIO (docker hub/quay currently 401/denied on this host), OR
+  - real S3/Qiniu credentials in env (see ops/wave4/env-credentials.checklist.md)

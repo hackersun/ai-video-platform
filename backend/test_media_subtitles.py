@@ -158,7 +158,7 @@ def test_direct_audio_video_generation_creates_subtitle_track_and_exports_srt(cl
         headers=_auth_headers(user_id),
     )
     assert export_resp.status_code == 200
-    assert export_resp.json()["url"].endswith(".srt")
+    assert export_resp.json()["url"].split("?")[0].endswith(".srt")
 
     list_resp = client.get(
         f"/api/v1/media/jobs?task_type=shot_audio_video&shot_id={shot_id}",

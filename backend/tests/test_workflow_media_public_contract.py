@@ -123,9 +123,12 @@ async def _attach_live_run(seed: dict[str, object], video_config_id: str) -> str
             ("tts", "tts", ["text-to-speech"]),
         ):
             provider_id, model_id, config_id = (str(uuid4()) for _ in range(3))
-            db.add(LLMProvider(id=provider_id, name=f"contract-{capability}", is_active=True))
+            provider = await db.scalar(select(LLMProvider).where(LLMProvider.name == f"contract-{capability}"))
+            if provider is None:
+                provider = LLMProvider(id=provider_id, name=f"contract-{capability}", is_active=True)
+                db.add(provider)
             db.add(LLMModel(
-                id=model_id, provider_id=provider_id, model_id=f"contract-{capability}-api",
+                id=model_id, provider_id=provider.id, model_id=f"contract-{capability}-api-{uuid4()}",
                 model_name=capability, model_type=model_type, capabilities=capabilities, is_active=True,
             ))
             db.add(LLMConfig(
@@ -144,6 +147,8 @@ async def _attach_live_run(seed: dict[str, object], video_config_id: str) -> str
         workflow = await db.get(Workflow, seed["workflow"])
         workflow.metadata_ = {"series_run_id": run_id}
         db.add(run)
+        from app.services.billing_guard import opt_in_live_billing
+        await opt_in_live_billing(db, str(seed["user"]), commit=False)
         await db.commit()
     return run_id
 
@@ -437,7 +442,7 @@ def test_separate_batch_locks_prompt_fallback_and_local_reference_omission(
 
     job = asyncio.run(_job())
     parameters = job.extra_data["prompt_parameters"]
-    assert job.image_url == "/static/generated/contract-local.png"
+    assert job.image_url.split("?")[0] == "/static/generated/contract-local.png"
     assert parameters["image_url_sent"] is False
     assert "公网" in parameters["image_url_omitted_reason"]
     assert parameters["provider_prompt_safety_retry"] is True

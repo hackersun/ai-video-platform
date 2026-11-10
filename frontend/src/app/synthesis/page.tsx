@@ -28,6 +28,7 @@ import {
   Filter
 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { AiGeneratedLabel } from '@/features/legal/ai-generated-label';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
 const API_ORIGIN = API_BASE.replace(/\/api\/v1\/?$/, '');
@@ -131,6 +132,7 @@ export default function SynthesisPage() {
   
   // 当前合成结果
   const [currentSynthesis, setCurrentSynthesis] = useState<SynthesisJob | null>(null);
+  const [manualOpen, setManualOpen] = useState(false);
   const [history, setHistory] = useState<SynthesisJob[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [selectedHistoryJob, setSelectedHistoryJob] = useState<SynthesisJob | null>(null);
@@ -140,6 +142,17 @@ export default function SynthesisPage() {
   const [publishingJobId, setPublishingJobId] = useState<string | null>(null);
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
+  // ?publication_id= 聚焦某条发布（一键生成视频完成后「查看发布」跳转至此）
+  const [focusPublicationId, setFocusPublicationId] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFocusPublicationId(new URLSearchParams(window.location.search).get('publication_id'));
+  }, []);
+
+  useEffect(() => {
+    if (!focusPublicationId || !publications.some((item) => item.id === focusPublicationId)) return;
+    document.querySelector(`[data-testid="publication-row-${focusPublicationId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [focusPublicationId, publications]);
 
   useEffect(() => {
     loadVideos();
@@ -430,6 +443,90 @@ export default function SynthesisPage() {
     return status || '未渲染';
   };
 
+  const publicationHistoryCard = (
+    <Card className="bg-white/5 border-white/10" data-testid="publication-history">
+      <CardHeader className="flex flex-row items-center justify-between">
+        <CardTitle className="text-white flex items-center gap-2">
+          <Download className="w-5 h-5" />
+          发布记录
+        </CardTitle>
+        <Button variant="ghost" size="sm" onClick={loadPublications}>
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {publications.length === 0 ? (
+          <div className="text-center py-8 text-white/40">
+            <Download className="w-8 h-8 mx-auto mb-2 opacity-50" />
+            <p>暂无发布记录</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[36rem] overflow-y-auto">
+            {[...publications].sort((a, b) => Number(b.id === focusPublicationId) - Number(a.id === focusPublicationId)).map((publication) => {
+              const artifactLinks = publicationArtifactLinks(publication);
+              const focused = publication.id === focusPublicationId;
+              return (
+                <div
+                  key={publication.id}
+                  data-testid={`publication-row-${publication.id}`}
+                  data-focused={focused ? 'true' : undefined}
+                  className={`flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between ${focused ? 'ring-2 ring-emerald-400' : ''}`}
+                >
+                  <div className="min-w-0 flex-1">
+                    {focused && artifactLinks.preview_url && (
+                      <video data-testid="focused-publication-video" src={toMediaUrl(artifactLinks.preview_url)} controls className="mb-3 w-full max-w-xl rounded-lg bg-black" />
+                    )}
+                    <div className="text-white font-medium truncate">{focused && <span className="mr-2 rounded bg-emerald-500/20 px-1.5 py-0.5 text-xs text-emerald-300">本次成片</span>}<AiGeneratedLabel className="mr-2 align-middle" />{publication.title}</div>
+                    <div className="text-white/50 text-sm">
+                      {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {artifactLinks.preview_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.preview_url)} target="_blank" rel="noreferrer">
+                          <Eye className="w-3.5 h-3.5 mr-1" />
+                          发布预览
+                        </a>
+                      )}
+                      {artifactLinks.srt_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.srt_url)} target="_blank" rel="noreferrer">
+                          <FileText className="w-3.5 h-3.5 mr-1" />
+                          发布字幕 SRT
+                        </a>
+                      )}
+                      {artifactLinks.timeline_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.timeline_url)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                          发布时间线
+                        </a>
+                      )}
+                      {artifactLinks.render_manifest_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.render_manifest_url)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-3.5 h-3.5 mr-1" />
+                          发布渲染清单
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(toMediaUrl(publication.export_url), '_blank')}>
+                      <Download className="w-4 h-4" />
+                    </Button>
+                    <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
+                      <XCircle className="w-4 h-4" />
+                    </Button>
+                    <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+
   return (
     <MainLayout>
       <div className="space-y-6">
@@ -437,13 +534,330 @@ export default function SynthesisPage() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <Combine className="w-6 h-6" />
-            音视频合成
+            我的成片
           </h1>
-          <p className="text-white/60 mt-1">将视频与音频合并为完整作品</p>
+          <p className="text-white/60 mt-1">生成好的视频都在这里，可以播放、下载和发布。</p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* 左侧：选择源 */}
+        {/* 从「查看发布」进入时，发布记录置顶整宽展示 */}
+        {focusPublicationId && publicationHistoryCard}
+
+        <div className="space-y-4">
+          {/* 错误提示 */}
+          {error && (
+            <Card className="bg-red-500/10 border-red-500/30">
+              <CardContent className="p-3 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-400" />
+                <p className="text-red-400 text-sm">{error}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {publishMessage && (
+            <Card className="bg-white/5 border-white/10">
+              <CardContent className="p-3 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-yellow-400" />
+                <p className="text-white/70 text-sm">{publishMessage}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 历史记录 */}
+          <Card className="bg-white/5 border-white/10">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="text-white flex items-center gap-2">
+                <Clock className="w-5 h-5" />
+                合成历史
+              </CardTitle>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => loadHistory()}
+                disabled={historyLoading}
+              >
+                <RefreshCw className={`w-4 h-4 ${historyLoading ? 'animate-spin' : ''}`} />
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-white/10 bg-black/20 p-4">
+                <div className="mb-3 flex items-center gap-2 text-white font-medium">
+                  <Filter className="w-4 h-4 text-violet-300" />
+                  合成历史筛选
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="space-y-1 text-sm text-white/70">
+                    <span>小说ID</span>
+                    <Input
+                      aria-label="小说ID"
+                      value={historyFilters.novel_id}
+                      onChange={(event) => updateHistoryFilter('novel_id', event.target.value)}
+                      placeholder="按小说过滤"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-white/70">
+                    <span>章节ID</span>
+                    <Input
+                      aria-label="章节ID"
+                      value={historyFilters.chapter_id}
+                      onChange={(event) => updateHistoryFilter('chapter_id', event.target.value)}
+                      placeholder="按章节过滤"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-white/70">
+                    <span>剧本ID</span>
+                    <Input
+                      aria-label="剧本ID"
+                      value={historyFilters.script_id}
+                      onChange={(event) => updateHistoryFilter('script_id', event.target.value)}
+                      placeholder="按剧本过滤"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-white/70">
+                    <span>分镜ID</span>
+                    <Input
+                      aria-label="分镜ID"
+                      value={historyFilters.storyboard_id}
+                      onChange={(event) => updateHistoryFilter('storyboard_id', event.target.value)}
+                      placeholder="按分镜过滤"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-white/70">
+                    <span>镜头ID</span>
+                    <Input
+                      aria-label="镜头ID"
+                      value={historyFilters.shot_id}
+                      onChange={(event) => updateHistoryFilter('shot_id', event.target.value)}
+                      placeholder="按镜头过滤"
+                      className="bg-white/10 border-white/20 text-white"
+                    />
+                  </label>
+                  <label className="space-y-1 text-sm text-white/70">
+                    <span>任务状态</span>
+                    <select
+                      aria-label="任务状态"
+                      value={historyFilters.status}
+                      onChange={(event) => updateHistoryFilter('status', event.target.value)}
+                      className="w-full rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none"
+                    >
+                      <option value="">全部状态</option>
+                      <option value="succeeded">成功</option>
+                      <option value="running">处理中</option>
+                      <option value="pending">排队中</option>
+                      <option value="failed">失败</option>
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-sm text-white/70 md:col-span-2">
+                    <span>渲染状态</span>
+                    <select
+                      aria-label="渲染状态"
+                      value={historyFilters.render_status}
+                      onChange={(event) => updateHistoryFilter('render_status', event.target.value)}
+                      className="w-full rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none"
+                    >
+                      <option value="">全部渲染状态</option>
+                      <option value="rendered">已渲染</option>
+                      <option value="ready">待渲染</option>
+                      <option value="adapter_ready">云渲染待提交</option>
+                      <option value="preflight_failed">预检失败</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => loadHistory(historyFiltersRef.current)} disabled={historyLoading}>
+                    {historyLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Filter className="w-4 h-4 mr-2" />}
+                    筛选历史
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={resetHistoryFilters} disabled={historyLoading}>
+                    重置
+                  </Button>
+                </div>
+              </div>
+
+              {selectedHistoryJob && (
+                <div data-testid="synthesis-history-preview" className="rounded-lg border border-violet-400/30 bg-violet-500/10 p-4 space-y-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <div className="text-white font-semibold">历史预览：{selectedHistoryJob.title}</div>
+                      <div className="mt-1 text-sm text-white/60">
+                        {statusText(selectedHistoryJob.status)} · {renderStatusText(selectedHistoryJob.render_status)} · {selectedHistoryJob.segment_count || 0} 个片段
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedHistoryJob.srt_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10" href={toMediaUrl(selectedHistoryJob.srt_url)} target="_blank" rel="noreferrer">
+                          <FileText className="w-4 h-4 mr-2" />
+                          字幕 SRT
+                        </a>
+                      )}
+                      {selectedHistoryJob.timeline_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10" href={toMediaUrl(selectedHistoryJob.timeline_url)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          时间线
+                        </a>
+                      )}
+                      {selectedHistoryJob.render_manifest_url && (
+                        <a className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10" href={toMediaUrl(selectedHistoryJob.render_manifest_url)} target="_blank" rel="noreferrer">
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          渲染清单
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  {previewUrlFor(selectedHistoryJob) ? (
+                    isHtmlPreview(previewUrlFor(selectedHistoryJob)) ? (
+                      <iframe
+                        title="合成历史预览"
+                        src={toMediaUrl(previewUrlFor(selectedHistoryJob))}
+                        className="h-72 w-full rounded-lg border border-white/10 bg-black"
+                      />
+                    ) : (
+                      <video
+                        src={toMediaUrl(previewUrlFor(selectedHistoryJob))}
+                        controls
+                        className="w-full rounded-lg bg-black"
+                      />
+                    )
+                  ) : (
+                    <div className="rounded-lg border border-white/10 bg-black/30 p-6 text-center text-white/50">
+                      该记录暂未生成可预览文件
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {history.length === 0 ? (
+                <div className="text-center py-8 text-white/40">
+                  <Combine className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p>暂无合成记录</p>
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-96 overflow-y-auto">
+                  {history.map((job) => {
+                    const publishable = isPublishableJob(job);
+                    return (
+                    <div
+                      key={job.id}
+                      data-testid={`synthesis-job-row-${job.id}`}
+                      className={`rounded-lg border p-3 transition-colors ${
+                        selectedHistoryJob?.id === job.id
+                          ? 'border-violet-400/50 bg-violet-500/10'
+                          : 'border-white/10 bg-white/5 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <Combine className="w-5 h-5 text-violet-400 mt-1" />
+                          <div className="min-w-0">
+                            <div className="text-white font-medium truncate">
+                              {job.title}
+                            </div>
+                            <div className="mt-1 text-white/60 text-sm">
+                              {new Date(job.created_at).toLocaleString()} · {statusText(job.status)} · {renderStatusText(job.render_status)}
+                            </div>
+                            {!publishable && (
+                              <div className="mt-2 rounded border border-yellow-500/25 bg-yellow-500/10 px-2 py-1 text-xs text-yellow-100">
+                                {publicationBlockerText(job)}
+                              </div>
+                            )}
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/50">
+                              {job.novel_id && <span className="rounded bg-white/10 px-2 py-1">小说 {job.novel_id.slice(0, 8)}</span>}
+                              {job.chapter_id && <span className="rounded bg-white/10 px-2 py-1">章节 {job.chapter_id.slice(0, 8)}</span>}
+                              {job.storyboard_id && <span className="rounded bg-white/10 px-2 py-1">分镜 {job.storyboard_id.slice(0, 8)}</span>}
+                              {job.shot_id && <span className="rounded bg-white/10 px-2 py-1">镜头 {job.shot_id.slice(0, 8)}</span>}
+                              {job.segment_count ? <span className="rounded bg-white/10 px-2 py-1">{job.segment_count} 段</span> : null}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {job.status === 'succeeded' ? (
+                            <CheckCircle className="w-5 h-5 text-green-400" />
+                          ) : job.status === 'failed' ? (
+                            <XCircle className="w-5 h-5 text-red-400" />
+                          ) : (
+                            <Loader2 className="w-5 h-5 text-yellow-400 animate-spin" />
+                          )}
+                          {(job.output_url || job.preview_url || job.video_url) && (
+                            <Button
+                              title="预览"
+                              aria-label={`预览 ${job.title}`}
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setSelectedHistoryJob(job)}
+                            >
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {publishable && job.output_url && (
+                            <>
+                              <Button
+                                title="发布"
+                                aria-label="发布"
+                                variant="ghost"
+                                size="sm"
+                                disabled={publishingJobId === job.id}
+                                onClick={() => publishJob(job)}
+                              >
+                                {publishingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                              </Button>
+                              <Button
+                                title="导出"
+                                aria-label="导出"
+                                variant="ghost"
+                                size="sm"
+                                disabled={publishingJobId === job.id}
+                                onClick={() => exportJob(job)}
+                              >
+                                <Download className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
+                          {job.manifest_url && (
+                            <Button
+                              title="打开成片清单"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => window.open(toMediaUrl(job.manifest_url), '_blank')}
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </Button>
+                          )}
+                          <Button
+                            title="归档合成记录"
+                            aria-label={`归档 ${job.title || '合成记录'}`}
+                            variant="ghost"
+                            size="sm"
+                            className="text-red-300 hover:text-red-200"
+                            disabled={deletingJobId === job.id}
+                            onClick={() => deleteHistoryJob(job)}
+                          >
+                            {deletingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {!focusPublicationId && publicationHistoryCard}
+        </div>
+
+        {/* 手动合成：专业能力，默认折叠 */}
+        <details
+          data-testid="manual-synthesis"
+          open={manualOpen}
+          onToggle={(event) => setManualOpen((event.currentTarget as HTMLDetailsElement).open)}
+          className="rounded-lg border border-white/10 bg-white/[0.03] p-4"
+        >
+          <summary className="cursor-pointer text-sm font-medium text-white/80">手动合成（自选视频和音频合并，一般不需要）</summary>
+          <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6 lg:items-start">
           <div className="space-y-4">
             {/* 视频选择 */}
             <Card className="bg-white/5 border-white/10">
@@ -571,8 +985,6 @@ export default function SynthesisPage() {
               </CardContent>
             </Card>
           </div>
-
-          {/* 右侧：预览和合成 */}
           <div className="space-y-4">
             {/* 合成配置 */}
             <Card className="bg-white/5 border-white/10">
@@ -633,25 +1045,6 @@ export default function SynthesisPage() {
               </CardContent>
             </Card>
 
-            {/* 错误提示 */}
-            {error && (
-              <Card className="bg-red-500/10 border-red-500/30">
-                <CardContent className="p-3 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-red-400" />
-                  <p className="text-red-400 text-sm">{error}</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {publishMessage && (
-              <Card className="bg-white/5 border-white/10">
-                <CardContent className="p-3 flex items-center gap-2">
-                  <AlertCircle className="w-5 h-5 text-yellow-400" />
-                  <p className="text-white/70 text-sm">{publishMessage}</p>
-                </CardContent>
-              </Card>
-            )}
-
             {/* 当前合成结果 */}
             {currentSynthesis && (
               <Card className="bg-white/5 border-white/10">
@@ -701,368 +1094,9 @@ export default function SynthesisPage() {
               </Card>
             )}
 
-            {/* 历史记录 */}
-            <Card className="bg-white/5 border-white/10">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Clock className="w-5 h-5" />
-                  合成历史
-                </CardTitle>
-                <Button 
-                  variant="ghost" 
-                  size="sm"
-                  onClick={() => loadHistory()}
-                  disabled={historyLoading}
-                >
-                  <RefreshCw className={`w-4 h-4 ${historyLoading ? 'animate-spin' : ''}`} />
-                </Button>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="rounded-lg border border-white/10 bg-black/20 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-white font-medium">
-                    <Filter className="w-4 h-4 text-violet-300" />
-                    合成历史筛选
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <label className="space-y-1 text-sm text-white/70">
-                      <span>小说ID</span>
-                      <Input
-                        aria-label="小说ID"
-                        value={historyFilters.novel_id}
-                        onChange={(event) => updateHistoryFilter('novel_id', event.target.value)}
-                        placeholder="按小说过滤"
-                        className="bg-white/10 border-white/20 text-white"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm text-white/70">
-                      <span>章节ID</span>
-                      <Input
-                        aria-label="章节ID"
-                        value={historyFilters.chapter_id}
-                        onChange={(event) => updateHistoryFilter('chapter_id', event.target.value)}
-                        placeholder="按章节过滤"
-                        className="bg-white/10 border-white/20 text-white"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm text-white/70">
-                      <span>剧本ID</span>
-                      <Input
-                        aria-label="剧本ID"
-                        value={historyFilters.script_id}
-                        onChange={(event) => updateHistoryFilter('script_id', event.target.value)}
-                        placeholder="按剧本过滤"
-                        className="bg-white/10 border-white/20 text-white"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm text-white/70">
-                      <span>分镜ID</span>
-                      <Input
-                        aria-label="分镜ID"
-                        value={historyFilters.storyboard_id}
-                        onChange={(event) => updateHistoryFilter('storyboard_id', event.target.value)}
-                        placeholder="按分镜过滤"
-                        className="bg-white/10 border-white/20 text-white"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm text-white/70">
-                      <span>镜头ID</span>
-                      <Input
-                        aria-label="镜头ID"
-                        value={historyFilters.shot_id}
-                        onChange={(event) => updateHistoryFilter('shot_id', event.target.value)}
-                        placeholder="按镜头过滤"
-                        className="bg-white/10 border-white/20 text-white"
-                      />
-                    </label>
-                    <label className="space-y-1 text-sm text-white/70">
-                      <span>任务状态</span>
-                      <select
-                        aria-label="任务状态"
-                        value={historyFilters.status}
-                        onChange={(event) => updateHistoryFilter('status', event.target.value)}
-                        className="w-full rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none"
-                      >
-                        <option value="">全部状态</option>
-                        <option value="succeeded">成功</option>
-                        <option value="running">处理中</option>
-                        <option value="pending">排队中</option>
-                        <option value="failed">失败</option>
-                      </select>
-                    </label>
-                    <label className="space-y-1 text-sm text-white/70 md:col-span-2">
-                      <span>渲染状态</span>
-                      <select
-                        aria-label="渲染状态"
-                        value={historyFilters.render_status}
-                        onChange={(event) => updateHistoryFilter('render_status', event.target.value)}
-                        className="w-full rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm text-white outline-none"
-                      >
-                        <option value="">全部渲染状态</option>
-                        <option value="rendered">已渲染</option>
-                        <option value="ready">待渲染</option>
-                        <option value="adapter_ready">云渲染待提交</option>
-                        <option value="preflight_failed">预检失败</option>
-                      </select>
-                    </label>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => loadHistory(historyFiltersRef.current)} disabled={historyLoading}>
-                      {historyLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Filter className="w-4 h-4 mr-2" />}
-                      筛选历史
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={resetHistoryFilters} disabled={historyLoading}>
-                      重置
-                    </Button>
-                  </div>
-                </div>
-
-                {selectedHistoryJob && (
-                  <div data-testid="synthesis-history-preview" className="rounded-lg border border-violet-400/30 bg-violet-500/10 p-4 space-y-3">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div>
-                        <div className="text-white font-semibold">历史预览：{selectedHistoryJob.title}</div>
-                        <div className="mt-1 text-sm text-white/60">
-                          {statusText(selectedHistoryJob.status)} · {renderStatusText(selectedHistoryJob.render_status)} · {selectedHistoryJob.segment_count || 0} 个片段
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedHistoryJob.srt_url && (
-                          <a className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10" href={toMediaUrl(selectedHistoryJob.srt_url)} target="_blank" rel="noreferrer">
-                            <FileText className="w-4 h-4 mr-2" />
-                            字幕 SRT
-                          </a>
-                        )}
-                        {selectedHistoryJob.timeline_url && (
-                          <a className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10" href={toMediaUrl(selectedHistoryJob.timeline_url)} target="_blank" rel="noreferrer">
-                            <ExternalLink className="w-4 h-4 mr-2" />
-                            时间线
-                          </a>
-                        )}
-                        {selectedHistoryJob.render_manifest_url && (
-                          <a className="inline-flex items-center rounded-md border border-white/20 px-3 py-2 text-sm text-white hover:bg-white/10" href={toMediaUrl(selectedHistoryJob.render_manifest_url)} target="_blank" rel="noreferrer">
-                            <ExternalLink className="w-4 h-4 mr-2" />
-                            渲染清单
-                          </a>
-                        )}
-                      </div>
-                    </div>
-                    {previewUrlFor(selectedHistoryJob) ? (
-                      isHtmlPreview(previewUrlFor(selectedHistoryJob)) ? (
-                        <iframe
-                          title="合成历史预览"
-                          src={toMediaUrl(previewUrlFor(selectedHistoryJob))}
-                          className="h-72 w-full rounded-lg border border-white/10 bg-black"
-                        />
-                      ) : (
-                        <video
-                          src={toMediaUrl(previewUrlFor(selectedHistoryJob))}
-                          controls
-                          className="w-full rounded-lg bg-black"
-                        />
-                      )
-                    ) : (
-                      <div className="rounded-lg border border-white/10 bg-black/30 p-6 text-center text-white/50">
-                        该记录暂未生成可预览文件
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {history.length === 0 ? (
-                  <div className="text-center py-8 text-white/40">
-                    <Combine className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>暂无合成记录</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-96 overflow-y-auto">
-                    {history.map((job) => {
-                      const publishable = isPublishableJob(job);
-                      return (
-                      <div
-                        key={job.id}
-                        data-testid={`synthesis-job-row-${job.id}`}
-                        className={`rounded-lg border p-3 transition-colors ${
-                          selectedHistoryJob?.id === job.id
-                            ? 'border-violet-400/50 bg-violet-500/10'
-                            : 'border-white/10 bg-white/5 hover:bg-white/10'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex items-start gap-3 min-w-0">
-                            <Combine className="w-5 h-5 text-violet-400 mt-1" />
-                            <div className="min-w-0">
-                              <div className="text-white font-medium truncate">
-                                {job.title}
-                              </div>
-                              <div className="mt-1 text-white/60 text-sm">
-                                {new Date(job.created_at).toLocaleString()} · {statusText(job.status)} · {renderStatusText(job.render_status)}
-                              </div>
-                              {!publishable && (
-                                <div className="mt-2 rounded border border-yellow-500/25 bg-yellow-500/10 px-2 py-1 text-xs text-yellow-100">
-                                  {publicationBlockerText(job)}
-                                </div>
-                              )}
-                              <div className="mt-2 flex flex-wrap gap-2 text-xs text-white/50">
-                                {job.novel_id && <span className="rounded bg-white/10 px-2 py-1">小说 {job.novel_id.slice(0, 8)}</span>}
-                                {job.chapter_id && <span className="rounded bg-white/10 px-2 py-1">章节 {job.chapter_id.slice(0, 8)}</span>}
-                                {job.storyboard_id && <span className="rounded bg-white/10 px-2 py-1">分镜 {job.storyboard_id.slice(0, 8)}</span>}
-                                {job.shot_id && <span className="rounded bg-white/10 px-2 py-1">镜头 {job.shot_id.slice(0, 8)}</span>}
-                                {job.segment_count ? <span className="rounded bg-white/10 px-2 py-1">{job.segment_count} 段</span> : null}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {job.status === 'succeeded' ? (
-                              <CheckCircle className="w-5 h-5 text-green-400" />
-                            ) : job.status === 'failed' ? (
-                              <XCircle className="w-5 h-5 text-red-400" />
-                            ) : (
-                              <Loader2 className="w-5 h-5 text-yellow-400 animate-spin" />
-                            )}
-                            {(job.output_url || job.preview_url || job.video_url) && (
-                              <Button
-                                title="预览"
-                                aria-label={`预览 ${job.title}`}
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setSelectedHistoryJob(job)}
-                              >
-                                <Eye className="w-4 h-4" />
-                              </Button>
-                            )}
-                            {publishable && job.output_url && (
-                              <>
-                                <Button
-                                  title="发布"
-                                  aria-label="发布"
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={publishingJobId === job.id}
-                                  onClick={() => publishJob(job)}
-                                >
-                                  {publishingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                                </Button>
-                                <Button
-                                  title="导出"
-                                  aria-label="导出"
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={publishingJobId === job.id}
-                                  onClick={() => exportJob(job)}
-                                >
-                                  <Download className="w-4 h-4" />
-                                </Button>
-                              </>
-                            )}
-                            {job.manifest_url && (
-                              <Button
-                                title="打开成片清单"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => window.open(toMediaUrl(job.manifest_url), '_blank')}
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </Button>
-                            )}
-                            <Button
-                              title="归档合成记录"
-                              aria-label={`归档 ${job.title || '合成记录'}`}
-                              variant="ghost"
-                              size="sm"
-                              className="text-red-300 hover:text-red-200"
-                              disabled={deletingJobId === job.id}
-                              onClick={() => deleteHistoryJob(job)}
-                            >
-                              {deletingJobId === job.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white/5 border-white/10" data-testid="publication-history">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Download className="w-5 h-5" />
-                  发布记录
-                </CardTitle>
-                <Button variant="ghost" size="sm" onClick={loadPublications}>
-                  <RefreshCw className="w-4 h-4" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {publications.length === 0 ? (
-                  <div className="text-center py-8 text-white/40">
-                    <Download className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p>暂无发布记录</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto">
-                    {publications.map((publication) => {
-                      const artifactLinks = publicationArtifactLinks(publication);
-                      return (
-                        <div
-                          key={publication.id}
-                          data-testid={`publication-row-${publication.id}`}
-                          className="flex flex-col gap-3 p-3 bg-white/5 rounded-lg sm:flex-row sm:items-center sm:justify-between"
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="text-white font-medium truncate">{publication.title}</div>
-                            <div className="text-white/50 text-sm">
-                              {publication.provider} · {publication.status} · {new Date(publication.created_at).toLocaleString()}
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-2">
-                              {artifactLinks.preview_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.preview_url)} target="_blank" rel="noreferrer">
-                                  <Eye className="w-3.5 h-3.5 mr-1" />
-                                  发布预览
-                                </a>
-                              )}
-                              {artifactLinks.srt_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.srt_url)} target="_blank" rel="noreferrer">
-                                  <FileText className="w-3.5 h-3.5 mr-1" />
-                                  发布字幕 SRT
-                                </a>
-                              )}
-                              {artifactLinks.timeline_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.timeline_url)} target="_blank" rel="noreferrer">
-                                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                                  发布时间线
-                                </a>
-                              )}
-                              {artifactLinks.render_manifest_url && (
-                                <a className="inline-flex items-center rounded-md border border-white/20 px-2 py-1 text-xs text-white hover:bg-white/10" href={toMediaUrl(artifactLinks.render_manifest_url)} target="_blank" rel="noreferrer">
-                                  <ExternalLink className="w-3.5 h-3.5 mr-1" />
-                                  发布渲染清单
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2 self-end sm:self-auto">
-                            <Button title="打开发布文件" variant="ghost" size="sm" disabled={publishingJobId === publication.id} onClick={() => window.open(toMediaUrl(publication.export_url), '_blank')}>
-                              <Download className="w-4 h-4" />
-                            </Button>
-                            <Button title="撤销发布" variant="ghost" size="sm" disabled={publishingJobId === publication.id || publication.status === 'revoked'} onClick={() => revokePublication(publication)}>
-                              <XCircle className="w-4 h-4" />
-                            </Button>
-                            <Button title="归档发布记录" variant="ghost" size="sm" className="text-red-300 hover:text-red-200" disabled={publishingJobId === publication.id} onClick={() => archivePublication(publication)}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
           </div>
-        </div>
+          </div>
+        </details>
       </div>
     </MainLayout>
   );

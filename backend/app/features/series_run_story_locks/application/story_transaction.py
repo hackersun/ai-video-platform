@@ -24,6 +24,7 @@ from .inspect_freshness import StoryLockFreshnessBlocked, ordered_run_chapters
 from ..public_errors import StoryLockPreparationBlocked
 from ..repositories import StoryLockLineageRepository, StoryLockRepository
 from .closure_v2_request import build_closure_v2_request, refresh_scoped_for_shot
+from .deterministic_acceptance import reactivate_reused_archived_characters
 from .explicit_dialogue_approval import _prepare_explicit_dialogue_facts
 from .production_closure_v2 import persist_production_closure_v2
 from .production_scoped_inputs import _is_signed_merged_competitor
@@ -190,8 +191,13 @@ async def apply_closure_v2_transaction(db: AsyncSession, run_id: str, request: d
                         if selected.intersection((episode.get("canonical_ids") or {}).get("shot_ids") or []):
                             await create_or_resolve_shots_stage(db, run=fresh_run, episode=episode)
                 trusted_reference_ids = migration_ids
+                chapters_for_reactivation = await _ordered_run_chapters(db, fresh_run)
+                await reactivate_reused_archived_characters(
+                    db, user_id=fresh_run.user_id, novel_id=fresh_run.novel_id,
+                    chapter_texts=[str(chapter.content or "") for chapter in chapters_for_reactivation],
+                )
                 await _prepare_explicit_dialogue_facts(
-                    db, fresh_run, await _ordered_run_chapters(db, fresh_run), tts_snapshot,
+                    db, fresh_run, chapters_for_reactivation, tts_snapshot,
                     native_audio=native_audio,
                 )
                 for episode in fresh_run.episodes or []:

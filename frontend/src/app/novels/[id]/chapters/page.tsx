@@ -252,13 +252,14 @@ function ChaptersContent() {
         </div>
 
         <ModelCapabilitySelector
+ novelId={novelId}
           capability="text"
           configs={modelConfigs}
           value={textModelConfigId}
           onChange={setTextModelConfigId}
           disabled={generatingChapter}
           title="章节生成模型"
-          description="章节生成会读取小说简介、已有章节、Story Bible、人物、场景、道具和事件，保持承上启下。"
+          description="章节生成会读取小说简介、已有章节、故事设定、人物、场景、道具和事件，保持承上启下。"
         />
 
         {/* 搜索 */}

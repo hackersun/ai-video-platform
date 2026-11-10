@@ -14,7 +14,7 @@ const waitForShotImage = async (shotId: string) => {
     const shot = await apiClient.getShot(shotId);
     if (shot.image_status === 'succeeded' && isRealFirstFrame(shot.image_url)) return shot;
     if (shot.image_status === 'succeeded' && !isRealFirstFrame(shot.image_url)) {
-      throw new Error('实模首帧不能使用开发占位图，请点击“只重试失败项”重新调用真实图像模型');
+      throw new Error('真实模型首帧不能使用开发占位图，请点击“只重试失败项”重新调用真实图像模型');
     }
     if (shot.image_status === 'failed') {
       throw new Error(shot.extra_data?.image_generation_error || '镜头首帧生成失败');

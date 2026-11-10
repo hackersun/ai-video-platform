@@ -3,6 +3,7 @@
 支持多模型接入配置管理
 """
 
+from app.services.simple_model_setup import is_internal_test_artifact
 from app.core.time_utils import utc_now
 from typing import List, Optional
 from datetime import datetime
@@ -272,7 +273,6 @@ async def clear_default_configs_for_model_group(
             and_(
                 LLMConfig.user_id == user_id,
                 LLMConfig.is_active == True,
-                LLMConfig.is_default == True,
             )
         )
     )
@@ -281,6 +281,16 @@ async def clear_default_configs_for_model_group(
             continue
         if legacy_model_capability_group(existing_model) == group:
             config.is_default = False
+            extra = config.extra_params if isinstance(config.extra_params, dict) else None
+            if extra and "simple_setup_capability" in extra:
+                config.extra_params = {k: v for k, v in extra.items() if k != "simple_setup_capability"}
+
+
+async def _write_through(db: AsyncSession, user_id: str) -> None:
+    """Legacy endpoints are compat adapters: every write is projected into model_config."""
+    from app.features.model_config.legacy_sync import reconcile_user_safely
+
+    await reconcile_user_safely(db, user_id)
 
 
 # ============== 预设数据 ==============
@@ -1189,6 +1199,7 @@ async def list_providers(
     providers = [
         provider for provider in result.scalars().all()
         if is_product_visible_provider(provider)
+        and not is_internal_test_artifact(provider.name, provider.name_cn)
     ]
     return [
         LLMProviderResponse(
@@ -1238,6 +1249,11 @@ async def list_configs(
         .order_by(desc(LLMConfig.is_default), desc(LLMConfig.created_at))
     )
     
+    from app.features.model_config import legacy_sync
+
+    canonical_ids: set[str] | None = None
+    if legacy_sync.canonical_reads_enabled():
+        canonical_ids = set((await legacy_sync.canonical_default_config_ids(db, user_id)).values())
     configs = []
     for row in result.all():
         config, model = row
@@ -1251,7 +1267,14 @@ async def list_configs(
         if provider is not None and not is_product_visible_provider(provider):
             continue
         
-        configs.append(build_llm_config_response(config, model, provider))
+        item = build_llm_config_response(config, model, provider)
+        if canonical_ids is not None:
+            # Canonical bindings currently cover text/image/video/tts only.
+            # Preserve legacy is_default for groups like vision until they are mapped.
+            group = legacy_model_capability_group(model)
+            if group in legacy_sync.SIMPLE_TO_CANONICAL:
+                item["is_default"] = config.id in canonical_ids
+        configs.append(item)
     
     if include_model_center_defaults:
         bindings = await binding_page(db, user_id, 1, 100)
@@ -1305,7 +1328,9 @@ async def create_config(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    return build_llm_config_response(config, model, provider)
+    response = build_llm_config_response(config, model, provider)
+    await _write_through(db, user_id)
+    return response
 
 
 @router.post("/configs/test", response_model=LLMTestResponse)
@@ -1369,53 +1394,11 @@ async def test_config(
             detail="配置不存在"
         )
     config, model = row
-    # 获取provider信息
-    provider_result = await db.execute(
-        select(LLMProvider).where(LLMProvider.id == model.provider_id)
-    )
-    provider = provider_result.scalar_one_or_none()
-    provider_id = provider.id if provider else model.provider_id
-    if deterministic_provider_fake_enabled():
-        test_result = deterministic_config_test_result(model.model_id)
-        config.test_status = "success"
-        config.test_message = test_result["message"]
-        config.tested_at = utc_now()
-        await db.commit()
-        return test_result
+    from app.services.model_config_test_runner import run_saved_config_test
 
-    api_key = config.get_api_key_decrypted()
-    if not api_key:
-        test_result = {
-            "success": False,
-            "message": "API Key 为空或无法解密，请重新保存并验证该配置",
-            "response": None,
-            "response_time_ms": 0,
-            "tokens_used": 0,
-        }
-        config.test_status = "failed"
-        config.test_message = test_result["message"]
-        config.tested_at = utc_now()
-        await db.commit()
-        return test_result
-
-    category = "speech" if model.model_type in ("tts", "audio", "speech") else "default"
-    extra = config.extra_params if isinstance(config.extra_params, dict) else {}
-    configured_base_url = configure_volcano_speech_endpoint(
-        extra.get("base_url") or model.base_url or (provider.base_url if provider else None), extra,
-    ) if category == "speech" else ""
-    driver_key = str(extra.get("driver_key") or "").strip() or await resolve_published_driver_key(db, model.id)
-    test_result = await _execute_config_test(
-        provider_id, api_key, model.model_id, request.message,
-        category=category, model_type=model.model_type, driver_key=driver_key,
-        base_url=configured_base_url or model.base_url or (provider.base_url if provider else "") or "",
-        connection_params=extra,
-    )
-    # 更新测试状态
-    config.test_status = "success" if test_result["success"] else "failed"
-    config.test_message = test_result["message"]
-    config.tested_at = utc_now()
-    await db.commit()
-    return test_result
+    outcome = await run_saved_config_test(db, config, model, request.message)
+    await _write_through(db, user_id)
+    return outcome
 
 
 @router.put("/configs/{config_id}", response_model=LLMConfigResponse)
@@ -1451,7 +1434,9 @@ async def update_config(
         select(LLMProvider).where(LLMProvider.id == model.provider_id)
     )
     provider = provider_result.scalar_one_or_none()
-    return build_llm_config_response(config, model, provider)
+    response = build_llm_config_response(config, model, provider)
+    await _write_through(db, user_id)
+    return response
 
 
 @router.delete("/configs/{config_id}")
@@ -1479,6 +1464,7 @@ async def delete_config(
     
     config.is_active = False
     await db.commit()
+    await _write_through(db, user_id)
     
     return {"message": "配置已删除"}
 
@@ -1513,8 +1499,9 @@ async def set_default_config(
     
     config.is_default = True
     await db.commit()
-
-    return {"message": f"已设为{legacy_model_capability_group(model)}能力默认配置"}
+    message = f"已设为{legacy_model_capability_group(model)}能力默认配置"
+    await _write_through(db, user_id)
+    return {"message": message}
 
 
 @router.get("/api-key/{provider}", response_model=dict)

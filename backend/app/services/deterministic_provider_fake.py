@@ -20,7 +20,7 @@ def deterministic_config_test_result(model_id: str) -> dict:
         raise RuntimeError("deterministic provider fake is disabled")
     return {
         "success": True,
-        "message": "deterministic provider adapter verified",
+        "message": "模拟模式：连接正常（未调用付费接口）",
         "response": f"deterministic:{model_id}",
         "response_time_ms": 0,
         "tokens_used": 0,

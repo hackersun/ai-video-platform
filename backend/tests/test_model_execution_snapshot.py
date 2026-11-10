@@ -124,12 +124,19 @@ async def test_driver_evidence_never_keeps_raw_provider_exception_text() -> None
             DriverContext(profile=_binding().profile, driver_key="volcano_ark_video_v3", connection_id="conn"),
         )
 
-    assert error.value.sanitized_evidence == {
-        "operation": "generation",
-        "provider_error_class": "RuntimeError",
-        "provider_error_type": "RuntimeError",
-        "provider_error_summary": "provider_generation_failed",
-    }
+    evidence = error.value.sanitized_evidence
+    assert evidence["operation"] == "generation"
+    assert evidence["provider_error_class"] == "RuntimeError"
+    assert evidence["provider_error_type"] == "RuntimeError"
+    assert evidence["provider_error_summary"] == "provider_generation_failed"
+    # Wave2: generation path attaches a Chinese repair hint (still secret-free).
+    assert "repair_hint" in evidence
+    assert "chapter ending secret" not in evidence["repair_hint"]
+    assert "private prompt" not in evidence["repair_hint"]
+    assert "模型设置" in evidence["repair_hint"] or "生成失败" in evidence["repair_hint"]
+    dumped = str(evidence)
+    assert "chapter ending secret" not in dumped
+    assert "private prompt" not in dumped
 
 
 @pytest.mark.parametrize(

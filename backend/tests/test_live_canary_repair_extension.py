@@ -40,7 +40,8 @@ async def _run(db: AsyncSession) -> SeriesProductionRun:
         gate_summary={}, run_metadata={}, episodes=[], version=1,
     )
     db.add_all([novel, run])
-    await db.commit()
+    from app.services.billing_guard import opt_in_live_billing
+    await opt_in_live_billing(db, user_id, commit=True)
     return run
 
 

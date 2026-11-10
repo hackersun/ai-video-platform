@@ -31,6 +31,7 @@ import { apiClient } from '@/lib/api-client';
 import {
   getDefaultConfigForCapability,
   SavedModelConfig,
+  friendlyModelName,
 } from '@/lib/model-configs';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
@@ -62,6 +63,8 @@ const STYLE_OPTIONS = [
 
 const FALLBACK_IMAGE_STYLES: ImageStyleTemplate[] = DEFAULT_IMAGE_STYLE_TEMPLATES;
 
+const NEW_NOVEL_DRAFT_KEY = 'avp:new-novel-draft';
+
 export default function NewNovelPage() {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
@@ -81,6 +84,20 @@ export default function NewNovelPage() {
     cover: '',
     intro: ''
   });
+
+  // 草稿保存在 sessionStorage：去配置模型等页面再回来时表单内容不丢失
+  const [draftReady, setDraftReady] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(NEW_NOVEL_DRAFT_KEY);
+      if (raw) setNovel((prev) => ({ ...prev, ...JSON.parse(raw) }));
+    } catch { /* ignore broken draft */ }
+    setDraftReady(true);
+  }, []);
+  useEffect(() => {
+    if (!draftReady) return;
+    try { window.sessionStorage.setItem(NEW_NOVEL_DRAFT_KEY, JSON.stringify(novel)); } catch { /* quota */ }
+  }, [novel, draftReady]);
 
   useEffect(() => {
     loadModelConfigs();
@@ -102,12 +119,38 @@ export default function NewNovelPage() {
       const response = await fetchWithAuth(`${API_BASE}/llm/configs?include_model_center_defaults=true`);
       if (!response.ok) return;
       const configs = await response.json();
-      const list = Array.isArray(configs) ? configs : [];
-      setModelConfigs(list);
-      const textDefault = getDefaultConfigForCapability(list, 'text');
-      const imageDefault = getDefaultConfigForCapability(list, 'image');
-      if (textDefault) setTextModelConfigId(textDefault.id);
-      if (imageDefault) setImageModelConfigId(imageDefault.id);
+      const list: SavedModelConfig[] = Array.isArray(configs) ? configs : [];
+      // 以「模型设置」当前生效的配置为准（与小说详情页、一键生成口径一致）。
+      const simple = await apiClient.getSimpleModelSetup().catch(() => null);
+      // 模型设置生效的配置（如模拟模式）可能不在历史配置列表中，补入后卡片展示其真实状态，而不是回退到过期的失败配置。
+      (['text', 'image'] as const).forEach((cap) => {
+        const current = simple?.capabilities?.[cap];
+        if (!current?.config_id || list.some((config) => config.id === current.config_id)) return;
+        list.unshift({
+          id: current.config_id,
+          model_id: current.model_id || '',
+          api_model_id: current.api_model_id || undefined,
+          model_capabilities: [cap],
+          provider_id: current.provider_id || '',
+          provider_name: current.provider_name || undefined,
+          model_name: current.model_name || current.model_id || '',
+          name: friendlyModelName(current, cap),
+          is_default: true,
+          test_status: current.test_status,
+          test_message: current.test_message,
+          tested_at: current.tested_at,
+          key_available: true,
+        });
+      });
+      setModelConfigs([...list]);
+      const effective = (cap: 'text' | 'image') => {
+        const id = simple?.capabilities?.[cap]?.config_id;
+        return id && list.some((config: SavedModelConfig) => config.id === id) ? id : getDefaultConfigForCapability(list, cap)?.id;
+      };
+      const textId = effective('text');
+      const imageId = effective('image');
+      if (textId) setTextModelConfigId(textId);
+      if (imageId) setImageModelConfigId(imageId);
     } catch (error) {
       console.error('加载模型配置失败:', error);
     }
@@ -136,6 +179,8 @@ export default function NewNovelPage() {
           genre: GENRE_OPTIONS.find(g => g.value === novel.genre)?.label || novel.genre,
           tags: novel.tags.split(',').map(tag => tag.trim()).filter(Boolean),
           cover_url: novel.cover || undefined,
+          intro: novel.intro || undefined,
+          style: STYLE_OPTIONS.find(s => s.value === novel.style)?.label || novel.style || undefined,
         })
       });
       
@@ -144,8 +189,10 @@ export default function NewNovelPage() {
       }
       
       toast({ title: publish ? '发布成功' : '保存成功', type: 'success' });
-      // 跳转到小说列表
-      window.location.href = '/novels';
+      try { window.sessionStorage.removeItem(NEW_NOVEL_DRAFT_KEY); } catch { /* ignore */ }
+      // 跳转到新小说详情页，直接添加章节
+      const created = await response.json().catch(() => null);
+      window.location.href = created?.id ? `/novels/${created.id}` : '/novels';
     } catch (error) {
       console.error('保存失败:', error);
       toast({ title: '保存失败', description: '请检查后端服务是否启动。', type: 'error' });
@@ -184,7 +231,7 @@ export default function NewNovelPage() {
       if (!generatedIntro) {
         throw new Error('AI 简介生成接口未返回简介内容');
       }
-      setNovel({ ...novel, intro: generatedIntro });
+      setNovel((prev) => ({ ...prev, intro: generatedIntro }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI 简介生成失败';
       toast({ title: 'AI 简介生成失败', description: message, type: 'error' });
@@ -222,7 +269,7 @@ export default function NewNovelPage() {
       if (!data.cover_url) {
         throw new Error('AI 封面生成接口未返回图片地址');
       }
-      setNovel({ ...novel, cover: data.cover_url });
+      setNovel((prev) => ({ ...prev, cover: data.cover_url }));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI 封面生成失败';
       toast({ title: 'AI 封面生成失败', description: message, type: 'error' });
@@ -268,9 +315,7 @@ export default function NewNovelPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* 主要内容 */}
-          <div className="lg:col-span-2 space-y-6">
+        <div className="mx-auto max-w-3xl space-y-6">
             {/* 基本信息 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -285,7 +330,7 @@ export default function NewNovelPage() {
                   <Input
                     placeholder="输入小说标题"
                     value={novel.title}
-                    onChange={(e) => setNovel({ ...novel, title: e.target.value })}
+                    onChange={(e) => setNovel((prev) => ({ ...prev, title: e.target.value }))}
                     className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                   />
                 </div>
@@ -295,18 +340,17 @@ export default function NewNovelPage() {
                   <Textarea
                     placeholder="简要介绍小说内容"
                     value={novel.description}
-                    onChange={(e) => setNovel({ ...novel, description: e.target.value })}
+                    onChange={(e) => setNovel((prev) => ({ ...prev, description: e.target.value }))}
                     rows={3}
                     className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm text-white/60 mb-2 block">题材分类 *</label>
                     <select
                       value={novel.genre}
-                      onChange={(e) => setNovel({ ...novel, genre: e.target.value })}
+                      onChange={(e) => setNovel((prev) => ({ ...prev, genre: e.target.value }))}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                     >
                       <option value="">选择题材</option>
@@ -315,11 +359,19 @@ export default function NewNovelPage() {
                       ))}
                     </select>
                   </div>
+              </CardContent>
+            </Card>
+
+            {/* 其余设置默认折叠：风格、标签、详细简介、封面、角色 */}
+            <details data-testid="novel-more-settings" className="rounded-lg border border-white/10 bg-white/[0.03] p-4">
+              <summary className="cursor-pointer text-sm font-medium text-white/80">更多设置（风格、标签、详细简介、封面，可稍后再填）</summary>
+              <div className="mt-4 space-y-6">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
                     <label className="text-sm text-white/60 mb-2 block">小说风格</label>
                     <select
                       value={novel.style}
-                      onChange={(e) => setNovel({ ...novel, style: e.target.value })}
+                      onChange={(e) => setNovel((prev) => ({ ...prev, style: e.target.value }))}
                       className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-white"
                     >
                       <option value="">选择风格</option>
@@ -328,20 +380,16 @@ export default function NewNovelPage() {
                       ))}
                     </select>
                   </div>
-                </div>
-
                 <div>
                   <label className="text-sm text-white/60 mb-2 block">标签</label>
                   <Input
                     placeholder="用逗号分隔标签，如：修仙、热血、成长"
                     value={novel.tags}
-                    onChange={(e) => setNovel({ ...novel, tags: e.target.value })}
+                    onChange={(e) => setNovel((prev) => ({ ...prev, tags: e.target.value }))}
                     className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                   />
                 </div>
-              </CardContent>
-            </Card>
-
+                </div>
             {/* 详细简介 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -376,16 +424,12 @@ export default function NewNovelPage() {
                 <Textarea
                   placeholder="输入小说的详细简介、世界观、人物设定等…"
                   value={novel.intro}
-                  onChange={(e) => setNovel({ ...novel, intro: e.target.value })}
+                  onChange={(e) => setNovel((prev) => ({ ...prev, intro: e.target.value }))}
                   rows={10}
                   className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
               </CardContent>
             </Card>
-          </div>
-
-          {/* 侧边栏 */}
-          <div className="space-y-6">
             {/* 封面设置 */}
             <Card className="bg-white/5 border-white/10">
               <CardHeader>
@@ -436,7 +480,7 @@ export default function NewNovelPage() {
                         variant="destructive"
                         size="sm"
                         className="absolute top-2 right-2"
-                        onClick={() => setNovel({ ...novel, cover: '' })}
+                        onClick={() => setNovel((prev) => ({ ...prev, cover: '' }))}
                       >
                         更换
                       </Button>
@@ -452,7 +496,7 @@ export default function NewNovelPage() {
                 <Input
                   placeholder="或输入图片URL"
                   value={novel.cover}
-                  onChange={(e) => setNovel({ ...novel, cover: e.target.value })}
+                  onChange={(e) => setNovel((prev) => ({ ...prev, cover: e.target.value }))}
                   className="mt-4 bg-white/5 border-white/10 text-white placeholder:text-white/40"
                 />
               </CardContent>
@@ -488,7 +532,8 @@ export default function NewNovelPage() {
                 </ul>
               </CardContent>
             </Card>
-          </div>
+              </div>
+            </details>
         </div>
       </div>
     </MainLayout>

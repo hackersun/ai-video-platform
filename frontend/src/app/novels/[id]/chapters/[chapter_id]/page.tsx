@@ -264,7 +264,7 @@ export default function ChapterDetailPage() {
   const wordCount = content.replace(/\s/g, '').length;
   const contentPreview = getStoryExcerpt(
     content,
-    '这个章节还没有正文，适合先用 AI 根据小说简介、前后章节和 Story Bible 生成本章内容。',
+    '这个章节还没有正文，适合先用 AI 根据小说简介、前后章节和 故事设定 生成本章内容。',
     280
   );
 
@@ -373,6 +373,7 @@ export default function ChapterDetailPage() {
                   title="目标字数"
                 />
                 <ModelCapabilitySelector
+ novelId={novelId}
                   capability="text"
                   configs={modelConfigs}
                   value={textModelConfigId}
@@ -456,7 +457,7 @@ export default function ChapterDetailPage() {
       <ConfirmDialog
         open={showRewriteConfirm}
         title="智能编写本章"
-        description="确定要根据小说整体设定、前后章节和 Story Bible 智能编写本章吗？当前正文会被替换。"
+        description="确定要根据小说整体设定、前后章节和 故事设定 智能编写本章吗？当前正文会被替换。"
         confirmText="智能编写"
         loading={isGenerating}
         onOpenChange={setShowRewriteConfirm}

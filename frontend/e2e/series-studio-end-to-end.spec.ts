@@ -149,7 +149,7 @@ function studioSnapshot(state: ScenarioState) {
       }],
     },
     issues: [],
-    actions: [],
+    actions: state.contractLocked ? [] : [{ code: 'lock_episode_contract', label: '锁定剧集合约', risk: 'safe' }],
     mode_policy: { mode: 'production', ready: !state.ledgerFinding, blocking_issue_count: state.ledgerFinding ? 1 : 0 },
   };
 }
@@ -338,9 +338,12 @@ test('full novel to episode production is controlled from the frontend', async (
   await page.getByRole('link', { name: /进入工作室|打开工作室/ }).first().click();
 
   await expect(page.getByRole('heading', { name: '系列动漫工作室' })).toBeVisible({ timeout: 30_000 });
+  const sectionTabs: Record<string, string> = { 'Production Bible': '设定', 多集计划: '设定', 剧集合约: '设定', 一致性评分: '复审' };
   for (const section of expectedSections.filter((item) => item !== '系列动漫工作室')) {
+    await page.getByRole('tab', { name: sectionTabs[section] || '生产' }).click();
     await expect(page.getByText(section).first()).toBeVisible({ timeout: 30_000 });
   }
+  await page.getByRole('tab', { name: '生产' }).click();
   await expect(page.getByText(/角色/).first()).toBeVisible();
   await expect(page.getByText(/场景/).first()).toBeVisible();
   await expect(page.getByText(/道具/).first()).toBeVisible();
@@ -356,6 +359,7 @@ test('production bible approval path works from studio', async ({ page }) => {
   await installSeriesStudioRoutes(page, { entityApproved: false, contractLocked: true });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
+  await page.getByRole('tab', { name: '设定' }).click();
   const panel = page.getByTestId('production-bible-panel');
   await expect(panel.getByText('林澈').first()).toBeVisible();
   await panel.getByRole('button', { name: '确认' }).first().click();
@@ -368,9 +372,10 @@ test('episode contract can be locked from studio', async ({ page }) => {
   await installSeriesStudioRoutes(page, { entityApproved: true, contractLocked: false });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
+  await page.getByRole('tab', { name: '设定' }).click();
   const panel = page.getByTestId('episode-contract-panel');
   await expect(panel.getByText('未锁定').first()).toBeVisible();
-  await panel.getByRole('button', { name: '锁定剧集合约' }).click();
+  await page.getByTestId('studio-command-bar').getByRole('button', { name: '锁定剧集合约' }).click();
 
   await expect(page.getByText('剧集合约已锁定')).toBeVisible();
   await expect(panel.getByText(/pb-hash-seri/)).toBeVisible();
@@ -380,6 +385,7 @@ test('shot review exposes fallback and reference package evidence', async ({ pag
   await installSeriesStudioRoutes(page, { entityApproved: true, contractLocked: true, ledgerFinding: true });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
+  await page.getByRole('tab', { name: '复审' }).click();
   await page.getByTestId('consistency-ledger-panel').getByRole('button', { name: '绑定角色参考' }).click();
 
   await expect(page).toHaveURL(/\/studio\/shot-review\?workflow_id=wf-series-e2e/);
@@ -395,11 +401,11 @@ test('expert workflow page links back to studio', async ({ page }) => {
   await installSeriesStudioRoutes(page, { entityApproved: true, contractLocked: true });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
-  await page.getByRole('button', { name: /专家工具|更多/ }).click();
+  await page.getByRole('button', { name: /高级工具|更多/ }).click();
   await page.getByRole('menuitem', { name: '工作流' }).click();
 
   await expect(page).toHaveURL(/\/workflow/);
-  await expect(page.getByText('这是专家工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
+  await expect(page.getByText(/日常请用小说页/)).toBeVisible();
   await page.getByRole('button', { name: '回到工作室' }).click();
   await expect(page).toHaveURL(/\/studio/);
 });
@@ -408,7 +414,7 @@ test('video generation history shows strategy and fallback badges', async ({ pag
   await installSeriesStudioRoutes(page, { entityApproved: true, contractLocked: true });
 
   await page.goto(`/studio?workflow_id=${ids.workflowId}`);
-  await page.getByRole('button', { name: /专家工具|更多/ }).click();
+  await page.getByRole('button', { name: /高级工具|更多/ }).click();
   await page.getByRole('menuitem', { name: '视频生成' }).click();
   await expect(page).toHaveURL(/\/video-generation/);
 

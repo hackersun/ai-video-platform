@@ -4,6 +4,7 @@
  */
 'use client';
 
+import { TERMS_VERSION } from '@/features/legal/legal-texts';
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 
 // ========== 类型定义 ==========
@@ -22,6 +23,7 @@ type AuthResponse = {
   detail?: string;
   user?: User;
   access_token?: string;
+  refresh_token?: string;
 };
 
 type AuthContextValue = {
@@ -30,7 +32,7 @@ type AuthContextValue = {
   isLoading: boolean;
   login: (username: string, password: string) => Promise<AuthResponse>;
   logout: (redirect?: boolean) => void;
-  register: (username: string, email: string, password: string) => Promise<AuthResponse>;
+  register: (username: string, email: string, password: string, acceptTerms?: boolean) => Promise<AuthResponse>;
   getToken: () => string | null;
   refreshUser: () => Promise<void>;
 };
@@ -48,11 +50,52 @@ async function readAuthResponse(response: Response, fallbackMessage: string): Pr
 }
 
 const TOKEN_KEY = 'auth_token';
+const REFRESH_KEY = 'auth_refresh_token';
 const USER_KEY = 'user';
+/** Remaining risk: access token still in localStorage (XSS-readable). Refresh prefers sessionStorage + HttpOnly cookie. */
 const PUBLIC_PATHS = ['/', '/login', '/register', '/forgot-password', '/reset-password'];
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(path => pathname === path || pathname.startsWith(`${path}/`));
+}
+
+function clearAuthStorage() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USER_KEY);
+  try { sessionStorage.removeItem(REFRESH_KEY); } catch { /* ignore */ }
+}
+
+function storeRefreshToken(token?: string | null) {
+  try {
+    if (token) sessionStorage.setItem(REFRESH_KEY, token);
+    else sessionStorage.removeItem(REFRESH_KEY);
+  } catch { /* ignore */ }
+}
+
+function readRefreshToken(): string | null {
+  try { return sessionStorage.getItem(REFRESH_KEY); } catch { return null; }
+}
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refresh = readRefreshToken();
+  if (!refresh) return null;
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+  try {
+    const response = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ refresh_token: refresh }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!data?.access_token) return null;
+    localStorage.setItem(TOKEN_KEY, data.access_token);
+    if (data.refresh_token) storeRefreshToken(data.refresh_token);
+    return data.access_token as string;
+  } catch {
+    return null;
+  }
 }
 
 // ========== JWT 工具函数 ==========
@@ -100,8 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (token && userStr) {
       if (isTokenExpired(token)) {
         // Token 已过期，清除并跳转登录
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
+        clearAuthStorage();
         const pathname = window.location.pathname;
         if (!isPublicPath(pathname)) {
           window.location.href = '/login';
@@ -131,16 +173,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const getToken = useCallback((): string | null => {
     const token = localStorage.getItem(TOKEN_KEY);
+    if (token && !isTokenExpired(token)) return token;
     if (token && isTokenExpired(token)) {
-      // 已过期，触发登出
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.removeItem(USER_KEY);
-      setUser(null);
-      setIsAuthenticated(false);
-      const pathname = window.location.pathname;
-      if (!isPublicPath(pathname)) {
-        window.location.href = '/login';
-      }
+      void refreshAccessToken().then((next) => {
+        if (!next) {
+          clearAuthStorage();
+          setUser(null);
+          setIsAuthenticated(false);
+          if (!isPublicPath(window.location.pathname)) {
+            window.location.href = '/login';
+          }
+        }
+      });
       return null;
     }
     return token;
@@ -165,8 +209,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(USER_KEY, JSON.stringify(userData));
       } else {
         // /auth/me 返回非200，token 可能无效
-        localStorage.removeItem(TOKEN_KEY);
-        localStorage.removeItem(USER_KEY);
+        clearAuthStorage();
         setUser(null);
         setIsAuthenticated(false);
         if (!isPublicPath(window.location.pathname)) {
@@ -190,6 +233,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (data.success && data.access_token && data.user) {
       localStorage.setItem(TOKEN_KEY, data.access_token);
       localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      storeRefreshToken(data.refresh_token);
       setUser(data.user);
       setIsAuthenticated(true);
     }
@@ -197,8 +241,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback((redirect = true) => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
+    const refresh = readRefreshToken();
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+    if (refresh) {
+      void fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ refresh_token: refresh }),
+      }).catch(() => undefined);
+    }
+    clearAuthStorage();
     setUser(null);
     setIsAuthenticated(false);
     if (redirect) {
@@ -207,18 +260,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (username: string, email: string, password: string): Promise<AuthResponse> => {
+    async (username: string, email: string, password: string, acceptTerms = false): Promise<AuthResponse> => {
       const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
       const response = await fetch(`${API_BASE}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password }),
+        body: JSON.stringify({ username, email, password, accept_terms: acceptTerms, terms_version: TERMS_VERSION }),
       });
       const data = await readAuthResponse(response, '注册服务暂时不可用，请稍后重试');
 
       if (data.success && data.access_token && data.user) {
         localStorage.setItem(TOKEN_KEY, data.access_token);
         localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+        storeRefreshToken(data.refresh_token);
         setUser(data.user);
         setIsAuthenticated(true);
       }

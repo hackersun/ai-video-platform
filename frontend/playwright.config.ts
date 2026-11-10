@@ -2,6 +2,8 @@ import { defineConfig, devices } from '@playwright/test';
 
 const e2ePort = process.env.PLAYWRIGHT_PORT || '3100';
 const baseURL = `http://localhost:${e2ePort}`;
+// Mocked specs assume the default API origin; never inherit a developer .env.local value.
+const e2eApiUrl = process.env.E2E_API_URL || 'http://localhost:8000/api/v1';
 const chromeExecutablePath = process.env.PLAYWRIGHT_CHROME_EXECUTABLE_PATH;
 const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || '/tmp/ai-video-platform-series-studio-e2e/test-results';
 const playwrightDistDir = process.env.PLAYWRIGHT_DIST_DIR || '.next-playwright';
@@ -31,7 +33,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: `NEXT_DIST_DIR=${playwrightDistDir} npx next dev -p ${e2ePort}`,
+    command: `NEXT_PUBLIC_API_URL=${e2eApiUrl} NEXT_DIST_DIR=${playwrightDistDir} npx next dev -p ${e2ePort}`,
     url: `${baseURL}/workflow`,
     reuseExistingServer,
     timeout: 120 * 1000,

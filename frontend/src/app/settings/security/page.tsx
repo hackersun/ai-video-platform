@@ -162,7 +162,7 @@ export default function SecuritySettingsPage() {
                   type={showNewPassword ? 'text' : 'password'}
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="输入新密码（至少6位）"
+                  placeholder="输入新密码（至少8位，含字母和数字）"
                   className="bg-white/5 border-white/10 text-white pr-10"
                 />
                 <button

@@ -77,10 +77,10 @@ export function useAnchorGeneration({
 
   const generateSelected = async () => {
     if (!run) return;
-    if (!preflightReady) { setError('实模前置准备尚未全部通过，禁止生成关键镜头。'); return; }
-    if (!selectedMode) { setError('请先选择 2 镜头冒烟、3 镜头代表验证或 6 镜头完整验证模式'); return; }
+    if (!preflightReady) { setError('生成前准备尚未全部通过，暂不能生成关键镜头。'); return; }
+    if (!selectedMode) { setError('请先选择「快速试做 2 个镜头」「试做 3 个代表镜头」或「完整试做 6 个镜头」'); return; }
     if (run.budget_policy?.profile !== 'isolated_live_canary' || run.budget_policy?.live_canary !== true) {
-      setError('请先明确启用“实模关键镜头验证”；整书编排本身不会自动开启付费模型。'); return;
+      setError('请先点击“启用真实模型试做”；整书编排本身不会自动使用付费模型。'); return;
     }
     setGenerationBusy(true); setError('');
     try {

@@ -21,6 +21,8 @@ import {
   LogOut,
   Shield,
   Users,
+  Film,
+  LayoutDashboard,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -33,22 +35,23 @@ import {
 import { useAuth } from '@/contexts/AuthContext';
 
 const primaryNav = [
-  { href: '/studio', label: '工作室' },
-  { href: '/quick-start', label: '快速开始' },
   { href: '/novels', label: '小说' },
-  { href: '/assets', label: '资产' },
-  { href: '/jobs', label: '任务中心' },
+  { href: '/synthesis', label: '成片' },
+  { href: '/llm-config', label: '模型设置' },
 ];
 
 const expertNav = [
-  { href: '/story-bibles', label: 'Story Bible' },
+  { href: '/studio', label: '工作室' },
+  { href: '/quick-start', label: '专家向导' },
+  { href: '/jobs', label: '任务中心' },
+  { href: '/assets', label: '角色与场景图' },
+  { href: '/story-bibles', label: '故事设定' },
   { href: '/producer', label: 'AI 制片' },
   { href: '/workflow', label: '工作流' },
   { href: '/video-generation', label: '视频生成' },
   { href: '/tts', label: '配音' },
-  { href: '/synthesis', label: '合成' },
-  { href: '/prompt-skills', label: '提示词管理' },
-  { href: '/llm-config', label: '模型中心' },
+  { href: '/timelines', label: '时间线' },
+  { href: '/dashboard', label: '数据概览' },
 ];
 
 type NavigationItem = {
@@ -71,6 +74,8 @@ const iconByHref: Record<string, typeof BookOpen> = {
   '/synthesis': Video,
   '/prompt-skills': BrainCircuit,
   '/llm-config': Cpu,
+  '/timelines': Film,
+  '/dashboard': LayoutDashboard,
 };
 
 const primaryNavItems = primaryNav.map((item) => ({
@@ -164,7 +169,7 @@ export function TopNavigation() {
           </DropdownMenuItem>
           <DropdownMenuItem
             className="flex items-center gap-2 px-3 py-2 text-sm text-white/75 transition-colors hover:bg-white/5 hover:text-white focus:bg-white/10 focus:text-white"
-            onSelect={() => router.push('/teams')}
+            onSelect={() => router.push('/settings/team')}
           >
             <Users className="h-4 w-4" />
             团队管理
@@ -187,7 +192,7 @@ export function TopNavigation() {
     <header className="app-top-navigation fixed top-0 left-0 right-0 z-50 h-16 bg-[#0f172a]/95 backdrop-blur-md border-b border-white/10">
       <div className="max-w-7xl mx-auto px-4 h-full flex items-center justify-between gap-3 min-w-0">
         {/* Logo */}
-        <Link href="/dashboard" className="flex items-center gap-2 flex-shrink-0">
+        <Link href="/novels" className="flex items-center gap-2 flex-shrink-0">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 flex items-center justify-center">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
@@ -220,8 +225,8 @@ export function TopNavigation() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="专家工具"
-                title="专家工具"
+                aria-label="高级工具"
+                title="高级工具"
                 className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
                   ${expertActive
                     ? 'text-white bg-white/10'
@@ -229,7 +234,7 @@ export function TopNavigation() {
                   }`}
               >
                 <Settings className="w-4 h-4" />
-                <span className="hidden md:inline">专家工具</span>
+                <span className="hidden md:inline">高级工具</span>
                 <ChevronDown className="w-3 h-3" />
               </button>
             </DropdownMenuTrigger>
@@ -246,7 +251,7 @@ export function TopNavigation() {
         </nav>
 
         <nav className="flex min-w-0 flex-1 items-center justify-end gap-1 md:hidden">
-          {primaryNavItems.slice(0, 4).map((item) => {
+          {primaryNavItems.map((item) => {
             const Icon = item.icon;
             return (
               <Link
@@ -269,7 +274,7 @@ export function TopNavigation() {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                aria-label="更多专家工具"
+                aria-label="更多高级工具"
                 title="更多"
                 className={`flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950
                   ${expertActive

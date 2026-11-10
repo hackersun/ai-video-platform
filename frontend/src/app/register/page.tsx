@@ -28,6 +28,7 @@ export default function RegisterPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [acceptTerms, setAcceptTerms] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,15 +56,21 @@ export default function RegisterPage() {
       return;
     }
 
+    if (!acceptTerms) {
+      setError('请先阅读并同意《用户协议》和《隐私政策》');
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      const result = await register(username, email, password);
+      const result = await register(username, email, password, true);
 
       if (result.success) {
         setSuccess('注册成功！正在跳转...');
         setTimeout(() => {
-          router.push('/dashboard');
+          // 新用户引导：先完成模型设置
+          router.push('/llm-config?welcome=1');
         }, 1500);
       } else {
         setError(result.detail || result.message || '注册失败');
@@ -138,7 +145,7 @@ export default function RegisterPage() {
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                   <Input
                     type="password"
-                    placeholder="请输入密码（至少6位）"
+                    placeholder="请输入密码（至少8位，含字母和数字）"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
@@ -160,6 +167,24 @@ export default function RegisterPage() {
                   />
                 </div>
               </div>
+
+              {/* 协议同意 */}
+              <label className="flex items-start gap-2 text-sm text-white/70">
+                <input
+                  type="checkbox"
+                  data-testid="register-accept-terms"
+                  checked={acceptTerms}
+                  onChange={(e) => setAcceptTerms(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-violet-600"
+                />
+                <span>
+                  我已阅读并同意{' '}
+                  <Link href="/register/terms" target="_blank" className="text-violet-400 hover:text-violet-300">《用户协议》</Link>
+                  和{' '}
+                  <Link href="/register/privacy" target="_blank" className="text-violet-400 hover:text-violet-300">《隐私政策》</Link>
+                  <span className="text-white/40">（草案，需法务审核）</span>
+                </span>
+              </label>
 
               {/* 错误提示 */}
               {error && (

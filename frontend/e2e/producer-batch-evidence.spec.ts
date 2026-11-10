@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './helpers/synthetic-media';
 
 function devToken(userId: string) {
   const payload = Buffer.from(

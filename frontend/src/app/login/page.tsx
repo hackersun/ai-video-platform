@@ -47,7 +47,7 @@ export default function LoginPage() {
       if (result.success) {
         setSuccess('登录成功！正在跳转...');
         setTimeout(() => {
-          router.push('/dashboard');
+          router.push('/novels');
         }, 1000);
       } else {
         setError(result.detail || result.message || '登录失败');

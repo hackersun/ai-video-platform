@@ -149,6 +149,17 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          <Card data-testid="settings-legal-card" className="border-white/10 bg-white/5">
+            <CardHeader>
+              <CardTitle className="text-white">协议与合规</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-4 text-sm">
+              <Link href="/register/terms" className="text-violet-300 hover:text-violet-200">《用户协议》</Link>
+              <Link href="/register/privacy" className="text-violet-300 hover:text-violet-200">《隐私政策》</Link>
+              <span className="text-white/45">草案，需法务审核 · 平台生成的视频均带「AI 生成」标识</span>
+            </CardContent>
+          </Card>
+
           <Card className="border-white/10 bg-white/5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-white">

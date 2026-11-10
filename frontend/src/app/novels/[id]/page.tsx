@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { TERMS } from '@/lib/glossary';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,7 +19,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { MainLayout } from '@/components/layout/main-layout';
-import { ModelCapabilitySelector } from '@/components/model-capability-selector';
+import { NovelModelOverrides } from '@/features/model-settings/novel-model-overrides';
 import {
   DEFAULT_IMAGE_STYLE_TEMPLATES,
   ImageStyleTemplatePicker,
@@ -26,6 +27,7 @@ import {
 } from '@/components/media/image-style-template-picker';
 import { useToast } from '@/components/ui/toast';
 import { 
+  ChevronDown,
   BookOpen, 
   Plus, 
   Trash2,
@@ -41,7 +43,6 @@ import {
   Sparkles,
   Film,
   Volume2,
-  Image,
   Play,
   Settings,
   ImageIcon,
@@ -53,7 +54,10 @@ import {
 import Link from 'next/link';
 import { fetchWithAuth } from '@/lib/fetch-with-auth';
 import { apiClient } from '@/lib/api-client';
-import { NovelProductionEntryCard } from '@/components/novels/novel-production-entry-card';
+import { PipelineStatusCard } from '@/features/publication-pipelines/pipeline-status-card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { usePublicationPipeline, isPipelineActive } from '@/features/publication-pipelines/use-publication-pipeline';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { SeriesRunPanel } from '@/components/novels/series-run-panel';
 import { SeriesPlanSetupCard } from '@/components/novels/series-plan-setup-card';
 import { getStoryExcerpt } from '@/components/novels/story-workbench-panel';
@@ -442,12 +446,64 @@ const getEpisodeContinuitySummary = (episode: SeriesEpisode) => {
   return parts.join('；');
 };
 
+type ChapterCreateMode = 'manual' | 'continue' | 'expand' | 'polish';
+
 export default function NovelDetailPage() {
   const { toast } = useToast();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
   const novelId = params.id as string;
+  const publicationPipeline = usePublicationPipeline(novelId);
+  // 一键生成：产品内统一确认弹窗；准备/弹窗期间按钮禁用 + 同步 ref 防止重复弹出。
+  const [oneClickConfirm, setOneClickConfirm] = useState<{ title: string; description: string; optIn: boolean } | null>(null);
+  const [oneClickPreparing, setOneClickPreparing] = useState(false);
+  const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false);
+  const oneClickGuard = useRef(false);
+  const launchOneClick = async () => {
+    const next = await publicationPipeline.start();
+    if (next) toast({ title: '已开始一键生成视频', description: '可在下方查看进度，完成后可直接播放。', type: 'success' });
+  };
+  const prepareOneClick = async () => {
+    if (oneClickGuard.current) return;
+    oneClickGuard.current = true;
+    setOneClickPreparing(true);
+    try {
+      const [billing, modelSetup] = await Promise.all([
+        apiClient.getBillingSettings(),
+        apiClient.getSimpleModelSetup().catch(() => null),
+      ]);
+      if (modelSetup?.simulation_enabled) {
+        // 演示模式不扣费：直接开始，不再弹确认。
+        await launchOneClick();
+      } else {
+        // 真实调用：每次都确认，并写清本次和账户的花费上限。
+        const caps = `本次最多花费 ¥${billing.per_pipeline_cap_rmb ?? '—'}，账户累计上限 ¥${billing.per_user_cap_rmb}（已用 ¥${billing.used_rmb}）。`;
+        setOneClickConfirm(billing.live_calls_opt_in
+          ? { title: '确认开始生成', description: `将调用真实模型生成视频。${caps}`, optIn: false }
+          : { title: '开启真实调用并开始生成', description: `尚未开启真实调用。确认后将开启并调用真实模型。${caps}可在「模型设置 → 费用上限」修改。`, optIn: true });
+      }
+    } catch (e: any) {
+      toast({ title: '无法读取费用设置', description: e?.message || '请稍后重试或到模型设置检查', type: 'error' });
+    } finally {
+      oneClickGuard.current = false;
+      setOneClickPreparing(false);
+    }
+  };
+  const confirmOneClick = async () => {
+    const pending = oneClickConfirm;
+    if (!pending || oneClickGuard.current) return;
+    oneClickGuard.current = true;
+    try {
+      if (pending.optIn) await apiClient.updateBillingSettings({ live_calls_opt_in: true });
+      setOneClickConfirm(null);
+      await launchOneClick();
+    } catch (e: any) {
+      toast({ title: '开启真实调用失败', description: e?.message || '请稍后重试', type: 'error' });
+    } finally {
+      oneClickGuard.current = false;
+    }
+  };
   const tabParam = searchParams.get('tab');
   
   const [novel, setNovel] = useState<Novel | null>(null);
@@ -458,6 +514,18 @@ export default function NovelDetailPage() {
   const [videoSummaries, setVideoSummaries] = useState<VideoJobSummary[]>([]);
   const [storyBibles, setStoryBibles] = useState<StoryBible[]>([]);
   const [seriesPlan, setSeriesPlan] = useState<SeriesPlan | null>(null);
+  // 分步制作（专业）入口默认折叠；打开后记住偏好。
+  const [stepMode, setStepMode] = useState(false);
+  useEffect(() => {
+    try { setStepMode(window.localStorage.getItem('avp.novel.stepMode') === '1'); } catch { /* ignore */ }
+  }, []);
+  const toggleStepMode = () => {
+    setStepMode((current) => {
+      const next = !current;
+      try { window.localStorage.setItem('avp.novel.stepMode', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
   const [productionEntry, setProductionEntry] = useState<NovelProductionEntry | null | undefined>(undefined);
   const [entityReviewSummary, setEntityReviewSummary] = useState<any | null>(null);
   const [storyStateMachine, setStoryStateMachine] = useState<StoryStateMachine | null>(null);
@@ -468,6 +536,7 @@ export default function NovelDetailPage() {
   // 新章节表单
   const [showChapterForm, setShowChapterForm] = useState(false);
   const [newChapterTitle, setNewChapterTitle] = useState('');
+  const [chapterCreateMode, setChapterCreateMode] = useState<ChapterCreateMode>('manual');
   const [newChapterContent, setNewChapterContent] = useState('');
   const [newChapterInstruction, setNewChapterInstruction] = useState('');
   const [newChapterTargetWordCount, setNewChapterTargetWordCount] = useState(1800);
@@ -479,6 +548,7 @@ export default function NovelDetailPage() {
   const [newCharacterName, setNewCharacterName] = useState('');
   const [newCharacterDesc, setNewCharacterDesc] = useState('');
   const [activeTab, setActiveTab] = useState('chapters');
+  const [showMoreTabs, setShowMoreTabs] = useState(false);
   const [creatingCharacter, setCreatingCharacter] = useState(false);
   const [settingsTitle, setSettingsTitle] = useState('');
   const [settingsDescription, setSettingsDescription] = useState('');
@@ -524,6 +594,19 @@ export default function NovelDetailPage() {
     }
   }, [novelId]);
 
+  // 一键生成推进时（阶段/状态变化）刷新章节/剧本/分镜统计，避免完成后仍显示 0。
+  const pipelineProgressKey = publicationPipeline.pipeline
+    ? `${publicationPipeline.pipeline.pipeline_id}:${publicationPipeline.pipeline.status}:${publicationPipeline.pipeline.stage}`
+    : '';
+  const lastPipelineKey = useRef('');
+  useEffect(() => {
+    if (!novelId || !pipelineProgressKey) return;
+    if (lastPipelineKey.current && lastPipelineKey.current !== pipelineProgressKey) {
+      loadNovelData();
+    }
+    lastPipelineKey.current = pipelineProgressKey;
+  }, [novelId, pipelineProgressKey]);
+
   const loadStyleTemplates = async () => {
     try {
       const data = await apiClient.getAssetStyleTemplates();
@@ -533,6 +616,12 @@ export default function NovelDetailPage() {
       setStyleTemplates(FALLBACK_IMAGE_STYLES);
     }
   };
+
+  // 模型设置：本小说覆盖优先，否则继承全局默认（由「模型设置」统一管理）。
+  const handleEffectiveModels = useCallback((effective: Partial<Record<'text' | 'image' | 'video' | 'tts', string | null>>) => {
+    if (effective.text) setTextModelConfigId(effective.text);
+    if (effective.image) setImageModelConfigId(effective.image);
+  }, []);
 
   const loadModelConfigs = async () => {
     try {
@@ -698,7 +787,7 @@ export default function NovelDetailPage() {
 
   const createChapter = async () => {
     if (!newChapterTitle.trim() && !newChapterContent.trim()) {
-      toast({ title: '请填写标题或正文', description: '也可以直接点击 AI 续写下一章。', type: 'info' });
+      toast({ title: '请填写标题或正文', description: '也可以在「创建方式」中选择 AI 续写下一章。', type: 'info' });
       return;
     }
 
@@ -724,7 +813,7 @@ export default function NovelDetailPage() {
     setChapterAiAction('continue');
     try {
       const instructionParts = [
-        '请作为下一章继续创作，必须承接当前小说简介、已有章节结尾、Story Bible、人物关系、场景、道具和事件线。',
+        '请作为下一章继续创作，必须承接当前小说简介、已有章节结尾、故事设定、人物关系、场景、道具和事件线。',
         '章节结尾要留下可继续进入下一章或后续分镜的视频化悬念。',
       ];
       if (newChapterContent.trim()) {
@@ -892,16 +981,16 @@ export default function NovelDetailPage() {
     try {
       const bible = await apiClient.generateStoryBible({
         novel_id: novelId,
-        title: `${novel.title} Story Bible`,
+        title: `${novel.title} ${TERMS.storyBible}`,
         style: novel.genre || 'anime',
         model_config_id: textModelConfigId || undefined,
       });
       setStoryBibles((prev) => [bible, ...prev.filter((item) => item.id !== bible.id)]);
       setStoryStateMachine(bible?.extra_data?.state_machine || null);
       setStateMachineIssues([]);
-      setBibleMessage('Story Bible 已生成');
+      setBibleMessage(`${TERMS.storyBible}已生成`);
     } catch (err: any) {
-      setBibleMessage(err?.message || 'Story Bible 生成失败');
+      setBibleMessage(err?.message || `${TERMS.storyBible}生成失败`);
     } finally {
       setGeneratingBible(false);
     }
@@ -910,7 +999,7 @@ export default function NovelDetailPage() {
   const handleCheckStoryBible = async () => {
     const storyBible = storyBibles[0];
     if (!storyBible) {
-      setBibleMessage('请先生成 Story Bible');
+      setBibleMessage(`请先生成${TERMS.storyBible}`);
       return;
     }
 
@@ -924,7 +1013,7 @@ export default function NovelDetailPage() {
       setBibleIssues(result.issues || []);
       setBibleMessage(`检查完成：${result.issue_count || 0} 个提示`);
     } catch (err: any) {
-      setBibleMessage(err?.message || 'Story Bible 检查失败');
+      setBibleMessage(err?.message || `${TERMS.storyBible}检查失败`);
     } finally {
       setCheckingBible(false);
     }
@@ -933,7 +1022,7 @@ export default function NovelDetailPage() {
   const handleGenerateStateMachine = async () => {
     const storyBible = storyBibles[0];
     if (!storyBible) {
-      setStateMachineMessage('请先生成 Story Bible');
+      setStateMachineMessage(`请先生成${TERMS.storyBible}`);
       return;
     }
     setGeneratingStateMachine(true);
@@ -953,12 +1042,12 @@ export default function NovelDetailPage() {
             : item
         )
       );
-      setStateMachineMessage(`状态机已生成：人物 ${machine.summary?.characters || 0}、场景 ${machine.summary?.scenes || 0}、道具 ${machine.summary?.props || 0}、事件 ${machine.summary?.events || 0}`);
-      toast({ title: 'Story Bible 状态机已生成', type: 'success' });
+      setStateMachineMessage(`${TERMS.stateMachine}已生成：人物 ${machine.summary?.characters || 0}、场景 ${machine.summary?.scenes || 0}、道具 ${machine.summary?.props || 0}、事件 ${machine.summary?.events || 0}`);
+      toast({ title: `${TERMS.storyBible}·${TERMS.stateMachine}已生成`, type: 'success' });
     } catch (err: any) {
-      const message = err?.message || '状态机生成失败';
+      const message = err?.message || `${TERMS.stateMachine}生成失败`;
       setStateMachineMessage(message);
-      toast({ title: '状态机生成失败', description: message, type: 'error' });
+      toast({ title: `${TERMS.stateMachine}生成失败`, description: message, type: 'error' });
     } finally {
       setGeneratingStateMachine(false);
     }
@@ -967,7 +1056,7 @@ export default function NovelDetailPage() {
   const handleCheckStateMachine = async () => {
     const storyBible = storyBibles[0];
     if (!storyBible) {
-      setStateMachineMessage('请先生成 Story Bible');
+      setStateMachineMessage(`请先生成${TERMS.storyBible}`);
       return;
     }
     setCheckingStateMachine(true);
@@ -977,9 +1066,9 @@ export default function NovelDetailPage() {
         novel_id: novelId,
       });
       setStateMachineIssues(result.issues || []);
-      setStateMachineMessage(`状态机检查完成：${result.issue_count || 0} 个提示`);
+      setStateMachineMessage(`${TERMS.stateMachine}检查完成：${result.issue_count || 0} 个提示`);
     } catch (err: any) {
-      setStateMachineMessage(err?.message || '状态机检查失败');
+      setStateMachineMessage(err?.message || `${TERMS.stateMachine}检查失败`);
     } finally {
       setCheckingStateMachine(false);
     }
@@ -1124,7 +1213,7 @@ export default function NovelDetailPage() {
   const firstReadableChapter = chapters.find((chapter) => chapter.content?.trim()) || chapters[0];
   const readingPreview = getStoryExcerpt(
     firstReadableChapter?.content || novel.description,
-    '暂无可预览正文。可以先创建章节，或用 AI 续写下一章生成可改编内容。',
+    '暂无可预览正文。可以先创建章节（创建方式可选 AI 续写下一章）。',
     280
   );
   const overviewStats = [
@@ -1132,12 +1221,32 @@ export default function NovelDetailPage() {
     { label: '角色', value: characters.length },
     { label: '剧本', value: scripts.length },
     { label: '分镜', value: storyboardSummaries.length },
-    { label: '视频', value: videoSummaries.length },
+    { label: '视频', value: videoSummaries.length || (publicationPipeline.pipeline?.final_video_url ? 1 : 0) },
     { label: '设定', value: storyBibles.length },
   ];
 
   return (
     <MainLayout>
+      <ConfirmDialog
+        open={oneClickConfirm !== null}
+        title={oneClickConfirm?.title || ''}
+        description={oneClickConfirm?.description || ''}
+        confirmText="开始生成"
+        loading={publicationPipeline.busy}
+        onOpenChange={(open) => { if (!open) setOneClickConfirm(null); }}
+        onConfirm={confirmOneClick}
+      />
+      <ConfirmDialog
+        open={cancelConfirmOpen}
+        title="取消本次生成？"
+        description="取消后可随时重新点击「一键生成视频」。"
+        confirmText="确认取消"
+        cancelText="继续生成"
+        destructive
+        loading={publicationPipeline.busy}
+        onOpenChange={setCancelConfirmOpen}
+        onConfirm={async () => { setCancelConfirmOpen(false); await publicationPipeline.cancel(); }}
+      />
       <div className="space-y-6">
         {/* 顶部导航 */}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1157,54 +1266,62 @@ export default function NovelDetailPage() {
             </div>
           </div>
           
-          {/* 快捷操作 */}
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            <Button asChild className="bg-cyan-600 hover:bg-cyan-700">
-              <Link href={`/novels/${novelId}/asset-analysis`}>
-                <Sparkles className="w-4 h-4 mr-2" />
-                AI 分析制作资产
-              </Link>
-            </Button>
-            <Button 
-              variant="outline" 
-              className="border-violet-500/50"
-              onClick={() => setCoverStyleDialogOpen(true)}
-              disabled={generatingCover}
-            >
-              {generatingCover ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <ImageIcon className="w-4 h-4 mr-2" />
-              )}
-              生成封面
-            </Button>
-            <Button asChild className="bg-violet-600 hover:bg-violet-700">
-              <Link href={`/video-generation?novel_id=${novelId}`}>
-                <Film className="w-4 h-4 mr-2" />
-                开始视频
-              </Link>
-            </Button>
-            <Button
-              variant="outline"
-              className="border-blue-500/50"
-              onClick={handleGenerateSeriesPlan}
-              disabled={generatingSeriesPlan || chapters.length === 0}
-            >
-              {generatingSeriesPlan ? (
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-              ) : (
-                <ListChecks className="w-4 h-4 mr-2" />
-              )}
-              整书计划
-            </Button>
+          {/* 快捷操作：一个主按钮 + 更多 */}
+          <div className="flex flex-col items-stretch gap-1 sm:items-end">
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <Button
+                data-testid="one-click-generate"
+                className="bg-violet-600 hover:bg-violet-700"
+                onClick={() => void prepareOneClick()}
+                disabled={chapters.length < 2 || oneClickPreparing || oneClickConfirm !== null || publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline)}
+              >
+                {publicationPipeline.busy || isPipelineActive(publicationPipeline.pipeline) ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Film className="w-4 h-4 mr-2" />
+                )}
+                {isPipelineActive(publicationPipeline.pipeline) ? '生成中…' : '一键生成视频'}
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" data-testid="novel-more-actions">
+                    更多
+                    <ChevronDown className="w-4 h-4 ml-1" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setCoverStyleDialogOpen(true)} disabled={generatingCover}>
+                    <ImageIcon className="w-4 h-4 mr-2" />生成封面
+                  </DropdownMenuItem>
+                  <div className="px-2 pb-1 pt-2 text-xs text-white/40">分步制作（专业）</div>
+                  <DropdownMenuItem data-testid="novel-step-mode-toggle" onClick={toggleStepMode}>
+                    <ListChecks className="w-4 h-4 mr-2" />{stepMode ? '收起分步制作面板' : '展开分步制作面板'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => router.push(`/novels/${novelId}/asset-analysis`)}>
+                    <Sparkles className="w-4 h-4 mr-2" />AI 分析制作资产
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => router.push(`/video-generation?novel_id=${novelId}`)}>
+                    <Film className="w-4 h-4 mr-2" />单集视频制作
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleGenerateSeriesPlan} disabled={generatingSeriesPlan || chapters.length === 0}>
+                    <ListChecks className="w-4 h-4 mr-2" />{generatingSeriesPlan ? '分集计划生成中…' : '重新生成分集计划'}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+            {chapters.length < 2 && <span className="text-xs text-amber-200 sm:text-right">至少需要 2 章</span>}
           </div>
         </div>
 
-        <NovelProductionEntryCard
-          entry={productionEntry}
-          fallbackHref={`/novels/${novelId}?tab=chapters`}
-          fallbackLabel="继续处理章节"
+        <PipelineStatusCard
           novelId={novelId}
+          pipeline={publicationPipeline.pipeline}
+          loading={publicationPipeline.loading}
+          busy={publicationPipeline.busy}
+          error={publicationPipeline.error}
+          onPause={() => { publicationPipeline.pause(); }}
+          onResume={() => { publicationPipeline.resume(); }}
+          onCancel={() => setCancelConfirmOpen(true)}
         />
 
         {/* 作品概览 */}
@@ -1290,6 +1407,9 @@ export default function NovelDetailPage() {
                   ))}
                 </div>
 
+                {stepMode && (
+                  <div data-testid="novel-step-panel" className="space-y-3 rounded-lg border border-white/10 bg-black/10 p-3">
+                    <div className="text-xs text-white/50">分步制作（专业）：逐步生成资产、剧本和分镜。日常出片直接用「一键生成视频」即可。</div>
                 <div className="rounded-lg border border-cyan-400/20 bg-cyan-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-2 text-sm font-medium text-cyan-50">
                     <Sparkles className="h-4 w-4" />
@@ -1318,13 +1438,13 @@ export default function NovelDetailPage() {
                   <div className="rounded-lg bg-white/[0.04] p-3">
                     <div className="text-xs text-white/40">一致性状态</div>
                     <div className="mt-1 text-sm font-medium text-white">
-                      {storyBibles.length > 0 ? 'Story Bible 已建立' : '建议生成 Story Bible'}
+                      {storyBibles.length > 0 ? `${TERMS.storyBible}已建立` : `建议生成${TERMS.storyBible}`}
                     </div>
                   </div>
                   <div className="rounded-lg bg-white/[0.04] p-3">
                     <div className="text-xs text-white/40">下一步建议</div>
                     <div className="mt-1 text-sm font-medium text-white">
-                      {chapters.length === 0 ? '先创建章节' : seriesPlan?.episodes?.length ? '按集推进制作' : '生成整书计划'}
+                      {chapters.length === 0 ? '先创建章节' : seriesPlan?.episodes?.length ? '按集推进制作' : '生成分集计划'}
                     </div>
                   </div>
                   <Link href={`/novels/${novelId}/asset-analysis`} className="rounded-lg border border-cyan-400/20 bg-cyan-500/[0.08] p-3 transition-colors hover:bg-cyan-500/[0.12]">
@@ -1338,6 +1458,8 @@ export default function NovelDetailPage() {
                     </div>
                   </Link>
                 </div>
+                  </div>
+                )}
               </div>
             </div>
           </CardContent>
@@ -1390,26 +1512,7 @@ export default function NovelDetailPage() {
           </DialogContent>
         </Dialog>
 
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-          <ModelCapabilitySelector
-            capability="text"
-            configs={modelConfigs}
-            value={textModelConfigId}
-            onChange={setTextModelConfigId}
-            disabled={extractingEntities || generatingBible}
-            title="文本生成默认"
-            description="实体提取和 Story Bible 生成会读取小说、章节、角色、场景、道具和事件上下文。"
-          />
-          <ModelCapabilitySelector
-            capability="image"
-            configs={modelConfigs}
-            value={imageModelConfigId}
-            onChange={setImageModelConfigId}
-            disabled={generatingCover}
-            title="图像生成默认"
-            description="小说封面会优先使用该图像模型，并绑定当前小说的题材和核心内容。"
-          />
-        </div>
+        <NovelModelOverrides novelId={novelId} onEffectiveChange={handleEffectiveModels} />
 
         {/* 标签页 */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -1418,26 +1521,39 @@ export default function NovelDetailPage() {
               <FileText className="w-4 h-4 mr-2" />
               章节 ({chapters.length})
             </TabsTrigger>
-            <TabsTrigger value="series-plan" className="data-[state=active]:bg-violet-600">
-              <ListChecks className="w-4 h-4 mr-2" />
-              整书计划 ({seriesPlan?.episodes?.length || 0})
-            </TabsTrigger>
             <TabsTrigger value="characters" className="data-[state=active]:bg-violet-600">
               <Users className="w-4 h-4 mr-2" />
               角色 ({characters.length})
             </TabsTrigger>
-            <TabsTrigger value="scripts" className="data-[state=active]:bg-violet-600">
-              <FileText className="w-4 h-4 mr-2" />
-              剧本 ({scripts.length})
-            </TabsTrigger>
-            <TabsTrigger value="story-bible" className="data-[state=active]:bg-violet-600">
-              <ShieldCheck className="w-4 h-4 mr-2" />
-              Story Bible ({storyBibles.length})
-            </TabsTrigger>
-            <TabsTrigger value="settings" className="data-[state=active]:bg-violet-600">
-              <Settings className="w-4 h-4 mr-2" />
-              设置
-            </TabsTrigger>
+            {(stepMode || showMoreTabs || !['chapters', 'characters'].includes(activeTab)) ? (
+              <>
+                <TabsTrigger value="series-plan" className="data-[state=active]:bg-violet-600">
+                  <ListChecks className="w-4 h-4 mr-2" />
+                  {TERMS.seriesPlan} ({seriesPlan?.episodes?.length || 0})
+                </TabsTrigger>
+                <TabsTrigger value="scripts" className="data-[state=active]:bg-violet-600">
+                  <FileText className="w-4 h-4 mr-2" />
+                  {TERMS.script} ({scripts.length})
+                </TabsTrigger>
+                <TabsTrigger value="story-bible" className="data-[state=active]:bg-violet-600">
+                  <ShieldCheck className="w-4 h-4 mr-2" />
+                  {TERMS.storyBible} ({storyBibles.length})
+                </TabsTrigger>
+                <TabsTrigger value="settings" className="data-[state=active]:bg-violet-600">
+                  <Settings className="w-4 h-4 mr-2" />
+                  设置
+                </TabsTrigger>
+              </>
+            ) : (
+              <button
+                type="button"
+                data-testid="novel-more-tabs"
+                onClick={() => setShowMoreTabs(true)}
+                className="inline-flex items-center rounded-sm px-3 py-1.5 text-sm text-slate-400 hover:text-white"
+              >
+                更多（{TERMS.seriesPlan}、{TERMS.script}、{TERMS.storyBible}、设置）
+              </button>
+            )}
           </TabsList>
 
           {/* 章节列表 */}
@@ -1473,7 +1589,7 @@ export default function NovelDetailPage() {
                       </Button>
                     </div>
                     <Textarea
-                      placeholder="章节内容或创作方向（可选）。如果直接点 AI 续写，系统会读取小说简介、前文、Story Bible、人物、场景、道具和事件线来生成下一章。"
+                      placeholder="章节内容或创作方向（可选）。如果直接点 AI 续写，系统会读取小说简介、前文、故事设定、人物、场景、道具和事件线来生成下一章。"
                       value={newChapterContent}
                       onChange={(e) => setNewChapterContent(e.target.value)}
                       className="bg-white/10 border-white/20 text-white min-h-[160px] resize-y"
@@ -1496,46 +1612,38 @@ export default function NovelDetailPage() {
                       />
                     </div>
                     <div className="rounded-lg border border-violet-500/20 bg-violet-500/10 p-3 text-sm text-violet-100">
-                      AI 辅助会优先使用上方“文本生成默认”模型，并自动带入本小说已有章节、Story Bible、人物、场景、道具和事件上下文，尽量保持下一章剧情承接。
+                      AI 辅助会优先使用上方“文本生成默认”模型，并自动带入本小说已有章节、故事设定、人物、场景、道具和事件上下文，尽量保持下一章剧情承接。
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        onClick={handleAIContinueChapter}
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        aria-label="创建方式"
+                        data-testid="chapter-create-mode"
+                        value={chapterCreateMode}
+                        onChange={(e) => setChapterCreateMode(e.target.value as ChapterCreateMode)}
                         disabled={creatingChapter || chapterAiAction !== null}
-                        className="bg-violet-600 hover:bg-violet-700"
+                        className="h-9 rounded-md border border-white/20 bg-white/10 px-2 text-sm text-white"
                       >
-                        {chapterAiAction === 'continue' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                        AI 续写下一章
-                      </Button>
+                        <option value="manual">直接保存正文</option>
+                        <option value="continue">AI 续写下一章</option>
+                        <option value="expand">AI 扩写成章</option>
+                        <option value="polish">AI 润色后保存</option>
+                      </select>
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => handleCreateChapterWithAI('expand')}
-                        disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
-                        className="border-blue-500/50 text-blue-200 hover:bg-blue-500/10"
-                      >
-                        {chapterAiAction === 'expand' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
-                        扩写成章
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handleCreateChapterWithAI('polish')}
-                        disabled={creatingChapter || chapterAiAction !== null || !newChapterContent.trim()}
-                        className="light-readable-disabled border-green-500/50 text-green-200 hover:bg-green-500/10"
-                      >
-                        {chapterAiAction === 'polish' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                        润色后创建
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        onClick={createChapter}
-                        disabled={creatingChapter || chapterAiAction !== null || (!newChapterTitle.trim() && !newChapterContent.trim())}
+                        data-testid="chapter-create-submit"
+                        onClick={() => {
+                          if (chapterCreateMode === 'continue') return handleAIContinueChapter();
+                          if (chapterCreateMode === 'expand' || chapterCreateMode === 'polish') return handleCreateChapterWithAI(chapterCreateMode);
+                          return createChapter();
+                        }}
+                        disabled={creatingChapter || chapterAiAction !== null || (
+                          chapterCreateMode === 'manual' ? (!newChapterTitle.trim() && !newChapterContent.trim())
+                            : chapterCreateMode !== 'continue' && !newChapterContent.trim()
+                        )}
                         className="bg-violet-600 hover:bg-violet-700"
                       >
-                        {creatingChapter && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                        手动创建
+                        {(creatingChapter || chapterAiAction !== null) ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
+                        创建章节
                       </Button>
                       <Button 
                         size="sm" 
@@ -1599,7 +1707,7 @@ export default function NovelDetailPage() {
                                 编辑
                               </Link>
                             </Button>
-                            <Button
+                            {stepMode && <Button
                               size="sm"
                               variant="outline"
                               onClick={() => generateScriptForChapter(chapter.id)}
@@ -1608,7 +1716,7 @@ export default function NovelDetailPage() {
                             >
                               {generatingScriptChapterId === chapter.id ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Sparkles className="w-4 h-4 mr-1" />}
                               生成剧本
-                            </Button>
+                            </Button>}
                             <Button asChild size="sm" variant="ghost">
                               <Link href={`/scripts?novel_id=${novelId}&chapter_id=${chapter.id}`}>
                                 <FileText className="w-4 h-4 mr-1" />
@@ -1674,48 +1782,56 @@ export default function NovelDetailPage() {
                     onGenerate={handleGenerateSeriesPlan} generating={generatingSeriesPlan} toMediaUrl={toMediaUrl} />
                 ) : (
                   <>
-                    <SeriesRunPanel
-                      novelId={novelId}
-                      chapters={chapters}
-                      seriesPlan={seriesPlan}
-                      modelConfigs={modelConfigs}
-                      visualStyle={seriesPlan.style || imageStyle}
-                    />
+                    <details data-testid="advanced-step-control" className="group rounded-xl border border-white/10 bg-white/[0.03]">
+                      <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-white/80 hover:text-white">
+                        高级：分步控制
+                        <span className="ml-2 text-xs font-normal text-white/40">一般无需展开，「一键生成视频」会自动完成以下步骤</span>
+                      </summary>
+                      <div className="p-4 pt-0">
+                        <SeriesRunPanel
+                          novelId={novelId}
+                          chapters={chapters}
+                          seriesPlan={seriesPlan}
+                          modelConfigs={modelConfigs}
+                          visualStyle={seriesPlan.style || imageStyle}
+                        />
+                      </div>
+                    </details>
                     <div className="rounded-xl border border-blue-400/20 bg-blue-500/10 p-4">
                       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                         <div>
                           <div className="flex items-center gap-2 text-sm font-medium text-blue-100">
                             <Film className="h-4 w-4" />
-                            连续动漫制作线
+                            分集制作进度
                           </div>
                           <p className="mt-1 text-sm text-white/60">
-                            整书计划会把多集拆分接入 Series Studio / Producer：先锁定 Production Bible，再逐集推进资产、声线、本集工程和质量门禁。
+                            {TERMS.seriesPlan}会把多集拆开制作：先锁定{TERMS.productionBible}与{TERMS.storyBible}，再逐集推进{TERMS.assets}、{TERMS.tts}和发布前检查。日常请用「{TERMS.oneClick}」。
                           </p>
                         </div>
                         <Badge variant="outline" className="w-fit border-blue-300/40 text-blue-100">
-                          Series Studio Ready
+                          可继续制作
                         </Badge>
                       </div>
                       <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">Production Bible</div>
-                          <div className="mt-1 text-sm text-white">{storyBibles.length > 0 ? '已绑定世界观/规则' : '待生成故事圣经'}</div>
+                          <div className="text-xs text-white/40">{TERMS.productionBible}</div>
+                          <div className="mt-1 text-sm text-white">{storyBibles.length > 0 ? '已绑定世界观/规则' : `待生成${TERMS.storyBible}`}</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">角色/场景资产</div>
-                          <div className="mt-1 text-sm text-white">{characters.length > 0 ? `${characters.length} 个角色可复用` : '待提取角色资产'}</div>
+                          <div className="text-xs text-white/40">{TERMS.assets}</div>
+                          <div className="mt-1 text-sm text-white">{characters.length > 0 ? `${characters.length} 个角色可复用` : '待提取角色'}</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">声线连续性</div>
-                          <div className="mt-1 text-sm text-white">进入 Producer 后锁定配音与字幕节奏</div>
+                          <div className="text-xs text-white/40">{TERMS.tts}连续性</div>
+                          <div className="mt-1 text-sm text-white">锁定角色声音与字幕节奏</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
                           <div className="text-xs text-white/40">本集工程</div>
-                          <div className="mt-1 text-sm text-white">继续本集工程会进入系列生产线</div>
+                          <div className="mt-1 text-sm text-white">继续本集可进入分步精修</div>
                         </div>
                         <div className="rounded-lg bg-black/15 p-3">
-                          <div className="text-xs text-white/40">质量门禁</div>
-                          <div className="mt-1 text-sm text-white">检查剧本、分镜、镜头、媒体完整性</div>
+                          <div className="text-xs text-white/40">{TERMS.gate}</div>
+                          <div className="mt-1 text-sm text-white">检查剧本、画面脚本和成片完整性</div>
                         </div>
                       </div>
                     </div>
@@ -1933,7 +2049,7 @@ export default function NovelDetailPage() {
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-white flex items-center gap-2">
                   <ShieldCheck className="w-5 h-5 text-violet-400" />
-                  Story Bible
+                  {TERMS.storyBible}
                 </CardTitle>
                 <div className="flex flex-wrap gap-2 sm:justify-end">
                   <Button
@@ -1972,7 +2088,7 @@ export default function NovelDetailPage() {
                     className="border-blue-500/50"
                   >
                     {generatingStateMachine ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <ListChecks className="w-4 h-4 mr-2" />}
-                    状态机
+                    {TERMS.stateMachine}
                   </Button>
                   <Button
                     size="sm"
@@ -1997,7 +2113,7 @@ export default function NovelDetailPage() {
                 {storyBibles.length === 0 ? (
                   <div className="text-center py-8 text-white/40">
                     <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p>暂无 Story Bible</p>
+                    <p>暂无{TERMS.storyBible}</p>
                     <p className="text-sm">可基于章节和角色生成一致性设定</p>
                   </div>
                 ) : (
@@ -2029,7 +2145,7 @@ export default function NovelDetailPage() {
                       <div>
                         <div className="flex items-center gap-2 text-white font-medium">
                           <ListChecks className="h-4 w-4 text-blue-200" />
-                          跨章节状态机
+                          跨章节{TERMS.stateMachine}
                         </div>
                         <p className="mt-1 text-sm text-white/55">
                           人物、场景、道具和事件状态会进入后续章节、分镜、镜头和视频生成约束。
@@ -2078,9 +2194,9 @@ export default function NovelDetailPage() {
                   </div>
                 ) : storyBibles.length > 0 ? (
                   <div className="rounded-lg border border-dashed border-white/15 bg-white/5 p-4">
-                    <div className="text-white font-medium">尚未生成跨章节状态机</div>
+                    <div className="text-white font-medium">尚未生成跨章节{TERMS.stateMachine}</div>
                     <p className="mt-1 text-sm text-white/50">
-                      状态机会把人物服装/关系、场景环境、道具流转和事件因果变成可检查规则，减少多集生成漂移。
+                      {TERMS.stateMachine}会把人物服装/关系、场景环境、道具流转和事件因果变成可检查规则，减少多集生成漂移。
                     </p>
                     <Button
                       size="sm"
@@ -2089,7 +2205,7 @@ export default function NovelDetailPage() {
                       disabled={generatingStateMachine}
                     >
                       {generatingStateMachine ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
-                      生成状态机
+                      生成{TERMS.stateMachine}
                     </Button>
                   </div>
                 ) : null}
@@ -2109,7 +2225,7 @@ export default function NovelDetailPage() {
 
                 {stateMachineIssues.length > 0 && (
                   <div>
-                    <div className="text-white/80 text-sm mb-2">状态机提示</div>
+                    <div className="text-white/80 text-sm mb-2">{TERMS.stateMachine}提示</div>
                     <div className="space-y-2">
                       {stateMachineIssues.slice(0, 12).map((issue, index) => (
                         <div key={`${issue.code}-${issue.name || issue.chapter_id || index}`} className="rounded-md bg-yellow-500/10 border border-yellow-500/20 px-3 py-2 text-sm text-yellow-100">
@@ -2245,37 +2361,6 @@ export default function NovelDetailPage() {
           </TabsContent>
         </Tabs>
 
-        {/* 底部快捷入口 */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-violet-600/20 to-purple-600/20 border-violet-500/30">
-            <CardContent className="p-4 text-center">
-              <Film className="w-8 h-8 mx-auto mb-2 text-violet-400" />
-              <div className="text-white font-medium">视频生成</div>
-              <div className="text-white/60 text-sm">基于剧本生成视频</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-blue-600/20 to-cyan-600/20 border-blue-500/30">
-            <CardContent className="p-4 text-center">
-              <Volume2 className="w-8 h-8 mx-auto mb-2 text-blue-400" />
-              <div className="text-white font-medium">语音合成</div>
-              <div className="text-white/60 text-sm">TTS语音生成</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-green-600/20 to-emerald-600/20 border-green-500/30">
-            <CardContent className="p-4 text-center">
-              <Play className="w-8 h-8 mx-auto mb-2 text-green-400" />
-              <div className="text-white font-medium">音视频合成</div>
-              <div className="text-white/60 text-sm">视频+音频合并</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-orange-600/20 to-amber-600/20 border-orange-500/30">
-            <CardContent className="p-4 text-center">
-              <Image className="w-8 h-8 mx-auto mb-2 text-orange-400" />
-              <div className="text-white font-medium">封面生成</div>
-              <div className="text-white/60 text-sm">AI生成小说封面</div>
-            </CardContent>
-          </Card>
-        </div>
       </div>
     </MainLayout>
   );

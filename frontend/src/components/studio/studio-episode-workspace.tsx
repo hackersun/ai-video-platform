@@ -1,5 +1,6 @@
 'use client';
 
+import { SeriesOverviewPanel } from './series-overview-panel';
 import type {
   StudioActionResult,
   StudioGuidedAction,
@@ -59,6 +60,7 @@ export function StudioEpisodeWorkspace({
         <StudioEpisodeSidebar snapshot={snapshot} />
       </div>
       <StudioCommandBar snapshot={snapshot} mode={mode} loading={loading} onModeChange={onModeChange} onPrimaryAction={onPrimaryAction} />
+      <SeriesOverviewPanel snapshot={snapshot} />
       <StudioActionProgress
         action={lastAction}
         loading={loading}

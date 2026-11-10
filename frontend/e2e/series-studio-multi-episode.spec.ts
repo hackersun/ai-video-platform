@@ -65,7 +65,7 @@ function studioSnapshot({ locked = false, resumed = false } = {}) {
       story_order: [],
       production_revisions: [],
     },
-    consistency_ledger: { overall_score: 76, findings: [{ code: 'episode-2-check', severity: 'warning' }] },
+    consistency_ledger: { evaluation_status: 'evaluated', overall_score: 76, findings: [{ code: 'episode-2-check', severity: 'warning' }] },
     guidance: {
       current_stage: failedResume ? 'draft' : locked ? 'draft' : 'episode_contract',
       stages: stageIds.map((id, index) => ({ id, label: id, status: index < (locked ? 3 : 2) ? 'ready' : index === (locked ? 3 : 2) ? 'working' : 'blocked' })),

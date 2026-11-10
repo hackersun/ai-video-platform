@@ -25,9 +25,9 @@ export function useLivePreflight() {
           await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
         }
       }
-      throw new Error('前置状态读取失败');
+      throw new Error('准备情况读取失败');
     } catch (reason: any) {
-      setPreflightError(reason?.message || '前置状态读取失败，请手动刷新。');
+      setPreflightError(reason?.message || '准备情况读取失败，请手动刷新。');
       throw reason;
     } finally {
       setPreflightLoading(false);

@@ -685,7 +685,7 @@ def test_storyboard_merge_videos_creates_manifest_srt_and_history_job(client: Te
     assert payload["segment_count"] == 2
     assert payload["output_url"].startswith("/static/dev/final-")
     assert payload["manifest_url"].startswith("/static/exports/")
-    assert payload["srt_url"].endswith(".srt")
+    assert payload["srt_url"].split("?")[0].endswith(".srt")
     assert payload["segments"][0]["shot_number"] == 1
     assert payload["segments"][1]["shot_number"] == 2
     assert payload["segments"][0]["subtitle"]["text"] == "林舟：我不能退。"
@@ -705,10 +705,10 @@ def test_storyboard_merge_videos_creates_manifest_srt_and_history_job(client: Te
     history_resp = client.get(f"/api/v1/synthesis/jobs/{payload['job_id']}", headers=headers)
     assert history_resp.status_code == 200
     history = history_resp.json()
-    assert history["output_url"] == payload["output_url"]
+    assert history["output_url"].split("?")[0] == payload["output_url"].split("?")[0]
     assert history["extra_data"]["storyboard_id"] == storyboard_id
-    assert history["extra_data"]["manifest_url"] == payload["manifest_url"]
-    assert history["extra_data"]["srt_url"] == payload["srt_url"]
+    assert history["extra_data"]["manifest_url"].split("?")[0] == payload["manifest_url"].split("?")[0]
+    assert history["extra_data"]["srt_url"].split("?")[0] == payload["srt_url"].split("?")[0]
     assert "is_real_merged" in history["extra_data"]
 
 
@@ -755,7 +755,7 @@ def test_storyboard_merge_videos_can_select_subset_real_merge_and_list_versions(
     assert payload["is_real_merged"] is True
     assert payload["render_backend"] == "ffmpeg"
     assert payload["output_url"].startswith("/static/exports/")
-    assert payload["output_url"].endswith(".mp4")
+    assert payload["output_url"].split("?")[0].endswith(".mp4")
     assert payload["duration_seconds"] >= 8
     assert payload["segments"][0]["duration_seconds"] >= 3.8
 

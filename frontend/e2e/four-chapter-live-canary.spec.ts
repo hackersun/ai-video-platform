@@ -100,10 +100,11 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
     await page.getByRole('button', { name: '新建章节' }).click();
     await page.getByPlaceholder(/章节标题，可留空/).fill(chapter.title);
     await page.getByPlaceholder(/章节内容或创作方向/).fill(chapter.content);
-    await page.getByRole('button', { name: '手动创建' }).click();
+    await page.getByTestId('chapter-create-submit').click();
     await expect(page.getByText(chapter.title, { exact: true })).toBeVisible();
   }
-  await page.getByRole('tab', { name: /整书计划/ }).click();
+  await page.getByTestId('novel-more-tabs').click();
+  await page.getByRole('tab', { name: /分集计划/ }).click();
   await page.getByRole('button', { name: '生成多集计划', exact: true }).click();
   const chapters = await (await page.request.get(`${apiBase}/chapters/novel/${novel.id}`, { headers })).json();
   let seriesPlan: any = null;
@@ -125,7 +126,7 @@ test('frontend Wave 1 generates two cross-episode anchors with immutable evidenc
   const initialRun = await createdRun.json();
   await page.evaluate(({ id, runId }) => localStorage.setItem(`series-run:${id}`, runId), { id: novel.id, runId: initialRun.id });
   await page.goto(`/novels/${novel.id}?tab=series-plan`);
-  await page.getByRole('tab', { name: '整书计划 (4)', exact: true }).click();
+  await page.getByRole('tab', { name: '分集计划 (4)', exact: true }).click();
   await expect(page.getByRole('button', { name: '继续推进' })).toBeVisible();
 
   const nativeAudioToggle = page.getByLabel('本次使用 Seedance 1.5 原生配音');

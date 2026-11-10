@@ -23,6 +23,7 @@ test.describe('Production OS deterministic frontend contracts', () => {
       return fulfillJson(route, {});
     });
     await page.goto('/studio?workflow_id=wf-os');
+    await page.getByRole('tab', { name: '设定' }).click();
     await expect(page.getByTestId('production-bible-panel')).toContainText('林澈');
     await expect(page.getByTestId('production-bible-panel')).toContainText('已确认');
     await expect(page.getByTestId('production-bible-panel')).toContainText('证据：第二章第3段');
@@ -37,6 +38,10 @@ test.describe('Production OS deterministic frontend contracts', () => {
     await expect(graph).toContainText('Production Graph');
     await graph.getByRole('link', { name: '查看受影响镜头' }).click();
     await expect(page).toHaveURL(/shot_id=shot-2/);
+    // Next <Link> 是客户端导航：URL 先变，而 /studio/shot-review 在 dev 下按需编译，编译完成后可能整页刷新。
+    // 并发跑时紧接着 goto 会被这次未完成的导航/刷新打断（net::ERR_ABORTED）。等目标页真正渲染出来再跳转。
+    await expect(page.getByRole('heading', { name: '镜头审阅', level: 1 })).toBeVisible({ timeout: 30_000 });
+    await page.waitForLoadState('networkidle');
     await page.goto('/studio?workflow_id=wf-os');
     expect(requests.some((item) => item.path.endsWith('/video/models'))).toBeTruthy();
   });
@@ -68,9 +73,9 @@ test.describe('Production OS deterministic frontend contracts', () => {
     await page.route('**/api/v1/workflow/wf-os/quality/evaluate', async (route) => { evaluated = true; await fulfillJson(route, { ready: false, blockers: [{ code: 'wrong_speaker' }] }); });
     await page.route('**/api/v1/workflow/wf-os/quality/repair', async (route) => { repaired = true; await fulfillJson(route, { unchanged_artifact_ids: ['video-1', 'video-2', 'tts-2'], evaluation_ready: true }); });
     await page.goto('/studio/shot-review?workflow_id=wf-os');
-    await page.getByRole('button', { name: '评估镜头 1 六维质量' }).click();
+    await page.getByRole('button', { name: /(开始|重新)检查镜头 1/ }).click();
     await page.getByRole('button', { name: '重新生成镜头 1 配音并重跑口型' }).click();
-    await expect(page.getByTestId('quality-gate-shot-1')).toContainText('可交付');
+    await expect(page.getByTestId('quality-gate-shot-1')).toContainText('全部通过');
     expect(requests.filter((item) => item.path.includes('/quality/')).map((item) => item.path)).toEqual(['/api/v1/workflow/wf-os/quality/evaluate', '/api/v1/workflow/wf-os/quality/repair']);
   });
 
@@ -98,6 +103,9 @@ test.describe('Production OS deterministic frontend contracts', () => {
     await page.goto('/analytics');
     const metrics = page.getByTestId('production-metrics');
     await expect(metrics).toContainText('连续动漫生产指标');
+    // 原始接口路径与内部字段不再出现在页面上。
+    await expect(page.locator('main')).not.toContainText('is_mock');
+    await expect(page.locator('main')).not.toContainText('/api/v1/dashboard/analytics');
     await expect(metrics).toContainText('确定性验证就绪');
     await expect(metrics).toContainText('首轮镜头接收率75.0%');
     await expect(metrics).toContainText('每终稿分钟成本不可用');

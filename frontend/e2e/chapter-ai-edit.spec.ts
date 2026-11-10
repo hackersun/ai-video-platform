@@ -127,7 +127,7 @@ test('chapter edit page can continue an empty next chapter from previous context
 
   await page.goto(`/novels/${novel.id}/chapters/${nextChapter.id}/edit`);
   await expect(page.getByRole('heading', { name: '编辑章节' })).toBeVisible();
-  await expect(page.getByText('0 字')).toBeVisible();
+  await expect(page.getByRole('complementary').getByText('0 字')).toBeVisible();
 
   await page.getByPlaceholder(/补充要求/).fill('承接上一章脚步声，写出谭云发现追兵并保护祖传玉简');
   await page.getByRole('button', { name: /续写内容|生成本章内容/ }).click();
@@ -200,12 +200,13 @@ test('novel detail supports AI-assisted chapter creation and Chinese settings co
   await expect(page.getByText(/仙侠 · 草稿/)).toBeVisible();
   await page.getByRole('button', { name: /新建章节/ }).click();
 
-  const chapterPanel = page.locator('[role="tabpanel"]').filter({ hasText: 'AI 续写下一章' });
+  const chapterPanel = page.locator('[role="tabpanel"]').filter({ has: page.getByTestId('chapter-create-mode') });
   await chapterPanel.getByPlaceholder(/章节内容或创作方向/).fill('陆青进入山门后发现试炼令发烫，石阶尽头出现新的敌人。');
   await chapterPanel.getByRole('button', { name: /提炼标题/ }).click();
   await expect(chapterPanel.getByPlaceholder(/章节标题/)).toHaveValue(/第2章/);
 
-  await chapterPanel.getByRole('button', { name: /AI 续写下一章/ }).click();
+  await chapterPanel.getByTestId('chapter-create-mode').selectOption('continue');
+  await chapterPanel.getByTestId('chapter-create-submit').click();
   await expect(page.getByText('AI 已续写下一章')).toBeVisible({ timeout: 30_000 });
 
   const chapters = await apiGet(page, `/chapters/novel/${novel.id}`);
@@ -215,6 +216,7 @@ test('novel detail supports AI-assisted chapter creation and Chinese settings co
   expect(generatedChapter?.title || '').toMatch(/^第2章/);
   expect(generatedChapter?.title).not.toBe('第2章');
 
+  await page.getByTestId('novel-more-tabs').click();
   await page.getByRole('tab', { name: /设置/ }).click();
   const settingsPanel = page.locator('[role="tabpanel"]').filter({ hasText: '小说设置' });
   await settingsPanel.locator('select').first().selectOption('玄幻');
@@ -247,7 +249,7 @@ test('chapter content page exposes AI writing controls and persists generated co
   });
 
   await page.goto(`/novels/${novel.id}/chapters/${chapter.id}`);
-  await expect(page.getByText('AI智能编写')).toBeVisible();
+  await expect(page.getByText('章节阅读预览')).toBeVisible();
   await expect(page.getByRole('button', { name: /智能编写/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /续写内容/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /润色内容/ })).toBeVisible();

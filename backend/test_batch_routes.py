@@ -93,7 +93,7 @@ def test_update_batch_item_accepts_json_body(client: TestClient, tmp_path) -> No
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "succeeded"
-    assert payload["image_url"] == "/static/generated/images/shot-001.jpg"
+    assert payload["image_url"].split("?")[0] == "/static/generated/images/shot-001.jpg"
     assert payload["image_job_id"] == "image-task-001"
 
 
@@ -609,4 +609,4 @@ def test_batch_progress_syncs_completed_video_items(client: TestClient, tmp_path
     assert progress_response.json()["succeeded_count"] == 1
     item = items_response.json()["items"][0]
     assert item["status"] == "succeeded"
-    assert item["video_url"] == "/static/generated/videos/video-sync-001.mp4"
+    assert item["video_url"].split("?")[0] == "/static/generated/videos/video-sync-001.mp4"

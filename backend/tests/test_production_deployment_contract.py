@@ -22,9 +22,9 @@ def _development_compose() -> dict:
 def test_production_compose_has_one_public_entry_and_private_stateful_services() -> None:
     compose = _compose()
     services = compose["services"]
-    assert set(services) == {"proxy", "frontend", "api", "postgres", "redis"}
+    assert set(services) == {"proxy", "frontend", "api", "postgres", "redis", "series-run-worker", "publication-pipeline-worker"}
     assert services["proxy"]["ports"] == ["${APP_HTTP_PORT:-8080}:80"]
-    for name in ("frontend", "api", "postgres", "redis"):
+    for name in ("frontend", "api", "postgres", "redis", "series-run-worker", "publication-pipeline-worker"):
         assert not services[name].get("ports"), name
     assert services["postgres"]["volumes"] == [
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/postgres:/var/lib/postgresql/data"
@@ -35,6 +35,19 @@ def test_production_compose_has_one_public_entry_and_private_stateful_services()
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/redis:/data"
     ]
     assert all("healthcheck" in service for service in services.values())
+    api_health = " ".join(services["api"]["healthcheck"].get("test") or [])
+    assert "8000/ready" in api_health
+
+    worker = services["series-run-worker"]
+    assert worker["command"] == ["python", "-m", "app.services.series_run_worker"]
+    assert worker["environment"]["REDIS_URL"] == "redis://redis:6379/0"
+    assert worker["environment"]["DATABASE_URL"].startswith("postgresql://")
+    assert worker["environment"]["DEV_MODE"] == "false"
+    assert "redis" in worker["depends_on"]
+    assert "postgres" in worker["depends_on"]
+    assert services["api"]["environment"]["REDIS_URL"] == "redis://redis:6379/0"
+    assert "--appendonly" in " ".join(services["redis"].get("command") or [])
+
 
 
 def test_production_compose_rejects_development_mounts_commands_and_weak_passwords() -> None:
@@ -83,7 +96,7 @@ def test_release_scripts_are_backup_first_and_rollback_capable() -> None:
     assert deploy.index("pg_dump") < deploy.index("up -d")
     assert "previous" in deploy and "current" in deploy
     assert "previous" in rollback and "current" in rollback
-    assert "/health" in health and "/api/v1/versions" in health
+    assert "/health" in health and "/ready" in health and "/api/v1/versions" in health
     assert "/srv/ai-video-platform" in deploy
     assert "chown 70:70" in deploy
     assert "chown 999:999" in deploy

@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { MainLayout } from '@/components/layout/main-layout';
@@ -176,6 +178,18 @@ export default function TeamSettingsPage() {
       <MainLayout>
         <div className="flex items-center justify-center h-64">
           <Loader2 className="h-8 w-8 animate-spin text-cyan-400" />
+        </div>
+      </MainLayout>
+    );
+  }
+
+  if (!projectId) {
+    return (
+      <MainLayout>
+        <div data-testid="team-empty-state" className="mx-auto flex max-w-md flex-col items-center justify-center gap-3 py-16 text-center">
+          <h1 className="text-xl font-semibold text-white">团队协作</h1>
+          <p className="text-white/60">个人创作不需要设置团队。需要多人协作时，请在具体作品的工作室中邀请成员。</p>
+          <Button asChild variant="outline"><Link href="/novels">返回我的小说</Link></Button>
         </div>
       </MainLayout>
     );

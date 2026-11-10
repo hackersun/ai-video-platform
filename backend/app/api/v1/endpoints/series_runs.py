@@ -49,6 +49,7 @@ from app.services.series_run_orchestrator import (
 )
 from app.services.series_run_execution_queue import (
     series_run_execution_active,
+    signal_series_run_pause,
     start_series_run_execution,
 )
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
@@ -276,7 +277,13 @@ async def pause_series_run(
     db: AsyncSession = Depends(get_db),
     user_id: str = Depends(get_current_user_id),
 ):
-    return await _change_state(db, await _owned_run(db, user_id, run_id), "paused")
+    payload = await _change_state(db, await _owned_run(db, user_id, run_id), "paused")
+    try:
+        await signal_series_run_pause(run_id)
+    except Exception:
+        # DB paused status remains authoritative; Redis signal is acceleration only.
+        pass
+    return payload
 
 
 @router.post("/series-runs/{run_id}/resume")
@@ -325,12 +332,26 @@ async def execute_series_run_async(
     if run.status in {"shots_ready", "anchor_ready", "completed", "paused"}:
         queued = False
     else:
-        queued = start_series_run_execution(run.id, user_id)
+        try:
+            queued = await start_series_run_execution(run.id, user_id)
+        except Exception as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="series run queue unavailable",
+            ) from error
+    if queued:
+        execution_status = "queued"
+    else:
+        try:
+            active = await series_run_execution_active(run.id)
+        except Exception:
+            active = False
+        execution_status = "already_running" if active else "not_required"
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={
             **_payload(run),
-            "execution_status": "queued" if queued else "already_running" if series_run_execution_active(run.id) else "not_required",
+            "execution_status": execution_status,
         },
     )
 
@@ -456,9 +477,9 @@ async def get_series_run_anchor_shots(
         "representative": representative,
         "full": full,
         "blockers": {
-            "smoke": anchor_coverage_blocker(smoke, mode="smoke"),
-            "representative": anchor_coverage_blocker(representative, mode="representative"),
-            "full": anchor_coverage_blocker(full, mode="full"),
+            "smoke": anchor_coverage_blocker(smoke, mode="smoke", episodes=shots),
+            "representative": anchor_coverage_blocker(representative, mode="representative", episodes=shots),
+            "full": anchor_coverage_blocker(full, mode="full", episodes=shots),
         },
     }
 
@@ -477,7 +498,7 @@ async def put_series_run_anchor_shots(
     except ValueError as error:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(error)) from error
     recommendations = recommend_anchor_shots(shots, mode=request.mode)
-    blocker = anchor_coverage_blocker(recommendations, mode=request.mode)
+    blocker = anchor_coverage_blocker(recommendations, mode=request.mode, episodes=shots)
     if blocker:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=blocker)
     if set(selected) != {item["shot_id"] for item in recommendations}:

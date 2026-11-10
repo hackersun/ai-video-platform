@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
 from typing import Iterable
@@ -127,6 +127,8 @@ class BackfillReport:
     planned_total: int = 0
     updated_total: int = 0
     prompt_conflicts: tuple[str, ...] = ()
+    # legacy LLMModel.id -> canonical profile version id (internal; not part of reports)
+    profile_version_ids: dict[str, str] = field(default_factory=dict, repr=False)
 
     @property
     def created_total(self) -> int:
@@ -419,7 +421,7 @@ async def backfill_model_center(
     for model in models:
         provider = provider_by_id.get(model.provider_id)
         if provider is not None:
-            profile_versions[model.id] = await _backfill_model(
+            profile_versions[model.id] = report.profile_version_ids[model.id] = await _backfill_model(
                 db, model, provider, canonical_provider_ids[provider.id], report, apply,
                 pending_profile_versions,
             )

@@ -19,5 +19,7 @@ class User(Base):
     reset_token_hash = Column(String(128), nullable=True)
     reset_token_expires_at = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True)
+    terms_accepted_version = Column(String(40), nullable=True)
+    terms_accepted_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)

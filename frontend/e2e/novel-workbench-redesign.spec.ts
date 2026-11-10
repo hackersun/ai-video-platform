@@ -192,8 +192,15 @@ test('novel detail exposes a reading preview and AI production shortcuts', async
 
   await expect(page.getByRole('heading', { name: '作品阅读预览' })).toBeVisible();
   await expect(page.getByTestId('novel-summary-panel').getByText('雨落在青石巷里')).toBeVisible();
-  await expect(page.getByText('AI 下一步')).toBeVisible();
+  // 分步制作（专业）默认折叠：新手只看到一键生成；从「更多」展开后入口完整保留。
+  await expect(page.getByText('AI 下一步')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /生成剧本/ })).toHaveCount(0);
+  await page.getByTestId('novel-more-actions').click();
+  await page.getByTestId('novel-step-mode-toggle').click();
+  await expect(page.getByTestId('novel-step-panel').getByText('AI 下一步')).toBeVisible();
   await expect(page.getByTestId('novel-summary-panel').getByRole('link', { name: /分析制作资产/ })).toHaveAttribute('href', '/novels/novel-001/asset-analysis');
+  await page.reload();
+  await expect(page.getByTestId('novel-step-panel')).toBeVisible();
 });
 
 test('chapter detail and editor keep preview beside AI writing actions', async ({ page }) => {

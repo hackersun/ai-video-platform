@@ -651,6 +651,82 @@ class ApiClient {
     });
   }
 
+  // ---- 一键生成视频（整书发布流水线）----
+  async getBillingSettings() {
+    return this.request<BillingSettings>('/billing/settings');
+  }
+
+  async updateBillingSettings(payload: Partial<Pick<BillingSettings, 'live_calls_opt_in' | 'per_user_cap_rmb' | 'per_pipeline_cap_rmb'>>) {
+    return this.request<BillingSettings>('/billing/settings', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async getBillingLedgerSummary() {
+    return this.request<BillingLedgerSummary>('/billing/ledger/summary');
+  }
+
+  async createPublicationPipeline(novelId: string, payload: { idempotency_key?: string; ensure_series_plan?: boolean } = {}) {
+    return this.request<PublicationPipeline>(`/novels/${novelId}/publication-pipelines`, {
+      method: 'POST',
+      body: JSON.stringify({ ensure_series_plan: true, idempotency_key: `ui-${novelId}-${Date.now()}`, ...payload }),
+    });
+  }
+
+  async getPublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}`);
+  }
+
+  async getSimpleModelSetup(novelId?: string) {
+    const qs = novelId ? `?novel_id=${encodeURIComponent(novelId)}` : '';
+    return this.request<SimpleModelSetupState>(`/model-center/simple-setup${qs}`);
+  }
+
+  async saveSimpleModelSetup(payload: SimpleModelSetupSavePayload) {
+    return this.request<SimpleModelSetupState>('/model-center/simple-setup', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  async testSimpleModelSetup(capabilities?: SimpleCapability[]) {
+    return this.request<SimpleModelSetupTestResult>('/model-center/simple-setup/test', {
+      method: 'POST',
+      body: JSON.stringify({ capabilities: capabilities || null }),
+    });
+  }
+
+  async setNovelModelOverrides(novelId: string, overrides: Partial<Record<SimpleCapability, string | null>>) {
+    return this.request<SimpleModelSetupState>(`/model-center/simple-setup/novels/${encodeURIComponent(novelId)}`, {
+      method: 'PUT',
+      body: JSON.stringify({ overrides }),
+    });
+  }
+
+  /** 一次请求返回多个小说的最近流水线状态（作品列表角标，替代逐本 N+1 请求）。 */
+  async getPublicationPipelineStatuses(novelIds: string[]) {
+    return this.request<{ statuses: Record<string, { pipeline_id: string; status: string; updated_at?: string | null }> }>(
+      `/publication-pipeline-statuses?novel_ids=${novelIds.map(encodeURIComponent).join(',')}`,
+    );
+  }
+
+  async listPublicationPipelines(novelId: string, limit = 20) {
+    return this.request<PublicationPipeline[]>(`/novels/${novelId}/publication-pipelines?limit=${limit}`);
+  }
+
+  async pausePublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}/pause`, { method: 'POST' });
+  }
+
+  async resumePublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}/resume`, { method: 'POST' });
+  }
+
+  async cancelPublicationPipeline(pipelineId: string) {
+    return this.request<PublicationPipeline>(`/publication-pipelines/${pipelineId}/cancel`, { method: 'POST' });
+  }
+
   async createSeriesRun(payload: Record<string, any>) {
     return this.request<SeriesProductionRun>('/series-runs', { method: 'POST', body: JSON.stringify(payload) });
   }
@@ -3192,7 +3268,7 @@ class ApiClient {
   /**
    * 用户注册
    */
-  async register(username: string, email: string, password: string) {
+  async register(username: string, email: string, password: string, acceptTerms = false) {
     const response = await this.request<{
       success: boolean;
       message: string;
@@ -3200,7 +3276,7 @@ class ApiClient {
       access_token?: string;
     }>('/auth/register', {
       method: 'POST',
-      body: JSON.stringify({ username, email, password }),
+      body: JSON.stringify({ username, email, password, accept_terms: acceptTerms }),
     });
 
     if (response.access_token) {
@@ -3387,5 +3463,135 @@ class ApiClient {
 }
 
 // 导出单例
+
+export interface BillingSettings {
+  live_calls_opt_in: boolean;
+  opted_in_at?: string | null;
+  per_user_cap_rmb: string;
+  per_pipeline_cap_rmb: string;
+  used_rmb: string;
+  reserved_rmb: string;
+  settled_rmb: string;
+  released_rmb: string;
+  defaults?: { per_user_cap_rmb?: string; per_pipeline_cap_rmb?: string };
+}
+
+export interface BillingLedgerSummary {
+  used_rmb: string;
+  reserved_rmb: string;
+  settled_rmb: string;
+  released_rmb: string;
+  blocked_cap_rmb: string;
+  per_user_cap_rmb: string;
+  per_pipeline_cap_rmb: string;
+  live_calls_opt_in: boolean;
+}
+
+export interface PublicationPipelineEpisode {
+  episode_number: number;
+  render_status?: string | null;
+  output_url?: string | null;
+  shots_ready?: boolean;
+  media_completed?: boolean;
+  blocker_code?: string | null;
+}
+
+export type SimpleCapability = 'text' | 'image' | 'video' | 'tts';
+
+export interface SimpleModelOption {
+  model_id: string;
+  api_model_id: string;
+  name: string;
+  provider_id: string;
+  provider_name: string;
+}
+
+export interface SimpleModelCard {
+  capability: SimpleCapability;
+  label: string;
+  config_id: string | null;
+  provider_id: string | null;
+  provider_name: string | null;
+  model_id: string | null;
+  model_name: string | null;
+  api_model_id: string | null;
+  has_key: boolean;
+  test_status: string | null;
+  test_message: string | null;
+  tested_at: string | null;
+  fresh: boolean;
+  extra_params: Record<string, string>;
+  options: SimpleModelOption[];
+}
+
+export interface SimpleModelProvider {
+  id: string;
+  code: string;
+  name: string;
+  presets: Partial<Record<SimpleCapability, string | null>>;
+  recommended: boolean;
+}
+
+export interface SimpleNovelChoice {
+  config_id: string;
+  name: string;
+  model_name: string;
+  provider_name: string | null;
+  test_status: string | null;
+}
+
+export interface SimpleModelSetupState {
+  providers: SimpleModelProvider[];
+  capabilities: Record<SimpleCapability, SimpleModelCard>;
+  primary_provider_id: string | null;
+  configured: boolean;
+  verified: boolean;
+  /** 非生产环境且启用本地确定性假模型时为 true */
+  simulation_available?: boolean;
+  /** 四项能力都指向模拟模式 */
+  simulation_enabled?: boolean;
+  novel_id?: string;
+  novel_overrides?: Record<SimpleCapability, string | null>;
+  novel_effective?: Record<SimpleCapability, SimpleModelCard>;
+  novel_choices?: Record<SimpleCapability, SimpleNovelChoice[]>;
+}
+
+export interface SimpleModelSetupSavePayload {
+  provider_id?: string | null;
+  api_key?: string | null;
+  simulation?: boolean;
+  capabilities: Partial<Record<SimpleCapability, { model_id?: string | null; api_key?: string | null; extra_params?: Record<string, string> }>>;
+}
+
+export interface SimpleModelSetupTestResult {
+  results: Partial<Record<SimpleCapability, { success: boolean; code?: string | null; message: string; response_time_ms?: number | null }>>;
+  state: SimpleModelSetupState;
+}
+
+export interface PublicationPipeline {
+  pipeline_id: string;
+  novel_id: string;
+  series_run_id?: string | null;
+  status: 'accepted' | 'running' | 'paused' | 'blocked' | 'failed' | 'cancelled' | 'succeeded' | string;
+  stage: string;
+  idempotency_key?: string | null;
+  episodes: PublicationPipelineEpisode[];
+  final_video_url?: string | null;
+  publication_id?: string | null;
+  publication_url?: string | null;
+  gate_summary?: Record<string, any>;
+  blocker_code?: string | null;
+  blocker_detail?: string | null;
+  updated_at?: string | null;
+  created_at?: string | null;
+}
+
+/** Turn a backend-relative media path (/static/...) into an absolute URL. */
+export function resolveMediaUrl(url?: string | null): string | null {
+  if (!url) return null;
+  if (/^https?:\/\//.test(url)) return url;
+  return `${API_BASE_URL.replace(/\/api\/v1\/?$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 export const apiClient = new ApiClient(API_BASE_URL);
 export default apiClient;

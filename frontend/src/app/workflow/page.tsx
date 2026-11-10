@@ -745,7 +745,7 @@ function WorkflowPageContent() {
           <div className="flex gap-2">
             <Button
               variant="outline"
-              onClick={() => router.push('/dashboard')}
+              onClick={() => router.push('/novels')}
               className="border-white/20"
             >
               返回首页
@@ -3812,7 +3812,7 @@ function ExportStep({ workflowData }: any) {
             </Button>
           )}
           <Button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push('/novels')}
             className="bg-violet-600 hover:bg-violet-700"
           >
             <Download className="w-4 h-4 mr-2" />

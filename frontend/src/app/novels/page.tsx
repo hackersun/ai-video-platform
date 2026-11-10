@@ -84,6 +84,18 @@ const STATUS_LABELS = {
 };
 
 const GENRE_OPTIONS = ['全部', '仙侠', '都市', '科幻', '历史', '言情', '悬疑'];
+const IMPORT_GENRES = ['仙侠', '都市', '科幻', '历史', '言情', '悬疑', '奇幻'];
+
+/** 导入时的书名：优先后端识别的书名；识别不到（或只是“未命名小说”）时用文件名，粘贴内容用「未命名小说 + 日期」。 */
+function autoImportTitle(previewTitle: string | undefined, fileName: string) {
+  const title = (previewTitle || '').trim();
+  if (title && title !== '未命名小说') return title;
+  const stem = fileName.replace(/\.(txt|md|markdown)$/i, '').trim();
+  if (stem && stem.toLowerCase() !== 'pasted') return stem;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `未命名小说 ${now.getMonth() + 1}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
 
 // 内嵌组件使用 useSearchParams
 function NovelsContent() {
@@ -102,14 +114,38 @@ function NovelsContent() {
   const [importGenre, setImportGenre] = useState('');
   const [importJobId, setImportJobId] = useState('');
   const [importChapters, setImportChapters] = useState<ImportChapter[]>([]);
+  const [showImportPreview, setShowImportPreview] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const pasteRef = useRef<HTMLTextAreaElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<Novel | null>(null);
   const [deleting, setDeleting] = useState(false);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const startPaste = searchParams?.get('start') === 'paste';
+  useEffect(() => {
+    if (startPaste) pasteRef.current?.focus();
+  }, [startPaste]);
   const highlightId = searchParams.get('highlight');
   const productionEntriesRequestRef = useRef(0);
+  const [videoStatus, setVideoStatus] = useState<Record<string, 'running' | 'done' | 'attention'>>({});
+
+  useEffect(() => {
+    if (!novels.length) return;
+    let alive = true;
+    // 单次批量请求获取全部角标状态（原为每本小说一个请求）。
+    apiClient.getPublicationPipelineStatuses(novels.map((item) => item.id)).then(({ statuses }) => {
+      const rows = Object.entries(statuses || {}).map(([novelId, latest]) => {
+        const state = latest.status === 'succeeded' ? 'done'
+          : ['blocked', 'failed'].includes(latest.status) ? 'attention'
+          : ['accepted', 'queued', 'running', 'paused'].includes(latest.status) ? 'running' : null;
+        return state ? [novelId, state] as const : null;
+      });
+      if (alive) setVideoStatus(Object.fromEntries(rows.filter(Boolean) as Array<readonly [string, 'running' | 'done' | 'attention']>));
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [novels]);
 
   // 从后端API加载小说
   const loadNovelsFromAPI = async () => {
@@ -239,52 +275,78 @@ function NovelsContent() {
     router.push(`/novels/${id}`);
   };
 
+  /** 粘贴的正文按 txt 走同一套解析与导入流程（一功能一入口）。 */
+  const handlePasteImport = async () => {
+    const text = pasteText.trim();
+    if (!text) {
+      setImportMessage('请先把小说正文粘贴到输入框');
+      return;
+    }
+    await handleImportFile(new File([text], 'pasted.txt', { type: 'text/plain' }));
+  };
+
+  const confirmImport = async (jobId: string, title: string) => {
+    const novel = await apiClient.confirmNovelImport({
+      job_id: jobId,
+      title: title.trim(),
+      genre: importGenre.trim() || undefined,
+      tags: importGenre.trim() ? [importGenre.trim()] : [],
+    });
+    setImportMessage(`导入成功：${title}`);
+    toast({ title: '导入成功', description: title, type: 'success' });
+    setImportJobId('');
+    setImportTitle('');
+    setImportGenre('');
+    setImportChapters([]);
+    setShowImportPreview(false);
+    setPasteText('');
+    await loadNovelsFromAPI();
+    router.push(`/novels/${novel.id}`);
+    return novel;
+  };
+
+  /** 解析成功后自动确认导入；只有失败才展开预览，让用户改标题后重试。 */
   const handleImportFile = async (file?: File) => {
     if (!file) return;
     if (!/\.(txt|md|markdown)$/i.test(file.name)) {
       setImportMessage('仅支持 .txt、.md 或 .markdown 文件');
+      setShowImportPreview(true);
       return;
     }
 
     setImporting(true);
     setImportMessage(null);
+    setShowImportPreview(false);
     try {
       const preview = await apiClient.previewNovelImport(file);
+      const chapters = preview.chapters || [];
+      const title = (importTitle.trim() || autoImportTitle(preview.title, file.name));
       setImportJobId(preview.id);
-      setImportTitle((currentTitle) =>
-        currentTitle.trim() ? currentTitle : preview.title || file.name.replace(/\.(txt|md|markdown)$/i, '')
-      );
-      setImportChapters(preview.chapters || []);
-      setImportMessage(`已解析 ${preview.chapter_count || 0} 章，请确认后导入`);
+      setImportTitle(title);
+      setImportChapters(chapters);
+      if (!chapters.length) {
+        setShowImportPreview(true);
+        setImportMessage('没有识别到章节，请检查正文格式后重试');
+        return;
+      }
+      await confirmImport(preview.id, title);
     } catch (err: any) {
-      setImportMessage(err?.message || '导入预览失败，请检查文件格式');
+      setShowImportPreview(true);
+      setImportMessage(err?.message || '导入失败，请检查文件格式或后端服务');
+      toast({ title: '导入失败', description: err?.message || '请检查文件格式', type: 'error' });
     } finally {
       setImporting(false);
     }
   };
 
-  const confirmImport = async () => {
+  const retryConfirmImport = async () => {
     if (!importJobId || !importTitle.trim() || importChapters.length === 0) return;
-
     setImporting(true);
     setImportMessage(null);
     try {
-      const novel = await apiClient.confirmNovelImport({
-        job_id: importJobId,
-        title: importTitle.trim(),
-        genre: importGenre.trim() || undefined,
-        tags: importGenre.trim() ? [importGenre.trim()] : [],
-      });
-
-      setImportMessage(`导入成功：${importTitle}`);
-      toast({ title: '导入成功', description: importTitle, type: 'success' });
-      setImportJobId('');
-      setImportTitle('');
-      setImportGenre('');
-      setImportChapters([]);
-      await loadNovelsFromAPI();
-      router.push(`/novels/${novel.id}`);
+      await confirmImport(importJobId, importTitle);
     } catch (err: any) {
+      setShowImportPreview(true);
       setImportMessage(err?.message || '导入失败，请检查后端服务');
       toast({ title: '导入失败', description: err?.message || '请检查后端服务', type: 'error' });
     } finally {
@@ -313,10 +375,27 @@ function NovelsContent() {
           <CardHeader>
             <CardTitle className="text-white flex items-center gap-2">
               <Upload className="w-5 h-5 text-violet-400" />
-              文本导入
+              粘贴或导入小说
             </CardTitle>
+            <p className="text-sm text-white/60">粘贴正文或选择 txt/md 文件，点「导入并开始」即可进入小说详情；识别失败时才会展开预览。</p>
           </CardHeader>
           <CardContent className="space-y-3">
+            <textarea
+              ref={pasteRef}
+              aria-label="粘贴小说正文"
+              data-testid="novel-paste-input"
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              rows={startPaste ? 8 : 4}
+              placeholder={'把小说正文粘贴到这里，例如：\n第一章 雾港来客\n沈砚抵达雾港……\n第二章 铜铃示警\n……'}
+              className="w-full rounded-md border border-white/10 bg-white/5 p-3 text-sm text-white placeholder:text-white/40"
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" data-testid="novel-paste-parse" onClick={handlePasteImport} disabled={importing || !pasteText.trim()} className="bg-violet-600 hover:bg-violet-700">
+                {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
+                导入并开始
+              </Button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
               <Input
                 value={importTitle}
@@ -324,12 +403,15 @@ function NovelsContent() {
                 placeholder="导入后小说标题"
                 className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
               />
-              <Input
+              <select
+                aria-label="导入题材"
                 value={importGenre}
                 onChange={(e) => setImportGenre(e.target.value)}
-                placeholder="类型（可选）"
-                className="bg-white/5 border-white/10 text-white placeholder:text-white/40"
-              />
+                className="h-10 rounded-md border border-white/10 bg-white/5 px-3 text-sm text-white"
+              >
+                <option value="">题材（可选）</option>
+                {IMPORT_GENRES.map((genre) => <option key={genre} value={genre}>{genre}</option>)}
+              </select>
               <label
                 htmlFor="novel-import-file-input"
                 className="inline-flex items-center justify-center rounded-md bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15 cursor-pointer"
@@ -347,16 +429,18 @@ function NovelsContent() {
               />
             </div>
 
-            {importChapters.length > 0 && (
-              <div className="rounded-lg bg-white/5 p-3">
+            {showImportPreview && (
+              <div className="rounded-lg bg-white/5 p-3" data-testid="novel-import-preview">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm text-white/70">
-                    预览：{importChapters.length} 章 · 首章《{importChapters[0]?.title}》
+                    {importChapters.length > 0
+                      ? `预览：${importChapters.length} 章 · 首章《${importChapters[0]?.title}》`
+                      : '未能识别章节，可改标题后重试或检查正文'}
                   </div>
                   <Button
                     size="sm"
-                    onClick={confirmImport}
-                    disabled={importing || !importTitle.trim()}
+                    onClick={retryConfirmImport}
+                    disabled={importing || !importTitle.trim() || importChapters.length === 0}
                     className="bg-violet-600 hover:bg-violet-700"
                   >
                     {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
@@ -476,6 +560,15 @@ function NovelsContent() {
                                     }`}>
                                       {STATUS_LABELS[novel.status]}
                                     </span>
+                                    {videoStatus[novel.id] && (
+                                      <span data-testid="novel-video-status" className={`px-2 py-0.5 rounded text-xs ${
+                                        videoStatus[novel.id] === 'done' ? 'bg-emerald-500/20 text-emerald-300' :
+                                        videoStatus[novel.id] === 'running' ? 'bg-violet-500/20 text-violet-300' :
+                                        'bg-amber-500/20 text-amber-300'
+                                      }`}>
+                                        {videoStatus[novel.id] === 'done' ? '已完成' : videoStatus[novel.id] === 'running' ? '生成中' : '需处理'}
+                                      </span>
+                                    )}
                                   </div>
                                   <p className="mt-2 line-clamp-2 break-words text-sm leading-6 text-white/60">{novel.description || '暂无简介'}</p>
                                   <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-white/40">

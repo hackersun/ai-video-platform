@@ -50,6 +50,13 @@ export function StudioModelContracts({ compact = false }: { compact?: boolean })
               <div className={`text-lg font-semibold ${readiness === 100 ? 'text-emerald-300' : 'text-amber-200'}`}>{models.length ? (readiness === 100 ? '良好' : '需检查') : '暂无契约'}</div>
               <div className="h-1.5 overflow-hidden rounded-full bg-white/10"><div className={`h-full ${readiness === 100 ? 'bg-emerald-400' : 'bg-amber-400'}`} style={{ width: `${readiness}%` }} /></div>
               <div className="text-xs text-white/50">{verifiedCount}/{models.length} 模型就绪</div>
+              {models.filter((model) => !(model.verified ?? model.test_status === 'success')).slice(0, 3).map((model) => (
+                <div key={model.id || model.name} className="min-w-0 rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-xs">
+                  <div className="truncate text-white/80">{model.name || model.display_name || model.id}</div>
+                  <div className="truncate text-white/45">{model.contract_status || model.adapter_status || (model.is_configured ? 'configured' : 'unknown')} · 未验证</div>
+                  {model.verification_gaps?.length ? <div className="break-words text-amber-100/65">缺口：{model.verification_gaps.join(' · ')}</div> : null}
+                </div>
+              ))}
               <Link href="/production-adapters" className="inline-block text-xs text-violet-300 hover:text-violet-200">查看模型状态 →</Link>
             </>
           )}

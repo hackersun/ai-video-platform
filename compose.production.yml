@@ -50,6 +50,26 @@ services:
       SERIES_STAGE_MODEL_TIMEOUT_SECONDS: ${SERIES_STAGE_MODEL_TIMEOUT_SECONDS:-90}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
       FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
+      APP_ENV: ${APP_ENV:-production}
+      MEDIA_SIGNING_KEY: ${MEDIA_SIGNING_KEY:-}
+      # G4 private media storage: local|s3|qiniu (production refuses local unless allowed)
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      ALLOW_LOCAL_STORAGE_IN_PRODUCTION: ${ALLOW_LOCAL_STORAGE_IN_PRODUCTION:-0}
+      STORAGE_BUCKET_ACL: ${STORAGE_BUCKET_ACL:-private}
+      STORAGE_KEY_PREFIX: ${STORAGE_KEY_PREFIX:-}
+      STORAGE_SIGNED_URL_TTL_SECONDS: ${STORAGE_SIGNED_URL_TTL_SECONDS:-900}
+      MEDIA_STATIC_DIR: /app/static
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      QINIU_BUCKET: ${QINIU_BUCKET:-}
+      QINIU_DOMAIN: ${QINIU_DOMAIN:-}
+      QINIU_UPLOAD_URL: ${QINIU_UPLOAD_URL:-}
+      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY:-}
+      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY:-}
       VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
@@ -62,7 +82,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 12
@@ -94,3 +114,103 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
+
+  series-run-worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.services.series_run_worker"]
+    environment:
+      DATABASE_URL: postgresql://ai_video:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ai_video_platform
+      REDIS_URL: redis://redis:6379/0
+      DEV_MODE: "false"
+      MODEL_CENTER_READ_MODE: canonical
+      SERIES_STAGE_MODEL_TIMEOUT_SECONDS: ${SERIES_STAGE_MODEL_TIMEOUT_SECONDS:-90}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
+      APP_ENV: ${APP_ENV:-production}
+      MEDIA_SIGNING_KEY: ${MEDIA_SIGNING_KEY:-}
+      # G4 private media storage: local|s3|qiniu (production refuses local unless allowed)
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      ALLOW_LOCAL_STORAGE_IN_PRODUCTION: ${ALLOW_LOCAL_STORAGE_IN_PRODUCTION:-0}
+      STORAGE_BUCKET_ACL: ${STORAGE_BUCKET_ACL:-private}
+      STORAGE_KEY_PREFIX: ${STORAGE_KEY_PREFIX:-}
+      STORAGE_SIGNED_URL_TTL_SECONDS: ${STORAGE_SIGNED_URL_TTL_SECONDS:-900}
+      MEDIA_STATIC_DIR: /app/static
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      QINIU_BUCKET: ${QINIU_BUCKET:-}
+      QINIU_DOMAIN: ${QINIU_DOMAIN:-}
+      QINIU_UPLOAD_URL: ${QINIU_UPLOAD_URL:-}
+      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY:-}
+      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY:-}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/media:/app/static
+      - ${AI_VIDEO_RUNTIME_ROOT:-/srv/ai-video-platform/runtime}/api-tmp:/tmp/ai-video-platform
+      - ${AI_VIDEO_FONT_ROOT:-/usr/share/fonts/opentype/noto}:/usr/share/fonts/opentype/noto:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,redis; redis.from_url(os.environ['REDIS_URL']).ping()"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  publication-pipeline-worker:
+    build: ./backend
+    restart: unless-stopped
+    command: ["python", "-m", "app.services.publication_pipeline_worker"]
+    environment:
+      DATABASE_URL: postgresql://ai_video:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/ai_video_platform
+      REDIS_URL: redis://redis:6379/0
+      DEV_MODE: "false"
+      PUBLICATION_PIPELINE_ENABLED: ${PUBLICATION_PIPELINE_ENABLED:-true}
+      MODEL_CENTER_READ_MODE: canonical
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:?JWT_SECRET_KEY is required}
+      FERNET_KEY: ${FERNET_KEY:?FERNET_KEY is required}
+      APP_ENV: ${APP_ENV:-production}
+      MEDIA_SIGNING_KEY: ${MEDIA_SIGNING_KEY:-}
+      # G4 private media storage: local|s3|qiniu (production refuses local unless allowed)
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      ALLOW_LOCAL_STORAGE_IN_PRODUCTION: ${ALLOW_LOCAL_STORAGE_IN_PRODUCTION:-0}
+      STORAGE_BUCKET_ACL: ${STORAGE_BUCKET_ACL:-private}
+      STORAGE_KEY_PREFIX: ${STORAGE_KEY_PREFIX:-}
+      STORAGE_SIGNED_URL_TTL_SECONDS: ${STORAGE_SIGNED_URL_TTL_SECONDS:-900}
+      MEDIA_STATIC_DIR: /app/static
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      QINIU_BUCKET: ${QINIU_BUCKET:-}
+      QINIU_DOMAIN: ${QINIU_DOMAIN:-}
+      QINIU_UPLOAD_URL: ${QINIU_UPLOAD_URL:-}
+      QINIU_ACCESS_KEY: ${QINIU_ACCESS_KEY:-}
+      QINIU_SECRET_KEY: ${QINIU_SECRET_KEY:-}
+      VOLCENGINE_API_KEY: ${VOLCENGINE_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/media:/app/static
+      - ${AI_VIDEO_RUNTIME_ROOT:-/srv/ai-video-platform/runtime}/api-tmp:/tmp/ai-video-platform
+      - ${AI_VIDEO_FONT_ROOT:-/usr/share/fonts/opentype/noto}:/usr/share/fonts/opentype/noto:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,redis; redis.from_url(os.environ['REDIS_URL']).ping()"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s

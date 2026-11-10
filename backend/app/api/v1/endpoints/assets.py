@@ -24,7 +24,7 @@ from app.models.character import Character
 from app.services.default_anime_library import ensure_default_anime_assets
 from app.services.asset_generation_service import AssetGenerationService, get_asset_view_presets, get_image_style_templates
 from app.services.asset_visual_review import review_asset_against_contract, retry_prompt_advice
-from app.services.media_persistence import persist_uploaded_media_bytes
+from app.services.upload_persistence import persist_uploaded_media
 from app.services.media_delivery import is_cloud_accessible_http_url
 from app.services.provider_asset_binding_service import (
     ProviderBindingError,
@@ -749,12 +749,10 @@ async def upload_asset_file(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传类型仅支持 resource 或 thumbnail")
 
     media_type = _asset_upload_media_type(asset_type, kind)
-    data = await file.read()
     try:
-        url = persist_uploaded_media_bytes(
-            data,
+        url, size = await persist_uploaded_media(
+            file,
             media_type=media_type,
-            content_type=file.content_type or "",
             subdir=f"assets/{media_type}s",
             prefix=f"{kind}-{user_id[:8]}",
             max_bytes=_asset_upload_limit(media_type),
@@ -768,7 +766,7 @@ async def upload_asset_file(
         url=url,
         filename=file.filename or "",
         content_type=file.content_type or "",
-        size=len(data),
+        size=size,
         media_type=media_type,
         kind=kind,
     )

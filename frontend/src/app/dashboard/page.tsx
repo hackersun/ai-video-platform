@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton, DashboardSkeleton } from '@/components/ui/skeleton';
 import { MainLayout } from '@/components/layout/main-layout';
-import { NextStepGuide } from '@/components/production/next-step-guide';
 import Link from 'next/link';
 import { 
-  BookOpen, 
+  BookOpen,
+  Film,
+  Cpu, 
   Users, 
   FileText, 
   Video, 
@@ -16,7 +17,6 @@ import {
   LayoutGrid, 
   ListTodo,
   LayoutTemplate,
-  Cpu,
   BarChart3,
   Sparkles,
   Plus,
@@ -222,88 +222,45 @@ export default function DashboardPage() {
             <h1 className="text-3xl font-bold text-white mb-2">
               欢迎回来，{user.username} 👋
             </h1>
-            <p className="text-white/60">从小说开始，把角色、世界观、声音和镜头统一成连续动漫</p>
+            <p className="text-white/60">粘贴小说，一键生成视频；日常请从小说页开始</p>
           </div>
           <Button asChild className="bg-violet-600 hover:bg-violet-700">
-            <Link href="/quick-start">
+            <Link href="/novels">
               <Sparkles className="w-4 h-4 mr-2" />
-              开始连续动漫向导
+              开始创作
             </Link>
           </Button>
         </div>
 
-        <NextStepGuide
-          current={novels.length ? `已有 ${novels.length} 个作品，可继续制作下一集` : '还没有作品，适合先用一段小说跑通首集'}
-          next={novels.length ? '进入连续动漫向导或工作台，选择作品继续生成分集' : '粘贴小说梗概和第一章，让 AI 生成首集工程'}
-          reason="先锁定设定本，后续多集才能保持人物、场景、道具和声线一致。"
-          href="/quick-start"
-          actionLabel="打开连续动漫向导"
-          checklist={['AI自动生成动漫设定本', 'AI自动生成剧本分镜', '可一键产出首集草片']}
-        />
-
-        {/* 创作流程引导 - 时间线样式 */}
-        <Card className="bg-gradient-to-r from-violet-600/10 to-indigo-600/10 border-violet-500/20">
-          <CardContent className="p-6">
-            <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-violet-400" />
-              推荐制作路径
-            </h2>
-            <div className="relative">
-              {/* 时间线连接线 */}
-              <div className="absolute top-6 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 hidden md:block" />
-              
-              <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4">
-                {[
-                  { step: 1, label: '开始连续动漫', href: '/quick-start', icon: Wand2, color: 'from-violet-500 to-violet-600' },
-                  { step: 2, label: '完善角色设定', href: '/characters', icon: Users, color: 'from-purple-500 to-purple-600' },
-                  { step: 3, label: '生成分集计划', href: '/novels', icon: BookOpen, color: 'from-blue-500 to-blue-600' },
-                  { step: 4, label: '一键制作首集', href: '/producer', icon: Sparkles, color: 'from-cyan-500 to-cyan-600' },
-                  { step: 5, label: '审核分镜声音', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
-                  { step: 6, label: '连续成片', href: '/studio', icon: Workflow, color: 'from-pink-500 to-pink-600' },
-                ].map((item, index) => (
-                  <div key={item.step} className="flex flex-col items-center relative z-10">
-                    <Link
-                      href={item.href}
-                      className={`w-12 h-12 rounded-full bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-lg transition-transform duration-200 hover:scale-110`}
-                    >
-                      <item.icon className="w-5 h-5" />
-                    </Link>
-                    <span className="text-xs text-white/60 mt-2 whitespace-nowrap">{item.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
         <div className="space-y-4">
           <div>
-            <h2 className="mb-3 text-lg font-semibold text-white">常用入口</h2>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <Link href="/quick-start">
+            <h2 className="mb-3 text-lg font-semibold text-white">快捷入口</h2>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="dashboard-shortcuts">
+              <Link href="/novels">
                 <Card className="h-full border-cyan-400/30 bg-cyan-500/10 transition-colors hover:border-cyan-300/60">
                   <CardContent className="p-5">
-                    <Wand2 className="mb-3 h-6 w-6 text-cyan-300" />
-                    <div className="font-medium text-white">连续动漫向导</div>
-                    <div className="mt-1 text-sm text-white/55">从小说开始，一次生成设定本、分镜和第一集草片</div>
+                    <BookOpen className="mb-3 h-6 w-6 text-cyan-300" />
+                    <div className="font-medium text-white">小说</div>
+                    <div className="mt-1 text-sm text-white/55">粘贴正文，一键生成视频</div>
                   </CardContent>
                 </Card>
               </Link>
-              <Link href="/novels">
+              <Link href="/synthesis">
                 <Card className="h-full border-white/10 bg-white/5 transition-colors hover:border-violet-400/40">
                   <CardContent className="p-5">
-                    <BookOpen className="mb-3 h-6 w-6 text-violet-300" />
-                    <div className="font-medium text-white">我的作品</div>
-                    <div className="mt-1 text-sm text-white/55">查看小说、章节、分集计划和已有制作进度</div>
+                    <Film className="mb-3 h-6 w-6 text-violet-300" />
+                    <div className="font-medium text-white">成片</div>
+                    <div className="mt-1 text-sm text-white/55">播放、下载和发布已生成的视频</div>
                   </CardContent>
                 </Card>
               </Link>
-              <Link href="/studio">
+              <Link href="/llm-config">
                 <Card className="h-full border-white/10 bg-white/5 transition-colors hover:border-emerald-400/40">
                   <CardContent className="p-5">
-                    <Workflow className="mb-3 h-6 w-6 text-emerald-300" />
-                    <div className="font-medium text-white">继续制作</div>
-                    <div className="mt-1 text-sm text-white/55">进入工作台，继续审核镜头、声音、字幕和成片质量</div>
+                    <Cpu className="mb-3 h-6 w-6 text-emerald-300" />
+                    <div className="font-medium text-white">模型设置</div>
+                    <div className="mt-1 text-sm text-white/55">粘贴 API Key 并检测可用性</div>
                   </CardContent>
                 </Card>
               </Link>
@@ -379,12 +336,12 @@ export default function DashboardPage() {
                     </CardContent>
                   </Card>
                 </Link>
-                <Link href="/producer">
+                <Link href="/novels">
                   <Card className="bg-white/5 border-white/10 hover:border-cyan-400/40 transition-colors h-full">
                     <CardContent className="p-5">
                       <Sparkles className="w-6 h-6 text-cyan-300 mb-3" />
-                      <div className="text-white font-medium">一键成片中心</div>
-                      <div className="text-white/50 text-sm mt-1">查看状态机、定稿包、媒体巡检、质量检查和安全补齐</div>
+                      <div className="text-white font-medium">一键生成视频</div>
+                      <div className="text-white/50 text-sm mt-1">在作品列表选择小说，一键生成整本视频并查看进度</div>
                     </CardContent>
                   </Card>
                 </Link>
@@ -489,13 +446,13 @@ export default function DashboardPage() {
                 </div>
                 <h3 className="text-xl font-semibold text-white mb-2">开始您的创作之旅</h3>
                 <p className="text-white/60 mb-6 max-w-md mx-auto">
-                  从连续动漫向导开始，AI会帮您把小说整理成设定本、分镜和首集草片
+                  从小说页开始：粘贴正文，一键生成视频
                 </p>
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
                   <Button asChild className="theme-always-dark bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white px-8">
-                    <Link href="/quick-start">
+                    <Link href="/novels">
                       <Sparkles className="w-4 h-4 mr-2" />
-                      开始向导
+                      开始创作
                     </Link>
                   </Button>
                   <Button asChild variant="outline" className="border-violet-500/50 text-violet-300 hover:bg-violet-600/20 px-8">

@@ -20,6 +20,7 @@ from app.models.workflow import Workflow
 from app.models.image_job import ImageJob
 from app.models.project import Project, ProjectMember
 from app.models.publication import Publication
+from app.models.publication_pipeline import NovelPublicationPipeline
 from app.models.asset import Asset, AssetCategory
 from app.models.timeline import Timeline, Track, Clip
 from app.models.story_bible import StoryBible
@@ -42,6 +43,7 @@ from app.models.quality_evaluation import QualityEvaluation
 from app.models.series_production_run import SeriesProductionRun
 from app.models.series_anchor_generation_submission import SeriesAnchorGenerationSubmission
 from app.models.live_canary_provider_operation import LiveCanaryProviderOperation
+from app.models.billing import BillingLedgerEntry, UserBillingSettings
 from app.models.model_center import (
     ModelBinding,
     ModelCertificationRun,
@@ -77,6 +79,7 @@ __all__ = [
     "Project",
     "ProjectMember",
     "Publication",
+    "NovelPublicationPipeline",
     "Asset",
     "AssetCategory",
     "Timeline",
@@ -106,6 +109,8 @@ __all__ = [
     "QualityEvaluation",
     "SeriesProductionRun",
     "LiveCanaryProviderOperation",
+    "BillingLedgerEntry",
+    "UserBillingSettings",
     "ModelProvider",
     "ModelProfile",
     "ModelConnection",

@@ -1,0 +1,44 @@
+# Wave4 local contracts only — not for production.
+# MinIO image registries may be blocked; use profile "minio" when the image is available:
+#   docker compose -f ops/wave4/docker-compose.contracts.yml --profile minio up -d
+name: avp-wave4-contracts
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: ai_video_platform
+      POSTGRES_USER: avp
+      POSTGRES_PASSWORD: avp_wave4_local
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avp -d ai_video_platform"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - avp_wave4_pg:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  minio:
+    profiles: ["minio"]
+    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "59000:9000"
+      - "59001:9001"
+    volumes:
+      - avp_wave4_minio:/data
+volumes:
+  avp_wave4_pg:
+  avp_wave4_minio:

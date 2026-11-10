@@ -30,9 +30,33 @@ from init_db import init_db
 from main import app
 
 
+_CREATED_TEST_PROVIDER_IDS: list[str] = []
+
+
 @pytest.fixture(scope="module", autouse=True)
-def _init_database() -> None:
+def _init_database():
     init_db()
+    yield
+    _cleanup_created_test_providers()
+
+
+def _cleanup_created_test_providers() -> None:
+    """本模块会在当前数据库里创建 live-* 临时供应商/模型/配置；结束后删除，避免残留到共享开发库的模型中心。"""
+    if not _CREATED_TEST_PROVIDER_IDS:
+        return
+    from sqlalchemy import delete
+
+    async def _cleanup() -> None:
+        async with AsyncSessionLocal() as db:
+            ids = list(_CREATED_TEST_PROVIDER_IDS)
+            model_ids = select(LLMModel.id).where(LLMModel.provider_id.in_(ids))
+            await db.execute(delete(LLMConfig).where(LLMConfig.model_id.in_(model_ids)))
+            await db.execute(delete(LLMModel).where(LLMModel.provider_id.in_(ids)))
+            await db.execute(delete(LLMProvider).where(LLMProvider.id.in_(ids), LLMProvider.name.like("live-%")))
+            await db.commit()
+
+    asyncio.run(_cleanup())
+    _CREATED_TEST_PROVIDER_IDS.clear()
 
 
 @pytest.fixture()
@@ -88,6 +112,7 @@ def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
                 ("tts", ["text-to-speech"], "tts"), ("video", ["text-to-video"], "video-generation"),
             ):
                 provider = LLMProvider(id=str(uuid4()), name=f"live-{capability}-{uuid4()}", is_active=True)
+                _CREATED_TEST_PROVIDER_IDS.append(provider.id)
                 model = LLMModel(id=str(uuid4()), provider_id=provider.id, model_id=f"api-{capability}", model_name=capability, model_type=model_type, capabilities=tags, is_active=True)
                 config = LLMConfig(id=str(uuid4()), user_id=user_id, model_id=model.id, name=capability, api_key="opaque", is_active=True, test_status="success", tested_at=utc_now())
                 db.add_all([provider, model, config]); bindings[capability] = config.id
@@ -100,6 +125,8 @@ def test_live_canonical_shot_image_precommits_operation_before_mocked_provider(
                 episodes=[{"episode_number": 1, "canonical_ids": {"workflow_id": workflow_id, "shot_ids": [shot_id]}}], version=1,
                 created_at=utc_now() - timedelta(seconds=1),
             ))
+            from app.services.billing_guard import opt_in_live_billing
+            await opt_in_live_billing(db, user_id, commit=False)
             await db.commit()
 
     asyncio.run(_seed())
@@ -1242,7 +1269,7 @@ def test_video_generation_skips_local_reference_image_for_provider(
     job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
     assert job_resp.status_code == 200
     job = job_resp.json()
-    assert job["image_url"] == "/static/generated/images/local-ref.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/local-ref.png"
     assert job["prompt_parameters"]["image_url_sent"] is False
     assert job["prompt_parameters"]["provider_image_url"] is None
     assert "公网" in job["prompt_parameters"]["image_url_omitted_reason"]
@@ -1324,7 +1351,7 @@ def test_video_generation_maps_local_reference_image_through_public_storage(
     job_resp = client.get(f"/api/v1/video/jobs/{create_resp.json()['job_id']}", headers=_auth_headers(user_id))
     assert job_resp.status_code == 200
     job = job_resp.json()
-    assert job["image_url"] == "/static/generated/images/local-ref.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/local-ref.png"
     assert job["prompt_parameters"]["image_url_sent"] is True
     assert job["prompt_parameters"]["provider_image_url"] == "https://cdn.example.com/static/generated/images/local-ref.png"
     assert job["prompt_parameters"]["image_delivery_method"] == "public_static_base_url"
@@ -1922,7 +1949,7 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     synthesis_payload = synthesis_resp.json()
     assert synthesis_payload["output_url"] != synthesis_payload["video_url"]
     extra = synthesis_payload["extra_data"]
-    assert extra["manifest_url"] == concat_payload["manifest_url"]
+    assert extra["manifest_url"].split("?")[0] == concat_payload["manifest_url"].split("?")[0]
     assert extra["segment_count"] == 2
     assert [segment["video"]["job_id"] for segment in extra["segments"]] == video_job_ids
     assert [segment["audio"]["job_id"] for segment in extra["segments"]] == tts_job_ids
@@ -1953,7 +1980,7 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     )
     assert workflow_status.status_code == 200
     status_payload = workflow_status.json()
-    assert status_payload["synthesis_jobs"][0]["manifest_url"] == concat_payload["manifest_url"]
+    assert status_payload["synthesis_jobs"][0]["manifest_url"].split("?")[0] == concat_payload["manifest_url"].split("?")[0]
     assert status_payload["synthesis_jobs"][0]["segment_count"] == 2
 
     preflight_resp = client.get(
@@ -1964,7 +1991,7 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     preflight = preflight_resp.json()
     assert preflight["ready"] is True
     assert preflight["segment_count"] == 2
-    assert preflight["manifest_url"] == concat_payload["manifest_url"]
+    assert preflight["manifest_url"].split("?")[0] == concat_payload["manifest_url"].split("?")[0]
 
     render_resp = client.post(
         f"/api/v1/workflow/{workflow_id}/render",
@@ -1979,9 +2006,9 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert render_payload["is_publishable"] is False
     assert render_payload["output_kind"] == "preview_package"
     assert render_payload["publication_blockers"][0]["code"] == "preview_package_not_publishable"
-    assert render_payload["preview_url"].endswith("-preview.html")
-    assert render_payload["srt_url"].endswith(".srt")
-    assert render_payload["timeline_url"].endswith("-timeline.json")
+    assert render_payload["preview_url"].split("?")[0].endswith("-preview.html")
+    assert render_payload["srt_url"].split("?")[0].endswith(".srt")
+    assert render_payload["timeline_url"].split("?")[0].endswith("-timeline.json")
     assert render_payload["render_manifest_url"].startswith("/static/exports/")
 
     preview_resp = client.get(render_payload["preview_url"])
@@ -1991,9 +2018,9 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     render_manifest_resp = client.get(render_payload["render_manifest_url"])
     assert render_manifest_resp.status_code == 200
     render_manifest = render_manifest_resp.json()
-    assert render_manifest["output_url"] == render_payload["preview_url"]
-    assert render_manifest["playable_url"] == render_payload["preview_url"]
-    assert render_manifest["artifacts"]["preview_url"] == render_payload["preview_url"]
+    assert render_manifest["output_url"].split("?")[0] == render_payload["preview_url"].split("?")[0]
+    assert render_manifest["playable_url"].split("?")[0] == render_payload["preview_url"].split("?")[0]
+    assert render_manifest["artifacts"]["preview_url"].split("?")[0] == render_payload["preview_url"].split("?")[0]
     assert [segment["index"] for segment in render_manifest["segments"]] == [1, 2]
     assert render_manifest["segments"][0]["audio"]["text"] == "第 1 个镜头台词"
     assert render_manifest["tracks"]["audio"][0]["url"]
@@ -2087,12 +2114,12 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
         f"/api/v1/synthesis/jobs/{concat_payload['job_id']}",
         headers=_auth_headers(user_id),
     ).json()
-    assert rendered_job["output_url"] == timeline_render["preview_url"]
+    assert rendered_job["output_url"].split("?")[0] == timeline_render["preview_url"].split("?")[0]
     assert rendered_job["is_publishable"] is False
     assert rendered_job["output_kind"] == "preview_package"
     assert rendered_job["publication_blockers"][0]["code"] == "preview_package_not_publishable"
     assert rendered_job["extra_data"]["render_status"] == "rendered"
-    assert rendered_job["extra_data"]["render_artifacts"]["srt_url"] == timeline_render["srt_url"]
+    assert rendered_job["extra_data"]["render_artifacts"]["srt_url"].split("?")[0] == timeline_render["srt_url"].split("?")[0]
     assert rendered_job["extra_data"]["render_source"] == "editable_timeline"
 
     rendered_status = client.get(
@@ -2104,10 +2131,10 @@ def test_workflow_concatenate_builds_multi_shot_sequence_manifest(client: TestCl
     assert rendered_status_job["render_status"] == "rendered"
     assert rendered_status_job["is_publishable"] is False
     assert rendered_status_job["output_kind"] == "preview_package"
-    assert rendered_status_job["preview_url"] == timeline_render["preview_url"]
-    assert rendered_status_job["srt_url"] == timeline_render["srt_url"]
-    assert rendered_status_job["timeline_url"] == timeline_render["timeline_url"]
-    assert rendered_status_job["render_manifest_url"] == timeline_render["render_manifest_url"]
+    assert rendered_status_job["preview_url"].split("?")[0] == timeline_render["preview_url"].split("?")[0]
+    assert rendered_status_job["srt_url"].split("?")[0] == timeline_render["srt_url"].split("?")[0]
+    assert rendered_status_job["timeline_url"].split("?")[0] == timeline_render["timeline_url"].split("?")[0]
+    assert rendered_status_job["render_manifest_url"].split("?")[0] == timeline_render["render_manifest_url"].split("?")[0]
     assert rendered_status_job["segment_count"] == 2
 
 
@@ -3030,7 +3057,7 @@ def test_video_consistency_package_uses_real_novel_character_and_shared_style_se
     assert jobs[0]["prompt_parameters"]["image_url_sent"] is False
     assert jobs[0]["prompt_parameters"]["reference_image_source"] == "character_avatar"
     assert "公网" in jobs[0]["prompt_parameters"]["image_url_omitted_reason"]
-    assert jobs[0]["image_url"] == "/static/generated/images/sunjian-reference.png"
+    assert jobs[0]["image_url"].split("?")[0] == "/static/generated/images/sunjian-reference.png"
     assert "孙剑" in jobs[0]["prompt"]
     assert "年轻瘦弱" in jobs[0]["prompt"]
     assert "眼神锐利" in jobs[0]["prompt"]
@@ -3650,7 +3677,7 @@ def test_workflow_media_batch_skips_local_reference_image_for_provider(
     assert all(item["type"] != "image_url" for item in captured_video[0]["content"])
 
     job = client.get(f"/api/v1/video/jobs/{payload['video_job_ids'][0]}", headers=_auth_headers(user_id)).json()
-    assert job["image_url"] == "/static/generated/images/linche-reference.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_url_sent"] is False
     assert job["prompt_parameters"]["reference_image_source"] == "character_avatar"
     assert "公网" in job["prompt_parameters"]["image_url_omitted_reason"]
@@ -3757,7 +3784,7 @@ def test_workflow_media_batch_maps_local_reference_image_through_public_storage(
     assert captured_video[0]["content"][0]["image_url"]["url"] == "https://cdn.example.com/static/generated/images/linche-reference.png"
 
     job = client.get(f"/api/v1/video/jobs/{payload['video_job_ids'][0]}", headers=_auth_headers(user_id)).json()
-    assert job["image_url"] == "/static/generated/images/linche-reference.png"
+    assert job["image_url"].split("?")[0] == "/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_url_sent"] is True
     assert job["prompt_parameters"]["provider_image_url"] == "https://cdn.example.com/static/generated/images/linche-reference.png"
     assert job["prompt_parameters"]["image_delivery_method"] == "public_static_base_url"
@@ -4044,8 +4071,8 @@ def test_workflow_render_ffmpeg_local_marks_output_publishable(
     payload = response.json()
     assert payload["status"] == "rendered"
     assert payload["render_backend"] == "ffmpeg_local"
-    assert payload["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
-    assert payload["srt_url"] == "/static/exports/final-ffmpeg-local.srt"
+    assert payload["output_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.mp4"
+    assert payload["srt_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.srt"
     assert payload["duration_seconds"] == 1.2
     assert payload["is_publishable"] is True
     assert payload["output_kind"] == "final_video"
@@ -4055,9 +4082,9 @@ def test_workflow_render_ffmpeg_local_marks_output_publishable(
         f"/api/v1/synthesis/jobs/{synthesis_job_id}",
         headers=_auth_headers(user_id),
     ).json()
-    assert rendered_job["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert rendered_job["output_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.mp4"
     assert rendered_job["extra_data"]["render_backend"] == "ffmpeg_local"
-    assert rendered_job["extra_data"]["render_artifacts"]["output_url"] == "/static/exports/final-ffmpeg-local.mp4"
+    assert rendered_job["extra_data"]["render_artifacts"]["output_url"].split("?")[0] == "/static/exports/final-ffmpeg-local.mp4"
     assert rendered_job["extra_data"]["is_publishable"] is True
 
     status_resp = client.get(f"/api/v1/workflow/status/{workflow_id}", headers=_auth_headers(user_id))
@@ -4373,12 +4400,12 @@ def test_synthesis_jobs_filter_lineage_and_expose_render_artifacts(client: TestC
     assert job["storyboard_id"] == storyboard_id
     assert job["shot_id"] == shot_id
     assert job["render_status"] == "rendered"
-    assert job["manifest_url"] == "/static/exports/sequence-a.json"
+    assert job["manifest_url"].split("?")[0] == "/static/exports/sequence-a.json"
     assert job["segment_count"] == 1
-    assert job["preview_url"] == "/static/exports/render-a-preview.html"
-    assert job["srt_url"] == "/static/exports/render-a.srt"
-    assert job["timeline_url"] == "/static/exports/render-a-timeline.json"
-    assert job["render_manifest_url"] == "/static/exports/render-a.json"
+    assert job["preview_url"].split("?")[0] == "/static/exports/render-a-preview.html"
+    assert job["srt_url"].split("?")[0] == "/static/exports/render-a.srt"
+    assert job["timeline_url"].split("?")[0] == "/static/exports/render-a-timeline.json"
+    assert job["render_manifest_url"].split("?")[0] == "/static/exports/render-a.json"
 
 
 def test_tts_requires_api_key_outside_dev_mode(
@@ -4394,6 +4421,7 @@ def test_tts_requires_api_key_outside_dev_mode(
             "username": f"tts-key-user-{suffix}",
             "email": f"tts-key-user-{suffix}@example.test",
             "password": "testPass123",
+            "accept_terms": True,
         },
     )
     assert register_resp.status_code == 200

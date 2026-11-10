@@ -24,7 +24,7 @@ from app.services.live_canary_repair_budget import effective_budget_maximum
 from app.features.series_run_media_preflight.public import evaluate_media_preflight
 from app.services.shot_quality_service import extract_dialogue_speaker
 from app.services.shot_image_delivery import is_live_ready_shot_image
-from app.services.anchor_shot_service import ANCHOR_MODE_CONTRACTS
+from app.services.anchor_shot_service import ANCHOR_MODE_CONTRACTS, anchor_contract
 from app.services.dialogue_lineage_service import extract_explicit_dialogue
 from app.services.media_job_selection import latest_non_superseded_by_shot
 from app.services.shot_input_fingerprint import shot_input_fingerprint
@@ -117,7 +117,7 @@ def _money_text(value: Decimal) -> str:
 async def _selected_anchor_shots(db: AsyncSession, run: SeriesProductionRun) -> list[tuple[int, Shot]]:
     selected = [str(item) for item in ((run.run_metadata or {}).get("selected_anchor_shot_ids") or [])]
     mode = str((run.run_metadata or {}).get("selected_anchor_mode") or "smoke")
-    required_count = ANCHOR_MODE_CONTRACTS.get(mode, ANCHOR_MODE_CONTRACTS["smoke"])["target_count"]
+    required_count = anchor_contract(mode if mode in ANCHOR_MODE_CONTRACTS else "smoke", run.episodes or None)["target_count"]
     if len(selected) != required_count or len(set(selected)) != required_count:
         return []
     episode_by_shot: dict[str, int] = {}
@@ -166,7 +166,7 @@ async def _anchor_preflight(
 
     anchors = await _selected_anchor_shots(db, run)
     selected_mode = str((run.run_metadata or {}).get("selected_anchor_mode") or "smoke")
-    contract = ANCHOR_MODE_CONTRACTS.get(selected_mode, ANCHOR_MODE_CONTRACTS["smoke"])
+    contract = anchor_contract(selected_mode if selected_mode in ANCHOR_MODE_CONTRACTS else "smoke", run.episodes or None)
     required_anchor_count = contract["target_count"]
     required_episode_count = contract["required_episodes"]
     if len(anchors) != required_anchor_count or len({item[0] for item in anchors}) < required_episode_count:

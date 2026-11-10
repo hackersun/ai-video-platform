@@ -230,6 +230,22 @@ const getShotReviewState = (shot: Shot) =>
   shot.extra_data?.production_context?.review_state || shot.extra_data?.review_state || 'pending_review';
 type BatchImageProgress = { status: string; message?: string };
 
+const DIALOGUE_SOURCE_LABELS: Record<string, string> = {
+  chapter: '章节原文', novel: '小说原文', script: '剧本', direct: '原文对白', model: 'AI 生成', manual: '手动填写', storyboard: '分镜',
+};
+
+/** 对白来源可能是字符串代码或对象（如 {type, chapter_id}），统一转成用户能看懂的文字，避免出现 [object Object]。 */
+function dialogueSourceLabel(source: unknown): string {
+  if (!source) return '';
+  if (typeof source === 'string') return DIALOGUE_SOURCE_LABELS[source] || source;
+  if (typeof source === 'object') {
+    const value = source as Record<string, unknown>;
+    const key = [value.label, value.name, value.type, value.kind, value.source].find((item) => typeof item === 'string') as string | undefined;
+    return key ? (DIALOGUE_SOURCE_LABELS[key] || key) : '原文';
+  }
+  return String(source);
+}
+
 export default function ShotsPage() {
   const { toast } = useToast();
   const router = useRouter();
@@ -1854,7 +1870,7 @@ export default function ShotsPage() {
                             {shot.extra_data?.dialogue_speaker && (
                               <div className="text-[11px] text-white/40">
                                 说话人：{shot.extra_data.dialogue_speaker}
-                                {shot.extra_data.dialogue_source ? ` · 来源：${shot.extra_data.dialogue_source}` : ''}
+                                {shot.extra_data.dialogue_source ? ` · 来源：${dialogueSourceLabel(shot.extra_data.dialogue_source)}` : ''}
                               </div>
                             )}
                           </div>
@@ -2124,7 +2140,7 @@ export default function ShotsPage() {
                         {(editData.extra_data?.dialogue_speaker || selectedShot.extra_data?.dialogue_speaker) && (
                           <p className="mt-1 text-xs text-blue-200/70">
                             说话人：{editData.extra_data?.dialogue_speaker || selectedShot.extra_data?.dialogue_speaker}
-                            {(editData.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source) ? ` · 来源：${editData.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source}` : ''}
+                            {(editData.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source) ? ` · 来源：${dialogueSourceLabel(editData.extra_data?.dialogue_source || selectedShot.extra_data?.dialogue_source)}` : ''}
                           </p>
                         )}
                       </div>
