@@ -408,7 +408,7 @@ test('top navigation has one canonical entry per function and legacy entries red
   await page.goto('/novels');
 
   const navigation = page.getByRole('navigation').first();
-  for (const label of ['小说', '任务中心', '资产', '成片', '模型设置']) {
+  for (const label of ['小说', '成片', '模型设置']) {
     await expect(navigation.getByRole('link', { name: label })).toBeVisible();
   }
   await expect(navigation.getByRole('link', { name: '模型设置' })).toHaveAttribute('href', '/llm-config');

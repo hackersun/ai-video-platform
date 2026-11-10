@@ -36,15 +36,15 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const primaryNav = [
   { href: '/novels', label: '小说' },
-  { href: '/jobs', label: '任务中心' },
-  { href: '/assets', label: '资产' },
   { href: '/synthesis', label: '成片' },
   { href: '/llm-config', label: '模型设置' },
 ];
 
 const expertNav = [
   { href: '/studio', label: '工作室' },
-  { href: '/quick-start', label: '快速开始' },
+  { href: '/quick-start', label: '专家向导' },
+  { href: '/jobs', label: '任务中心' },
+  { href: '/assets', label: '角色与场景图' },
   { href: '/story-bibles', label: '故事设定' },
   { href: '/producer', label: 'AI 制片' },
   { href: '/workflow', label: '工作流' },
@@ -251,7 +251,7 @@ export function TopNavigation() {
         </nav>
 
         <nav className="flex min-w-0 flex-1 items-center justify-end gap-1 md:hidden">
-          {primaryNavItems.slice(0, 4).map((item) => {
+          {primaryNavItems.map((item) => {
             const Icon = item.icon;
             return (
               <Link
