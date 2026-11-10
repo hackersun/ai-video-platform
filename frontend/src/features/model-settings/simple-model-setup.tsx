@@ -236,6 +236,8 @@ export function SimpleModelSetup() {
   }
 
   const busy = saving || testing;
+  // 正式环境无演示模式：欢迎页只推「自带 Key」，不暗示免费试用/赠送额度。
+  const showByokWelcome = Boolean(welcome && state && !state.configured && path === null && !state.simulation_available);
   const showChooser = Boolean(welcome && state && !state.configured && path === null && state.simulation_available);
   const summary = SIMPLE_CAPABILITIES.map((cap) => {
     const card = state?.capabilities[cap];
@@ -256,17 +258,37 @@ export function SimpleModelSetup() {
         </Link>
       </header>
 
-      {showChooser ? (
+      {showByokWelcome ? (
+        <section data-testid="onboarding-byok" className="rounded-2xl border-2 border-violet-300 bg-gradient-to-br from-violet-50 to-white p-8 shadow-sm">
+          <div className="mx-auto max-w-xl space-y-4 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-violet-100 text-violet-700">
+              <KeyRound className="h-6 w-6" />
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900">填写 API Key 开始</h2>
+            <p className="text-sm leading-6 text-slate-600">
+              正式环境<strong>没有免费试用</strong>，也不赠送额度。请粘贴你自己的 API Key；
+              检测通过后可开启真实生成（默认每次最多 ¥{DEFAULT_PIPELINE_CAP_RMB}，账户累计上限可在费用设置里调整）。
+            </p>
+            <button type="button" data-testid="onboarding-byok-start" onClick={() => setPath('key')} disabled={busy}
+              className="inline-flex h-11 items-center justify-center rounded-xl bg-violet-600 px-6 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-60">
+              开始填写 API Key
+            </button>
+            <div>
+              <Link href="/novels" className="text-sm text-slate-500 underline">稍后再说，去作品列表 →</Link>
+            </div>
+          </div>
+        </section>
+      ) : showChooser ? (
         <section data-testid="onboarding-choice" className="grid gap-4 md:grid-cols-2">
           <button type="button" onClick={startTrial} disabled={busy}
             className="flex flex-col items-start gap-2 rounded-2xl border-2 border-violet-300 bg-violet-50 p-6 text-left hover:border-violet-500 disabled:opacity-60">
-            <span className="flex items-center gap-2 text-lg font-semibold text-violet-800"><Sparkles className="h-5 w-5" />免费试用</span>
-            <span className="text-sm text-violet-700">不需要 API Key、不扣费，用演示素材走完整个流程。</span>
+            <span className="flex items-center gap-2 text-lg font-semibold text-violet-800"><Sparkles className="h-5 w-5" />演示模式（测试环境）</span>
+            <span className="text-sm text-violet-700">仅测试/演示环境可用：不需要 API Key、不扣费，用演示素材走完流程。正式环境需自带 Key，无赠送额度。</span>
           </button>
           <button type="button" onClick={() => setPath('key')} disabled={busy}
             className="flex flex-col items-start gap-2 rounded-2xl border-2 border-slate-200 bg-white p-6 text-left hover:border-violet-400 disabled:opacity-60">
             <span className="flex items-center gap-2 text-lg font-semibold text-slate-900"><KeyRound className="h-5 w-5" />我有 API Key</span>
-            <span className="text-sm text-slate-600">粘贴一个 Key，自动检测并开启真实生成（默认每次最多 ¥{DEFAULT_PIPELINE_CAP_RMB}）。</span>
+            <span className="text-sm text-slate-600">粘贴一个 Key，自动检测并开启真实生成（默认每次最多 ¥{DEFAULT_PIPELINE_CAP_RMB}）。正式环境必须自带 Key。</span>
           </button>
           <Link href="/novels" className="text-sm text-slate-500 underline md:col-span-2">稍后再说，去作品列表 →</Link>
         </section>
@@ -276,7 +298,7 @@ export function SimpleModelSetup() {
             <div className={`rounded-xl border px-4 py-3 text-sm ${state.configured && state.verified ? toneClass.ok : toneClass.warn}`} role="status">
               {state.configured && state.verified
                 ? '全部就绪：文本、图像、视频、语音均已连接，可以直接「一键生成视频」。'
-                : state.configured ? '已填写，尚未全部检测通过。点击「保存并检测」重试。' : '尚未完成设置：粘贴 API Key 后点击「保存并检测」。'}
+                : state.configured ? '已填写，尚未全部检测通过。点击「保存并检测」重试。' : '尚未完成设置：请粘贴你自己的 API Key 后点击「保存并检测」（正式环境无免费试用、无赠送额度）。'}
             </div>
           )}
 
@@ -291,16 +313,16 @@ export function SimpleModelSetup() {
             <section data-testid="model-setup-simulation" className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="font-medium text-slate-800">免费试用（演示模式）</div>
+                  <div className="font-medium text-slate-800">演示模式（仅测试环境）</div>
                   <p className="mt-0.5 text-slate-500">
                     {state.simulation_enabled
-                      ? '当前使用演示模式：生成结果为演示素材，不扣费。如需真实生成，在下方粘贴 API Key 并「保存并检测」。'
-                      : '不需要 API Key、不扣费：一键切换并检测，然后直接去导入小说。'}
+                      ? '当前使用演示模式：生成结果为演示素材，不扣费。正式环境需自带 API Key，无赠送额度。'
+                      : '测试环境可用：不需要 API Key、不扣费。正式环境没有免费试用，请粘贴自己的 API Key。'}
                   </p>
                 </div>
                 <button type="button" onClick={startTrial} disabled={busy || state.simulation_enabled}
                   className="inline-flex h-9 items-center rounded-md border border-slate-300 bg-white px-3 font-medium text-slate-700 hover:border-violet-400 disabled:opacity-60">
-                  {state.simulation_enabled ? '已在免费试用' : '免费试用'}
+                  {state.simulation_enabled ? '已在演示模式' : '进入演示模式'}
                 </button>
               </div>
             </section>

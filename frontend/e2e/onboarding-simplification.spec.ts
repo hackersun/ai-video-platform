@@ -366,10 +366,10 @@ test('welcome: only two choices; free trial saves, self-checks and jumps to nove
   await page.goto('/llm-config?welcome=1');
   const choice = page.getByTestId('onboarding-choice');
   await expect(choice.getByRole('button')).toHaveCount(2);
-  await expect(choice.getByRole('button', { name: /免费试用/ })).toBeVisible();
+  await expect(choice.getByRole('button', { name: /演示模式/ })).toBeVisible();
   await expect(choice.getByRole('button', { name: /我有 API Key/ })).toBeVisible();
   await expect(page.getByLabel('API Key', { exact: true })).toHaveCount(0);
-  await choice.getByRole('button', { name: /免费试用/ }).click();
+  await choice.getByRole('button', { name: /演示模式/ }).click();
   await expect(page).toHaveURL(/\/novels\?start=paste/);
   expect(simulationSaved).toBe(true);
 });
@@ -381,6 +381,23 @@ test('welcome: "我有 API Key" reveals only the key form', async ({ page }) => 
   await page.goto('/llm-config?welcome=1');
   await page.getByTestId('onboarding-choice').getByRole('button', { name: /我有 API Key/ }).click();
   await expect(page.getByTestId('onboarding-choice')).toHaveCount(0);
+  await expect(page.getByLabel('API Key', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '保存并检测' })).toBeVisible();
+});
+
+test('welcome without simulation: clear BYOK card, no free trial promise', async ({ page }) => {
+  await page.route('**/api/v1/model-center/simple-setup', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ...simpleState(false), simulation_available: false, simulation_enabled: false }) });
+  });
+  await page.goto('/llm-config?welcome=1');
+  await expect(page.getByTestId('onboarding-choice')).toHaveCount(0);
+  const byok = page.getByTestId('onboarding-byok');
+  await expect(byok).toBeVisible();
+  await expect(byok.getByRole('heading', { name: '填写 API Key 开始' })).toBeVisible();
+  await expect(byok.getByText(/没有免费试用/)).toBeVisible();
+  await expect(byok.getByText(/不赠送额度/)).toBeVisible();
+  await page.getByTestId('onboarding-byok-start').click();
+  await expect(page.getByTestId('onboarding-byok')).toHaveCount(0);
   await expect(page.getByLabel('API Key', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: '保存并检测' })).toBeVisible();
 });
