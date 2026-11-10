@@ -207,8 +207,8 @@ test('imports txt chapters and drives entity and Story Bible actions', async ({ 
     buffer: Buffer.from('第一章 启航\n林澈进入星舰。\n\n第二章 星门\n星门在远方开启。'),
   });
 
-  await expect(page.getByText('已解析 2 章')).toBeVisible();
-  await page.getByRole('button', { name: /确认导入/ }).click();
+  // 文件导入成功时自动确认，不展开预览
+  await expect(page.getByTestId('novel-import-preview')).toHaveCount(0);
   await page.waitForURL(/\/novels\/novel-imported/);
 
   await expect(page.getByRole('tab', { name: /^章节 \(/ })).toBeVisible();

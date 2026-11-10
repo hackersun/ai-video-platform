@@ -114,6 +114,7 @@ function NovelsContent() {
   const [importGenre, setImportGenre] = useState('');
   const [importJobId, setImportJobId] = useState('');
   const [importChapters, setImportChapters] = useState<ImportChapter[]>([]);
+  const [showImportPreview, setShowImportPreview] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [pasteText, setPasteText] = useState('');
@@ -284,53 +285,68 @@ function NovelsContent() {
     await handleImportFile(new File([text], 'pasted.txt', { type: 'text/plain' }));
   };
 
+  const confirmImport = async (jobId: string, title: string) => {
+    const novel = await apiClient.confirmNovelImport({
+      job_id: jobId,
+      title: title.trim(),
+      genre: importGenre.trim() || undefined,
+      tags: importGenre.trim() ? [importGenre.trim()] : [],
+    });
+    setImportMessage(`导入成功：${title}`);
+    toast({ title: '导入成功', description: title, type: 'success' });
+    setImportJobId('');
+    setImportTitle('');
+    setImportGenre('');
+    setImportChapters([]);
+    setShowImportPreview(false);
+    setPasteText('');
+    await loadNovelsFromAPI();
+    router.push(`/novels/${novel.id}`);
+    return novel;
+  };
+
+  /** 解析成功后自动确认导入；只有失败才展开预览，让用户改标题后重试。 */
   const handleImportFile = async (file?: File) => {
     if (!file) return;
     if (!/\.(txt|md|markdown)$/i.test(file.name)) {
       setImportMessage('仅支持 .txt、.md 或 .markdown 文件');
+      setShowImportPreview(true);
       return;
     }
 
     setImporting(true);
     setImportMessage(null);
+    setShowImportPreview(false);
     try {
       const preview = await apiClient.previewNovelImport(file);
+      const chapters = preview.chapters || [];
+      const title = (importTitle.trim() || autoImportTitle(preview.title, file.name));
       setImportJobId(preview.id);
-      setImportTitle((currentTitle) =>
-        currentTitle.trim() ? currentTitle : autoImportTitle(preview.title, file.name)
-      );
-      setImportChapters(preview.chapters || []);
-      setImportMessage(`已解析 ${preview.chapter_count || 0} 章，请确认后导入`);
+      setImportTitle(title);
+      setImportChapters(chapters);
+      if (!chapters.length) {
+        setShowImportPreview(true);
+        setImportMessage('没有识别到章节，请检查正文格式后重试');
+        return;
+      }
+      await confirmImport(preview.id, title);
     } catch (err: any) {
-      setImportMessage(err?.message || '导入预览失败，请检查文件格式');
+      setShowImportPreview(true);
+      setImportMessage(err?.message || '导入失败，请检查文件格式或后端服务');
+      toast({ title: '导入失败', description: err?.message || '请检查文件格式', type: 'error' });
     } finally {
       setImporting(false);
     }
   };
 
-  const confirmImport = async () => {
+  const retryConfirmImport = async () => {
     if (!importJobId || !importTitle.trim() || importChapters.length === 0) return;
-
     setImporting(true);
     setImportMessage(null);
     try {
-      const novel = await apiClient.confirmNovelImport({
-        job_id: importJobId,
-        title: importTitle.trim(),
-        genre: importGenre.trim() || undefined,
-        tags: importGenre.trim() ? [importGenre.trim()] : [],
-      });
-
-      setImportMessage(`导入成功：${importTitle}`);
-      toast({ title: '导入成功', description: importTitle, type: 'success' });
-      setImportJobId('');
-      setImportTitle('');
-      setImportGenre('');
-      setImportChapters([]);
-      setPasteText('');
-      await loadNovelsFromAPI();
-      router.push(`/novels/${novel.id}`);
+      await confirmImport(importJobId, importTitle);
     } catch (err: any) {
+      setShowImportPreview(true);
       setImportMessage(err?.message || '导入失败，请检查后端服务');
       toast({ title: '导入失败', description: err?.message || '请检查后端服务', type: 'error' });
     } finally {
@@ -361,7 +377,7 @@ function NovelsContent() {
               <Upload className="w-5 h-5 text-violet-400" />
               粘贴或导入小说
             </CardTitle>
-            <p className="text-sm text-white/60">粘贴正文或选择 txt/md 文件，系统自动识别书名和章节；导入后点「一键生成视频」即可出片。</p>
+            <p className="text-sm text-white/60">粘贴正文或选择 txt/md 文件，点「导入并开始」即可进入小说详情；识别失败时才会展开预览。</p>
           </CardHeader>
           <CardContent className="space-y-3">
             <textarea
@@ -377,7 +393,7 @@ function NovelsContent() {
             <div className="flex flex-wrap gap-2">
               <Button type="button" data-testid="novel-paste-parse" onClick={handlePasteImport} disabled={importing || !pasteText.trim()} className="bg-violet-600 hover:bg-violet-700">
                 {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
-                识别章节
+                导入并开始
               </Button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-[1fr_180px_auto] gap-3">
@@ -413,16 +429,18 @@ function NovelsContent() {
               />
             </div>
 
-            {importChapters.length > 0 && (
-              <div className="rounded-lg bg-white/5 p-3">
+            {showImportPreview && (
+              <div className="rounded-lg bg-white/5 p-3" data-testid="novel-import-preview">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-sm text-white/70">
-                    预览：{importChapters.length} 章 · 首章《{importChapters[0]?.title}》
+                    {importChapters.length > 0
+                      ? `预览：${importChapters.length} 章 · 首章《${importChapters[0]?.title}》`
+                      : '未能识别章节，可改标题后重试或检查正文'}
                   </div>
                   <Button
                     size="sm"
-                    onClick={confirmImport}
-                    disabled={importing || !importTitle.trim()}
+                    onClick={retryConfirmImport}
+                    disabled={importing || !importTitle.trim() || importChapters.length === 0}
                     className="bg-violet-600 hover:bg-violet-700"
                   >
                     {importing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <CheckCircle className="w-4 h-4 mr-2" />}
