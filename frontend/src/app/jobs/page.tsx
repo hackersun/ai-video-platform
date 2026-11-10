@@ -1,5 +1,7 @@
 'use client';
 
+import { stageLabel } from '@/lib/stage-labels';
+
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -52,6 +54,8 @@ interface Job {
   duration?: number;
   output?: string;
   error?: string;
+  novelTitle?: string;
+  stepLabel?: string;
 }
 
 const TYPE_ICONS = {
@@ -214,42 +218,77 @@ export default function JobsPage() {
     return Number.isNaN(date.getTime()) ? 0 : date.getTime();
   };
 
-  const mapJob = (raw: any, type: Job['type']): Job => ({
-    id: raw.id || raw.job_id || raw.task_id,
-    name: raw.title || raw.prompt || raw.text || `${TYPE_LABELS[type]}任务`,
-    type,
-    status: normalizeStatus(raw.status),
-    progress: raw.progress_percent ?? raw.progress ?? (raw.status === 'succeeded' || raw.status === 'completed' ? 100 : 0),
-    createdAt: toDateText(raw.created_at),
-    createdAtTime: toDateTime(raw.created_at),
-    startedAt: raw.started_at ? toDateText(raw.started_at) : undefined,
-    completedAt: raw.completed_at ? toDateText(raw.completed_at) : undefined,
-    duration: Math.round(raw.duration_seconds || raw.duration || 0) || undefined,
-    output: raw.output_url || raw.video_url || raw.audio_url || raw.output_video_url || raw.output_audio_url || raw.output_manifest_url || raw.image_urls?.[0],
-    error: raw.error_message || raw.message,
-  });
+  const pickNovelTitle = (raw: any, novelNames: Record<string, string>) => {
+    const direct = raw.novel_title || raw.novel?.title || raw.metadata?.novel_title || raw.extra?.novel_title || raw.lineage?.novel_title;
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    const novelId = raw.novel_id || raw.novel?.id || raw.metadata?.novel_id || raw.extra?.novel_id || raw.lineage?.novel_id;
+    if (novelId && novelNames[novelId]) return novelNames[novelId];
+    return '';
+  };
+
+  const pickStepLabel = (raw: any, type: Job['type']) => {
+    const stage = raw.stage || raw.current_stage || raw.pipeline_stage || raw.status_stage || raw.phase;
+    const fromStage = stageLabel(typeof stage === 'string' ? stage : null);
+    if (fromStage && fromStage !== stage) return fromStage;
+    if (raw.episode_number) return `第 ${raw.episode_number} 集 · ${TYPE_LABELS[type]}`;
+    if (raw.shot_number) return `镜头 ${raw.shot_number} · ${TYPE_LABELS[type]}`;
+    if (raw.chapter_title) return `${raw.chapter_title} · ${TYPE_LABELS[type]}`;
+    return TYPE_LABELS[type];
+  };
+
+  const mapJob = (raw: any, type: Job['type'], novelNames: Record<string, string> = {}): Job => {
+    const novelTitle = pickNovelTitle(raw, novelNames);
+    const stepLabel = pickStepLabel(raw, type);
+    const fallback = raw.title || raw.prompt || raw.text || `${TYPE_LABELS[type]}任务`;
+    const name = novelTitle
+      ? `《${novelTitle}》· ${stepLabel}`
+      : (typeof fallback === 'string' && fallback.length > 48 ? `${fallback.slice(0, 48)}…` : fallback);
+    return {
+      id: raw.id || raw.job_id || raw.task_id,
+      name,
+      type,
+      status: normalizeStatus(raw.status),
+      progress: raw.progress_percent ?? raw.progress ?? (raw.status === 'succeeded' || raw.status === 'completed' ? 100 : 0),
+      createdAt: toDateText(raw.created_at),
+      createdAtTime: toDateTime(raw.created_at),
+      startedAt: raw.started_at ? toDateText(raw.started_at) : undefined,
+      completedAt: raw.completed_at ? toDateText(raw.completed_at) : undefined,
+      duration: Math.round(raw.duration_seconds || raw.duration || 0) || undefined,
+      output: raw.output_url || raw.video_url || raw.audio_url || raw.output_video_url || raw.output_audio_url || raw.output_manifest_url || raw.image_urls?.[0],
+      error: raw.error_message || raw.message,
+      novelTitle: novelTitle || undefined,
+      stepLabel,
+    };
+  };
 
   const loadJobs = async () => {
     setIsLoading(true);
     setLoadError(null);
     try {
-      const [videos, ttsJobs, images, synthesis, media, batchJobs] = await Promise.all([
+      const [videos, ttsJobs, images, synthesis, media, batchJobs, novels] = await Promise.all([
         apiClient.getVideoJobs(),
         apiClient.getTTSJobs(),
         apiClient.getImageJobs({ limit: 100 }),
         apiClient.getSynthesisJobs(),
         apiClient.getMediaJobs(),
         apiClient.getBatchJobs({ limit: 100 }),
+        apiClient.getNovels().catch(() => []),
       ]);
       const batchJobItems = Array.isArray(batchJobs) ? batchJobs : batchJobs.jobs || [];
+      const novelList = Array.isArray(novels) ? novels : (novels as any)?.items || [];
+      const novelNames = Object.fromEntries(
+        novelList
+          .filter((item: any) => item?.id && item?.title)
+          .map((item: any) => [item.id, item.title])
+      );
 
       const mergedJobs = [
-        ...videos.map((job: any) => mapJob(job, 'video')),
-        ...ttsJobs.map((job: any) => mapJob(job, 'tts')),
-        ...images.map((job: any) => mapJob(job, 'image')),
-        ...synthesis.map((job: any) => mapJob(job, 'synthesis')),
-        ...media.map((job: any) => mapJob(job, 'media')),
-        ...batchJobItems.map((job: any) => mapJob(job, 'batch')),
+        ...videos.map((job: any) => mapJob(job, 'video', novelNames)),
+        ...ttsJobs.map((job: any) => mapJob(job, 'tts', novelNames)),
+        ...images.map((job: any) => mapJob(job, 'image', novelNames)),
+        ...synthesis.map((job: any) => mapJob(job, 'synthesis', novelNames)),
+        ...media.map((job: any) => mapJob(job, 'media', novelNames)),
+        ...batchJobItems.map((job: any) => mapJob(job, 'batch', novelNames)),
       ].sort((a, b) => b.createdAtTime - a.createdAtTime);
 
       setJobs(mergedJobs);
@@ -721,7 +760,8 @@ export default function JobsPage() {
                                 <div className="min-w-0">
                                   <div className="truncate text-sm font-medium text-white">{job.name}</div>
                                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/40">
-                                    <span>{TYPE_LABELS[job.type]}</span>
+                                    <span>{job.stepLabel || TYPE_LABELS[job.type]}</span>
+                                    {job.novelTitle ? <span className="text-white/50">《{job.novelTitle}》</span> : null}
                                     <span title={`任务编号 ${job.id}`}>编号 #{String(job.id).slice(0, 6)}</span>
                                     {job.output && (
                                       <span className="inline-flex items-center gap-1 text-teal-300/80">
