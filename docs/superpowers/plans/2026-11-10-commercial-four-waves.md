@@ -49,8 +49,8 @@
 
 - [x] 假模式新账号全路径点击统计
 - [x] 截图 `docs/ui-simplification-2026-11-08/wave1-after/`
-- [ ] 本计划勾选第 1 波；打包 `~/Documents/avp-wave1.tgz` → `/workspace/wave1/`
-- [ ] 停止服务
+- [x] 本计划勾选第 1 波；打包 `~/Documents/avp-wave1.tgz` → `/workspace/wave1/`
+- [x] 停止服务
 
 ---
 
