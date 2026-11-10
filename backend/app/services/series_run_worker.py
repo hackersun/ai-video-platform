@@ -15,6 +15,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.redis_client import get_redis, processing_key, queue_key
 from app.models.series_production_run import SeriesProductionRun
 from app.services.series_run_execution_queue import (
+    HEARTBEAT_REFRESH_INTERVAL_SECONDS,
     MAX_ATTEMPTS,
     acquire_run_lock,
     ack_processing,
@@ -37,6 +38,23 @@ def _worker_id() -> str:
     return os.getenv("SERIES_RUN_WORKER_ID") or f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
+async def _heartbeat_loop(run_id: str, *, worker_id: str, lease_token: str, stop_event: asyncio.Event) -> None:
+    """Refresh lease/heartbeat on a timer, not only at orchestrator stage boundaries.
+
+    Long provider polls / FFmpeg can exceed HEARTBEAT_TTL without calling should_stop;
+    without mid-stage refresh another worker may reclaim and double-run (double-bill).
+    """
+    while not stop_event.is_set():
+        try:
+            await refresh_execution_heartbeat(run_id, worker_id=worker_id, lease_token=lease_token)
+        except Exception:
+            logger.exception("series run heartbeat refresh failed", extra={"run_id": run_id})
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_REFRESH_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+
+
 async def _execute_run(run_id: str, user_id: str, *, worker_id: str, lease_token: str) -> None:
     async with AsyncSessionLocal() as db:
         run = await db.scalar(
@@ -57,10 +75,22 @@ async def _execute_run(run_id: str, user_id: str, *, worker_id: str, lease_token
             await refresh_execution_heartbeat(run_id, worker_id=worker_id, lease_token=lease_token)
             return False
 
+        hb_stop = asyncio.Event()
+        hb_task = asyncio.create_task(
+            _heartbeat_loop(run_id, worker_id=worker_id, lease_token=lease_token, stop_event=hb_stop),
+            name=f"series-run-heartbeat:{run_id}",
+        )
         try:
             await SeriesRunOrchestrator(should_stop=should_stop).execute(db, run)
         except Exception:
             logger.exception("series run worker execution failed", extra={"run_id": run_id})
+        finally:
+            hb_stop.set()
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def process_one(redis, worker_id: str) -> bool:

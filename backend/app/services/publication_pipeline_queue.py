@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 KEY_PREFIX = "avp:publication_pipeline:"
 LOCK_TTL_SECONDS = 120
 HEARTBEAT_TTL_SECONDS = 60
+HEARTBEAT_REFRESH_INTERVAL_SECONDS = 20
+DEAD_LETTER_DETAIL = (
+    "任务重试次数已用尽，已停止自动重跑。"
+    "请到小说详情页点「重试」，或检查 Worker / Redis 后重新提交。"
+)
 PAUSE_TTL_SECONDS = 300
 MAX_ATTEMPTS = 25
 
@@ -162,6 +167,10 @@ async def reclaim_stale_processing(redis) -> int:
                 "publication pipeline queue dead-lettered after max attempts",
                 extra={"pipeline_id": pipeline_id, "attempt": attempt},
             )
+            # Requeue once so the worker can mark the DB pipeline failed + blocker.
+            payload["attempt"] = attempt
+            payload["dead_letter"] = True
+            await redis.lpush(queue_key(), json.dumps(payload, ensure_ascii=False))
             continue
         payload["attempt"] = attempt
         await redis.lpush(queue_key(), json.dumps(payload, ensure_ascii=False))
@@ -170,17 +179,32 @@ async def reclaim_stale_processing(redis) -> int:
 
 
 async def record_queue_dead_letter(db, pipeline, *, attempt: int, reason: str) -> None:
+    """Persist dead-letter metadata and force terminal failed + actionable blocker."""
     metadata = dict(pipeline.pipeline_metadata or {})
-    metadata["queue_dead_letter"] = {
+    dead = {
         "attempt": attempt,
         "reason": reason,
         "at": _enqueued_at(),
+        "blocker_code": "queue_dead_letter",
+        "message": DEAD_LETTER_DETAIL,
     }
+    metadata["queue_dead_letter"] = dead
     pipeline.pipeline_metadata = metadata
+    if pipeline.status not in {"succeeded", "cancelled"}:
+        pipeline.status = "failed"
+    pipeline.blocker_code = "queue_dead_letter"
+    pipeline.blocker_detail = DEAD_LETTER_DETAIL
+    summary = dict(pipeline.gate_summary or {})
+    summary["blocker_code"] = "queue_dead_letter"
+    summary["blocker_detail"] = DEAD_LETTER_DETAIL
+    summary["queue_dead_letter"] = dead
+    pipeline.gate_summary = summary
     await db.commit()
 
 
 __all__ = [
+    "DEAD_LETTER_DETAIL",
+    "HEARTBEAT_REFRESH_INTERVAL_SECONDS",
     "HEARTBEAT_TTL_SECONDS",
     "KEY_PREFIX",
     "LOCK_TTL_SECONDS",

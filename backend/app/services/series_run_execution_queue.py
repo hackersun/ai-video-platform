@@ -27,8 +27,15 @@ logger = logging.getLogger(__name__)
 
 LOCK_TTL_SECONDS = 120
 HEARTBEAT_TTL_SECONDS = 60
+# Refresh well under HEARTBEAT_TTL so long stages (provider poll / FFmpeg) cannot
+# expire the lease and get reclaimed into a second concurrent worker (double-billing).
+HEARTBEAT_REFRESH_INTERVAL_SECONDS = 20
 PAUSE_TTL_SECONDS = 300
 MAX_ATTEMPTS = 25
+DEAD_LETTER_DETAIL = (
+    "任务重试次数已用尽，已停止自动重跑。"
+    "请到小说详情页点「重试」，或检查 Worker / Redis 后重新提交。"
+)
 QUEUE_KEY = queue_key()
 PROCESSING_KEY = processing_key()
 
@@ -141,7 +148,11 @@ async def reclaim_stale_processing(redis) -> int:
                 "series run queue dead-lettered after max attempts",
                 extra={"run_id": run_id, "attempt": attempt},
             )
-            # Worker/ops may persist queue_dead_letter on the run; reclaim itself only drops.
+            # Requeue once with attempt>MAX so the worker can mark the DB run failed
+            # with an actionable blocker (reclaim has no DB session).
+            payload["attempt"] = attempt
+            payload["dead_letter"] = True
+            await redis.lpush(queue_key(), json.dumps(payload, ensure_ascii=False))
             continue
         payload["attempt"] = attempt
         await redis.lpush(queue_key(), json.dumps(payload, ensure_ascii=False))
@@ -150,17 +161,34 @@ async def reclaim_stale_processing(redis) -> int:
 
 
 async def record_queue_dead_letter(db, run, *, attempt: int, reason: str) -> None:
+    """Persist dead-letter metadata and force a terminal failed state.
+
+    Without the status flip, the UI can stay on「进行中/排队」forever after max attempts.
+    """
     metadata = dict(run.run_metadata or {})
-    metadata["queue_dead_letter"] = {
+    dead = {
         "attempt": attempt,
         "reason": reason,
         "at": _enqueued_at(),
+        "blocker_code": "queue_dead_letter",
+        "message": DEAD_LETTER_DETAIL,
     }
+    metadata["queue_dead_letter"] = dead
     run.run_metadata = metadata
+    gate = dict(run.gate_summary or {})
+    gate["queue_dead_letter"] = dead
+    gate["blocker_code"] = "queue_dead_letter"
+    gate["blocker_detail"] = DEAD_LETTER_DETAIL
+    run.gate_summary = gate
+    # Terminal failed so pause/resume/UI polling stop treating it as active work.
+    if run.status not in {"completed", "cancelled"}:
+        run.status = "failed"
     await db.commit()
 
 
 __all__ = [
+    "DEAD_LETTER_DETAIL",
+    "HEARTBEAT_REFRESH_INTERVAL_SECONDS",
     "HEARTBEAT_TTL_SECONDS",
     "LOCK_TTL_SECONDS",
     "MAX_ATTEMPTS",

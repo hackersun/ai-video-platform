@@ -19,6 +19,7 @@ from app.models.publication_pipeline import NovelPublicationPipeline
 from app.services.publication_pipeline_orchestrator import PublicationPipelineOrchestrator
 from app.services.publication_pipeline_media_hooks import run_media_quality_with_default_hooks
 from app.services.publication_pipeline_queue import (
+    HEARTBEAT_REFRESH_INTERVAL_SECONDS,
     MAX_ATTEMPTS,
     ack_processing,
     acquire_pipeline_lock,
@@ -54,6 +55,26 @@ def _enabled() -> bool:
     }
 
 
+async def _heartbeat_loop(
+    pipeline_id: str, *, worker_id: str, lease_token: str, stop_event: asyncio.Event
+) -> None:
+    """Timer-based lease refresh so long media/FFmpeg stages cannot be reclaimed."""
+    while not stop_event.is_set():
+        try:
+            await refresh_execution_heartbeat(
+                pipeline_id, worker_id=worker_id, lease_token=lease_token
+            )
+        except Exception:
+            logger.exception(
+                "publication pipeline heartbeat refresh failed",
+                extra={"pipeline_id": pipeline_id},
+            )
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_REFRESH_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            continue
+
+
 async def _execute_pipeline(
     pipeline_id: str, user_id: str, *, worker_id: str, lease_token: str
 ) -> None:
@@ -78,6 +99,13 @@ async def _execute_pipeline(
             )
             return False
 
+        hb_stop = asyncio.Event()
+        hb_task = asyncio.create_task(
+            _heartbeat_loop(
+                pipeline_id, worker_id=worker_id, lease_token=lease_token, stop_event=hb_stop
+            ),
+            name=f"publication-pipeline-heartbeat:{pipeline_id}",
+        )
         try:
             await PublicationPipelineOrchestrator(should_stop=should_stop, run_media_fn=run_media_quality_with_default_hooks).execute(db, pipeline)
         except Exception as exc:
@@ -86,6 +114,13 @@ async def _execute_pipeline(
                 extra={"pipeline_id": pipeline_id},
             )
             await _fail_closed(db, pipeline_id, user_id, exc)
+        finally:
+            hb_stop.set()
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
 
 
 async def _fail_closed(db, pipeline_id: str, user_id: str, exc: Exception) -> None:
