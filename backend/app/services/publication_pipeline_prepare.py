@@ -32,7 +32,27 @@ PREFLIGHT_CODE_MAP = {
     "model_bindings_missing": "models_not_configured",
     "voice_selection_required": "voice_selection_required",
     "voice_selection_stale": "voice_selection_required",
+    "voice_binding_missing": "voice_binding_missing",
 }
+
+# blocker_code -> Chinese, actionable repair hint for the one-click UI
+BLOCKER_REPAIR_HINTS = {
+    "models_not_configured": "请到「模型设置」填写 API Key，点「保存并检测」通过后再试。",
+    "voice_selection_required": "请到「模型设置」确认语音模型可用，然后重新点「一键生成」。",
+    "voice_binding_missing": "说话角色还没配音色。请重新点「一键生成」（系统会自动绑定默认音色），或到角色页手动选音色。",
+    "live_calls_not_opted_in": "请到「模型设置」开启真实模型调用并确认费用上限后再试。",
+    "queue_dead_letter": "任务重试次数已用尽。请到小说详情页点「重试」，或检查后台 Worker / Redis 后重新提交。",
+    "series_run_media_preflight_failed": "媒体前置检查未通过。请根据页面提示补齐模型、音色或素材后重试。",
+}
+
+
+def actionable_blocker_detail(code: str, detail: str = "") -> str:
+    """Prefer a Chinese repair hint; keep original detail as secondary context."""
+    hint = BLOCKER_REPAIR_HINTS.get(str(code) or "")
+    text = (detail or "").strip()
+    if hint and text and text not in hint:
+        return f"{hint}（{text}）"
+    return hint or text or str(code)
 
 
 def _record(run: SeriesProductionRun, step: str, result: str) -> None:
@@ -88,6 +108,89 @@ async def _saved_default_voice(db: AsyncSession, config_id: str | None) -> str |
     config = await db.get(LLMConfig, config_id)
     extra = (config.extra_params if config is not None and isinstance(config.extra_params, dict) else {})
     return str(extra.get("default_voice_id") or "") or None
+
+
+async def ensure_speaking_voice_bindings(
+    db: AsyncSession, run: SeriesProductionRun, *, force_entity_ids: list[str] | None = None,
+) -> int:
+    """Bind a usable default TTS voice onto every speaking character missing one.
+
+    One-click ``persist_voice_selection`` only stores the run-level protagonist
+    selection. Media preflight requires **each** speaking entity to carry
+    ``voice_binding``; without this step, real-model multi-character novels hit
+    ``voice_binding_missing`` and stall. Fake mode is usually covered by the
+    acceptance fixture, but we still fill gaps so both paths stay consistent.
+
+    Returns the number of entities newly bound.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.story_entity import StoryEntity
+    from app.services.story_entity_lifecycle import get_entity_review_status
+
+    selection = dict((run.run_metadata or {}).get("voice_selection") or {})
+    voice_id = str(selection.get("voice_id") or "").strip()
+    if not voice_id:
+        return 0
+
+    # Prefer distinct voices when the allowlist exposes more than one option.
+    option_ids: list[str] = []
+    raw_options = ((run.run_metadata or {}).get("voice_options_cache") or {}).get("options") or []
+    for item in raw_options:
+        if isinstance(item, dict) and item.get("voice_id"):
+            option_ids.append(str(item["voice_id"]))
+    if voice_id not in option_ids:
+        option_ids.insert(0, voice_id)
+    if not option_ids:
+        option_ids = [voice_id]
+
+    rows = list(
+        (
+            await db.scalars(
+                select(StoryEntity).where(
+                    StoryEntity.user_id == run.user_id,
+                    StoryEntity.novel_id == run.novel_id,
+                    StoryEntity.entity_type == "character",
+                )
+            )
+        ).all()
+    )
+    forced = {str(item) for item in (force_entity_ids or []) if item}
+    bound = 0
+    voice_index = 0
+    for entity in rows:
+        status = get_entity_review_status(entity)
+        if status in {"rejected", "archived"}:
+            continue
+        attrs = dict(entity.attributes or {})
+        # Dialogue-derived speakers may appear only via preflight entity_ids.
+        if not attrs.get("speaking") and entity.id not in forced:
+            continue
+        binding = dict(attrs.get("voice_binding") or {})
+        if binding.get("voice_id") and binding.get("status") in {"approved", "locked", "legacy"}:
+            continue
+        chosen = option_ids[voice_index % len(option_ids)]
+        voice_index += 1
+        attrs["voice_binding"] = {
+            "voice_id": chosen,
+            "version": int(selection.get("version") or 1),
+            "status": "locked",
+            "provider_id": selection.get("provider_id"),
+            "config_id": selection.get("config_id"),
+            "db_model_id": selection.get("db_model_id") or selection.get("model_id"),
+            "api_model_id": selection.get("api_model_id"),
+            "tested_at": selection.get("tested_at"),
+            "source": "one_click_default_voice",
+        }
+        attrs["speaking"] = True
+        entity.attributes = attrs
+        flag_modified(entity, "attributes")
+        bound += 1
+    if bound:
+        _record(run, "speaking_voice_bindings", f"bound:{bound}")
+        await db.commit()
+    return bound
 
 
 async def prepare_run_for_media(
@@ -168,6 +271,16 @@ async def prepare_run_for_media(
         if fake:  # setup re-applies the voice binding onto the protagonist
             await setup_acceptance_fixture(db, user_id=run.user_id, novel_id=run.novel_id)
             await db.refresh(run)
+    # Cache allowlisted options for multi-character default binding (no network).
+    if voice and isinstance(voice.get("options"), list):
+        meta = dict(run.run_metadata or {})
+        meta["voice_options_cache"] = {
+            "config_id": voice.get("config_id"),
+            "options": list(voice.get("options") or []),
+        }
+        run.run_metadata = meta
+        await db.commit()
+        await db.refresh(run)
     _record(run, "voice", "passed")
 
     # 4. full anchor selection covering every shot
@@ -203,20 +316,37 @@ async def prepare_run_for_media(
         raise PipelineMediaBlocked("reference_preparation_blocked", str(exc)) from exc
     await db.refresh(run)
 
-    # 7. preflight (real mode: one automatic re-bind when bindings went stale)
+    # 7. speaking-character voices (real multi-character: close voice_binding_missing)
+    await ensure_speaking_voice_bindings(db, run)
+    await db.refresh(run)
+
+    # 8. preflight (real mode: one automatic re-bind when bindings went stale)
     preflight = await evaluate_media_preflight(db, run)
     if not preflight.get("ready") and not fake and "model_bindings_not_fresh" in (preflight.get("codes") or []):
         await auto_bind_models(db, run)
         await db.refresh(run)
         preflight = await evaluate_media_preflight(db, run)
+    if not preflight.get("ready") and "voice_binding_missing" in (preflight.get("codes") or []):
+        # One more pass after preflight named the missing speakers (dialogue-derived).
+        missing_ids: list[str] = []
+        for issue in preflight.get("issues") or []:
+            if isinstance(issue, dict) and issue.get("code") == "voice_binding_missing":
+                missing_ids.extend(str(i) for i in (issue.get("entity_ids") or []) if i)
+        await ensure_speaking_voice_bindings(db, run, force_entity_ids=missing_ids)
+        await db.refresh(run)
+        preflight = await evaluate_media_preflight(db, run)
     if not preflight.get("ready"):
         codes = [str(c) for c in preflight.get("codes") or []]
         first = codes[0] if codes else "series_run_media_preflight_failed"
-        raise PipelineMediaBlocked(PREFLIGHT_CODE_MAP.get(first, first), "媒体前置检查未通过：" + ",".join(codes))
+        mapped = PREFLIGHT_CODE_MAP.get(first, first)
+        raise PipelineMediaBlocked(
+            mapped,
+            actionable_blocker_detail(mapped, "媒体前置检查未通过：" + ",".join(codes)),
+        )
     _record(run, "preflight", "passed")
     await db.commit()
     await db.refresh(run)
     return run
 
 
-__all__ = ["auto_bind_models", "prepare_run_for_media", "PREFLIGHT_CODE_MAP"]
+__all__ = ["BLOCKER_REPAIR_HINTS", "PREFLIGHT_CODE_MAP", "actionable_blocker_detail", "auto_bind_models", "ensure_speaking_voice_bindings", "prepare_run_for_media"]
