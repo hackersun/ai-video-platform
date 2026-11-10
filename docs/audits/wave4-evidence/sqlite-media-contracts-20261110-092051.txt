@@ -1,0 +1,6 @@
+started_at=2026-11-10 09:20:51 +0800
+scope=health_readiness+object_storage_g4+private_media_access
+......................                                                   [100%]
+22 passed in 2.57s
+pytest_exit=0
+STATUS=PASS

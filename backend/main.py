@@ -152,12 +152,25 @@ app.mount("/static", PrivateAwareStaticFiles(directory=str(STATIC_DIR)), name="s
 
 @app.get("/health")
 async def health_check():
-    """健康检查"""
+    """Liveness: process is up. Dependency checks live on /ready."""
     return {
         "status": "healthy",
         "service": "AI视频平台",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "probe": "liveness",
     }
+
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness: DB required; Redis required when REDIS_URL is set."""
+    from fastapi.responses import JSONResponse
+
+    from app.core.health import build_readiness
+
+    payload = await build_readiness()
+    code = 200 if payload.get("status") == "ready" else 503
+    return JSONResponse(content=payload, status_code=code)
 
 
 @app.get("/")
@@ -166,7 +179,8 @@ async def root():
     return {
         "message": "AI视频平台 API",
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "ready": "/ready",
     }
 
 

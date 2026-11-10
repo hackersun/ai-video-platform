@@ -1,0 +1,18 @@
+database=postgresql+asyncpg://avp:avp_wave4_local@127.0.0.1:55432/ai_video_platform
+started_at=2026-11-10 09:20:54 +0800
+scope=publication_one_click+postgresql_runtime+deployment_compose_contract
+✅ 数据库表创建成功！
+✅ Job lineage fields migration completed.
+✅ Workflow context fields migration completed.
+✅ Character scope fields migration completed.
+✅ Media/subtitle compatibility migration completed.
+✅ User account fields migration completed.
+✅ Script chapter lineage migration completed.
+✅ Entity/asset scope fields migration completed.
+✅ Story entity extended fields migration completed.
+✅ Project ID fields migration completed.
+✅ Publication fields migration completed.
+.........................                                                [100%]
+25 passed in 1.55s
+pytest_exit=0
+STATUS=PASS

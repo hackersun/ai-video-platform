@@ -1,0 +1,1019 @@
+database=postgresql+asyncpg://avp:avp_wave4_local@127.0.0.1:55432/ai_video_platform
+started_at=2026-11-10 09:20:18 +0800
+✅ 数据库表创建成功！
+✅ Job lineage fields migration completed.
+✅ Workflow context fields migration completed.
+✅ Character scope fields migration completed.
+✅ Media/subtitle compatibility migration completed.
+✅ User account fields migration completed.
+✅ Script chapter lineage migration completed.
+✅ Entity/asset scope fields migration completed.
+✅ Story entity extended fields migration completed.
+✅ Project ID fields migration completed.
+✅ Publication fields migration completed.
+................F.F............FF..............                          [100%]
+=================================== FAILURES ===================================
+___________ test_readiness_503_when_redis_configured_but_unreachable ___________
+
+client = <starlette.testclient.TestClient object at 0x111ae7250>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10d739950>
+
+    def test_readiness_503_when_redis_configured_but_unreachable(client: TestClient, monkeypatch) -> None:
+        monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:1/0")
+        from app.core import health as health_mod
+    
+        # Fresh client per env is not required; build_readiness reads env each call.
+        resp = client.get("/ready")
+        assert resp.status_code == 503
+        body = resp.json()
+        assert body["status"] == "not_ready"
+>       assert body["checks"]["database"]["ok"] is True
+E       assert False is True
+
+tests/test_health_readiness.py:44: AssertionError
+______________ test_build_readiness_reports_storage_in_production ______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111ac15e0>
+
+    def test_build_readiness_reports_storage_in_production(monkeypatch) -> None:
+        import asyncio
+    
+        from app.core import health as health_mod
+    
+        monkeypatch.setenv("APP_ENV", "production")
+        monkeypatch.delenv("REDIS_URL", raising=False)
+        for name in ("STORAGE_PROVIDER", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION"):
+            monkeypatch.delenv(name, raising=False)
+        payload = asyncio.run(health_mod.build_readiness())
+>       assert payload["status"] == "ready"  # storage advisory only
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: assert 'not_ready' == 'ready'
+E         
+E         - ready
+E         + not_ready
+
+tests/test_health_readiness.py:65: AssertionError
+___________ test_pipeline_url_signed_for_owner_and_cross_user_denied ___________
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x111ac8e50>>
+
+    async def _start_transaction(self):
+        if self.isolation_level == "autocommit":
+            return
+    
+        try:
+            self._transaction = self._connection.transaction(
+                isolation=self.isolation_level,
+                readonly=self.readonly,
+                deferrable=self.deferrable,
+            )
+>           await self._transaction.start()
+
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:848: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.14/site-packages/asyncpg/transaction.py:146: in start
+    await self._connection.execute(query)
+venv/lib/python3.14/site-packages/asyncpg/connection.py:377: in execute
+    result = await self._protocol.query(query, timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:330: in query
+    self._check_state()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   raise apg_exc.InterfaceError(
+E   asyncpg.exceptions._base.InterfaceError: cannot perform operation: another operation is in progress
+
+asyncpg/protocol/protocol.pyx:737: InterfaceError
+
+The above exception was the direct cause of the following exception:
+
+self = <sqlalchemy.engine.base.Connection object at 0x111a48f50>
+dialect = <sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x10bbb8d70>
+context = <sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x111a268b0>
+statement = <sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x111ae6210>
+parameters = [('6ef1ef18-5097-46e2-b81d-74961aa566f9', 'own-c683b3a9-5a79-47d6-90ce-b3dff5806020', None, 'pm 25f5eeb0-b5ba-45db-902d-12b5755a4dc7', 'x', None, ...)]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.14/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:520: in _prepare_and_execute
+    await adapt_connection._start_transaction()
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:850: in _start_transaction
+    self._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x111ac8e50>>
+error = InterfaceError('cannot perform operation: another operation is in progress')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError: <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: InterfaceError
+
+The above exception was the direct cause of the following exception:
+
+client = <starlette.testclient.TestClient object at 0x111c5c9e0>
+export_file = PosixPath('/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/static/exports/test-private-2f02cd9d-0295-4a5a-a8b3-4f2110042e02.mp4')
+
+    @pytest.mark.asyncio
+    async def test_pipeline_url_signed_for_owner_and_cross_user_denied(client: TestClient, export_file: Path) -> None:
+        owner, other = f"own-{uuid4()}", f"oth-{uuid4()}"
+>       novel = client.post("/api/v1/novels", json={"title": f"pm {uuid4()}", "description": "x"}, headers=_h(owner))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_private_media_access.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.14/site-packages/starlette/testclient.py:546: in post
+    return super().post(
+venv/lib/python3.14/site-packages/httpx/_client.py:1144: in post
+    return self.request(
+venv/lib/python3.14/site-packages/starlette/testclient.py:445: in request
+    return super().request(
+venv/lib/python3.14/site-packages/httpx/_client.py:825: in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/httpx/_client.py:914: in send
+    response = self._send_handling_auth(
+venv/lib/python3.14/site-packages/httpx/_client.py:942: in _send_handling_auth
+    response = self._send_handling_redirects(
+venv/lib/python3.14/site-packages/httpx/_client.py:979: in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/httpx/_client.py:1014: in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/starlette/testclient.py:348: in handle_request
+    raise exc
+venv/lib/python3.14/site-packages/starlette/testclient.py:345: in handle_request
+    portal.call(self.app, scope, receive, send)
+venv/lib/python3.14/site-packages/anyio/from_thread.py:334: in call
+    return cast(T_Retval, self.start_task_soon(func, *args).result())
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/_base.py:454: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/concurrent/futures/_base.py:396: in __get_result
+    raise self._exception
+venv/lib/python3.14/site-packages/anyio/from_thread.py:259: in _call_func
+    retval = await retval_or_awaitable
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/fastapi/applications.py:1160: in __call__
+    await super().__call__(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/applications.py:107: in __call__
+    await self.middleware_stack(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/middleware/errors.py:186: in __call__
+    raise exc
+venv/lib/python3.14/site-packages/starlette/middleware/errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+venv/lib/python3.14/site-packages/starlette/middleware/base.py:191: in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+                                   ^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py:162: in __exit__
+    self.gen.throw(value)
+venv/lib/python3.14/site-packages/starlette/_utils.py:87: in collapse_excgroups
+    raise exc
+venv/lib/python3.14/site-packages/starlette/middleware/base.py:193: in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+main.py:112: in add_private_network_cors_header
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/starlette/middleware/base.py:168: in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+venv/lib/python3.14/site-packages/starlette/middleware/base.py:144: in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+venv/lib/python3.14/site-packages/starlette/middleware/cors.py:87: in __call__
+    await self.app(scope, receive, send)
+app/core/media_access.py:213: in __call__
+    await self.app(scope, receive, _send)
+venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py:63: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+venv/lib/python3.14/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py:18: in __call__
+    await self.app(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/routing.py:716: in __call__
+    await self.middleware_stack(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/routing.py:736: in app
+    await route.handle(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/routing.py:290: in handle
+    await self.app(scope, receive, send)
+venv/lib/python3.14/site-packages/fastapi/routing.py:130: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+venv/lib/python3.14/site-packages/starlette/_exception_handler.py:53: in wrapped_app
+    raise exc
+venv/lib/python3.14/site-packages/starlette/_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+venv/lib/python3.14/site-packages/fastapi/routing.py:116: in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/fastapi/routing.py:670: in app
+    raw_response = await run_endpoint_function(
+venv/lib/python3.14/site-packages/fastapi/routing.py:324: in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+app/api/v1/endpoints/novels.py:790: in create_novel
+    await db.commit()
+venv/lib/python3.14/site-packages/sqlalchemy/ext/asyncio/session.py:1000: in commit
+    await greenlet_spawn(self.sync_session.commit)
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:2030: in commit
+    trans.commit(_to_root=True)
+<string>:2: in commit
+    ???
+venv/lib/python3.14/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:1311: in commit
+    self._prepare_impl()
+<string>:2: in _prepare_impl
+    ???
+venv/lib/python3.14/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:1286: in _prepare_impl
+    self.session.flush()
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:4331: in flush
+    self._flush(objects)
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:4466: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/util/langhelpers.py:121: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:4427: in _flush
+    flush_context.execute()
+venv/lib/python3.14/site-packages/sqlalchemy/orm/unitofwork.py:466: in execute
+    rec.execute(self)
+venv/lib/python3.14/site-packages/sqlalchemy/orm/unitofwork.py:642: in execute
+    util.preloaded.orm_persistence.save_obj(
+venv/lib/python3.14/site-packages/sqlalchemy/orm/persistence.py:93: in save_obj
+    _emit_insert_statements(
+venv/lib/python3.14/site-packages/sqlalchemy/orm/persistence.py:1048: in _emit_insert_statements
+    result = connection.execute(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+venv/lib/python3.14/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:520: in _prepare_and_execute
+    await adapt_connection._start_transaction()
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:850: in _start_transaction
+    self._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x111ac8e50>>
+error = InterfaceError('cannot perform operation: another operation is in progress')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+E                   [SQL: INSERT INTO novels (id, user_id, project_id, title, description, genre, status, word_count, tags, cover_url, source, extra_data, created_at, updated_at) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::INTEGER, $9::JSON, $10::VARCHAR, $11::VARCHAR, $12::JSON, $13::TIMESTAMP WITHOUT TIME ZONE, $14::TIMESTAMP WITHOUT TIME ZONE)]
+E                   [parameters: ('6ef1ef18-5097-46e2-b81d-74961aa566f9', 'own-c683b3a9-5a79-47d6-90ce-b3dff5806020', None, 'pm 25f5eeb0-b5ba-45db-902d-12b5755a4dc7', 'x', None, 'draft', 0, '[]', None, 'manual', '{}', datetime.datetime(2026, 11, 10, 1, 20, 25, 707697), datetime.datetime(2026, 11, 10, 1, 20, 25, 707704))]
+E                   (Background on this error at: https://sqlalche.me/e/20/rvf5)
+
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: InterfaceError
+------------------------------ Captured log call -------------------------------
+ERROR    main:main.py:129 Unhandled error on POST /api/v1/novels: InterfaceError
+Traceback (most recent call last):
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 848, in _start_transaction
+    await self._transaction.start()
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/asyncpg/transaction.py", line 146, in start
+    await self._connection.execute(query)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/asyncpg/connection.py", line 377, in execute
+    result = await self._protocol.query(query, timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "asyncpg/protocol/protocol.pyx", line 330, in query
+  File "asyncpg/protocol/protocol.pyx", line 737, in asyncpg.protocol.protocol.BaseProtocol._check_state
+    raise apg_exc.InterfaceError(
+asyncpg.exceptions._base.InterfaceError: cannot perform operation: another operation is in progress
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._prepare_and_execute(operation, parameters)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 520, in _prepare_and_execute
+    await adapt_connection._start_transaction()
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 850, in _start_transaction
+    self._handle_exception(error)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError: <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/base.py", line 191, in __call__
+    with recv_stream, send_stream, collapse_excgroups():
+                                   ~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/contextlib.py", line 162, in __exit__
+    self.gen.throw(value)
+    ~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/_utils.py", line 87, in collapse_excgroups
+    raise exc
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/base.py", line 193, in __call__
+    response = await self.dispatch_func(request, call_next)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/main.py", line 112, in add_private_network_cors_header
+    response = await call_next(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/base.py", line 168, in call_next
+    raise app_exc from app_exc.__cause__ or app_exc.__context__
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/base.py", line 144, in coro
+    await self.app(scope, receive_or_disconnect, send_no_error)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/cors.py", line 87, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/app/core/media_access.py", line 213, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/routing.py", line 716, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/routing.py", line 736, in app
+    await route.handle(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/routing.py", line 290, in handle
+    await self.app(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/fastapi/routing.py", line 130, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/fastapi/routing.py", line 116, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/fastapi/routing.py", line 670, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/fastapi/routing.py", line 324, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/app/api/v1/endpoints/novels.py", line 790, in create_novel
+    await db.commit()
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/ext/asyncio/session.py", line 1000, in commit
+    await greenlet_spawn(self.sync_session.commit)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 201, in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py", line 2030, in commit
+    trans.commit(_to_root=True)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^
+  File "<string>", line 2, in commit
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py", line 1311, in commit
+    self._prepare_impl()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "<string>", line 2, in _prepare_impl
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
+    ret_value = fn(self, *arg, **kw)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py", line 1286, in _prepare_impl
+    self.session.flush()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
+    self._flush(objects)
+    ~~~~~~~~~~~^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
+    with util.safe_reraise():
+         ~~~~~~~~~~~~~~~~~^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/util/langhelpers.py", line 121, in __exit__
+    raise exc_value.with_traceback(exc_tb)
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
+    flush_context.execute()
+    ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
+    rec.execute(self)
+    ~~~~~~~~~~~^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
+    util.preloaded.orm_persistence.save_obj(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self.mapper,
+        ^^^^^^^^^^^^
+        uow.states_for_mapper_hierarchy(self.mapper, False, False),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        uow,
+        ^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
+    _emit_insert_statements(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        base_mapper,
+        ^^^^^^^^^^^^
+    ...<3 lines>...
+        insert,
+        ^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/orm/persistence.py", line 1048, in _emit_insert_statements
+    result = connection.execute(
+        statement, multiparams, execution_options=execution_options
+    )
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
+    return meth(
+        self,
+        distilled_parameters,
+        execution_options or NO_OPTIONS,
+    )
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/sql/elements.py", line 527, in _execute_on_connection
+    return connection._execute_clauseelement(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self, distilled_params, execution_options
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
+    ret = self._execute_context(
+        dialect,
+    ...<8 lines>...
+        cache_hit=cache_hit,
+    )
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 1846, in _execute_context
+    return self._exec_single_context(
+           ~~~~~~~~~~~~~~~~~~~~~~~~~^
+        dialect, context, statement, parameters
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 1986, in _exec_single_context
+    self._handle_dbapi_exception(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        e, str_statement, effective_parameters, cursor, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 2363, in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py", line 1967, in _exec_single_context
+    self.dialect.do_execute(
+    ~~~~~~~~~~~~~~~~~~~~~~~^
+        cursor, str_statement, effective_parameters, context
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/engine/default.py", line 952, in do_execute
+    cursor.execute(statement, parameters)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
+    self._adapt_connection.await_(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        self._prepare_and_execute(operation, parameters)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 520, in _prepare_and_execute
+    await adapt_connection._start_transaction()
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 850, in _start_transaction
+    self._handle_exception(error)
+    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
+    raise translated_error from error
+sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+[SQL: INSERT INTO novels (id, user_id, project_id, title, description, genre, status, word_count, tags, cover_url, source, extra_data, created_at, updated_at) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::INTEGER, $9::JSON, $10::VARCHAR, $11::VARCHAR, $12::JSON, $13::TIMESTAMP WITHOUT TIME ZONE, $14::TIMESTAMP WITHOUT TIME ZONE)]
+[parameters: ('6ef1ef18-5097-46e2-b81d-74961aa566f9', 'own-c683b3a9-5a79-47d6-90ce-b3dff5806020', None, 'pm 25f5eeb0-b5ba-45db-902d-12b5755a4dc7', 'x', None, 'draft', 0, '[]', None, 'manual', '{}', datetime.datetime(2026, 11, 10, 1, 20, 25, 707697), datetime.datetime(2026, 11, 10, 1, 20, 25, 707704))]
+(Background on this error at: https://sqlalche.me/e/20/rvf5)
+______________________ test_cross_user_publication_denied ______________________
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x111ac8e50>>
+
+    async def _start_transaction(self):
+        if self.isolation_level == "autocommit":
+            return
+    
+        try:
+            self._transaction = self._connection.transaction(
+                isolation=self.isolation_level,
+                readonly=self.readonly,
+                deferrable=self.deferrable,
+            )
+>           await self._transaction.start()
+
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:848: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.14/site-packages/asyncpg/transaction.py:146: in start
+    await self._connection.execute(query)
+venv/lib/python3.14/site-packages/asyncpg/connection.py:377: in execute
+    result = await self._protocol.query(query, timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+asyncpg/protocol/protocol.pyx:330: in query
+    self._check_state()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+>   raise apg_exc.InterfaceError(
+E   asyncpg.exceptions._base.InterfaceError: cannot perform operation: another operation is in progress
+
+asyncpg/protocol/protocol.pyx:737: InterfaceError
+
+The above exception was the direct cause of the following exception:
+
+self = <sqlalchemy.engine.base.Connection object at 0x111f19d60>
+dialect = <sqlalchemy.dialects.postgresql.asyncpg.PGDialect_asyncpg object at 0x10bbb8d70>
+context = <sqlalchemy.dialects.postgresql.asyncpg.PGExecutionContext_asyncpg object at 0x111c5e250>
+statement = <sqlalchemy.dialects.postgresql.asyncpg.PGCompiler_asyncpg object at 0x111b2d310>
+parameters = [('d7fc61eb-2df1-486a-a496-63263b6aee2c', 'own-34593d57-09b9-402e-b7df-bd5631bf346c', None, None, 't', None, ...)]
+
+    def _exec_single_context(
+        self,
+        dialect: Dialect,
+        context: ExecutionContext,
+        statement: Union[str, Compiled],
+        parameters: Optional[_AnyMultiExecuteParams],
+    ) -> CursorResult[Any]:
+        """continue the _execute_context() method for a single DBAPI
+        cursor.execute() or cursor.executemany() call.
+    
+        """
+        if dialect.bind_typing is BindTyping.SETINPUTSIZES:
+            generic_setinputsizes = context._prepare_set_input_sizes()
+    
+            if generic_setinputsizes:
+                try:
+                    dialect.do_set_input_sizes(
+                        context.cursor, generic_setinputsizes, context
+                    )
+                except BaseException as e:
+                    self._handle_dbapi_exception(
+                        e, str(statement), parameters, None, context
+                    )
+    
+        cursor, str_statement, parameters = (
+            context.cursor,
+            context.statement,
+            context.parameters,
+        )
+    
+        effective_parameters: Optional[_AnyExecuteParams]
+    
+        if not context.executemany:
+            effective_parameters = parameters[0]
+        else:
+            effective_parameters = parameters
+    
+        if self._has_events or self.engine._has_events:
+            for fn in self.dispatch.before_cursor_execute:
+                str_statement, effective_parameters = fn(
+                    self,
+                    cursor,
+                    str_statement,
+                    effective_parameters,
+                    context,
+                    context.executemany,
+                )
+    
+        if self._echo:
+            self._log_info(str_statement)
+    
+            stats = context._get_cache_stats()
+    
+            if not self.engine.hide_parameters:
+                self._log_info(
+                    "[%s] %r",
+                    stats,
+                    sql_util._repr_params(
+                        effective_parameters,
+                        batches=10,
+                        ismulti=context.executemany,
+                    ),
+                )
+            else:
+                self._log_info(
+                    "[%s] [SQL parameters hidden due to hide_parameters=True]",
+                    stats,
+                )
+    
+        evt_handled: bool = False
+        try:
+            if context.execute_style is ExecuteStyle.EXECUTEMANY:
+                effective_parameters = cast(
+                    "_CoreMultiExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_executemany:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_executemany(
+                        cursor,
+                        str_statement,
+                        effective_parameters,
+                        context,
+                    )
+            elif not effective_parameters and context.no_parameters:
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute_no_params:
+                        if fn(cursor, str_statement, context):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+                    self.dialect.do_execute_no_params(
+                        cursor, str_statement, context
+                    )
+            else:
+                effective_parameters = cast(
+                    "_CoreSingleExecuteParams", effective_parameters
+                )
+                if self.dialect._has_events:
+                    for fn in self.dialect.dispatch.do_execute:
+                        if fn(
+                            cursor,
+                            str_statement,
+                            effective_parameters,
+                            context,
+                        ):
+                            evt_handled = True
+                            break
+                if not evt_handled:
+>                   self.dialect.do_execute(
+                        cursor, str_statement, effective_parameters, context
+                    )
+
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1967: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.14/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:520: in _prepare_and_execute
+    await adapt_connection._start_transaction()
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:850: in _start_transaction
+    self._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x111ac8e50>>
+error = InterfaceError('cannot perform operation: another operation is in progress')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.InterfaceError: <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: InterfaceError
+
+The above exception was the direct cause of the following exception:
+
+client = <starlette.testclient.TestClient object at 0x111c5e470>
+export_file = PosixPath('/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/static/exports/test-private-40932c76-942b-4b48-9ce8-f87932429b85.mp4')
+
+    @pytest.mark.asyncio
+    async def test_cross_user_publication_denied(client: TestClient, export_file: Path) -> None:
+        from app.models.publication import Publication
+    
+        owner, other = f"own-{uuid4()}", f"oth-{uuid4()}"
+        pub_id = str(uuid4())
+        async with AsyncSessionLocal() as db:
+            db.add(Publication(id=pub_id, user_id=owner, title="t", video_url=f"/static/exports/{export_file.name}",
+                               export_url=f"/static/exports/{export_file.name}", artifact_path=str(export_file)))
+>           await db.commit()
+
+tests/test_private_media_access.py:119: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+venv/lib/python3.14/site-packages/sqlalchemy/ext/asyncio/session.py:1000: in commit
+    await greenlet_spawn(self.sync_session.commit)
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:201: in greenlet_spawn
+    result = context.throw(*sys.exc_info())
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:2030: in commit
+    trans.commit(_to_root=True)
+<string>:2: in commit
+    ???
+venv/lib/python3.14/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:1311: in commit
+    self._prepare_impl()
+<string>:2: in _prepare_impl
+    ???
+venv/lib/python3.14/site-packages/sqlalchemy/orm/state_changes.py:137: in _go
+    ret_value = fn(self, *arg, **kw)
+                ^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:1286: in _prepare_impl
+    self.session.flush()
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:4331: in flush
+    self._flush(objects)
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:4466: in _flush
+    with util.safe_reraise():
+         ^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/util/langhelpers.py:121: in __exit__
+    raise exc_value.with_traceback(exc_tb)
+venv/lib/python3.14/site-packages/sqlalchemy/orm/session.py:4427: in _flush
+    flush_context.execute()
+venv/lib/python3.14/site-packages/sqlalchemy/orm/unitofwork.py:466: in execute
+    rec.execute(self)
+venv/lib/python3.14/site-packages/sqlalchemy/orm/unitofwork.py:642: in execute
+    util.preloaded.orm_persistence.save_obj(
+venv/lib/python3.14/site-packages/sqlalchemy/orm/persistence.py:93: in save_obj
+    _emit_insert_statements(
+venv/lib/python3.14/site-packages/sqlalchemy/orm/persistence.py:1048: in _emit_insert_statements
+    result = connection.execute(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1419: in execute
+    return meth(
+venv/lib/python3.14/site-packages/sqlalchemy/sql/elements.py:527: in _execute_on_connection
+    return connection._execute_clauseelement(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1641: in _execute_clauseelement
+    ret = self._execute_context(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1846: in _execute_context
+    return self._exec_single_context(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1986: in _exec_single_context
+    self._handle_dbapi_exception(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:2363: in _handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
+venv/lib/python3.14/site-packages/sqlalchemy/engine/base.py:1967: in _exec_single_context
+    self.dialect.do_execute(
+venv/lib/python3.14/site-packages/sqlalchemy/engine/default.py:952: in do_execute
+    cursor.execute(statement, parameters)
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:585: in execute
+    self._adapt_connection.await_(
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:132: in await_only
+    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/util/_concurrency_py3k.py:196: in greenlet_spawn
+    value = await result
+            ^^^^^^^^^^^^
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:520: in _prepare_and_execute
+    await adapt_connection._start_transaction()
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:850: in _start_transaction
+    self._handle_exception(error)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <AdaptedConnection <asyncpg.connection.Connection object at 0x111ac8e50>>
+error = InterfaceError('cannot perform operation: another operation is in progress')
+
+    def _handle_exception(self, error):
+        if self._connection.is_closed():
+            self._transaction = None
+            self._started = False
+    
+        if not isinstance(error, AsyncAdapt_asyncpg_dbapi.Error):
+            exception_mapping = self.dbapi._asyncpg_error_translate
+    
+            for super_ in type(error).__mro__:
+                if super_ in exception_mapping:
+                    translated_error = exception_mapping[super_](
+                        "%s: %s" % (type(error), error)
+                    )
+                    translated_error.pgcode = translated_error.sqlstate = (
+                        getattr(error, "sqlstate", None)
+                    )
+>                   raise translated_error from error
+E                   sqlalchemy.exc.InterfaceError: (sqlalchemy.dialects.postgresql.asyncpg.InterfaceError) <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform operation: another operation is in progress
+E                   [SQL: INSERT INTO publications (id, user_id, project_id, synthesis_job_id, title, description, video_url, cover_url, duration_seconds, format, resolution, orientation, status, visibility, tags, view_count, like_count, export_url, artifact_path, provider, metadata, created_at, updated_at) VALUES ($1::VARCHAR, $2::VARCHAR, $3::VARCHAR, $4::VARCHAR, $5::VARCHAR, $6::VARCHAR, $7::VARCHAR, $8::VARCHAR, $9::FLOAT, $10::VARCHAR, $11::VARCHAR, $12::VARCHAR, $13::VARCHAR, $14::VARCHAR, $15::JSON, $16::INTEGER, $17::INTEGER, $18::VARCHAR, $19::VARCHAR, $20::VARCHAR, $21::JSON, $22::TIMESTAMP WITHOUT TIME ZONE, $23::TIMESTAMP WITHOUT TIME ZONE)]
+E                   [parameters: ('d7fc61eb-2df1-486a-a496-63263b6aee2c', 'own-34593d57-09b9-402e-b7df-bd5631bf346c', None, None, 't', None, '/static/exports/test-private-40932c76-942b-4b48-9ce8-f87932429b85.mp4', None, None, 'mp4', '1080p', 'landscape', 'succeeded', 'private', '[]', 0, 0, '/static/exports/test-private-40932c76-942b-4b48-9ce8-f87932429b85.mp4', '/Users/sunqinyue/Documents/work/BJDEV/claude/ai-video-platform/backend/static/exports/test-private-40932c76-942b-4b48-9ce8-f87932429b85.mp4', 'local', '{}', datetime.datetime(2026, 11, 10, 1, 20, 26, 198583), datetime.datetime(2026, 11, 10, 1, 20, 26, 198591))]
+E                   (Background on this error at: https://sqlalche.me/e/20/rvf5)
+
+venv/lib/python3.14/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py:797: InterfaceError
+=========================== short test summary info ============================
+FAILED tests/test_health_readiness.py::test_readiness_503_when_redis_configured_but_unreachable
+FAILED tests/test_health_readiness.py::test_build_readiness_reports_storage_in_production
+FAILED tests/test_private_media_access.py::test_pipeline_url_signed_for_owner_and_cross_user_denied
+FAILED tests/test_private_media_access.py::test_cross_user_publication_denied
+4 failed, 43 passed in 4.85s
+pytest_exit=1
+STATUS=FAIL

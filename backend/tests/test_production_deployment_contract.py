@@ -35,6 +35,9 @@ def test_production_compose_has_one_public_entry_and_private_stateful_services()
         "${AI_VIDEO_DATA_ROOT:-/srv/ai-video-platform/data}/redis:/data"
     ]
     assert all("healthcheck" in service for service in services.values())
+    api_health = " ".join(services["api"]["healthcheck"].get("test") or [])
+    assert "8000/ready" in api_health
+
     worker = services["series-run-worker"]
     assert worker["command"] == ["python", "-m", "app.services.series_run_worker"]
     assert worker["environment"]["REDIS_URL"] == "redis://redis:6379/0"
@@ -93,7 +96,7 @@ def test_release_scripts_are_backup_first_and_rollback_capable() -> None:
     assert deploy.index("pg_dump") < deploy.index("up -d")
     assert "previous" in deploy and "current" in deploy
     assert "previous" in rollback and "current" in rollback
-    assert "/health" in health and "/api/v1/versions" in health
+    assert "/health" in health and "/ready" in health and "/api/v1/versions" in health
     assert "/srv/ai-video-platform" in deploy
     assert "chown 70:70" in deploy
     assert "chown 999:999" in deploy
