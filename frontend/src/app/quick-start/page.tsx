@@ -765,9 +765,9 @@ export default function QuickStartPage() {
           <div>
             <h1 className="text-3xl font-bold text-white flex items-center gap-2">
               <Wand2 className="h-7 w-7 text-violet-400" />
-              连续动漫向导
+              专家向导
             </h1>
-            <p className="mt-1 text-white/60">粘贴故事，AI 自动生成动漫设定本、首集剧本分镜和可预览草片</p>
+            <p className="mt-1 text-white/60">专业分步制作：生成设定本、首集剧本分镜和草片。日常请用小说页「一键生成视频」。</p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Button onClick={() => saveDraft(true)} variant="outline" className="border-white/20 text-white">

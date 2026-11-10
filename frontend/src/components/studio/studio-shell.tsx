@@ -699,11 +699,11 @@ export function StudioShell() {
           <CardContent className="p-8 text-center">
             <div className="text-lg font-medium text-white">先从小说创建本集工程</div>
             <div className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/55">
-              还没有可继续制作的本集工程。建议先打开连续动漫向导，导入小说章节并生成动漫设定本和第一集；完成后会带着本集工程回到这里继续一键草片、资产锁和质量门禁。
+              还没有可继续制作的本集工程。建议先到小说页一键生成；需要分步精修时再打开专家向导；完成后会带着本集工程回到这里继续一键草片、资产锁和质量门禁。
             </div>
             <div className="mt-5 flex flex-col justify-center gap-2 sm:flex-row">
               <Button className="bg-cyan-600 hover:bg-cyan-700" onClick={() => router.push('/quick-start')}>
-                连续动漫向导：小说到第一集
+                专家向导：小说到第一集
               </Button>
               <Button variant="outline" className="border-white/20 text-white" onClick={() => router.push('/novels')}>
                 一键成片：从小说开始

@@ -84,7 +84,7 @@ test('quick start provides a sample story and beginner-ready checks', async ({ p
   });
 
   await page.goto('/quick-start');
-  await expect(page.getByRole('heading', { name: '连续动漫向导' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '专家向导' })).toBeVisible();
   await page.getByRole('button', { name: '填入示例故事' }).click();
 
   await expect(page.getByPlaceholder('例如：星灯邮差')).toHaveValue('星灯邮差');

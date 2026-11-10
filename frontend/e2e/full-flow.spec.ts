@@ -300,7 +300,7 @@ test('quick start creates an editable first episode workspace', async ({ page })
   test.setTimeout(60_000);
   const stamp = Date.now();
   await page.goto('/quick-start');
-  await expect(page.getByRole('heading', { name: '连续动漫向导' })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('heading', { name: '专家向导' })).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole('button', { name: '生成第一集' }).click();
   await expect(page.getByText(/请先补齐：/)).toBeVisible();

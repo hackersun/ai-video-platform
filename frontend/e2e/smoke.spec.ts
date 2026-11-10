@@ -13,7 +13,7 @@ test('unauthenticated homepage CTA opens login', async ({ page }) => {
   });
 
   await page.goto('/');
-  const startLink = page.getByRole('link', { name: /开始连续动漫向导/ });
+  const startLink = page.getByRole('link', { name: '开始创作', exact: true }).first();
 
   await expect(startLink).toHaveAttribute('href', '/login');
   await startLink.click();
