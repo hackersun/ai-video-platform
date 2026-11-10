@@ -8,13 +8,10 @@ from uuid import uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+# Backend/memory stores only; tight numeric limits stay in the client fixture
+# so they cannot leak into the rest of the suite at collection time.
 os.environ["RATE_LIMIT_BACKEND"] = "memory"
 os.environ["REFRESH_TOKEN_STORE"] = "memory"
-os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "15"
-os.environ["AUTH_RATE_LIMIT_LOGIN"] = "3"
-os.environ["AUTH_RATE_LIMIT_WINDOW_SECONDS"] = "60"
-os.environ["API_RATE_LIMIT_GENERATE"] = "2"
-os.environ["API_RATE_LIMIT_WINDOW_SECONDS"] = "60"
 
 
 @pytest.fixture()

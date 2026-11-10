@@ -405,7 +405,7 @@ test('expert workflow page links back to studio', async ({ page }) => {
   await page.getByRole('menuitem', { name: '工作流' }).click();
 
   await expect(page).toHaveURL(/\/workflow/);
-  await expect(page.getByText('这是高级工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
+  await expect(page.getByText(/日常请用小说页/)).toBeVisible();
   await page.getByRole('button', { name: '回到工作室' }).click();
   await expect(page).toHaveURL(/\/studio/);
 });
