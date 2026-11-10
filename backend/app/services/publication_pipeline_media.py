@@ -162,7 +162,8 @@ async def run_media_quality_for_pipeline(
     blocker = _quality_blocker_from_generate_result(result if isinstance(result, dict) else {})
     await db.refresh(run)
     if blocker:
-        raise PipelineMediaBlocked(blocker, blocker)
+        from app.services.publication_pipeline_prepare import actionable_blocker_detail
+        raise PipelineMediaBlocked(blocker, actionable_blocker_detail(blocker))
     if run.status != "completed":
         media_tail = ((run.gate_summary or {}).get("media_tail") or {})
         if media_tail.get("result") != "passed":

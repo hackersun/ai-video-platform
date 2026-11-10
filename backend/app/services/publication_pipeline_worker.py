@@ -135,7 +135,14 @@ async def _fail_closed(db, pipeline_id: str, user_id: str, exc: Exception) -> No
         )
         if pipeline is None or pipeline.status in {"succeeded", "cancelled", "failed", "blocked", "paused"}:
             return
-        detail = f"{type(exc).__name__}: {exc}"[:1000]
+        from app.features.model_drivers.adapters._shared import generation_failure_message
+        from app.services.publication_pipeline_prepare import actionable_blocker_detail
+
+        repair = generation_failure_message(exc)
+        detail = actionable_blocker_detail(
+            "worker_unhandled_exception",
+            f"{repair}（{type(exc).__name__}）",
+        )[:1000]
         pipeline.status = "failed"
         pipeline.blocker_code = "worker_unhandled_exception"
         pipeline.blocker_detail = detail
