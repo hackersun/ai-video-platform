@@ -95,6 +95,8 @@ app = FastAPI(
 )
 
 app.add_middleware(SignExportUrlsMiddleware)
+from app.middleware.commercial_rate_limit import CommercialRateLimitMiddleware
+app.add_middleware(CommercialRateLimitMiddleware)
 # CORS配置
 app.add_middleware(
     CORSMiddleware,

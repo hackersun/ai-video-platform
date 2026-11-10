@@ -12,7 +12,7 @@ import hashlib
 import os
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, Field
@@ -22,6 +22,8 @@ from sqlalchemy import select
 from app.core.database import get_db
 from app.core.security import get_current_user_id
 from app.models import User
+from app.services.password_policy import PasswordPolicyError, validate_password
+from app.services.refresh_token_store import get_refresh_token_store
 
 router = APIRouter(tags=["用户认证"])
 
@@ -31,9 +33,13 @@ router = APIRouter(tags=["用户认证"])
 # 从环境变量读取JWT密钥，生产环境必须设置
 _JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-jwt-secret-change-in-production")
 _JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-_ACCESS_TOKEN_EXPIRE_HOURS = 24
-_REFRESH_TOKEN_EXPIRE_DAYS = 7
+# Commercial default: short-lived access; refresh remains longer and is rotatable.
+_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+_ACCESS_TOKEN_EXPIRE_HOURS = max(_ACCESS_TOKEN_EXPIRE_MINUTES, 1) / 60
+_REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 _RESET_TOKEN_EXPIRE_MINUTES = 30
+_REFRESH_COOKIE_NAME = "avp_refresh_token"
+_REFRESH_COOKIE_PATH = "/api/v1/auth"
 
 # 密码哈希 - 支持 sha256_crypt (新) 和 bcrypt (旧兼容)
 pwd_context = CryptContext(schemes=["sha256_crypt", "bcrypt"], deprecated="auto")
@@ -45,7 +51,7 @@ class UserRegisterRequest(BaseModel):
     """注册请求"""
     username: str = Field(..., min_length=3, max_length=50, description="用户名")
     email: str = Field(..., description="邮箱")
-    password: str = Field(..., min_length=6, max_length=100, description="密码")
+    password: str = Field(..., min_length=8, max_length=100, description="密码（至少8位，含字母和数字）")
     accept_terms: bool = Field(False, description="是否同意用户协议与隐私政策")
     terms_version: Optional[str] = Field(None, max_length=40, description="同意的协议版本")
 
@@ -87,8 +93,8 @@ class AuthResponse(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    """刷新令牌请求"""
-    refresh_token: str
+    """刷新令牌请求（cookie 路径可省略 body）"""
+    refresh_token: Optional[str] = None
 
 
 class UserProfileUpdateRequest(BaseModel):
@@ -101,7 +107,7 @@ class UserProfileUpdateRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     """修改密码请求"""
     current_password: str = Field(..., min_length=1, description="当前密码")
-    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+    new_password: str = Field(..., min_length=8, max_length=100, description="新密码（至少8位，含字母和数字）")
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -112,7 +118,7 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     """重置密码请求"""
     token: str = Field(..., min_length=24, description="重置令牌")
-    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+    new_password: str = Field(..., min_length=8, max_length=100, description="新密码（至少8位，含字母和数字）")
 
 
 class MessageResponse(BaseModel):
@@ -209,29 +215,44 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return False
 
 
+def _access_ttl() -> timedelta:
+    return timedelta(minutes=max(1, _ACCESS_TOKEN_EXPIRE_MINUTES))
+
+
+def _refresh_ttl() -> timedelta:
+    return timedelta(days=max(1, _REFRESH_TOKEN_EXPIRE_DAYS))
+
+
+def _access_expires_in_seconds() -> int:
+    return int(_access_ttl().total_seconds())
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """创建JWT access token。"""
+    """创建短时 JWT access token（默认 15 分钟）。"""
     to_encode = data.copy()
-    expire = utc_now() + (expires_delta or timedelta(hours=_ACCESS_TOKEN_EXPIRE_HOURS))
-    to_encode.update({"exp": expire, "type": "access"})
+    expire = utc_now() + (expires_delta or _access_ttl())
+    to_encode.update({"exp": expire, "type": "access", "iat": utc_now()})
     return jwt.encode(to_encode, _JWT_SECRET_KEY, algorithm=_JWT_ALGORITHM)
 
 
 def create_refresh_token(data: dict) -> str:
-    """创建JWT refresh token（有效期更长）。"""
-    to_encode = {"sub": data.get("sub", data.get("user_id")), "type": "refresh"}
-    expire = utc_now() + timedelta(days=_REFRESH_TOKEN_EXPIRE_DAYS)
+    """创建可轮换 JWT refresh token（带 jti）。"""
+    to_encode = {
+        "sub": data.get("sub", data.get("user_id")),
+        "type": "refresh",
+        "jti": secrets.token_urlsafe(16),
+    }
+    expire = utc_now() + _refresh_ttl()
     to_encode["exp"] = expire
+    to_encode["iat"] = utc_now()
     return jwt.encode(to_encode, _JWT_SECRET_KEY, algorithm=_JWT_ALGORITHM)
 
 
 def decode_token(token: str) -> dict:
-    """解码并验证JWT token。"""
     return jwt.decode(token, _JWT_SECRET_KEY, algorithms=[_JWT_ALGORITHM])
 
 
 def verify_access_token(token: str) -> Optional[str]:
-    """验证access token并返回user_id。如果无效返回None。"""
     try:
         payload = decode_token(token)
         if payload.get("type") != "access":
@@ -242,7 +263,6 @@ def verify_access_token(token: str) -> Optional[str]:
 
 
 def verify_refresh_token(token: str) -> Optional[str]:
-    """验证refresh token并返回user_id。如果无效返回None。"""
     try:
         payload = decode_token(token)
         if payload.get("type") != "refresh":
@@ -252,16 +272,77 @@ def verify_refresh_token(token: str) -> Optional[str]:
         return None
 
 
+def _refresh_jti(token: str) -> Optional[str]:
+    try:
+        payload = decode_token(token)
+        if payload.get("type") != "refresh":
+            return None
+        jti = payload.get("jti")
+        return jti if isinstance(jti, str) and jti else None
+    except JWTError:
+        return None
+
+
+def _cookie_secure() -> bool:
+    from app.core.runtime_env import is_production_environment
+    return is_production_environment()
+
+
+def attach_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        key=_REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        max_age=int(_refresh_ttl().total_seconds()),
+        httponly=True,
+        secure=_cookie_secure(),
+        samesite="lax",
+        path=_REFRESH_COOKIE_PATH,
+    )
+
+
+def clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(key=_REFRESH_COOKIE_NAME, path=_REFRESH_COOKIE_PATH)
+
+
+def _extract_refresh_token(request_body_token: Optional[str], http_request: Request) -> Optional[str]:
+    if request_body_token and request_body_token.strip():
+        return request_body_token.strip()
+    cookie_token = http_request.cookies.get(_REFRESH_COOKIE_NAME)
+    return cookie_token.strip() if cookie_token else None
+
+
+async def _revoke_refresh_token(token: str) -> None:
+    jti = _refresh_jti(token)
+    if not jti:
+        jti = "legacy:" + hashlib.sha256(token.encode("utf-8")).hexdigest()[:32]
+    await get_refresh_token_store().revoke(jti, ttl_seconds=int(_refresh_ttl().total_seconds()))
+
+
+async def _assert_refresh_active(token: str) -> str:
+    user_id = verify_refresh_token(token)
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的refresh token")
+    jti = _refresh_jti(token)
+    if jti and await get_refresh_token_store().is_revoked(jti):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新凭证已失效，请重新登录")
+    return user_id
+
+
 # ============== API端点 ==============
 
 @router.post("/auth/register")
 async def register(
     request: UserRegisterRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """用户注册 - 注册成功后直接返回access和refresh token。"""
     if not request.accept_terms:
         return AuthResponse(success=False, message="请先阅读并同意《用户协议》和《隐私政策》")
+    try:
+        validate_password(request.password, username=request.username, email=request.email)
+    except PasswordPolicyError as exc:
+        return AuthResponse(success=False, message=str(exc))
     # 检查用户名是否存在
     result = await db.execute(
         select(User).where(User.username == request.username)
@@ -300,6 +381,7 @@ async def register(
     access_token = create_access_token(data={"sub": user.id})
     refresh_token = create_refresh_token(data={"user_id": user.id})
 
+    attach_refresh_cookie(response, refresh_token)
     return AuthResponse(
         success=True,
         message="注册成功",
@@ -321,6 +403,7 @@ async def register(
 @router.post("/auth/login")
 async def login(
     request: UserLoginRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
     """用户登录 - 返回access和refresh token。"""
@@ -349,6 +432,7 @@ async def login(
     access_token = create_access_token(data={"sub": user.id})
     refresh_token = create_refresh_token(data={"user_id": user.id})
 
+    attach_refresh_cookie(response, refresh_token)
     return AuthResponse(
         success=True,
         message="登录成功",
@@ -368,17 +452,16 @@ async def login(
 @router.post("/auth/refresh")
 async def refresh_token(
     request: RefreshTokenRequest,
+    http_request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db)
 ):
-    """使用refresh token获取新的access token。"""
-    user_id = verify_refresh_token(request.refresh_token)
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的refresh token"
-        )
+    """使用 refresh token 轮换签发新的 access + refresh。"""
+    presented = _extract_refresh_token(request.refresh_token, http_request)
+    if not presented:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少 refresh token")
+    user_id = await _assert_refresh_active(presented)
 
-    # 验证用户仍存在且活跃
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     if not user or not user.is_active:
@@ -387,13 +470,29 @@ async def refresh_token(
             detail="用户不存在或已被禁用"
         )
 
-    # 生成新的access token（保留原refresh token）
+    await _revoke_refresh_token(presented)
     access_token = create_access_token(data={"sub": user.id})
+    new_refresh = create_refresh_token(data={"user_id": user.id})
+    attach_refresh_cookie(response, new_refresh)
     return TokenResponse(
         access_token=access_token,
-        refresh_token=request.refresh_token,
-        expires_in=_ACCESS_TOKEN_EXPIRE_HOURS * 3600
+        refresh_token=new_refresh,
+        expires_in=_access_expires_in_seconds()
     )
+
+
+@router.post("/auth/logout", response_model=MessageResponse)
+async def logout(
+    request: RefreshTokenRequest,
+    http_request: Request,
+    response: Response,
+):
+    """撤销 refresh（body 或 HttpOnly cookie）并清除 cookie。"""
+    presented = _extract_refresh_token(request.refresh_token, http_request)
+    if presented:
+        await _revoke_refresh_token(presented)
+    clear_refresh_cookie(response)
+    return MessageResponse(message="已退出登录")
 
 
 @router.get("/auth/me", response_model=UserResponse)
@@ -451,6 +550,10 @@ async def change_password(
         raise HTTPException(status_code=400, detail="当前密码不正确")
     if request.current_password == request.new_password:
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+    try:
+        validate_password(request.new_password, username=user.username, email=user.email)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     user.hashed_password = hash_password(request.new_password)
     user.updated_at = utc_now()
@@ -495,6 +598,10 @@ async def reset_password(
         raise HTTPException(status_code=400, detail="重置令牌无效或已过期")
     if verify_password(request.new_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="新密码不能与当前密码相同")
+    try:
+        validate_password(request.new_password, username=user.username, email=user.email)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     user.hashed_password = hash_password(request.new_password)
     user.reset_token_hash = None

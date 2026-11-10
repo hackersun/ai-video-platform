@@ -145,7 +145,7 @@ export default function RegisterPage() {
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
                   <Input
                     type="password"
-                    placeholder="请输入密码（至少6位）"
+                    placeholder="请输入密码（至少8位，含字母和数字）"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"

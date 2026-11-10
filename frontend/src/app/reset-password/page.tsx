@@ -91,7 +91,7 @@ export default function ResetPasswordPage() {
                     type="password"
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
-                    placeholder="至少6位"
+                    placeholder="至少8位，含字母和数字"
                     className="pl-10 bg-white/5 border-white/10 text-white placeholder:text-white/40"
                   />
                 </div>

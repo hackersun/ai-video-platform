@@ -137,7 +137,7 @@ async function register(page: any, suffix: string) {
   await page.goto('/register');
   await page.getByPlaceholder('请输入用户名').fill(username);
   await page.getByPlaceholder('请输入邮箱').fill(`${username}@example.invalid`);
-  await page.getByPlaceholder('请输入密码（至少6位）').fill(password);
+  await page.getByPlaceholder('请输入密码（至少8位，含字母和数字）').fill(password);
   await page.getByPlaceholder('请再次输入密码').fill(password);
   await page.getByTestId('register-accept-terms').check();
   await page.getByRole('button', { name: '注册' }).click();
