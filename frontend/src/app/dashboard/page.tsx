@@ -5,10 +5,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton, DashboardSkeleton } from '@/components/ui/skeleton';
 import { MainLayout } from '@/components/layout/main-layout';
-import { NextStepGuide } from '@/components/production/next-step-guide';
 import Link from 'next/link';
 import { 
-  BookOpen, 
+  BookOpen,
+  Film,
+  Cpu, 
   Users, 
   FileText, 
   Video, 
@@ -16,7 +17,6 @@ import {
   LayoutGrid, 
   ListTodo,
   LayoutTemplate,
-  Cpu,
   BarChart3,
   Sparkles,
   Plus,
@@ -232,78 +232,35 @@ export default function DashboardPage() {
           </Button>
         </div>
 
-        <NextStepGuide
-          current={novels.length ? `已有 ${novels.length} 个作品，可继续制作下一集` : '还没有作品，适合先用一段小说跑通首集'}
-          next={novels.length ? '打开小说列表，继续一键生成或查看成片' : '粘贴小说正文，导入后一键生成视频'}
-          reason="日常路径：导入小说 → 一键生成 → 下载发布。"
-          href="/novels"
-          actionLabel="开始创作"
-          checklist={['导入小说', '一键生成视频', '下载或发布成片']}
-        />
-
-        {/* 创作流程引导 - 时间线样式 */}
-        <Card className="bg-gradient-to-r from-violet-600/10 to-indigo-600/10 border-violet-500/20">
-          <CardContent className="p-6">
-            <h2 className="text-lg font-semibold text-white mb-6 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-violet-400" />
-              推荐制作路径
-            </h2>
-            <div className="relative">
-              {/* 时间线连接线 */}
-              <div className="absolute top-6 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 via-purple-500 to-blue-500 hidden md:block" />
-              
-              <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4">
-                {[
-                  { step: 1, label: '开始创作', href: '/novels', icon: Wand2, color: 'from-violet-500 to-violet-600' },
-                  { step: 2, label: '完善角色设定', href: '/characters', icon: Users, color: 'from-purple-500 to-purple-600' },
-                  { step: 3, label: '生成分集计划', href: '/novels', icon: BookOpen, color: 'from-blue-500 to-blue-600' },
-                  { step: 4, label: '一键生成视频', href: '/novels', icon: Sparkles, color: 'from-cyan-500 to-cyan-600' },
-                  { step: 5, label: '审核分镜声音', href: '/storyboards', icon: LayoutGrid, color: 'from-emerald-500 to-emerald-600' },
-                  { step: 6, label: '连续成片', href: '/studio', icon: Workflow, color: 'from-pink-500 to-pink-600' },
-                ].map((item, index) => (
-                  <div key={item.step} className="flex flex-col items-center relative z-10">
-                    <Link
-                      href={item.href}
-                      className={`w-12 h-12 rounded-full bg-gradient-to-br ${item.color} flex items-center justify-center text-white shadow-lg transition-transform duration-200 hover:scale-110`}
-                    >
-                      <item.icon className="w-5 h-5" />
-                    </Link>
-                    <span className="text-xs text-white/60 mt-2 whitespace-nowrap">{item.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
         <div className="space-y-4">
           <div>
-            <h2 className="mb-3 text-lg font-semibold text-white">常用入口</h2>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <h2 className="mb-3 text-lg font-semibold text-white">快捷入口</h2>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3" data-testid="dashboard-shortcuts">
               <Link href="/novels">
                 <Card className="h-full border-cyan-400/30 bg-cyan-500/10 transition-colors hover:border-cyan-300/60">
                   <CardContent className="p-5">
-                    <Wand2 className="mb-3 h-6 w-6 text-cyan-300" />
-                    <div className="font-medium text-white">开始创作</div>
-                    <div className="mt-1 text-sm text-white/55">粘贴小说，一键生成视频</div>
+                    <BookOpen className="mb-3 h-6 w-6 text-cyan-300" />
+                    <div className="font-medium text-white">小说</div>
+                    <div className="mt-1 text-sm text-white/55">粘贴正文，一键生成视频</div>
                   </CardContent>
                 </Card>
               </Link>
-              <Link href="/novels">
+              <Link href="/synthesis">
                 <Card className="h-full border-white/10 bg-white/5 transition-colors hover:border-violet-400/40">
                   <CardContent className="p-5">
-                    <BookOpen className="mb-3 h-6 w-6 text-violet-300" />
-                    <div className="font-medium text-white">我的作品</div>
-                    <div className="mt-1 text-sm text-white/55">查看小说、章节、分集计划和已有制作进度</div>
+                    <Film className="mb-3 h-6 w-6 text-violet-300" />
+                    <div className="font-medium text-white">成片</div>
+                    <div className="mt-1 text-sm text-white/55">播放、下载和发布已生成的视频</div>
                   </CardContent>
                 </Card>
               </Link>
-              <Link href="/studio">
+              <Link href="/llm-config">
                 <Card className="h-full border-white/10 bg-white/5 transition-colors hover:border-emerald-400/40">
                   <CardContent className="p-5">
-                    <Workflow className="mb-3 h-6 w-6 text-emerald-300" />
-                    <div className="font-medium text-white">继续制作</div>
-                    <div className="mt-1 text-sm text-white/55">进入工作台，继续审核镜头、声音、字幕和成片质量</div>
+                    <Cpu className="mb-3 h-6 w-6 text-emerald-300" />
+                    <div className="font-medium text-white">模型设置</div>
+                    <div className="mt-1 text-sm text-white/55">粘贴 API Key 并检测可用性</div>
                   </CardContent>
                 </Card>
               </Link>

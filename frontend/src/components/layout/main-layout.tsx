@@ -28,13 +28,13 @@ export function ExpertToolBanner() {
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-cyan-400/20 bg-cyan-500/10 p-4 text-sm text-cyan-50 sm:flex-row sm:items-center sm:justify-between">
-      <div>这是高级工具。连续动漫制作建议从工作室统一管控。</div>
+      <div>这是专业工作台。日常请用小说页「一键生成视频」；这里只做分步精修。</div>
       <button
         type="button"
-        onClick={() => router.push('/studio')}
+        onClick={() => router.push('/novels')}
         className="inline-flex h-9 shrink-0 items-center justify-center rounded-md bg-cyan-600 px-3 text-sm font-medium text-white transition-colors hover:bg-cyan-700"
       >
-        回到工作室
+        去小说页
       </button>
     </div>
   );

@@ -78,8 +78,8 @@ test('专家工具页面提示回到工作室统一管控', async ({ page }) => 
   });
 
   await page.goto('/workflow');
-  await expect(page.getByText('这是高级工具。连续动漫制作建议从工作室统一管控。')).toBeVisible();
-  await expect(page.getByRole('button', { name: '回到工作室' })).toBeVisible();
+  await expect(page.getByText(/日常请用小说页/)).toBeVisible();
+  await expect(page.getByRole('button', { name: '去小说页' })).toBeVisible();
 });
 
 test('手机栏可进入模型设置', async ({ page }) => {
